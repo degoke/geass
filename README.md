@@ -1,5 +1,10 @@
 # Geass
 
+> Managed cloud experience on your VPS or bare-metal — powered by K3s.
+
+[![License: ELv2](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/degoke/geass)](https://github.com/degoke/geass/releases/latest)
+
 Geass is a source-available platform that brings the managed public cloud experience to your own VPS or bare-metal hardware.
 
 Powered by [K3s](https://k3s.io/), Geass turns a single affordable server—or a cluster of machines—into a cohesive, horizontally scalable environment. It abstracts away raw infrastructure management so you can deploy applications, provision databases, and manage networking as smoothly as you would on AWS or GCP, on infrastructure you control.
