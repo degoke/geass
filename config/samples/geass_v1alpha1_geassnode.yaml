@@ -1,0 +1,15 @@
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassNode
+metadata:
+  labels:
+    app.kubernetes.io/name: geass
+    app.kubernetes.io/managed-by: kustomize
+  name: geassnode-sample
+spec:
+  role: Worker
+  eip: 203.0.113.10
+  sshUser: ubuntu
+  sshKeySecretRef:
+    name: worker-ssh-key
+  clusterRef:
+    name: geasscluster-sample

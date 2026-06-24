@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@b5ca8573202a903aa9ea1546cddcf5aafa0a0bde # v3.10.0
+
+      - name: Build geass installer (amd64)
+        run: make build-geass GEASS_GOARCH=amd64
+
+      - name: Rename amd64 binary
+        run: mv bin/geass bin/geass-linux-amd64
+
+      - name: Build geass installer (arm64)
+        run: make build-geass GEASS_GOARCH=arm64
+
+      - name: Rename arm64 binary
+        run: mv bin/geass bin/geass-linux-arm64
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@a149427bb2130fa9360a5693a74a8750d6590fcf # v2.2.0
+        with:
+          files: |
+            bin/geass-linux-amd64
+            bin/geass-linux-arm64
+            scripts/install.sh
+          generate_release_notes: true

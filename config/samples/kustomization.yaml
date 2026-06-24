@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- geass_v1alpha1_geasscluster.yaml
+- geass_v1alpha1_geassnode.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

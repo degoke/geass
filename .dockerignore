@@ -1,0 +1,17 @@
+bin/
+dist/
+testbin/
+.git/
+.github/
+.vscode/
+*.md
+cover.out
+.gitignore
+.golangci.yml
+.custom-gcl.yml
+AGENTS.md
+PROJECT
+Makefile
+Dockerfile
+.dockerignore
+.devcontainer/
