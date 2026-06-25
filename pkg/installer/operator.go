@@ -29,8 +29,8 @@ func (s *OperatorDeploy) applyFromKustomize(path string) error {
 	Logf(s.Name(), "Deploying manifests from %s", resolved)
 
 	return runCommandWithOptions(s.Name(), commandOptions{
-		env:        append(os.Environ(), "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"),
-		envLog:     []string{"KUBECONFIG=/etc/rancher/k3s/k3s.yaml"},
+		env:        append(os.Environ(), k3sKubeconfigEnv),
+		envLog:     []string{k3sKubeconfigEnv},
 		echoStdout: true,
 		echoStderr: true,
 	}, "k3s", "kubectl", "apply", "-k", resolved)
@@ -43,8 +43,8 @@ func (s *OperatorDeploy) applyEmbedded() error {
 
 	Logf(s.Name(), "Deploying embedded operator manifests (%d bytes)", len(embeddedOperatorManifests))
 	return runCommandWithOptions(s.Name(), commandOptions{
-		env:        append(os.Environ(), "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"),
-		envLog:     []string{"KUBECONFIG=/etc/rancher/k3s/k3s.yaml"},
+		env:        append(os.Environ(), k3sKubeconfigEnv),
+		envLog:     []string{k3sKubeconfigEnv},
 		stdin:      bytes.NewReader(embeddedOperatorManifests),
 		echoStdout: true,
 		echoStderr: true,

@@ -43,12 +43,12 @@ func (s *WaitForOperator) deploymentName() string {
 func (s *WaitForOperator) Run() error {
 	deployment := s.deploymentName()
 	deadline := time.Now().Add(5 * time.Minute)
-	kubeEnv := append(os.Environ(), "KUBECONFIG=/etc/rancher/k3s/k3s.yaml")
+	kubeEnv := append(os.Environ(), k3sKubeconfigEnv)
 	Logf(s.Name(), "Waiting for deployment/%s rollout until %s", deployment, deadline.UTC().Format(time.RFC3339))
 	for time.Now().Before(deadline) {
 		out, err := combinedOutputCommandWithOptions(s.Name(), commandOptions{
 			env:    kubeEnv,
-			envLog: []string{"KUBECONFIG=/etc/rancher/k3s/k3s.yaml"},
+			envLog: []string{k3sKubeconfigEnv},
 		}, "k3s", "kubectl",
 			"rollout", "status", "deployment/"+deployment,
 			"-n", "geass-system", "--timeout=60s",

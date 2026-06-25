@@ -33,10 +33,10 @@ func (s *ClusterCRApply) Run() error {
 		serverURL = "https://127.0.0.1:6443"
 	}
 
-	kubeEnv := append(os.Environ(), "KUBECONFIG=/etc/rancher/k3s/k3s.yaml")
+	kubeEnv := append(os.Environ(), k3sKubeconfigEnv)
 	kubeOpts := commandOptions{
 		env:        kubeEnv,
-		envLog:     []string{"KUBECONFIG=/etc/rancher/k3s/k3s.yaml"},
+		envLog:     []string{k3sKubeconfigEnv},
 		echoStdout: true,
 		echoStderr: true,
 	}

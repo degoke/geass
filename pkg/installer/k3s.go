@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const k3sKubeconfigEnv = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+
 type K3sInstall struct {
 	Version string // optional, defaults to upstream installer channel resolution
 }
@@ -20,7 +22,9 @@ func (s *K3sInstall) Run() error {
 	if version == "" {
 		Logf(s.Name(), "Preparing k3s installation with upstream default channel resolution")
 	} else if strings.EqualFold(version, "latest") {
-		Logf(s.Name(), "Version %q is not a valid k3s release tag, falling back to upstream default channel resolution", version)
+		Logf(s.Name(),
+			"Version %q is not a valid k3s release tag, falling back to upstream default channel resolution",
+			version)
 		version = ""
 	} else {
 		Logf(s.Name(), "Preparing k3s installation for version %s", version)

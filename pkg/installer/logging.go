@@ -183,10 +183,6 @@ func outputCommand(step, name string, args ...string) ([]byte, error) {
 	return stdoutBuf.Bytes(), nil
 }
 
-func combinedOutputCommand(step, name string, args ...string) ([]byte, error) {
-	return combinedOutputCommandWithOptions(step, commandOptions{}, name, args...)
-}
-
 func combinedOutputCommandWithOptions(step string, opts commandOptions, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = opts.dir
@@ -229,8 +225,8 @@ func shellQuote(value string) string {
 
 	safe := true
 	for _, r := range value {
-		if !(r == '.' || r == '/' || r == '_' || r == '-' || r == ':' ||
-			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if r != '.' && r != '/' && r != '_' && r != '-' && r != ':' &&
+			(r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			safe = false
 			break
 		}

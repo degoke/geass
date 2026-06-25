@@ -55,8 +55,13 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 fmt: ## Run go fmt against code.
 	go fmt ./...
 
+.PHONY: stub-installer-assets
+stub-installer-assets: ## Create placeholder embed assets for vet, lint, and test.
+	mkdir -p pkg/installer/assets
+	@touch $(INSTALLER_OPERATOR_TAR) $(INSTALLER_OPERATOR_MANIFESTS)
+
 .PHONY: vet
-vet: ## Run go vet against code.
+vet: stub-installer-assets ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
@@ -95,7 +100,7 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint stub-installer-assets ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix

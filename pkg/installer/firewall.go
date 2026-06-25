@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const firewallFirewalld = "firewalld"
+
 var k3sPorts = []struct {
 	port     string
 	protocol string
@@ -30,7 +32,7 @@ func (s *FirewallSetup) Run() error {
 			if err := runCommand(s.Name(), "ufw", "allow", fmt.Sprintf("%s/%s", p.port, p.protocol)); err != nil {
 				return fmt.Errorf("ufw allow %s/%s: %w", p.port, p.protocol, err)
 			}
-		case "firewalld":
+		case firewallFirewalld:
 			if err := runCommand(s.Name(), "firewall-cmd", "--permanent",
 				"--add-port="+fmt.Sprintf("%s/%s", p.port, p.protocol)); err != nil {
 				return fmt.Errorf("firewall-cmd add-port %s/%s: %w", p.port, p.protocol, err)
@@ -42,7 +44,7 @@ func (s *FirewallSetup) Run() error {
 		}
 	}
 
-	if fw == "firewalld" {
+	if fw == firewallFirewalld {
 		if err := runCommand(s.Name(), "firewall-cmd", "--reload"); err != nil {
 			return fmt.Errorf("firewall-cmd reload: %w", err)
 		}
@@ -59,7 +61,7 @@ func detectFirewall(step string) string {
 	}
 	if _, err := exec.LookPath("firewall-cmd"); err == nil {
 		if runCommand(step, "firewall-cmd", "--state") == nil {
-			return "firewalld"
+			return firewallFirewalld
 		}
 	}
 	return "iptables"

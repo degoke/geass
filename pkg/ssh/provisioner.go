@@ -35,7 +35,7 @@ func (p *sshProvisioner) Provision(ctx context.Context, in ProvisionInput) error
 	if err != nil {
 		return fmt.Errorf("ssh dial %s: %w", in.Host, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	steps := []struct {
 		name string
@@ -73,7 +73,7 @@ func (p *sshProvisioner) Drain(ctx context.Context, host string, key []byte, use
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	return runStep(ctx, client, "uninstall-k3s", "/usr/local/bin/k3s-agent-uninstall.sh || true")
 }
@@ -104,7 +104,7 @@ func runStep(ctx context.Context, client *gossh.Client, name, cmd string) error 
 	if err != nil {
 		return fmt.Errorf("new session for %s: %w", name, err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	var out, errBuf bytes.Buffer
 	sess.Stdout = &out

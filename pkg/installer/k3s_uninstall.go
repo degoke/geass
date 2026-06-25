@@ -40,7 +40,10 @@ func UninstallK3s() error {
 		return runCommand("uninstall k3s", "sh", k3sAgentUninstallScript)
 	}
 
-	return fmt.Errorf("existing k3s installation detected but no uninstall script found at %s or %s", k3sUninstallScript, k3sAgentUninstallScript)
+	return fmt.Errorf(
+		"existing k3s installation detected but no uninstall script found at %s or %s",
+		k3sUninstallScript, k3sAgentUninstallScript,
+	)
 }
 
 // RemoveExistingInstall uninstalls k3s when a previous installation is present.
