@@ -4,6 +4,10 @@
 resources:
 - bases/geass.geass.dev_geassclusters.yaml
 - bases/geass.geass.dev_geassnodes.yaml
+- bases/geass.geass.dev_geassapps.yaml
+- bases/geass.geass.dev_geassdatabases.yaml
+- bases/geass.geass.dev_geasscaches.yaml
+- bases/geass.geass.dev_geassobjectstores.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

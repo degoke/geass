@@ -14,10 +14,17 @@ spec:
     singular: geasscluster
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GeassCluster is the Schema for the geassclusters API
+        description: GeassCluster is the Schema for the geassclusters API.
         properties:
           apiVersion:
             description: |-
@@ -37,14 +44,42 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GeassCluster
+            description: GeassClusterSpec defines the desired state of GeassCluster.
             properties:
+              addons:
+                description: Addons controls default platform add-ons reconciled by
+                  the cluster controller.
+                properties:
+                  certManager:
+                    description: CertManager controls cert-manager installation.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enabled installs cert-manager when true.
+                        type: boolean
+                    type: object
+                  monitoring:
+                    description: Monitoring controls kube-prometheus-stack installation.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enabled installs monitoring when true.
+                        type: boolean
+                      profile:
+                        default: lite
+                        description: Profile selects the monitoring footprint.
+                        enum:
+                        - lite
+                        - full
+                        type: string
+                    type: object
+                type: object
               serverURL:
-                description: ServerURL is the URL of the GeassCluster server
+                description: ServerURL is the URL of the GeassCluster server.
                 type: string
               tokenSecretRef:
                 description: TokenSecretRef is the reference to the secret containing
-                  the token for the GeassCluster
+                  the token for the GeassCluster.
                 properties:
                   name:
                     description: name is unique within a namespace to reference a
@@ -57,7 +92,7 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
               version:
-                description: Version is the version of the GeassCluster
+                description: Version is the version of the GeassCluster.
                 type: string
             required:
             - serverURL
@@ -65,19 +100,11 @@ spec:
             - version
             type: object
           status:
-            description: status defines the observed state of GeassCluster
+            description: GeassClusterStatus defines the observed state of GeassCluster.
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the GeassCluster resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: conditions represent the current state of the GeassCluster
+                  resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -137,7 +164,7 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               phase:
-                description: Phase is the current phase of the GeassCluster
+                description: Phase is the current phase of the GeassCluster.
                 type: string
             type: object
         required:

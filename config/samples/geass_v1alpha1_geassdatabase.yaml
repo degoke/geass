@@ -1,0 +1,9 @@
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassDatabase
+metadata:
+  name: geassdatabase-sample
+  namespace: geass-system
+spec:
+  workspace: dev
+  engine: Postgres
+  version: "16"

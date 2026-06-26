@@ -1,0 +1,10 @@
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassObjectStore
+metadata:
+  name: geassobjectstore-sample
+  namespace: geass-system
+spec:
+  workspace: dev
+  engine: MinIO
+  buckets:
+    - assets

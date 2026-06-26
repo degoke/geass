@@ -14,24 +14,63 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// GeassWorkspace identifies a fixed Geass deployment environment.
+// +kubebuilder:validation:Enum=dev;staging;production
+type GeassWorkspace string
 
-// GeassClusterSpec defines the desired state of GeassCluster
+const (
+	WorkspaceDev        GeassWorkspace = "dev"
+	WorkspaceStaging    GeassWorkspace = "staging"
+	WorkspaceProduction GeassWorkspace = "production"
+)
+
+// GeassClusterCertManagerAddon controls cert-manager installation.
+type GeassClusterCertManagerAddon struct {
+	// Enabled installs cert-manager when true.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// GeassClusterMonitoringAddon controls kube-prometheus-stack installation.
+type GeassClusterMonitoringAddon struct {
+	// Enabled installs monitoring when true.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Profile selects the monitoring footprint.
+	// +kubebuilder:default=lite
+	// +kubebuilder:validation:Enum=lite;full
+	// +optional
+	Profile string `json:"profile,omitempty"`
+}
+
+// GeassClusterAddonsSpec groups platform add-on toggles.
+type GeassClusterAddonsSpec struct {
+	// CertManager controls cert-manager installation.
+	// +optional
+	CertManager GeassClusterCertManagerAddon `json:"certManager,omitempty"`
+
+	// Monitoring controls kube-prometheus-stack installation.
+	// +optional
+	Monitoring GeassClusterMonitoringAddon `json:"monitoring,omitempty"`
+}
+
+// GeassClusterSpec defines the desired state of GeassCluster.
 type GeassClusterSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// Version is the version of the GeassCluster
+	// Version is the version of the GeassCluster.
 	Version string `json:"version"`
 
-	// ServerURL is the URL of the GeassCluster server
+	// ServerURL is the URL of the GeassCluster server.
 	ServerURL string `json:"serverURL"`
 
-	// TokenSecretRef is the reference to the secret containing the token for the GeassCluster
+	// TokenSecretRef is the reference to the secret containing the token for the GeassCluster.
 	TokenSecretRef corev1.SecretReference `json:"tokenSecretRef"`
+
+	// Addons controls default platform add-ons reconciled by the cluster controller.
+	// +optional
+	Addons GeassClusterAddonsSpec `json:"addons,omitempty"`
 }
 
 type ClusterPhase string
@@ -42,53 +81,38 @@ const (
 
 // GeassClusterStatus defines the observed state of GeassCluster.
 type GeassClusterStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the GeassCluster resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Phase is the current phase of the GeassCluster
+	// Phase is the current phase of the GeassCluster.
 	Phase ClusterPhase `json:"phase,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 
-// GeassCluster is the Schema for the geassclusters API
+// GeassCluster is the Schema for the geassclusters API.
 type GeassCluster struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of GeassCluster
 	// +required
 	Spec GeassClusterSpec `json:"spec"`
 
-	// status defines the observed state of GeassCluster
 	// +optional
 	Status GeassClusterStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// GeassClusterList contains a list of GeassCluster
+// GeassClusterList contains a list of GeassCluster.
 type GeassClusterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
@@ -100,4 +124,9 @@ func init() {
 		s.AddKnownTypes(SchemeGroupVersion, &GeassCluster{}, &GeassClusterList{})
 		return nil
 	})
+}
+
+// AddonEnabled returns whether an addon pointer is enabled (default true).
+func AddonEnabled(enabled *bool) bool {
+	return enabled == nil || *enabled
 }

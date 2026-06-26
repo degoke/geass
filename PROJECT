@@ -36,4 +36,40 @@ resources:
   kind: GeassNode
   path: github.com/degoke/geass/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: geass.dev
+  group: geass
+  kind: GeassApp
+  path: github.com/degoke/geass/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: geass.dev
+  group: geass
+  kind: GeassDatabase
+  path: github.com/degoke/geass/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: geass.dev
+  group: geass
+  kind: GeassCache
+  path: github.com/degoke/geass/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: geass.dev
+  group: geass
+  kind: GeassObjectStore
+  path: github.com/degoke/geass/api/v1alpha1
+  version: v1alpha1
 version: "3"

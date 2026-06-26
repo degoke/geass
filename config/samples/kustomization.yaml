@@ -2,4 +2,8 @@
 resources:
 - geass_v1alpha1_geasscluster.yaml
 - geass_v1alpha1_geassnode.yaml
+- geass_v1alpha1_geassapp.yaml
+- geass_v1alpha1_geassdatabase.yaml
+- geass_v1alpha1_geasscache.yaml
+- geass_v1alpha1_geassobjectstore.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,14 @@
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassApp
+metadata:
+  name: geassapp-sample
+  namespace: geass-system
+spec:
+  workspace: dev
+  image: nginx:alpine
+  port: 8080
+  ingress:
+    host: demo.local
+    path: /
+  metrics:
+    enabled: true

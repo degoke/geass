@@ -1,5 +1,5 @@
 /*
-Copyright 2026 DEGOKE.
+Copyright 2026 Adegoke Adewoye.
 
 Licensed under the Elastic License 2.0 (the "License"); you may not use this
 file except in compliance with the License. You may obtain a copy of the
@@ -26,6 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -54,12 +57,21 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = geassv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = helmv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = monitoringv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = cnpgv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join("..", "..", "config", "crd", "external"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 

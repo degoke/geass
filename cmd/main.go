@@ -29,7 +29,11 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/internal/controller"
+	"github.com/degoke/geass/internal/dashboard"
+	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/ssh"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -42,6 +46,9 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(geassv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(helmv1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
+	utilruntime.Must(cnpgv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -54,6 +61,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var dashboardAddr string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -72,6 +80,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&dashboardAddr, "dashboard-bind-address", ":8082",
+		"The address the Geass HTMX dashboard binds to. Use 0 to disable.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -186,7 +196,45 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnode")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassAppReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassDatabaseReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassdatabase")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassCacheReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geasscache")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassObjectStoreReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassobjectstore")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
+
+	if dashboardAddr != "0" {
+		if err := mgr.Add(&dashboard.Server{
+			Client: mgr.GetClient(),
+			Addr:   dashboardAddr,
+		}); err != nil {
+			setupLog.Error(err, "Failed to add dashboard server")
+			os.Exit(1)
+		}
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

@@ -7,17 +7,40 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - nodes
+  - configmaps
   - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - geass.geass.dev
+  - apps
   resources:
-  - geassclusters
-  - geassnodes
+  - deployments
   verbs:
   - create
   - delete
@@ -29,16 +52,89 @@ rules:
 - apiGroups:
   - geass.geass.dev
   resources:
+  - geassapps
+  - geasscaches
+  - geassclusters
+  - geassdatabases
+  - geassnodes
+  - geassobjectstores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/finalizers
+  - geasscaches/finalizers
   - geassclusters/finalizers
+  - geassdatabases/finalizers
   - geassnodes/finalizers
+  - geassobjectstores/finalizers
   verbs:
   - update
 - apiGroups:
   - geass.geass.dev
   resources:
+  - geassapps/status
+  - geasscaches/status
   - geassclusters/status
+  - geassdatabases/status
   - geassnodes/status
+  - geassobjectstores/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - helm.cattle.io
+  resources:
+  - helmcharts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

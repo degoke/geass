@@ -63,11 +63,15 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          - --dashboard-bind-address=:8082
         image: geass-operator:v0.0.1
         name: manager
         ports:
         - containerPort: 8081
           name: health
+          protocol: TCP
+        - containerPort: 8082
+          name: dashboard
           protocol: TCP
         securityContext:
           readOnlyRootFilesystem: true
