@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,9 +34,7 @@ func applyGeassLabels(obj metav1.Object, owner client.Object, kind string) {
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	for k, v := range geassResourceLabels(owner, kind) {
-		labels[k] = v
-	}
+	maps.Copy(labels, geassResourceLabels(owner, kind))
 	obj.SetLabels(labels)
 }
 

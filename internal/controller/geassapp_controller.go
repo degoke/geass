@@ -11,6 +11,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,13 @@ import (
 )
 
 const appFinalizer = platform.FinalizerApp
+
+const (
+	appContainerName = "app"
+	portNameHTTP     = "http"
+	schemeHTTP       = "http"
+	schemeHTTPS      = "https"
+)
 
 // GeassAppReconciler reconciles a GeassApp object.
 type GeassAppReconciler struct {
@@ -66,17 +74,13 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if !app.DeletionTimestamp.IsZero() {
-		if err := r.deleteWorkspaceResources(ctx, &app, wsNS); err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, &app, wsNS)
 		controllerutil.RemoveFinalizer(&app, appFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &app)
 	}
 
 	if prevNS, moved := previousWorkspaceNamespace(app.Status.WorkspaceNamespace, wsNS); moved {
-		if err := r.deleteWorkspaceResources(ctx, &app, prevNS); err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, &app, prevNS)
 	}
 
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
@@ -112,9 +116,9 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	url := ""
 	if app.Spec.Ingress.Host != "" {
-		scheme := "http"
+		scheme := schemeHTTP
 		if app.Spec.Ingress.TLSEnabled {
-			scheme = "https"
+			scheme = schemeHTTPS
 		}
 		path := app.Spec.Ingress.Path
 		if path == "" {
@@ -197,9 +201,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selector}
 		podLabels := r.appLabels(app)
-		for k, v := range selector {
-			podLabels[k] = v
-		}
+		maps.Copy(podLabels, selector)
 		volumes := []corev1.Volume{}
 		volumeMounts := []corev1.VolumeMount{}
 		if len(app.Spec.ConfigData) > 0 {
@@ -258,9 +260,9 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 			ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
-					Name:         "app",
+					Name:         appContainerName,
 					Image:        app.Spec.Image,
-					Ports:        []corev1.ContainerPort{{Name: "http", ContainerPort: port}},
+					Ports:        []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: port}},
 					Env:          app.Spec.Env,
 					EnvFrom:      app.Spec.EnvFrom,
 					VolumeMounts: volumeMounts,
@@ -285,9 +287,9 @@ func (r *GeassAppReconciler) reconcileService(ctx context.Context, app *geassv1a
 		applyGeassLabels(svc, app, "GeassApp")
 		svc.Spec.Selector = r.appLabels(app)
 		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:       "http",
+			Name:       portNameHTTP,
 			Port:       port,
-			TargetPort: intstr.FromString("http"),
+			TargetPort: intstr.FromString(portNameHTTP),
 		}}
 		return setSameNamespaceOwner(app, svc, r.Scheme)
 	})
@@ -376,7 +378,7 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	}
 	metricsPort := app.Spec.Metrics.Port
 	if metricsPort == "" {
-		metricsPort = "http"
+		metricsPort = portNameHTTP
 	}
 
 	sm := &monitoringv1.ServiceMonitor{
@@ -394,7 +396,7 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	return err
 }
 
-func (r *GeassAppReconciler) deleteWorkspaceResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
+func (r *GeassAppReconciler) deleteWorkspaceResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
 	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics"}
 	for _, name := range names {
 		_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
@@ -407,7 +409,6 @@ func (r *GeassAppReconciler) deleteWorkspaceResources(ctx context.Context, app *
 	_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
 	_ = r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
 	_ = r.Delete(ctx, &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
-	return nil
 }
 
 func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1.GeassApp, message string) (ctrl.Result, error) {

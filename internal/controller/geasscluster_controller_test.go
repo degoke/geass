@@ -32,7 +32,7 @@ import (
 func markHelmChartReady(ctx context.Context, name string) {
 	chart := &helmv1.HelmChart{}
 	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "kube-system"}, chart)
+		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)
 	}).WithTimeout(5 * time.Second).Should(Succeed())
 	chart.Status.Conditions = []helmv1.HelmChartCondition{{
 		Type:   "Deployed",
@@ -63,7 +63,7 @@ var _ = Describe("GeassCluster Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: resourceNamespace}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
 	})
 
 	AfterEach(func() {
@@ -79,9 +79,9 @@ var _ = Describe("GeassCluster Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: resourceNamespace},
 			Spec: geassv1alpha1.GeassClusterSpec{
 				Version:   "v1",
-				ServerURL: "https://127.0.0.1:6443",
+				ServerURL: testClusterServerURL,
 				TokenSecretRef: corev1.SecretReference{
-					Name:      "geass-token",
+					Name:      testClusterTokenName,
 					Namespace: resourceNamespace,
 				},
 				Addons: geassv1alpha1.GeassClusterAddonsSpec{
@@ -106,11 +106,11 @@ var _ = Describe("GeassCluster Controller", func() {
 		}
 
 		certChart := &helmv1.HelmChart{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.CertManagerChartName, Namespace: "kube-system"}, certChart)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.CertManagerChartName, Namespace: testHelmChartNS}, certChart)).To(Succeed())
 		Expect(certChart.Spec.TargetNamespace).To(Equal(platform.CertManagerTargetNS))
 
 		monChart := &helmv1.HelmChart{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.MonitoringChartName, Namespace: "kube-system"}, monChart)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.MonitoringChartName, Namespace: testHelmChartNS}, monChart)).To(Succeed())
 		Expect(monChart.Spec.TargetNamespace).To(Equal(platform.MonitoringTargetNS))
 		Expect(monChart.Spec.ValuesContent).To(ContainSubstring("defaultDashboards:\n  enabled: false"))
 	})
@@ -121,9 +121,9 @@ var _ = Describe("GeassCluster Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: resourceNamespace},
 			Spec: geassv1alpha1.GeassClusterSpec{
 				Version:   "v1",
-				ServerURL: "https://127.0.0.1:6443",
+				ServerURL: testClusterServerURL,
 				TokenSecretRef: corev1.SecretReference{
-					Name:      "geass-token",
+					Name:      testClusterTokenName,
 					Namespace: resourceNamespace,
 				},
 				Addons: geassv1alpha1.GeassClusterAddonsSpec{
@@ -158,9 +158,9 @@ var _ = Describe("GeassCluster Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: resourceNamespace},
 			Spec: geassv1alpha1.GeassClusterSpec{
 				Version:   "v1",
-				ServerURL: "https://127.0.0.1:6443",
+				ServerURL: testClusterServerURL,
 				TokenSecretRef: corev1.SecretReference{
-					Name:      "geass-token",
+					Name:      testClusterTokenName,
 					Namespace: resourceNamespace,
 				},
 				Addons: geassv1alpha1.GeassClusterAddonsSpec{
@@ -176,7 +176,7 @@ var _ = Describe("GeassCluster Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		certChart := &helmv1.HelmChart{}
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: platform.CertManagerChartName, Namespace: "kube-system"}, certChart)
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: platform.CertManagerChartName, Namespace: testHelmChartNS}, certChart)
 		Expect(err).To(HaveOccurred())
 
 		latest := &geassv1alpha1.GeassCluster{}
@@ -192,13 +192,13 @@ var _ = Describe("GeassApp Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "geass-dev"}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevWorkspaceNS}})
 	})
 
 	It("creates Deployment, Service, and Ingress in the workspace namespace", func() {
 		replicas := int32(2)
 		app := &geassv1alpha1.GeassApp{
-			ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Image:     "nginx:alpine",
@@ -213,34 +213,34 @@ var _ = Describe("GeassApp Controller", func() {
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 
 		reconciler := &GeassAppReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		deploy := &appsv1.Deployment{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "demo", Namespace: "geass-dev"}, deploy)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testAppName, Namespace: testDevWorkspaceNS}, deploy)).To(Succeed())
 		deploy.Status.ObservedGeneration = deploy.Generation
 		deploy.Status.Replicas = 2
 		deploy.Status.ReadyReplicas = 2
 		deploy.Status.AvailableReplicas = 2
 		Expect(k8sClient.Status().Update(ctx, deploy)).To(Succeed())
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(*deploy.Spec.Replicas).To(Equal(int32(2)))
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "demo", Namespace: "geass-dev"}, &corev1.Service{})).To(Succeed())
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "demo", Namespace: "geass-dev"}, &networkingv1.Ingress{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testAppName, Namespace: testDevWorkspaceNS}, &corev1.Service{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testAppName, Namespace: testDevWorkspaceNS}, &networkingv1.Ingress{})).To(Succeed())
 
 		latest := &geassv1alpha1.GeassApp{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "demo", Namespace: ns}, latest)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testAppName, Namespace: ns}, latest)).To(Succeed())
 		Expect(conditionIsTrue(latest.Status.Conditions, platform.ConditionReady)).To(BeTrue())
 	})
 
 	It("creates ServiceMonitor only when metrics are enabled", func() {
 		app := &geassv1alpha1.GeassApp{
-			ObjectMeta: metav1.ObjectMeta{Name: "metrics-app", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testMetricsAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Image:     "nginx:alpine",
@@ -250,22 +250,22 @@ var _ = Describe("GeassApp Controller", func() {
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 
 		reconciler := &GeassAppReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "metrics-app", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testMetricsAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "metrics-app", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testMetricsAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		deploy := &appsv1.Deployment{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app", Namespace: "geass-dev"}, deploy)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testMetricsAppName, Namespace: testDevWorkspaceNS}, deploy)).To(Succeed())
 		deploy.Status.ObservedGeneration = deploy.Generation
 		deploy.Status.Replicas = 1
 		deploy.Status.ReadyReplicas = 1
 		deploy.Status.AvailableReplicas = 1
 		Expect(k8sClient.Status().Update(ctx, deploy)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "metrics-app", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testMetricsAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app-metrics", Namespace: "geass-dev"}, &monitoringv1.ServiceMonitor{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app-metrics", Namespace: testDevWorkspaceNS}, &monitoringv1.ServiceMonitor{})).To(Succeed())
 	})
 })
 
@@ -275,13 +275,13 @@ var _ = Describe("GeassDatabase Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "geass-dev"}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevWorkspaceNS}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
 	})
 
 	It("installs CNPG operator and creates cluster resources", func() {
 		db := &geassv1alpha1.GeassDatabase{
-			ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: ns},
 			Spec: geassv1alpha1.GeassDatabaseSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Engine:    geassv1alpha1.DatabaseEnginePostgres,
@@ -290,29 +290,29 @@ var _ = Describe("GeassDatabase Controller", func() {
 		Expect(k8sClient.Create(ctx, db)).To(Succeed())
 
 		reconciler := &GeassDatabaseReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "orders", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "orders", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		markHelmChartReady(ctx, platform.CNPGChartName)
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "orders", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		cluster := &cnpgv1.Cluster{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "orders", Namespace: "geass-dev"}, cluster)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testDBName, Namespace: testDevWorkspaceNS}, cluster)).To(Succeed())
 		cluster.Status.Phase = "Cluster in healthy state"
 		cluster.Status.ReadyInstances = 1
 		if err := k8sClient.Status().Update(ctx, cluster); err != nil {
 			Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
 		}
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "orders", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		secret := &corev1.Secret{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "orders-connection", Namespace: "geass-dev"}, secret)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "orders-connection", Namespace: testDevWorkspaceNS}, secret)).To(Succeed())
 		host := string(secret.Data["host"])
 		if host == "" {
 			host = secret.StringData["host"]
@@ -320,13 +320,13 @@ var _ = Describe("GeassDatabase Controller", func() {
 		Expect(host).To(ContainSubstring("orders-rw"))
 
 		latest := &geassv1alpha1.GeassDatabase{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "orders", Namespace: ns}, latest)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testDBName, Namespace: ns}, latest)).To(Succeed())
 		Expect(conditionIsTrue(latest.Status.Conditions, platform.ConditionReady)).To(BeTrue())
 	})
 
 	It("cleans up workspace resources on delete", func() {
 		db := &geassv1alpha1.GeassDatabase{
-			ObjectMeta: metav1.ObjectMeta{Name: "cleanup-db", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testCleanupDBName, Namespace: ns},
 			Spec: geassv1alpha1.GeassDatabaseSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Engine:    geassv1alpha1.DatabaseEnginePostgres,
@@ -335,16 +335,16 @@ var _ = Describe("GeassDatabase Controller", func() {
 		Expect(k8sClient.Create(ctx, db)).To(Succeed())
 
 		reconciler := &GeassDatabaseReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "cleanup-db", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCleanupDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "cleanup-db", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCleanupDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Delete(ctx, db)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "cleanup-db", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCleanupDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: "cleanup-db", Namespace: "geass-dev"}, &cnpgv1.Cluster{})
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: testCleanupDBName, Namespace: testDevWorkspaceNS}, &cnpgv1.Cluster{})
 		Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 	})
 })

@@ -70,17 +70,13 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !db.DeletionTimestamp.IsZero() {
-		if err := r.deleteWorkspaceResources(ctx, &db, wsNS); err != nil {
-			return r.setNotReady(ctx, &db, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, &db, wsNS)
 		controllerutil.RemoveFinalizer(&db, databaseFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &db)
 	}
 
 	if prevNS, moved := previousWorkspaceNamespace(db.Status.WorkspaceNamespace, wsNS); moved {
-		if err := r.deleteWorkspaceResources(ctx, &db, prevNS); err != nil {
-			return r.setNotReady(ctx, &db, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, &db, prevNS)
 	}
 
 	if err := r.ensureCNPGOperator(ctx); err != nil {
@@ -126,11 +122,10 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, r.Status().Update(ctx, latest)
 }
 
-func (r *GeassDatabaseReconciler) deleteWorkspaceResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
+func (r *GeassDatabaseReconciler) deleteWorkspaceResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
 	_ = client.IgnoreNotFound(r.Delete(ctx, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
-	return nil
 }
 
 func (r *GeassDatabaseReconciler) ensureCNPGOperator(ctx context.Context) error {
@@ -166,7 +161,7 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 			secret.StringData = map[string]string{}
 		}
 		if _, ok := secret.StringData["username"]; !ok {
-			secret.StringData["username"] = "app"
+			secret.StringData["username"] = appContainerName
 		}
 		if _, ok := secret.StringData["password"]; !ok {
 			secret.StringData["password"] = db.Name + "-password"
@@ -202,7 +197,7 @@ func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *
 			Bootstrap: cnpgv1.BootstrapConfiguration{
 				InitDB: cnpgv1.InitDBConfiguration{
 					Database: db.Name,
-					Owner:    "app",
+					Owner:    appContainerName,
 					Secret:   corev1.LocalObjectReference{Name: db.Name + "-bootstrap"},
 				},
 			},

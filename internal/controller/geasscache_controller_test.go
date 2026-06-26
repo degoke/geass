@@ -29,13 +29,13 @@ var _ = Describe("GeassCache Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "geass-dev"}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevWorkspaceNS}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
 	})
 
 	It("creates Redis HelmChart and connection secret", func() {
 		cache := &geassv1alpha1.GeassCache{
-			ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Engine:    geassv1alpha1.CacheEngineRedis,
@@ -44,27 +44,27 @@ var _ = Describe("GeassCache Controller", func() {
 		Expect(k8sClient.Create(ctx, cache)).To(Succeed())
 
 		reconciler := &GeassCacheReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "sessions", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "sessions", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		markHelmChartReady(ctx, "geass-redis-sessions")
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "sessions", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		secret := &corev1.Secret{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "sessions-connection", Namespace: "geass-dev"}, secret)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "sessions-connection", Namespace: testDevWorkspaceNS}, secret)).To(Succeed())
 
 		latest := &geassv1alpha1.GeassCache{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "sessions", Namespace: ns}, latest)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testCacheName, Namespace: ns}, latest)).To(Succeed())
 		Expect(conditionIsTrue(latest.Status.Conditions, platform.ConditionReady)).To(BeTrue())
 	})
 
 	It("deletes HelmChart on resource deletion", func() {
 		cache := &geassv1alpha1.GeassCache{
-			ObjectMeta: metav1.ObjectMeta{Name: "temp-cache", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: testTempCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
 				Workspace: geassv1alpha1.WorkspaceDev,
 				Engine:    geassv1alpha1.CacheEngineRedis,
@@ -73,18 +73,18 @@ var _ = Describe("GeassCache Controller", func() {
 		Expect(k8sClient.Create(ctx, cache)).To(Succeed())
 
 		reconciler := &GeassCacheReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "temp-cache", Namespace: ns}})
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testTempCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "temp-cache", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testTempCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 		markHelmChartReady(ctx, "geass-redis-temp-cache")
 
 		Expect(k8sClient.Delete(ctx, cache)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "temp-cache", Namespace: ns}})
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testTempCacheName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
 		chart := &helmv1.HelmChart{}
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-redis-temp-cache", Namespace: "kube-system"}, chart)
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-redis-temp-cache", Namespace: testHelmChartNS}, chart)
 		Expect(err).To(HaveOccurred())
 	})
 })

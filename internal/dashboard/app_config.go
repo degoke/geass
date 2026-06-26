@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -127,7 +127,7 @@ func (s *Server) getApp(r *http.Request, name string) (*geassv1alpha1.GeassApp, 
 
 func (s *Server) renderAppConfigPanel(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp) {
 	html := appConfigPanel(app.Name, app.Spec.ConfigData)
-	if r.Header.Get("HX-Request") == "true" {
+	if isHXRequest(r) {
 		s.render(w, html)
 		return
 	}
@@ -136,7 +136,7 @@ func (s *Server) renderAppConfigPanel(w http.ResponseWriter, r *http.Request, ap
 
 func (s *Server) renderAppSecretsPanel(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp) {
 	html := appSecretsPanel(app.Name, app.Spec.SecretData)
-	if r.Header.Get("HX-Request") == "true" {
+	if isHXRequest(r) {
 		s.render(w, html)
 		return
 	}
@@ -150,7 +150,7 @@ func appConfigPanel(name string, data map[string]string) string {
 		rows.WriteString(`<tr><td colspan="3"><em>No config entries yet</em></td></tr>`)
 	} else {
 		for _, k := range keys {
-			rows.WriteString(fmt.Sprintf(`<tr>
+			fmt.Fprintf(&rows, `<tr>
 				<td>%s</td>
 				<td><code>%s</code></td>
 				<td>
@@ -160,7 +160,7 @@ func appConfigPanel(name string, data map[string]string) string {
 						<button type="submit">Remove</button>
 					</form>
 				</td>
-			</tr>`, esc(k), esc(data[k]), esc(name), esc(name), esc(k)))
+			</tr>`, esc(k), esc(data[k]), esc(name), esc(name), esc(k))
 		}
 	}
 	return fmt.Sprintf(`<section id="app-config" class="card">
@@ -186,7 +186,7 @@ func appSecretsPanel(name string, data map[string]string) string {
 		rows.WriteString(`<tr><td colspan="3"><em>No secrets yet</em></td></tr>`)
 	} else {
 		for _, k := range keys {
-			rows.WriteString(fmt.Sprintf(`<tr>
+			fmt.Fprintf(&rows, `<tr>
 				<td>%s</td>
 				<td>••••••••</td>
 				<td>
@@ -196,7 +196,7 @@ func appSecretsPanel(name string, data map[string]string) string {
 						<button type="submit">Remove</button>
 					</form>
 				</td>
-			</tr>`, esc(k), esc(name), esc(name), esc(k)))
+			</tr>`, esc(k), esc(name), esc(name), esc(k))
 		}
 	}
 	return fmt.Sprintf(`<section id="app-secrets" class="card">
@@ -223,7 +223,7 @@ func sortedKeys(m map[string]string) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

@@ -13,6 +13,18 @@ import (
 
 const systemNamespace = platform.SystemNamespace
 
+const (
+	hxRequestHeader    = "HX-Request"
+	hxRequestTrue      = "true"
+	formFieldWorkspace = "workspace"
+	routeActionEdit    = "edit"
+	routeActionUpdate  = "update"
+)
+
+func isHXRequest(r *http.Request) bool {
+	return r.Header.Get(hxRequestHeader) == hxRequestTrue
+}
+
 func layout(title, body string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html>
@@ -55,7 +67,7 @@ func (s *Server) render(w http.ResponseWriter, html string) {
 }
 
 func (s *Server) renderFragment(w http.ResponseWriter, r *http.Request, html string) {
-	if r.Header.Get("HX-Request") == "true" {
+	if isHXRequest(r) {
 		s.render(w, fragment(html))
 		return
 	}
@@ -88,15 +100,15 @@ func conditionStatus(conditions []metav1.Condition, conditionType string) string
 	return "Unknown"
 }
 
-func workspaceSelect(name, selected string) string {
+func workspaceSelect(selected string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<label>Workspace<select name="%s" required>`, name))
+	fmt.Fprintf(&b, `<label>Workspace<select name="%s" required>`, formFieldWorkspace)
 	for _, ws := range platform.DefaultWorkspaces {
 		sel := ""
 		if ws == selected {
 			sel = " selected"
 		}
-		b.WriteString(fmt.Sprintf(`<option value="%s"%s>%s</option>`, ws, sel, ws))
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, ws, sel, ws)
 	}
 	b.WriteString(`</select></label>`)
 	return b.String()
@@ -114,7 +126,7 @@ func isDelete(r *http.Request) bool {
 }
 
 func redirect(w http.ResponseWriter, r *http.Request, path string) {
-	if r.Header.Get("HX-Request") == "true" {
+	if isHXRequest(r) {
 		w.Header().Set("HX-Redirect", path)
 		w.WriteHeader(http.StatusOK)
 		return

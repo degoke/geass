@@ -10,6 +10,10 @@ const (
 	WorkspaceDev        = "dev"
 	WorkspaceStaging    = "staging"
 	WorkspaceProduction = "production"
+
+	DevWorkspaceNamespace        = "geass-dev"
+	StagingWorkspaceNamespace    = "geass-staging"
+	ProductionWorkspaceNamespace = "geass-production"
 )
 
 var DefaultWorkspaces = []string{WorkspaceDev, WorkspaceStaging, WorkspaceProduction}
@@ -18,11 +22,11 @@ var DefaultWorkspaces = []string{WorkspaceDev, WorkspaceStaging, WorkspaceProduc
 func WorkspaceNamespace(workspace string) (string, error) {
 	switch workspace {
 	case WorkspaceDev:
-		return "geass-dev", nil
+		return DevWorkspaceNamespace, nil
 	case WorkspaceStaging:
-		return "geass-staging", nil
+		return StagingWorkspaceNamespace, nil
 	case WorkspaceProduction:
-		return "geass-production", nil
+		return ProductionWorkspaceNamespace, nil
 	default:
 		return "", fmt.Errorf("unsupported workspace %q", workspace)
 	}

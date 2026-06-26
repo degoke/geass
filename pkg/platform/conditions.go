@@ -13,7 +13,12 @@ const (
 )
 
 // SetCondition upserts a condition on the provided slice and returns the updated slice.
-func SetCondition(conditions []metav1.Condition, conditionType string, status metav1.ConditionStatus, reason, message string) []metav1.Condition {
+func SetCondition(
+	conditions []metav1.Condition,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason, message string,
+) []metav1.Condition {
 	now := metav1.Now()
 	for i := range conditions {
 		if conditions[i].Type == conditionType {

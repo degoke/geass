@@ -58,7 +58,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -115,7 +115,7 @@ func (s *Server) metricsCards(ctx context.Context) string {
 		if err != nil {
 			val = "unavailable"
 		}
-		b.WriteString(fmt.Sprintf(`<div class="card"><h3>%s</h3><p>%s</p></div>`, m.Title, val))
+		fmt.Fprintf(&b, `<div class="card"><h3>%s</h3><p>%s</p></div>`, m.Title, val)
 	}
 	b.WriteString(`</div>`)
 	return b.String()

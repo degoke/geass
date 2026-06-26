@@ -30,3 +30,6 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# Local manual testing notes (not committed)
+test.md

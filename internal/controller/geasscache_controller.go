@@ -64,9 +64,7 @@ func (r *GeassCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	chartName := cacheChartName(cache.Name)
 	if !cache.DeletionTimestamp.IsZero() {
-		if err := r.deleteWorkspaceResources(ctx, chartName, &cache, wsNS); err != nil {
-			return r.setNotReady(ctx, &cache, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, chartName, &cache, wsNS)
 		controllerutil.RemoveFinalizer(&cache, cacheFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &cache)
 	}
@@ -132,10 +130,9 @@ func (r *GeassCacheReconciler) cleanupPreviousWorkspace(ctx context.Context, cha
 	return helmchart.Delete(ctx, r.Client, chartName)
 }
 
-func (r *GeassCacheReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, wsNS string) error {
+func (r *GeassCacheReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, wsNS string) {
 	_ = helmchart.Delete(ctx, r.Client, chartName)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cache.Name + "-connection", Namespace: wsNS}}))
-	return nil
 }
 
 func (r *GeassCacheReconciler) reconcileConnectionSecret(ctx context.Context, cache *geassv1alpha1.GeassCache, wsNS, host string) error {

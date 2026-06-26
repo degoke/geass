@@ -19,6 +19,8 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
+const testAppName = "demo"
+
 type fakeMetrics struct {
 	values map[string]string
 }
@@ -38,7 +40,7 @@ func newFakeClient(objects ...client.Object) client.Client {
 
 func TestHandleAppsList(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: platform.SystemNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
 			Workspace: geassv1alpha1.WorkspaceDev,
 			Image:     "nginx:alpine",
@@ -52,7 +54,7 @@ func TestHandleAppsList(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, "demo")
+	require.Contains(t, body, testAppName)
 	require.Contains(t, body, "hx-get=\"/apps\"")
 }
 
@@ -76,7 +78,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	srv := &Server{Client: c}
 
 	form := url.Values{}
-	form.Set("name", "demo")
+	form.Set("name", testAppName)
 	form.Set("workspace", "dev")
 	form.Set("image", "nginx:alpine")
 	form.Set("port", "8080")
@@ -88,7 +90,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 
 	var app geassv1alpha1.GeassApp
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 
 	updateForm := url.Values{}
 	updateForm.Set("workspace", "staging")
@@ -98,10 +100,10 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	upReq = upReq.WithContext(ctx)
 	upReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	upRec := httptest.NewRecorder()
-	srv.handleAppUpdate(upRec, upReq, "demo")
+	srv.handleAppUpdate(upRec, upReq, testAppName)
 	require.Equal(t, http.StatusSeeOther, upRec.Code)
 
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Equal(t, geassv1alpha1.WorkspaceStaging, app.Spec.Workspace)
 	require.Equal(t, "nginx:1.25", app.Spec.Image)
 
@@ -114,7 +116,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	srv.handleAppRoutes(delRec, delReq)
 	require.Equal(t, http.StatusSeeOther, delRec.Code)
 
-	err := c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app)
+	err := c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app)
 	require.Error(t, err)
 }
 
@@ -156,7 +158,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	srv := &Server{Client: c}
 
 	form := url.Values{}
-	form.Set("name", "demo")
+	form.Set("name", testAppName)
 	form.Set("workspace", "dev")
 	form.Set("image", "nginx:alpine")
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
@@ -172,15 +174,15 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	cfgReq := httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", strings.NewReader(cfgForm.Encode()))
 	cfgReq = cfgReq.WithContext(ctx)
 	cfgReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	cfgReq.Header.Set("HX-Request", "true")
+	cfgReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	cfgRec := httptest.NewRecorder()
-	srv.handleAppConfigSet(cfgRec, cfgReq, "demo")
+	srv.handleAppConfigSet(cfgRec, cfgReq, testAppName)
 	require.Equal(t, http.StatusOK, cfgRec.Code)
 	require.Contains(t, cfgRec.Body.String(), "LOG_LEVEL")
 	require.Contains(t, cfgRec.Body.String(), "debug")
 
 	var app geassv1alpha1.GeassApp
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Equal(t, "debug", app.Spec.ConfigData["LOG_LEVEL"])
 
 	secForm := url.Values{}
@@ -189,14 +191,14 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	secReq := httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/set", strings.NewReader(secForm.Encode()))
 	secReq = secReq.WithContext(ctx)
 	secReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	secReq.Header.Set("HX-Request", "true")
+	secReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	secRec := httptest.NewRecorder()
-	srv.handleAppSecretSet(secRec, secReq, "demo")
+	srv.handleAppSecretSet(secRec, secReq, testAppName)
 	require.Equal(t, http.StatusOK, secRec.Code)
 	require.Contains(t, secRec.Body.String(), "API_TOKEN")
 	require.NotContains(t, secRec.Body.String(), "secret-value")
 
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Equal(t, "secret-value", app.Spec.SecretData["API_TOKEN"])
 
 	delCfg := url.Values{}
@@ -204,12 +206,12 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	delCfgReq := httptest.NewRequest(http.MethodPost, "/apps/demo/config/delete", strings.NewReader(delCfg.Encode()))
 	delCfgReq = delCfgReq.WithContext(ctx)
 	delCfgReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	delCfgReq.Header.Set("HX-Request", "true")
+	delCfgReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	delCfgRec := httptest.NewRecorder()
-	srv.handleAppConfigDelete(delCfgRec, delCfgReq, "demo")
+	srv.handleAppConfigDelete(delCfgRec, delCfgReq, testAppName)
 	require.Equal(t, http.StatusOK, delCfgRec.Code)
 
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo", Namespace: platform.SystemNamespace}, &app))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Nil(t, app.Spec.ConfigData)
 }
 

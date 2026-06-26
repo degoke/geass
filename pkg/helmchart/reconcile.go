@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/platform"
 )
 
 // Ensure creates or updates a HelmChart in kube-system with the provided spec.
@@ -18,7 +19,7 @@ func Ensure(ctx context.Context, c client.Client, name string, spec helmv1.HelmC
 	chart := &helmv1.HelmChart{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "kube-system",
+			Namespace: platform.HelmChartNamespace,
 		},
 	}
 	op, err := controllerutil.CreateOrUpdate(ctx, c, chart, func() error {
@@ -35,7 +36,7 @@ func Ensure(ctx context.Context, c client.Client, name string, spec helmv1.HelmC
 // Delete removes a HelmChart if it exists.
 func Delete(ctx context.Context, c client.Client, name string) error {
 	chart := &helmv1.HelmChart{}
-	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "kube-system"}, chart)
+	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: platform.HelmChartNamespace}, chart)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -61,7 +62,7 @@ func IsReady(chart *helmv1.HelmChart) bool {
 // Get fetches a HelmChart by name from kube-system.
 func Get(ctx context.Context, c client.Client, name string) (*helmv1.HelmChart, error) {
 	chart := &helmv1.HelmChart{}
-	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "kube-system"}, chart)
+	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: platform.HelmChartNamespace}, chart)
 	if err != nil {
 		return nil, err
 	}

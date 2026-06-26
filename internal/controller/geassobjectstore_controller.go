@@ -65,9 +65,7 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	chartName := objectStoreChartName(store.Name)
 	if !store.DeletionTimestamp.IsZero() {
-		if err := r.deleteWorkspaceResources(ctx, chartName, &store, wsNS); err != nil {
-			return r.setNotReady(ctx, &store, err.Error())
-		}
+		r.deleteWorkspaceResources(ctx, chartName, &store, wsNS)
 		controllerutil.RemoveFinalizer(&store, objectStoreFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &store)
 	}
@@ -87,7 +85,7 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	var bucketLines strings.Builder
 	for _, b := range buckets {
-		bucketLines.WriteString(fmt.Sprintf("  - name: %s\n    policy: none\n    purge: false\n", b))
+		fmt.Fprintf(&bucketLines, "  - name: %s\n    policy: none\n    purge: false\n", b)
 	}
 	values := fmt.Sprintf(`mode: standalone
 rootUser: "%s"
@@ -139,10 +137,9 @@ func (r *GeassObjectStoreReconciler) cleanupPreviousWorkspace(ctx context.Contex
 	return helmchart.Delete(ctx, r.Client, chartName)
 }
 
-func (r *GeassObjectStoreReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, wsNS string) error {
+func (r *GeassObjectStoreReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, wsNS string) {
 	_ = helmchart.Delete(ctx, r.Client, chartName)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}))
-	return nil
 }
 
 func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, accessKey, secretKey string) error {

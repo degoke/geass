@@ -95,22 +95,22 @@ func (s *Server) handleClusterOverview(w http.ResponseWriter, r *http.Request) {
 			addons := conditionStatus(cluster.Status.Conditions, platform.ConditionAddonsReady)
 			workspaces := conditionStatus(cluster.Status.Conditions, platform.ConditionWorkspacesReady)
 			ready := conditionStatus(cluster.Status.Conditions, platform.ConditionReady)
-			cards.WriteString(fmt.Sprintf(`
+			fmt.Fprintf(&cards, `
 				<div class="card">
 					<h2>%s</h2>
 					<p>Add-ons: %s</p>
 					<p>Workspaces: %s</p>
 					<p>Cluster ready: %s</p>
 				</div>
-			`, cluster.Name, addons, workspaces, ready))
+			`, cluster.Name, addons, workspaces, ready)
 		}
 	}
 	for _, ws := range platform.DefaultWorkspaces {
 		ns, _ := platform.WorkspaceNamespace(ws)
-		cards.WriteString(fmt.Sprintf(`<div class="card"><h3>Workspace %s</h3><p>Namespace: %s</p></div>`, ws, ns))
+		fmt.Fprintf(&cards, `<div class="card"><h3>Workspace %s</h3><p>Namespace: %s</p></div>`, ws, ns)
 	}
 	body := fmt.Sprintf(`<h1>Cluster Overview</h1><div hx-get="/cluster" hx-trigger="every 30s" hx-select="main" hx-target="main" hx-swap="outerHTML">%s</div>`, cards.String())
-	if r.Header.Get("HX-Request") == "true" {
+	if isHXRequest(r) {
 		s.render(w, cards.String())
 		return
 	}
@@ -131,8 +131,8 @@ func (s *Server) appsTable(ctx context.Context) string {
 	var rows strings.Builder
 	for _, app := range list.Items {
 		ready := conditionStatus(app.Status.Conditions, platform.ConditionReady)
-		rows.WriteString(fmt.Sprintf(`<tr><td><a href="/apps/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			app.Name, app.Name, app.Spec.Workspace, app.Spec.Image, ready))
+		fmt.Fprintf(&rows, `<tr><td><a href="/apps/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			app.Name, app.Name, app.Spec.Workspace, app.Spec.Image, ready)
 	}
 	return fmt.Sprintf(`
 		<h1>Apps</h1>
@@ -155,7 +155,7 @@ func (s *Server) handleAppForm(w http.ResponseWriter, r *http.Request) {
 			<label><input type="checkbox" name="metrics"> Enable metrics</label>
 			<button type="submit">Create</button>
 		</form>
-	`, workspaceSelect("workspace", "dev"))
+	`, workspaceSelect("dev"))
 	s.render(w, layout("Create App", body))
 }
 
@@ -223,9 +223,9 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch parts[1] {
-	case "edit":
+	case routeActionEdit:
 		s.handleAppEdit(w, r, name)
-	case "update":
+	case routeActionUpdate:
 		s.handleAppUpdate(w, r, name)
 	case "config":
 		if len(parts) == 3 && parts[2] == "set" {
@@ -294,7 +294,7 @@ func (s *Server) handleAppEdit(w http.ResponseWriter, r *http.Request, name stri
 			<label><input type="checkbox" name="metrics"%s> Enable metrics</label>
 			<button type="submit">Save</button>
 		</form>
-	`, name, name, name, workspaceSelect("workspace", string(app.Spec.Workspace)), app.Spec.Image, app.Spec.Port, app.Spec.Ingress.Host, metricsChecked)
+	`, name, name, name, workspaceSelect(string(app.Spec.Workspace)), app.Spec.Image, app.Spec.Port, app.Spec.Ingress.Host, metricsChecked)
 	s.render(w, layout("Edit App", body))
 }
 
@@ -338,8 +338,8 @@ func (s *Server) databasesTable(ctx context.Context) string {
 	var rows strings.Builder
 	for _, db := range list.Items {
 		ready := conditionStatus(db.Status.Conditions, platform.ConditionReady)
-		rows.WriteString(fmt.Sprintf(`<tr><td><a href="/databases/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			db.Name, db.Name, db.Spec.Workspace, db.Spec.Engine, ready))
+		fmt.Fprintf(&rows, `<tr><td><a href="/databases/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			db.Name, db.Name, db.Spec.Workspace, db.Spec.Engine, ready)
 	}
 	return fmt.Sprintf(`
 		<h1>Databases</h1>
@@ -358,7 +358,7 @@ func (s *Server) handleDatabaseForm(w http.ResponseWriter, r *http.Request) {
 			%s
 			<button type="submit">Create</button>
 		</form>
-	`, workspaceSelect("workspace", "dev"))
+	`, workspaceSelect("dev"))
 	s.render(w, layout("Create Database", body))
 }
 
@@ -402,9 +402,9 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch parts[1] {
-	case "edit":
+	case routeActionEdit:
 		s.handleDatabaseEdit(w, r, name)
-	case "update":
+	case routeActionUpdate:
 		s.handleDatabaseUpdate(w, r, name)
 	default:
 		http.NotFound(w, r)
@@ -449,7 +449,7 @@ func (s *Server) handleDatabaseEdit(w http.ResponseWriter, r *http.Request, name
 			<label>Postgres version <input name="version" value="%s"></label>
 			<button type="submit">Save</button>
 		</form>
-	`, name, name, name, workspaceSelect("workspace", string(db.Spec.Workspace)), version)
+	`, name, name, name, workspaceSelect(string(db.Spec.Workspace)), version)
 	s.render(w, layout("Edit Database", body))
 }
 
@@ -487,8 +487,8 @@ func (s *Server) cachesTable(ctx context.Context) string {
 	var rows strings.Builder
 	for _, c := range list.Items {
 		ready := conditionStatus(c.Status.Conditions, platform.ConditionReady)
-		rows.WriteString(fmt.Sprintf(`<tr><td><a href="/caches/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			c.Name, c.Name, c.Spec.Workspace, c.Spec.Engine, ready))
+		fmt.Fprintf(&rows, `<tr><td><a href="/caches/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			c.Name, c.Name, c.Spec.Workspace, c.Spec.Engine, ready)
 	}
 	return fmt.Sprintf(`
 		<h1>Caches</h1>
@@ -507,7 +507,7 @@ func (s *Server) handleCacheForm(w http.ResponseWriter, r *http.Request) {
 			%s
 			<button type="submit">Create</button>
 		</form>
-	`, workspaceSelect("workspace", "dev"))
+	`, workspaceSelect("dev"))
 	s.render(w, layout("Create Cache", body))
 }
 
@@ -551,9 +551,9 @@ func (s *Server) handleCacheRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch parts[1] {
-	case "edit":
+	case routeActionEdit:
 		s.handleCacheEdit(w, r, name)
-	case "update":
+	case routeActionUpdate:
 		s.handleCacheUpdate(w, r, name)
 	default:
 		http.NotFound(w, r)
@@ -591,7 +591,7 @@ func (s *Server) handleCacheEdit(w http.ResponseWriter, r *http.Request, name st
 			%s
 			<button type="submit">Save</button>
 		</form>
-	`, name, name, name, workspaceSelect("workspace", string(cache.Spec.Workspace)))
+	`, name, name, name, workspaceSelect(string(cache.Spec.Workspace)))
 	s.render(w, layout("Edit Cache", body))
 }
 
@@ -626,8 +626,8 @@ func (s *Server) objectStoresTable(ctx context.Context) string {
 	var rows strings.Builder
 	for _, store := range list.Items {
 		ready := conditionStatus(store.Status.Conditions, platform.ConditionReady)
-		rows.WriteString(fmt.Sprintf(`<tr><td><a href="/object-stores/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			store.Name, store.Name, store.Spec.Workspace, store.Spec.Engine, ready))
+		fmt.Fprintf(&rows, `<tr><td><a href="/object-stores/%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			store.Name, store.Name, store.Spec.Workspace, store.Spec.Engine, ready)
 	}
 	return fmt.Sprintf(`
 		<h1>Object Storage</h1>
@@ -646,7 +646,7 @@ func (s *Server) handleObjectStoreForm(w http.ResponseWriter, r *http.Request) {
 			%s
 			<button type="submit">Create</button>
 		</form>
-	`, workspaceSelect("workspace", "dev"))
+	`, workspaceSelect("dev"))
 	s.render(w, layout("Create Object Store", body))
 }
 
@@ -690,9 +690,9 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	switch parts[1] {
-	case "edit":
+	case routeActionEdit:
 		s.handleObjectStoreEdit(w, r, name)
-	case "update":
+	case routeActionUpdate:
 		s.handleObjectStoreUpdate(w, r, name)
 	default:
 		http.NotFound(w, r)
@@ -730,7 +730,7 @@ func (s *Server) handleObjectStoreEdit(w http.ResponseWriter, r *http.Request, n
 			%s
 			<button type="submit">Save</button>
 		</form>
-	`, name, name, name, workspaceSelect("workspace", string(store.Spec.Workspace)))
+	`, name, name, name, workspaceSelect(string(store.Spec.Workspace)))
 	s.render(w, layout("Edit Object Store", body))
 }
 
