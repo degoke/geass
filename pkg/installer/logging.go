@@ -107,6 +107,12 @@ func Logf(step, format string, args ...any) {
 	installLog.writeLine(step, "info", fmt.Sprintf(format, args...))
 }
 
+func Warnf(step, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	installLog.writeLine(step, "warning", msg)
+	fmt.Fprintf(os.Stderr, "warning: %s\n", msg)
+}
+
 func logCommand(step string, cmd *exec.Cmd, opts commandOptions) {
 	Logf(step, "Running command: %s", formatCommand(cmd.Path, cmd.Args[1:]...))
 	if cmd.Dir != "" {

@@ -26,7 +26,7 @@ func main() {
 
 	steps := []installer.Step{
 		&installer.SystemChecks{},          // OS, memory, disk, arch
-		&installer.FirewallSetup{},         // open 6443, 10250, 8472/udp
+		&installer.FirewallSetup{},         // open 6443, 10250, 8472/udp when a host firewall is active
 		&installer.RemoveExistingInstall{}, // uninstall k3s if already present
 		&installer.K3sInstall{},            // download get.k3s.io installer and run server mode
 		&installer.WaitForK3s{},            // poll until /etc/rancher/k3s/k3s.yaml exists

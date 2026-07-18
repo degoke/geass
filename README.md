@@ -49,7 +49,7 @@ curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh | 
 
 The installer will:
 
-- Verify system requirements and open required firewall ports
+- Verify system requirements and open required firewall ports when a host firewall is active
 - Install K3s in server mode
 - Deploy the Geass operator
 - Apply the initial cluster configuration
