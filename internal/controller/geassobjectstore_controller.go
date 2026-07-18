@@ -107,7 +107,11 @@ buckets:
 	if err != nil {
 		return r.setNotReady(ctx, &store, err.Error())
 	}
-	if !helmChartReady(chart) {
+	ready, err := helmChartReady(ctx, r.Client, chart)
+	if err != nil {
+		return r.setNotReady(ctx, &store, err.Error())
+	}
+	if !ready {
 		log.Info("Waiting for MinIO HelmChart", "chart", chartName)
 		return r.setNotReady(ctx, &store, "MinIO HelmChart is not ready")
 	}

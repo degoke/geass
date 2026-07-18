@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,17 +47,29 @@ func Delete(ctx context.Context, c client.Client, name string) error {
 	return c.Delete(ctx, chart)
 }
 
-// IsReady reports whether the HelmChart status indicates a deployed release.
-func IsReady(chart *helmv1.HelmChart) bool {
-	if chart == nil {
-		return false
+// IsReady reports whether the HelmChart install job completed successfully.
+// K3s records the install job name on status.jobName; job completion is the
+// authoritative signal that the chart was deployed.
+func IsReady(ctx context.Context, c client.Client, chart *helmv1.HelmChart) (bool, error) {
+	if chart == nil || chart.Status.JobName == "" {
+		return false, nil
 	}
-	for _, cond := range chart.Status.Conditions {
-		if cond.Type == "Deployed" && cond.Status == metav1.ConditionTrue {
-			return true
-		}
+	if c == nil {
+		return false, fmt.Errorf("client is required to verify HelmChart install job")
 	}
-	return false
+
+	job := &batchv1.Job{}
+	err := c.Get(ctx, types.NamespacedName{
+		Name:      chart.Status.JobName,
+		Namespace: chart.Namespace,
+	}, job)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return job.Status.Succeeded > 0, nil
 }
 
 // Get fetches a HelmChart by name from kube-system.

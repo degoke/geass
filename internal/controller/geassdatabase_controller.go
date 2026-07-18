@@ -148,7 +148,7 @@ func (r *GeassDatabaseReconciler) cnpgOperatorReady(ctx context.Context) (bool, 
 	if err != nil {
 		return false, err
 	}
-	return helmchart.IsReady(chart), nil
+	return helmchart.IsReady(ctx, r.Client, chart)
 }
 
 func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {

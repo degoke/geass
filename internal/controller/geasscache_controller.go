@@ -98,7 +98,11 @@ master:
 	if err != nil {
 		return r.setNotReady(ctx, &cache, err.Error())
 	}
-	if !helmChartReady(chart) {
+	ready, err := helmChartReady(ctx, r.Client, chart)
+	if err != nil {
+		return r.setNotReady(ctx, &cache, err.Error())
+	}
+	if !ready {
 		log.Info("Waiting for Redis HelmChart", "chart", chartName)
 		return r.setNotReady(ctx, &cache, "Redis HelmChart is not ready")
 	}

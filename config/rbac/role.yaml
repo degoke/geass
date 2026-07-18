@@ -91,6 +91,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - helm.cattle.io
   resources:
   - helmcharts

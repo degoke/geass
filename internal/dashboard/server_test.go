@@ -215,6 +215,46 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	require.Nil(t, app.Spec.ConfigData)
 }
 
+func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassAppSpec{
+			Workspace: geassv1alpha1.WorkspaceDev,
+			Image:     "nginx:alpine",
+			Port:      8080,
+		},
+	}
+	srv := &Server{Client: newFakeClient(app)}
+
+	req := httptest.NewRequest(http.MethodGet, "/apps/demo/edit", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	srv.handleAppRoutes(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "Edit App")
+}
+
+func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
+	cluster := &geassv1alpha1.GeassCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		Spec: geassv1alpha1.GeassClusterSpec{
+			Version:   "v1",
+			ServerURL: "https://127.0.0.1:6443",
+		},
+	}
+	srv := &Server{Client: newFakeClient(cluster)}
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster", nil)
+	rec := httptest.NewRecorder()
+	srv.handleClusterOverview(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "default")
+	require.Contains(t, rec.Body.String(), "Namespace: default")
+}
+
 func TestHandleClusterOverviewWithMetrics(t *testing.T) {
 	cluster := &geassv1alpha1.GeassCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace},

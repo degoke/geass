@@ -48,10 +48,20 @@ func (s *ClusterCRApply) Run() error {
 		return fmt.Errorf("wait for GeassCluster CRD: %w", err)
 	}
 
-	manifest := fmt.Sprintf(`apiVersion: %s
+	manifest := geassClusterManifest(name, version, serverURL)
+
+	Logf(s.Name(), "Applying GeassCluster name=%s version=%s serverURL=%s", name, version, serverURL)
+	opts := kubeOpts
+	opts.stdin = strings.NewReader(manifest)
+	return runCommandWithOptions(s.Name(), opts, "k3s", "kubectl", "apply", "-f", "-")
+}
+
+func geassClusterManifest(name, version, serverURL string) string {
+	return fmt.Sprintf(`apiVersion: %s
 kind: GeassCluster
 metadata:
   name: %s
+  namespace: geass-system
 spec:
   version: %s
   serverURL: %s
@@ -59,9 +69,4 @@ spec:
     name: geass-token
     namespace: geass-system
 `, geassClusterAPIVersion, name, version, serverURL)
-
-	Logf(s.Name(), "Applying GeassCluster name=%s version=%s serverURL=%s", name, version, serverURL)
-	opts := kubeOpts
-	opts.stdin = strings.NewReader(manifest)
-	return runCommandWithOptions(s.Name(), opts, "k3s", "kubectl", "apply", "-f", "-")
 }

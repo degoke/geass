@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,13 +35,30 @@ func markHelmChartReady(ctx context.Context, name string) {
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)
 	}).WithTimeout(5 * time.Second).Should(Succeed())
-	chart.Status.Conditions = []helmv1.HelmChartCondition{{
-		Type:   "Deployed",
-		Status: metav1.ConditionTrue,
-	}}
+
+	jobName := "helm-install-" + name
+	chart.Status.JobName = jobName
 	if err := k8sClient.Status().Update(ctx, chart); err != nil {
 		Expect(k8sClient.Update(ctx, chart)).To(Succeed())
 	}
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: testHelmChartNS},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "helm",
+						Image: "pause:3.9",
+					}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+	}
+	Expect(k8sClient.Create(ctx, job)).To(Succeed())
+	job.Status.Succeeded = 1
+	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 }
 
 func conditionIsTrue(conditions []metav1.Condition, t string) bool {

@@ -58,6 +58,7 @@ type GeassClusterReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 
 func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -162,7 +163,7 @@ func (r *GeassClusterReconciler) helmChartReady(ctx context.Context, name string
 	if err != nil {
 		return false, err
 	}
-	return helmchart.IsReady(chart), nil
+	return helmchart.IsReady(ctx, r.Client, chart)
 }
 
 func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geassv1alpha1.GeassCluster, workspacesReady, addonsReady bool, reconcileErr error) (ctrl.Result, error) {

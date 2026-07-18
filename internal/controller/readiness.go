@@ -1,7 +1,10 @@
 package controller
 
 import (
+	"context"
+
 	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/helmchart"
@@ -35,6 +38,6 @@ func cnpgClusterReady(cluster *cnpgv1.Cluster) bool {
 	return cluster.Status.ReadyInstances >= instances
 }
 
-func helmChartReady(chart *helmv1.HelmChart) bool {
-	return helmchart.IsReady(chart)
+func helmChartReady(ctx context.Context, c client.Client, chart *helmv1.HelmChart) (bool, error) {
+	return helmchart.IsReady(ctx, c, chart)
 }

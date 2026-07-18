@@ -13,11 +13,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/helmchart"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
-func waitHelmChartDeployed(t *testing.T, ctx context.Context, c client.Client, chart *helmv1.HelmChart) {
+func waitHelmChartReady(t *testing.T, ctx context.Context, c client.Client, chart *helmv1.HelmChart) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -25,14 +26,16 @@ func waitHelmChartDeployed(t *testing.T, ctx context.Context, c client.Client, c
 		if err := c.Get(ctx, client.ObjectKeyFromObject(chart), latest); err != nil {
 			t.Fatalf("get HelmChart: %v", err)
 		}
-		for _, cond := range latest.Status.Conditions {
-			if cond.Type == "Deployed" && cond.Status == metav1.ConditionTrue {
-				return
-			}
+		ready, err := helmchart.IsReady(ctx, c, latest)
+		if err != nil {
+			t.Fatalf("check HelmChart readiness: %v", err)
+		}
+		if ready {
+			return
 		}
 		time.Sleep(15 * time.Second)
 	}
-	t.Fatal("HelmChart did not reach Deployed=True before timeout")
+	t.Fatal("HelmChart did not become ready before timeout")
 }
 
 func TestHelmChartReconcileOnK3s(t *testing.T) {
@@ -68,7 +71,7 @@ func TestHelmChartReconcileOnK3s(t *testing.T) {
 		t.Fatalf("create HelmChart: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Delete(ctx, chart) })
-	waitHelmChartDeployed(t, ctx, c, chart)
+	waitHelmChartReady(t, ctx, c, chart)
 }
 
 func TestHelmChartUpdateOnK3s(t *testing.T) {
@@ -100,7 +103,7 @@ func TestHelmChartUpdateOnK3s(t *testing.T) {
 		t.Fatalf("create redis HelmChart: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Delete(ctx, chart) })
-	waitHelmChartDeployed(t, ctx, c, chart)
+	waitHelmChartReady(t, ctx, c, chart)
 
 	latest := &helmv1.HelmChart{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(chart), latest); err != nil {
@@ -138,7 +141,7 @@ func TestHelmChartDeleteOnK3s(t *testing.T) {
 	if err := c.Create(ctx, chart); err != nil {
 		t.Fatalf("create chart: %v", err)
 	}
-	waitHelmChartDeployed(t, ctx, c, chart)
+	waitHelmChartReady(t, ctx, c, chart)
 
 	if err := c.Delete(ctx, chart); err != nil {
 		t.Fatalf("delete chart: %v", err)

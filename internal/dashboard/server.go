@@ -82,7 +82,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleClusterOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var clusters geassv1alpha1.GeassClusterList
-	if err := s.Client.List(ctx, &clusters, client.InNamespace(systemNamespace)); err != nil {
+	if err := s.Client.List(ctx, &clusters); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -98,11 +98,12 @@ func (s *Server) handleClusterOverview(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&cards, `
 				<div class="card">
 					<h2>%s</h2>
+					<p>Namespace: %s</p>
 					<p>Add-ons: %s</p>
 					<p>Workspaces: %s</p>
 					<p>Cluster ready: %s</p>
 				</div>
-			`, cluster.Name, addons, workspaces, ready)
+			`, cluster.Name, cluster.Namespace, addons, workspaces, ready)
 		}
 	}
 	for _, ws := range platform.DefaultWorkspaces {
@@ -225,8 +226,10 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case routeActionEdit:
 		s.handleAppEdit(w, r, name)
+		return
 	case routeActionUpdate:
 		s.handleAppUpdate(w, r, name)
+		return
 	case "config":
 		if len(parts) == 3 && parts[2] == "set" {
 			s.handleAppConfigSet(w, r, name)
@@ -404,8 +407,10 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case routeActionEdit:
 		s.handleDatabaseEdit(w, r, name)
+		return
 	case routeActionUpdate:
 		s.handleDatabaseUpdate(w, r, name)
+		return
 	default:
 		http.NotFound(w, r)
 	}
@@ -553,8 +558,10 @@ func (s *Server) handleCacheRoutes(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case routeActionEdit:
 		s.handleCacheEdit(w, r, name)
+		return
 	case routeActionUpdate:
 		s.handleCacheUpdate(w, r, name)
+		return
 	default:
 		http.NotFound(w, r)
 	}
@@ -692,8 +699,10 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 	switch parts[1] {
 	case routeActionEdit:
 		s.handleObjectStoreEdit(w, r, name)
+		return
 	case routeActionUpdate:
 		s.handleObjectStoreUpdate(w, r, name)
+		return
 	default:
 		http.NotFound(w, r)
 	}
