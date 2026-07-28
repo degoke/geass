@@ -4,6 +4,8 @@ import (
 	"context"
 	"maps"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/platform"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,13 +22,28 @@ const (
 	managedByValue     = "geass"
 )
 
+func resourceNamespace(project, environment string) (string, error) {
+	return platform.ProjectNamespace(project, environment)
+}
+
 func geassResourceLabels(owner client.Object, kind string) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		labelManagedBy:     managedByValue,
 		labelGeassKind:     kind,
 		labelGeassName:     owner.GetName(),
 		labelGeassSystemNS: owner.GetNamespace(),
 	}
+	switch resource := owner.(type) {
+	case *geassv1alpha1.GeassApp:
+		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+	case *geassv1alpha1.GeassDatabase:
+		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+	case *geassv1alpha1.GeassCache:
+		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+	case *geassv1alpha1.GeassObjectStore:
+		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+	}
+	return labels
 }
 
 func applyGeassLabels(obj metav1.Object, owner client.Object, kind string) {
@@ -45,9 +62,9 @@ func setSameNamespaceOwner(owner, child client.Object, scheme *runtime.Scheme) e
 	return controllerutil.SetControllerReference(owner, child, scheme)
 }
 
-// previousWorkspaceNamespace returns the namespace recorded in status when the
-// workspace changed and resources in the old namespace must be cleaned up.
-func previousWorkspaceNamespace(statusNS, currentNS string) (string, bool) {
+// previousTargetNamespace returns the namespace recorded in status when the
+// placement changed and resources in the old namespace must be cleaned up.
+func previousTargetNamespace(statusNS, currentNS string) (string, bool) {
 	if statusNS == "" || statusNS == currentNS {
 		return "", false
 	}

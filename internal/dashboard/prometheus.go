@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // MetricsClient queries Prometheus for cluster overview cards.
@@ -106,7 +108,14 @@ var overviewMetrics = []metricCard{
 func (s *Server) metricsCards(ctx context.Context) string {
 	mc := s.Metrics
 	if mc == nil {
-		mc = &PrometheusClient{}
+		prometheusURL := ""
+		if s.Client != nil {
+			config := &geassv1alpha1.GeassPlatformConfig{}
+			if err := s.Client.Get(ctx, client.ObjectKey{Name: "platform", Namespace: platform.SystemNamespace}, config); err == nil {
+				prometheusURL = config.Spec.PrometheusURL
+			}
+		}
+		mc = &PrometheusClient{BaseURL: prometheusURL}
 	}
 	var b strings.Builder
 	b.WriteString(`<div class="metrics">`)

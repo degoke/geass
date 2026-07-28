@@ -4,5 +4,6 @@ metadata:
   name: geasscache-sample
   namespace: geass-system
 spec:
-  workspace: dev
+  project: payments
+  environment: dev
   engine: Redis

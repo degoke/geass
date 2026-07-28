@@ -18,6 +18,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,6 +30,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/platform"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	// +kubebuilder:scaffold:imports
 )
@@ -88,6 +91,22 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+	Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: platform.SystemNamespace}})).To(Succeed())
+	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassClusterSpec{Version: "v1", ServerURL: "https://cluster.example", TokenSecretRef: corev1.SecretReference{Name: "token"}}}
+	Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+	cluster.Status.Conditions = []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue, Reason: "Ready", Message: "Cluster is ready", LastTransitionTime: metav1.Now()}}
+	Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
+	project := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: "default"}, Environments: []string{"dev", "staging", "production"}}}
+	Expect(k8sClient.Create(ctx, project)).To(Succeed())
+	project.Status.Environments = []geassv1alpha1.GeassProjectEnvironmentStatus{{Name: string(geassv1alpha1.EnvironmentDev), Namespace: "payments-dev"}, {Name: string(geassv1alpha1.EnvironmentStaging), Namespace: "payments-staging"}, {Name: string(geassv1alpha1.EnvironmentProduction), Namespace: "payments-production"}}
+	project.Status.Conditions = []metav1.Condition{{
+		Type:               "Ready",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "Project environments are ready",
+		LastTransitionTime: metav1.Now(),
+	}}
+	Expect(k8sClient.Status().Update(ctx, project)).To(Succeed())
 })
 
 var _ = AfterSuite(func() {

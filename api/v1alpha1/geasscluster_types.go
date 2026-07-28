@@ -14,16 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// GeassWorkspace identifies a fixed Geass deployment environment.
-// +kubebuilder:validation:Enum=dev;staging;production
-type GeassWorkspace string
-
-const (
-	WorkspaceDev        GeassWorkspace = "dev"
-	WorkspaceStaging    GeassWorkspace = "staging"
-	WorkspaceProduction GeassWorkspace = "production"
-)
-
 // GeassClusterCertManagerAddon controls cert-manager installation.
 type GeassClusterCertManagerAddon struct {
 	// Enabled installs cert-manager when true.
@@ -107,7 +97,8 @@ type GeassCluster struct {
 	Spec GeassClusterSpec `json:"spec"`
 
 	// +optional
-	Status GeassClusterStatus `json:"status,omitzero"`
+	// +optional
+	Status GeassClusterStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

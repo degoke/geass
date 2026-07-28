@@ -4,30 +4,19 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: geassobjectstores.geass.geass.dev
+  name: geasscloudconnections.geass.geass.dev
 spec:
   group: geass.geass.dev
   names:
-    kind: GeassObjectStore
-    listKind: GeassObjectStoreList
-    plural: geassobjectstores
-    singular: geassobjectstore
+    kind: GeassCloudConnection
+    listKind: GeassCloudConnectionList
+    plural: geasscloudconnections
+    singular: geasscloudconnection
   scope: Namespaced
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .spec.environment
-      name: Environment
-      type: string
-    - jsonPath: .spec.engine
-      name: Engine
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
-      type: string
-    name: v1alpha1
+  - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GeassObjectStore is the Schema for the geassobjectstores API.
         properties:
           apiVersion:
             description: |-
@@ -47,40 +36,17 @@ spec:
           metadata:
             type: object
           spec:
-            description: GeassObjectStoreSpec defines the desired state of GeassObjectStore.
             properties:
-              buckets:
-                description: Buckets is an optional list of buckets to create on provision.
-                items:
-                  type: string
-                type: array
-              engine:
-                description: Engine is the object store engine to provision.
-                enum:
-                - MinIO
-                type: string
-              environment:
-                description: Environment is the project environment.
-                enum:
-                - dev
-                - staging
-                - production
-                type: string
-              project:
-                description: Project is the owning project.
-                minLength: 1
+              provider:
                 type: string
             required:
-            - engine
-            - environment
-            - project
+            - provider
             type: object
           status:
-            description: GeassObjectStoreStatus defines the observed state of GeassObjectStore.
             properties:
+              available:
+                type: boolean
               conditions:
-                description: conditions represent the current state of the GeassObjectStore
-                  resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -136,22 +102,11 @@ spec:
                   - type
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
-              connectionSecret:
-                description: ConnectionSecret is the name of the Secret containing
-                  credentials.
-                type: string
-              endpoint:
-                description: Endpoint is the in-cluster S3-compatible endpoint URL.
-                type: string
-              targetNamespace:
-                description: TargetNamespace is the namespace workloads were created
-                  in.
-                type: string
+            required:
+            - available
             type: object
         required:
+        - metadata
         - spec
         type: object
     served: true

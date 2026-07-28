@@ -21,17 +21,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - namespaces
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - nodes
   verbs:
   - get
@@ -48,6 +37,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - geass.geass.dev
@@ -91,9 +88,9 @@ rules:
   - patch
   - update
 - apiGroups:
-  - batch
+  - geass.geass.dev
   resources:
-  - jobs
+  - geasshareadinesses
   verbs:
   - get
   - list

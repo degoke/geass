@@ -19,6 +19,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -180,12 +181,18 @@ func main() {
 		setupLog.Error(err, "Failed to start manager")
 		os.Exit(1)
 	}
-
 	if err := (&controller.GeassClusterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassProjectReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassproject")
 		os.Exit(1)
 	}
 	if err := (&controller.GeassNodeReconciler{
@@ -210,6 +217,28 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassdatabase")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassLogicalDatabaseReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geasslogicaldatabase")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassHAReadinessReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geasshareadiness")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassPlatformConfigReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassplatformconfig")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassCloudConnectionReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geasscloudconnection")
+		os.Exit(1)
+	}
 	if err := (&controller.GeassCacheReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -230,6 +259,7 @@ func main() {
 		if err := mgr.Add(&dashboard.Server{
 			Client: mgr.GetClient(),
 			Addr:   dashboardAddr,
+			Kube:   kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
 		}); err != nil {
 			setupLog.Error(err, "Failed to add dashboard server")
 			os.Exit(1)

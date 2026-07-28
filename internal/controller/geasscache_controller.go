@@ -10,9 +10,12 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -47,12 +50,15 @@ func (r *GeassCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.Get(ctx, req.NamespacedName, &cache); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := platform.ValidateProjectPlacement(ctx, r.Client, cache.Spec.Project, cache.Spec.Environment); err != nil {
+		return r.setNotReady(ctx, &cache, err.Error())
+	}
 
 	if cache.Spec.Engine != geassv1alpha1.CacheEngineRedis {
 		return r.setNotReady(ctx, &cache, fmt.Sprintf("unsupported engine %q", cache.Spec.Engine))
 	}
 
-	wsNS, err := platform.WorkspaceNamespace(string(cache.Spec.Workspace))
+	wsNS, err := resourceNamespace(cache.Spec.Project, string(cache.Spec.Environment))
 	if err != nil {
 		return r.setNotReady(ctx, &cache, err.Error())
 	}
@@ -64,25 +70,33 @@ func (r *GeassCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	chartName := cacheChartName(cache.Name)
 	if !cache.DeletionTimestamp.IsZero() {
-		r.deleteWorkspaceResources(ctx, chartName, &cache, wsNS)
+		r.deleteTargetResources(ctx, chartName, &cache, wsNS)
 		controllerutil.RemoveFinalizer(&cache, cacheFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &cache)
 	}
+	password, err := r.ensureRedisPassword(ctx, &cache, wsNS)
+	if err != nil {
+		return r.setNotReady(ctx, &cache, err.Error())
+	}
 
-	if prevNS, moved := previousWorkspaceNamespace(cache.Status.WorkspaceNamespace, wsNS); moved {
-		if err := r.cleanupPreviousWorkspace(ctx, chartName, &cache, prevNS); err != nil {
+	if prevNS, moved := previousTargetNamespace(cache.Status.TargetNamespace, wsNS); moved {
+		if err := r.cleanupPreviousTarget(ctx, chartName, &cache, prevNS); err != nil {
 			return r.setNotReady(ctx, &cache, err.Error())
 		}
 	}
 
 	values := fmt.Sprintf(`architecture: standalone
+commonLabels:
+  geass.dev/managed-by: geass
+  geass.dev/project: %s
+  geass.dev/environment: %s
 auth:
   enabled: true
   password: "%s"
 master:
   persistence:
     enabled: false
-`, cache.Name+"-redis")
+`, cache.Spec.Project, cache.Spec.Environment, password)
 	spec := helmv1.HelmChartSpec{
 		Chart:           platform.RedisReleaseChart,
 		Repo:            platform.RedisChartRepo,
@@ -116,7 +130,7 @@ master:
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&cache), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.WorkspaceNamespace = wsNS
+	latest.Status.TargetNamespace = wsNS
 	latest.Status.ConnectionSecret = cache.Name + "-connection"
 	latest.Status.Host = host
 	latest.Status.Port = 6379
@@ -128,13 +142,13 @@ func cacheChartName(name string) string {
 	return "geass-redis-" + name
 }
 
-func (r *GeassCacheReconciler) cleanupPreviousWorkspace(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, previousNS string) error {
+func (r *GeassCacheReconciler) cleanupPreviousTarget(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, previousNS string) error {
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cache.Name + "-connection", Namespace: previousNS}}))
 	// Uninstall the release from the old namespace before redeploying elsewhere.
 	return helmchart.Delete(ctx, r.Client, chartName)
 }
 
-func (r *GeassCacheReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, wsNS string) {
+func (r *GeassCacheReconciler) deleteTargetResources(ctx context.Context, chartName string, cache *geassv1alpha1.GeassCache, wsNS string) {
 	_ = helmchart.Delete(ctx, r.Client, chartName)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cache.Name + "-connection", Namespace: wsNS}}))
 }
@@ -143,18 +157,52 @@ func (r *GeassCacheReconciler) reconcileConnectionSecret(ctx context.Context, ca
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: cache.Name + "-connection", Namespace: wsNS},
 	}
-	password := cache.Name + "-redis"
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+	password, err := r.ensureRedisPassword(ctx, cache, wsNS)
+	if err != nil {
+		return err
+	}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, cache, "GeassCache")
-		secret.StringData = map[string]string{
-			"host":     host,
-			"port":     "6379",
-			"password": password,
-			"uri":      fmt.Sprintf("redis://:%s@%s:6379", password, host),
+		secret.Data = map[string][]byte{
+			"host": []byte(host), "port": []byte("6379"), "password": []byte(password),
+			"uri": []byte(fmt.Sprintf("redis://:%s@%s:6379", password, host)),
 		}
 		return setSameNamespaceOwner(cache, secret, r.Scheme)
 	})
 	return err
+}
+
+func (r *GeassCacheReconciler) ensureRedisPassword(ctx context.Context, cache *geassv1alpha1.GeassCache, namespace string) (string, error) {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{Name: cache.Name + "-connection", Namespace: namespace}, secret)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return "", err
+	}
+	if err == nil {
+		if password := string(secret.Data["password"]); password != "" {
+			return password, nil
+		}
+		if password := secret.StringData["password"]; password != "" {
+			return password, nil
+		}
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	password := hex.EncodeToString(bytes)
+	if apierrors.IsNotFound(err) {
+		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cache.Name + "-connection", Namespace: namespace}}
+	}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		applyGeassLabels(secret, cache, "GeassCache")
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data["password"] = []byte(password)
+		return setSameNamespaceOwner(cache, secret, r.Scheme)
+	})
+	return password, err
 }
 
 func (r *GeassCacheReconciler) setNotReady(ctx context.Context, cache *geassv1alpha1.GeassCache, message string) (ctrl.Result, error) {

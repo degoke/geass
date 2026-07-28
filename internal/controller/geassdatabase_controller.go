@@ -43,6 +43,7 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases/finalizers,verbs=update
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geasshareadinesses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -54,14 +55,26 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &db); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
+		return r.setNotReady(ctx, &db, err.Error())
+	}
 
 	if db.Spec.Engine != geassv1alpha1.DatabaseEnginePostgres {
 		return r.setNotReady(ctx, &db, fmt.Sprintf("unsupported engine %q", db.Spec.Engine))
 	}
 
-	wsNS, err := platform.WorkspaceNamespace(string(db.Spec.Workspace))
+	wsNS, err := resourceNamespace(db.Spec.Project, string(db.Spec.Environment))
 	if err != nil {
 		return r.setNotReady(ctx, &db, err.Error())
+	}
+	if db.Spec.Project != "" {
+		ready, err := r.haReady(ctx)
+		if err != nil {
+			return r.setNotReady(ctx, &db, err.Error())
+		}
+		if !ready {
+			return r.setNotReady(ctx, &db, "HA readiness has not passed; run the platform readiness check")
+		}
 	}
 
 	if !controllerutil.ContainsFinalizer(&db, databaseFinalizer) {
@@ -70,13 +83,13 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !db.DeletionTimestamp.IsZero() {
-		r.deleteWorkspaceResources(ctx, &db, wsNS)
+		r.deleteTargetResources(ctx, &db, wsNS)
 		controllerutil.RemoveFinalizer(&db, databaseFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &db)
 	}
 
-	if prevNS, moved := previousWorkspaceNamespace(db.Status.WorkspaceNamespace, wsNS); moved {
-		r.deleteWorkspaceResources(ctx, &db, prevNS)
+	if prevNS, moved := previousTargetNamespace(db.Status.TargetNamespace, wsNS); moved {
+		r.deleteTargetResources(ctx, &db, prevNS)
 	}
 
 	if err := r.ensureCNPGOperator(ctx); err != nil {
@@ -115,14 +128,27 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&db), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.WorkspaceNamespace = wsNS
+	latest.Status.TargetNamespace = wsNS
 	latest.Status.ConnectionSecret = db.Name + "-connection"
 	latest.Status.Host = host
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "DatabaseReady", "Postgres database is ready")
 	return ctrl.Result{}, r.Status().Update(ctx, latest)
 }
 
-func (r *GeassDatabaseReconciler) deleteWorkspaceResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
+func (r *GeassDatabaseReconciler) haReady(ctx context.Context) (bool, error) {
+	var reports geassv1alpha1.GeassHAReadinessList
+	if err := r.List(ctx, &reports, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return false, err
+	}
+	for _, report := range reports.Items {
+		if conditionStatus(report.Status.Conditions, platform.ConditionReady) == string(metav1.ConditionTrue) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
 	_ = client.IgnoreNotFound(r.Delete(ctx, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))

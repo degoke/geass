@@ -113,7 +113,8 @@ type GeassNode struct {
 
 	// status defines the observed state of GeassNode
 	// +optional
-	Status GeassNodeStatus `json:"status,omitzero"`
+	// +optional
+	Status GeassNodeStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

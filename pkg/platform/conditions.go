@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	ConditionReady           = "Ready"
-	ConditionAddonsReady     = "AddonsReady"
-	ConditionWorkspacesReady = "WorkspacesReady"
+	ConditionReady       = "Ready"
+	ConditionAddonsReady = "AddonsReady"
 )
 
 // SetCondition upserts a condition on the provided slice and returns the updated slice.

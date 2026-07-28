@@ -29,7 +29,7 @@ var _ = Describe("GeassCache Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevWorkspaceNS}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevTargetNS}})
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
 	})
 
@@ -37,8 +37,8 @@ var _ = Describe("GeassCache Controller", func() {
 		cache := &geassv1alpha1.GeassCache{
 			ObjectMeta: metav1.ObjectMeta{Name: testCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
-				Workspace: geassv1alpha1.WorkspaceDev,
-				Engine:    geassv1alpha1.CacheEngineRedis,
+				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Engine: geassv1alpha1.CacheEngineRedis,
 			},
 		}
 		Expect(k8sClient.Create(ctx, cache)).To(Succeed())
@@ -55,7 +55,7 @@ var _ = Describe("GeassCache Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		secret := &corev1.Secret{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "sessions-connection", Namespace: testDevWorkspaceNS}, secret)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "sessions-connection", Namespace: testDevTargetNS}, secret)).To(Succeed())
 
 		latest := &geassv1alpha1.GeassCache{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testCacheName, Namespace: ns}, latest)).To(Succeed())
@@ -66,8 +66,8 @@ var _ = Describe("GeassCache Controller", func() {
 		cache := &geassv1alpha1.GeassCache{
 			ObjectMeta: metav1.ObjectMeta{Name: testTempCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
-				Workspace: geassv1alpha1.WorkspaceDev,
-				Engine:    geassv1alpha1.CacheEngineRedis,
+				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Engine: geassv1alpha1.CacheEngineRedis,
 			},
 		}
 		Expect(k8sClient.Create(ctx, cache)).To(Succeed())

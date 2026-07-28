@@ -62,8 +62,11 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := platform.ValidateProjectPlacement(ctx, r.Client, app.Spec.Project, app.Spec.Environment); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
 
-	wsNS, err := platform.WorkspaceNamespace(string(app.Spec.Workspace))
+	wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment))
 	if err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
@@ -74,13 +77,13 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if !app.DeletionTimestamp.IsZero() {
-		r.deleteWorkspaceResources(ctx, &app, wsNS)
+		r.deleteTargetResources(ctx, &app, wsNS)
 		controllerutil.RemoveFinalizer(&app, appFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &app)
 	}
 
-	if prevNS, moved := previousWorkspaceNamespace(app.Status.WorkspaceNamespace, wsNS); moved {
-		r.deleteWorkspaceResources(ctx, &app, prevNS)
+	if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+		r.deleteTargetResources(ctx, &app, prevNS)
 	}
 
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
@@ -131,14 +134,14 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&app), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.WorkspaceNamespace = wsNS
+	latest.Status.TargetNamespace = wsNS
 	latest.Status.URL = url
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Reconciled GeassApp", "workspace", app.Spec.Workspace, "namespace", wsNS)
+	log.Info("Reconciled GeassApp", "environment", app.Spec.Environment, "namespace", wsNS)
 	return ctrl.Result{}, nil
 }
 
@@ -146,7 +149,8 @@ func (r *GeassAppReconciler) appLabels(app *geassv1alpha1.GeassApp) map[string]s
 	return map[string]string{
 		"app.kubernetes.io/name":       app.Name,
 		"app.kubernetes.io/managed-by": "geass",
-		"geass.dev/workspace":          string(app.Spec.Workspace),
+		"geass.dev/project":            app.Spec.Project,
+		"geass.dev/environment":        string(app.Spec.Environment),
 	}
 }
 
@@ -396,7 +400,7 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	return err
 }
 
-func (r *GeassAppReconciler) deleteWorkspaceResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
+func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
 	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics"}
 	for _, name := range names {
 		_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})

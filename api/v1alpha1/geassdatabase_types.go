@@ -24,9 +24,14 @@ const (
 
 // GeassDatabaseSpec defines the desired state of GeassDatabase.
 type GeassDatabaseSpec struct {
-	// Workspace is the target Geass workspace.
+	// Project is the owning project.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Project string `json:"project"`
+	// Environment is the project environment.
 	// +kubebuilder:validation:Enum=dev;staging;production
-	Workspace GeassWorkspace `json:"workspace"`
+	// +kubebuilder:validation:Required
+	Environment GeassEnvironment `json:"environment"`
 
 	// Engine is the database engine to provision.
 	// +kubebuilder:validation:Enum=Postgres
@@ -51,9 +56,9 @@ type GeassDatabaseSpec struct {
 
 // GeassDatabaseStatus defines the observed state of GeassDatabase.
 type GeassDatabaseStatus struct {
-	// WorkspaceNamespace is the namespace workloads were created in.
+	// TargetNamespace is the namespace workloads were created in.
 	// +optional
-	WorkspaceNamespace string `json:"workspaceNamespace,omitempty"`
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// ConnectionSecret is the name of the Secret containing connection credentials.
 	// +optional
@@ -72,7 +77,7 @@ type GeassDatabaseStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Workspace",type=string,JSONPath=`.spec.workspace`
+// +kubebuilder:printcolumn:name="Environment",type=string,JSONPath=`.spec.environment`
 // +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.spec.engine`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 
@@ -87,7 +92,8 @@ type GeassDatabase struct {
 	Spec GeassDatabaseSpec `json:"spec"`
 
 	// +optional
-	Status GeassDatabaseStatus `json:"status,omitzero"`
+	// +optional
+	Status GeassDatabaseStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

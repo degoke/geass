@@ -15,8 +15,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.workspace
-      name: Workspace
+    - jsonPath: .spec.environment
+      name: Environment
       type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
@@ -52,7 +52,7 @@ spec:
                 description: ConfigData is key/value data stored in an owned ConfigMap.
                 type: object
               configMapRefs:
-                description: ConfigMapRefs lists existing ConfigMaps in the workspace
+                description: ConfigMapRefs lists existing ConfigMaps in the target
                   namespace to mount under /config/refs/<name>.
                 items:
                   description: |-
@@ -231,7 +231,7 @@ spec:
                 type: array
               envFrom:
                 description: EnvFrom loads environment variables from referenced ConfigMaps
-                  and Secrets in the workspace namespace.
+                  and Secrets in the target namespace.
                 items:
                   description: EnvFromSource represents the source of a set of ConfigMaps
                     or Secrets
@@ -277,6 +277,13 @@ spec:
                       x-kubernetes-map-type: atomic
                   type: object
                 type: array
+              environment:
+                description: Environment is the project environment for this app.
+                enum:
+                - dev
+                - staging
+                - production
+                type: string
               image:
                 description: Image is the container image to run.
                 minLength: 1
@@ -317,6 +324,10 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
               replicas:
                 default: 1
                 description: Replicas is the desired Deployment replica count.
@@ -329,7 +340,7 @@ spec:
                 description: SecretData is key/value data stored in an owned Secret.
                 type: object
               secretRefs:
-                description: SecretRefs lists existing Secrets in the workspace namespace
+                description: SecretRefs lists existing Secrets in the target namespace
                   to mount under /secrets/refs/<name>.
                 items:
                   description: |-
@@ -348,16 +359,10 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
-              workspace:
-                description: Workspace is the target Geass workspace.
-                enum:
-                - dev
-                - staging
-                - production
-                type: string
             required:
+            - environment
             - image
-            - workspace
+            - project
             type: object
           status:
             description: GeassAppStatus defines the observed state of GeassApp.
@@ -423,12 +428,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
+                  in.
+                type: string
               url:
                 description: URL is the primary ingress URL when configured.
-                type: string
-              workspaceNamespace:
-                description: WorkspaceNamespace is the namespace workloads were created
-                  in.
                 type: string
             type: object
         required:

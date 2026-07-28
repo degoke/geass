@@ -23,9 +23,14 @@ const (
 
 // GeassCacheSpec defines the desired state of GeassCache.
 type GeassCacheSpec struct {
-	// Workspace is the target Geass workspace.
+	// Project is the owning project.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Project string `json:"project"`
+	// Environment is the project environment.
 	// +kubebuilder:validation:Enum=dev;staging;production
-	Workspace GeassWorkspace `json:"workspace"`
+	// +kubebuilder:validation:Required
+	Environment GeassEnvironment `json:"environment"`
 
 	// Engine is the cache engine to provision.
 	// +kubebuilder:validation:Enum=Redis
@@ -39,9 +44,9 @@ type GeassCacheSpec struct {
 
 // GeassCacheStatus defines the observed state of GeassCache.
 type GeassCacheStatus struct {
-	// WorkspaceNamespace is the namespace workloads were created in.
+	// TargetNamespace is the namespace workloads were created in.
 	// +optional
-	WorkspaceNamespace string `json:"workspaceNamespace,omitempty"`
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// ConnectionSecret is the name of the Secret containing Redis credentials.
 	// +optional
@@ -64,7 +69,7 @@ type GeassCacheStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Workspace",type=string,JSONPath=`.spec.workspace`
+// +kubebuilder:printcolumn:name="Environment",type=string,JSONPath=`.spec.environment`
 // +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.spec.engine`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 
@@ -79,7 +84,8 @@ type GeassCache struct {
 	Spec GeassCacheSpec `json:"spec"`
 
 	// +optional
-	Status GeassCacheStatus `json:"status,omitzero"`
+	// +optional
+	Status GeassCacheStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

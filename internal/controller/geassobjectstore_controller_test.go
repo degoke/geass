@@ -29,7 +29,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 
 	BeforeEach(func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevWorkspaceNS}})
+		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevTargetNS}})
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
 	})
 
@@ -37,8 +37,8 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testObjectStoreName, Namespace: ns},
 			Spec: geassv1alpha1.GeassObjectStoreSpec{
-				Workspace: geassv1alpha1.WorkspaceDev,
-				Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Engine: geassv1alpha1.ObjectStoreEngineMinIO,
 			},
 		}
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())
@@ -55,12 +55,12 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		secret := &corev1.Secret{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "assets-connection", Namespace: testDevWorkspaceNS}, secret)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "assets-connection", Namespace: testDevTargetNS}, secret)).To(Succeed())
 		endpoint := string(secret.Data["endpoint"])
 		if endpoint == "" {
 			endpoint = secret.StringData["endpoint"]
 		}
-		Expect(endpoint).To(ContainSubstring("geass-minio-assets.geass-dev.svc"))
+		Expect(endpoint).To(ContainSubstring("geass-minio-assets.payments-dev.svc"))
 
 		latest := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, latest)).To(Succeed())
@@ -71,8 +71,8 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testTempStoreName, Namespace: ns},
 			Spec: geassv1alpha1.GeassObjectStoreSpec{
-				Workspace: geassv1alpha1.WorkspaceDev,
-				Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Engine: geassv1alpha1.ObjectStoreEngineMinIO,
 			},
 		}
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())

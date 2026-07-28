@@ -5,4 +5,5 @@ const (
 	FinalizerDatabase    = "geass.geass.dev/database"
 	FinalizerCache       = "geass.geass.dev/cache"
 	FinalizerObjectStore = "geass.geass.dev/objectstore"
+	FinalizerProject     = "geass.geass.dev/project"
 )

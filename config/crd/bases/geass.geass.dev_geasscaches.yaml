@@ -15,8 +15,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.workspace
-      name: Workspace
+    - jsonPath: .spec.environment
+      name: Environment
       type: string
     - jsonPath: .spec.engine
       name: Engine
@@ -54,20 +54,25 @@ spec:
                 enum:
                 - Redis
                 type: string
-              version:
-                default: "7.4"
-                description: Version is the Redis chart/app version hint.
-                type: string
-              workspace:
-                description: Workspace is the target Geass workspace.
+              environment:
+                description: Environment is the project environment.
                 enum:
                 - dev
                 - staging
                 - production
                 type: string
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
+              version:
+                default: "7.4"
+                description: Version is the Redis chart/app version hint.
+                type: string
             required:
             - engine
-            - workspace
+            - environment
+            - project
             type: object
           status:
             description: GeassCacheStatus defines the observed state of GeassCache.
@@ -144,8 +149,8 @@ spec:
                 description: Port is the Redis port.
                 format: int32
                 type: integer
-              workspaceNamespace:
-                description: WorkspaceNamespace is the namespace workloads were created
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
                   in.
                 type: string
             type: object

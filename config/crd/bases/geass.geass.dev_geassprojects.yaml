@@ -4,30 +4,23 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: geassobjectstores.geass.geass.dev
+  name: geassprojects.geass.geass.dev
 spec:
   group: geass.geass.dev
   names:
-    kind: GeassObjectStore
-    listKind: GeassObjectStoreList
-    plural: geassobjectstores
-    singular: geassobjectstore
+    kind: GeassProject
+    listKind: GeassProjectList
+    plural: geassprojects
+    singular: geassproject
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.environment
-      name: Environment
-      type: string
-    - jsonPath: .spec.engine
-      name: Engine
-      type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GeassObjectStore is the Schema for the geassobjectstores API.
         properties:
           apiVersion:
             description: |-
@@ -47,40 +40,44 @@ spec:
           metadata:
             type: object
           spec:
-            description: GeassObjectStoreSpec defines the desired state of GeassObjectStore.
             properties:
-              buckets:
-                description: Buckets is an optional list of buckets to create on provision.
+              clusterRef:
+                description: ClusterRef identifies the GeassCluster that owns this
+                  project.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              displayName:
+                description: DisplayName is the human-readable project name shown
+                  by the dashboard.
+                type: string
+              environments:
+                description: Environments are the isolated environments enabled for
+                  this project.
                 items:
                   type: string
+                minItems: 1
                 type: array
-              engine:
-                description: Engine is the object store engine to provision.
-                enum:
-                - MinIO
-                type: string
-              environment:
-                description: Environment is the project environment.
-                enum:
-                - dev
-                - staging
-                - production
-                type: string
-              project:
-                description: Project is the owning project.
-                minLength: 1
-                type: string
             required:
-            - engine
-            - environment
-            - project
+            - clusterRef
+            - environments
             type: object
           status:
-            description: GeassObjectStoreStatus defines the observed state of GeassObjectStore.
             properties:
+              clusterRef:
+                description: ClusterRef is the cluster observed by the controller.
+                  It prevents silent project migration.
+                type: string
               conditions:
-                description: conditions represent the current state of the GeassObjectStore
-                  resource.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -136,22 +133,21 @@ spec:
                   - type
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
-              connectionSecret:
-                description: ConnectionSecret is the name of the Secret containing
-                  credentials.
-                type: string
-              endpoint:
-                description: Endpoint is the in-cluster S3-compatible endpoint URL.
-                type: string
-              targetNamespace:
-                description: TargetNamespace is the namespace workloads were created
-                  in.
-                type: string
+              environments:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
             type: object
         required:
+        - metadata
         - spec
         type: object
     served: true

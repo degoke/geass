@@ -10,7 +10,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,7 +58,6 @@ type GeassClusterReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 
 func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var cluster geassv1alpha1.GeassCluster
@@ -67,33 +65,12 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	workspacesReady, err := r.reconcileWorkspaces(ctx)
-	if err != nil {
-		return r.updateStatus(ctx, &cluster, false, false, err)
-	}
-
 	addonsReady, err := r.reconcileAddons(ctx, &cluster)
 	if err != nil {
-		return r.updateStatus(ctx, &cluster, workspacesReady, false, err)
+		return r.updateStatus(ctx, &cluster, false, err)
 	}
 
-	return r.updateStatus(ctx, &cluster, workspacesReady, addonsReady, nil)
-}
-
-func (r *GeassClusterReconciler) reconcileWorkspaces(ctx context.Context) (bool, error) {
-	labels := map[string]string{
-		"geass.dev/managed-by": "geass-cluster",
-	}
-	for _, ws := range platform.DefaultWorkspaces {
-		ns, err := platform.WorkspaceNamespace(ws)
-		if err != nil {
-			return false, err
-		}
-		if err := ensureNamespace(ctx, r.Client, ns, labels); err != nil {
-			return false, fmt.Errorf("ensure workspace namespace %s: %w", ns, err)
-		}
-	}
-	return true, nil
+	return r.updateStatus(ctx, &cluster, addonsReady, nil)
 }
 
 func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *geassv1alpha1.GeassCluster) (bool, error) {
@@ -166,19 +143,13 @@ func (r *GeassClusterReconciler) helmChartReady(ctx context.Context, name string
 	return helmchart.IsReady(ctx, r.Client, chart)
 }
 
-func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geassv1alpha1.GeassCluster, workspacesReady, addonsReady bool, reconcileErr error) (ctrl.Result, error) {
+func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geassv1alpha1.GeassCluster, addonsReady bool, reconcileErr error) (ctrl.Result, error) {
 	latest := cluster.DeepCopy()
 	if err := r.Get(ctx, client.ObjectKeyFromObject(cluster), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	conditions := latest.Status.Conditions
-	if workspacesReady {
-		conditions = platform.SetCondition(conditions, platform.ConditionWorkspacesReady, metav1.ConditionTrue, "WorkspacesReady", platform.ConditionMessage(platform.ConditionWorkspacesReady, true))
-	} else {
-		conditions = platform.SetCondition(conditions, platform.ConditionWorkspacesReady, metav1.ConditionFalse, "WorkspacesPending", platform.ConditionMessage(platform.ConditionWorkspacesReady, false))
-	}
-
 	if reconcileErr != nil {
 		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, "ReconcileError", reconcileErr.Error())
 		conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", reconcileErr.Error())
@@ -188,7 +159,7 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, "AddonsPending", platform.ConditionMessage(platform.ConditionAddonsReady, false))
 	}
 
-	overallReady := workspacesReady && addonsReady && reconcileErr == nil
+	overallReady := addonsReady && reconcileErr == nil
 	if overallReady {
 		conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionTrue, "ClusterReady", "Geass cluster is ready")
 		latest.Status.Phase = geassv1alpha1.ClusterPhaseReady

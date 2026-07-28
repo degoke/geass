@@ -49,9 +49,14 @@ type GeassAppMetricsSpec struct {
 
 // GeassAppSpec defines the desired state of GeassApp.
 type GeassAppSpec struct {
-	// Workspace is the target Geass workspace.
+	// Project is the owning project.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Project string `json:"project"`
+	// Environment is the project environment for this app.
 	// +kubebuilder:validation:Enum=dev;staging;production
-	Workspace GeassWorkspace `json:"workspace"`
+	// +kubebuilder:validation:Required
+	Environment GeassEnvironment `json:"environment"`
 
 	// Image is the container image to run.
 	// +kubebuilder:validation:MinLength=1
@@ -77,15 +82,15 @@ type GeassAppSpec struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// EnvFrom loads environment variables from referenced ConfigMaps and Secrets in the workspace namespace.
+	// EnvFrom loads environment variables from referenced ConfigMaps and Secrets in the target namespace.
 	// +optional
 	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
 
-	// ConfigMapRefs lists existing ConfigMaps in the workspace namespace to mount under /config/refs/<name>.
+	// ConfigMapRefs lists existing ConfigMaps in the target namespace to mount under /config/refs/<name>.
 	// +optional
 	ConfigMapRefs []corev1.LocalObjectReference `json:"configMapRefs,omitempty"`
 
-	// SecretRefs lists existing Secrets in the workspace namespace to mount under /secrets/refs/<name>.
+	// SecretRefs lists existing Secrets in the target namespace to mount under /secrets/refs/<name>.
 	// +optional
 	SecretRefs []corev1.LocalObjectReference `json:"secretRefs,omitempty"`
 
@@ -104,9 +109,9 @@ type GeassAppSpec struct {
 
 // GeassAppStatus defines the observed state of GeassApp.
 type GeassAppStatus struct {
-	// WorkspaceNamespace is the namespace workloads were created in.
+	// TargetNamespace is the namespace workloads were created in.
 	// +optional
-	WorkspaceNamespace string `json:"workspaceNamespace,omitempty"`
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 
 	// URL is the primary ingress URL when configured.
 	// +optional
@@ -121,7 +126,7 @@ type GeassAppStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Workspace",type=string,JSONPath=`.spec.workspace`
+// +kubebuilder:printcolumn:name="Environment",type=string,JSONPath=`.spec.environment`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 
 // GeassApp is the Schema for the geassapps API.
@@ -135,7 +140,8 @@ type GeassApp struct {
 	Spec GeassAppSpec `json:"spec"`
 
 	// +optional
-	Status GeassAppStatus `json:"status,omitzero"`
+	// +optional
+	Status GeassAppStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

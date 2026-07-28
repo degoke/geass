@@ -4,6 +4,7 @@ metadata:
   name: geassdatabase-sample
   namespace: geass-system
 spec:
-  workspace: dev
+  project: payments
+  environment: dev
   engine: Postgres
   version: "16"

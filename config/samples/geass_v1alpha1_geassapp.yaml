@@ -4,7 +4,8 @@ metadata:
   name: geassapp-sample
   namespace: geass-system
 spec:
-  workspace: dev
+  project: payments
+  environment: dev
   image: nginx:alpine
   port: 8080
   ingress:

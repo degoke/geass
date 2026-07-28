@@ -15,8 +15,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.workspace
-      name: Workspace
+    - jsonPath: .spec.environment
+      name: Environment
       type: string
     - jsonPath: .spec.engine
       name: Engine
@@ -54,6 +54,13 @@ spec:
                 enum:
                 - Postgres
                 type: string
+              environment:
+                description: Environment is the project environment.
+                enum:
+                - dev
+                - staging
+                - production
+                type: string
               instances:
                 default: 1
                 description: Instances is the number of Postgres instances in the
@@ -61,6 +68,10 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
               storageSize:
                 anyOf:
                 - type: integer
@@ -73,16 +84,10 @@ spec:
                 default: "16"
                 description: Version is the Postgres major version.
                 type: string
-              workspace:
-                description: Workspace is the target Geass workspace.
-                enum:
-                - dev
-                - staging
-                - production
-                type: string
             required:
             - engine
-            - workspace
+            - environment
+            - project
             type: object
           status:
             description: GeassDatabaseStatus defines the observed state of GeassDatabase.
@@ -155,8 +160,8 @@ spec:
               host:
                 description: Host is the in-cluster database hostname.
                 type: string
-              workspaceNamespace:
-                description: WorkspaceNamespace is the namespace workloads were created
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
                   in.
                 type: string
             type: object

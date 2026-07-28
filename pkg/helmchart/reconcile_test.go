@@ -13,6 +13,8 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
+const testInstallJobName = "helm-install-test-chart"
+
 func TestIsReady(t *testing.T) {
 	t.Parallel()
 
@@ -47,32 +49,32 @@ func TestIsReady(t *testing.T) {
 		},
 		{
 			name:  "install job missing",
-			chart: chart("helm-install-test-chart"),
+			chart: chart(testInstallJobName),
 			want:  false,
 		},
 		{
 			name:  "install job completed",
-			chart: chart("helm-install-test-chart"),
+			chart: chart(testInstallJobName),
 			job: &batchv1.Job{
-				ObjectMeta: metav1.ObjectMeta{Name: "helm-install-test-chart", Namespace: platform.HelmChartNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: testInstallJobName, Namespace: platform.HelmChartNamespace},
 				Status:     batchv1.JobStatus{Succeeded: 1},
 			},
 			want: true,
 		},
 		{
 			name:  "install job still running",
-			chart: chart("helm-install-test-chart"),
+			chart: chart(testInstallJobName),
 			job: &batchv1.Job{
-				ObjectMeta: metav1.ObjectMeta{Name: "helm-install-test-chart", Namespace: platform.HelmChartNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: testInstallJobName, Namespace: platform.HelmChartNamespace},
 				Status:     batchv1.JobStatus{Active: 1},
 			},
 			want: false,
 		},
 		{
 			name:  "install job failed",
-			chart: chart("helm-install-test-chart"),
+			chart: chart(testInstallJobName),
 			job: &batchv1.Job{
-				ObjectMeta: metav1.ObjectMeta{Name: "helm-install-test-chart", Namespace: platform.HelmChartNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: testInstallJobName, Namespace: platform.HelmChartNamespace},
 				Status:     batchv1.JobStatus{Failed: 1},
 			},
 			want: false,
@@ -106,7 +108,7 @@ func TestIsReadyRequiresClient(t *testing.T) {
 	chart := &helmv1.HelmChart{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-chart", Namespace: platform.HelmChartNamespace},
 		Status: helmv1.HelmChartStatus{
-			JobName: "helm-install-test-chart",
+			JobName: testInstallJobName,
 		},
 	}
 

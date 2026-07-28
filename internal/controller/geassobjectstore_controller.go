@@ -48,12 +48,15 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err := r.Get(ctx, req.NamespacedName, &store); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := platform.ValidateProjectPlacement(ctx, r.Client, store.Spec.Project, store.Spec.Environment); err != nil {
+		return r.setNotReady(ctx, &store, err.Error())
+	}
 
 	if store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
 		return r.setNotReady(ctx, &store, fmt.Sprintf("unsupported engine %q", store.Spec.Engine))
 	}
 
-	wsNS, err := platform.WorkspaceNamespace(string(store.Spec.Workspace))
+	wsNS, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment))
 	if err != nil {
 		return r.setNotReady(ctx, &store, err.Error())
 	}
@@ -65,13 +68,13 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	chartName := objectStoreChartName(store.Name)
 	if !store.DeletionTimestamp.IsZero() {
-		r.deleteWorkspaceResources(ctx, chartName, &store, wsNS)
+		r.deleteTargetResources(ctx, chartName, &store, wsNS)
 		controllerutil.RemoveFinalizer(&store, objectStoreFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &store)
 	}
 
-	if prevNS, moved := previousWorkspaceNamespace(store.Status.WorkspaceNamespace, wsNS); moved {
-		if err := r.cleanupPreviousWorkspace(ctx, chartName, &store, prevNS); err != nil {
+	if prevNS, moved := previousTargetNamespace(store.Status.TargetNamespace, wsNS); moved {
+		if err := r.cleanupPreviousTarget(ctx, chartName, &store, prevNS); err != nil {
 			return r.setNotReady(ctx, &store, err.Error())
 		}
 	}
@@ -88,10 +91,14 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		fmt.Fprintf(&bucketLines, "  - name: %s\n    policy: none\n    purge: false\n", b)
 	}
 	values := fmt.Sprintf(`mode: standalone
+commonLabels:
+  geass.dev/managed-by: geass
+  geass.dev/project: %s
+  geass.dev/environment: %s
 rootUser: "%s"
 rootPassword: "%s"
 buckets:
-%s`, accessKey, secretKey, bucketLines.String())
+%s`, store.Spec.Project, store.Spec.Environment, accessKey, secretKey, bucketLines.String())
 	spec := helmv1.HelmChartSpec{
 		Chart:           platform.MinIOReleaseChart,
 		Repo:            platform.MinIOChartRepo,
@@ -125,7 +132,7 @@ buckets:
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&store), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.WorkspaceNamespace = wsNS
+	latest.Status.TargetNamespace = wsNS
 	latest.Status.ConnectionSecret = store.Name + "-connection"
 	latest.Status.Endpoint = endpoint
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ObjectStoreReady", "MinIO object store is ready")
@@ -136,12 +143,12 @@ func objectStoreChartName(name string) string {
 	return "geass-minio-" + name
 }
 
-func (r *GeassObjectStoreReconciler) cleanupPreviousWorkspace(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, previousNS string) error {
+func (r *GeassObjectStoreReconciler) cleanupPreviousTarget(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, previousNS string) error {
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: previousNS}}))
 	return helmchart.Delete(ctx, r.Client, chartName)
 }
 
-func (r *GeassObjectStoreReconciler) deleteWorkspaceResources(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, wsNS string) {
+func (r *GeassObjectStoreReconciler) deleteTargetResources(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, wsNS string) {
 	_ = helmchart.Delete(ctx, r.Client, chartName)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}))
 }

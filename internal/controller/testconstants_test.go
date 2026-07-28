@@ -3,7 +3,7 @@ package controller
 import "github.com/degoke/geass/pkg/platform"
 
 const (
-	testDevWorkspaceNS   = platform.DevWorkspaceNamespace
+	testDevTargetNS      = "payments-dev"
 	testHelmChartNS      = platform.HelmChartNamespace
 	testAppName          = "demo"
 	testCacheName        = "sessions"

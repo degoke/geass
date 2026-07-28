@@ -4,7 +4,8 @@ metadata:
   name: geassobjectstore-sample
   namespace: geass-system
 spec:
-  workspace: dev
+  project: payments
+  environment: dev
   engine: MinIO
   buckets:
     - assets

@@ -20,6 +20,7 @@ import (
 )
 
 const testAppName = "demo"
+const testClusterName = "default"
 
 type fakeMetrics struct {
 	values map[string]string
@@ -42,8 +43,8 @@ func TestHandleAppsList(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
-			Workspace: geassv1alpha1.WorkspaceDev,
-			Image:     "nginx:alpine",
+			Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+			Image: "nginx:alpine",
 		},
 	}
 	srv := &Server{Client: newFakeClient(app)}
@@ -56,6 +57,36 @@ func TestHandleAppsList(t *testing.T) {
 	body := rec.Body.String()
 	require.Contains(t, body, testAppName)
 	require.Contains(t, body, "hx-get=\"/apps\"")
+}
+
+func TestHandleProjectCreateAndDetail(t *testing.T) {
+	ctx := context.Background()
+	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}}
+	c := newFakeClient(cluster)
+	srv := &Server{Client: c}
+	form := url.Values{"name": {"payments"}, "displayName": {"Payments"}, "cluster": {"default"}, "environments": {"dev,staging"}}
+	req := httptest.NewRequest(http.MethodPost, "/projects/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleProjectCreate(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var project geassv1alpha1.GeassProject
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "payments", Namespace: platform.SystemNamespace}, &project))
+	require.Equal(t, "Payments", project.Spec.DisplayName)
+
+	detail := httptest.NewRecorder()
+	srv.handleProjectRoutes(detail, httptest.NewRequest(http.MethodGet, "/projects/payments", nil).WithContext(ctx))
+	require.Equal(t, http.StatusOK, detail.Code)
+	require.Contains(t, detail.Body.String(), "Add resource")
+}
+
+func TestProjectResourceUsesProjectReference(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req.Form = url.Values{"environment": {"staging"}, "project": {"payments"}}
+	app := (&Server{}).appFromForm("api", "ghcr.io/acme/api:1", req)
+	require.Equal(t, "payments", app.Spec.Project)
+	require.Equal(t, geassv1alpha1.EnvironmentStaging, app.Spec.Environment)
 }
 
 func TestHandleAppCreateValidation(t *testing.T) {
@@ -79,7 +110,8 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("name", testAppName)
-	form.Set("workspace", "dev")
+	form.Set("project", "payments")
+	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
 	form.Set("port", "8080")
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
@@ -93,7 +125,8 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 
 	updateForm := url.Values{}
-	updateForm.Set("workspace", "staging")
+	updateForm.Set("environment", "staging")
+	updateForm.Set("project", "payments")
 	updateForm.Set("image", "nginx:1.25")
 	updateForm.Set("port", "9090")
 	upReq := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(updateForm.Encode()))
@@ -104,7 +137,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, upRec.Code)
 
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
-	require.Equal(t, geassv1alpha1.WorkspaceStaging, app.Spec.Workspace)
+	require.Equal(t, geassv1alpha1.EnvironmentStaging, app.Spec.Environment)
 	require.Equal(t, "nginx:1.25", app.Spec.Image)
 
 	delForm := url.Values{}
@@ -120,6 +153,42 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestHandleAppCreateRecordsDeployment(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeClient()
+	srv := &Server{Client: c}
+	form := url.Values{"name": {"worker"}, "project": {"payments"}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:1"}}
+	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppCreate(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var deployments geassv1alpha1.GeassDeploymentList
+	require.NoError(t, c.List(ctx, &deployments, client.MatchingLabels{"geass.dev/app": "worker"}))
+	require.Len(t, deployments.Items, 1)
+	require.Equal(t, "ghcr.io/acme/worker:1", deployments.Items[0].Spec.Image)
+}
+
+func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: "payments", Image: "nginx"}}
+	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "postgres", Namespace: platform.SystemNamespace}, Status: geassv1alpha1.GeassDatabaseStatus{ConnectionSecret: "postgres-connection"}}
+	c := newFakeClient(app, db)
+	srv := &Server{Client: c}
+	form := url.Values{"kind": {"database"}, "name": {"postgres"}}
+	req := httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppAttach(rec, req, "api")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	var updated geassv1alpha1.GeassApp
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
+	require.Len(t, updated.Spec.Env, 1)
+	require.Equal(t, "DATABASE_URL", updated.Spec.Env[0].Name)
+	require.Equal(t, "postgres-connection", updated.Spec.Env[0].ValueFrom.SecretKeyRef.Name)
+}
+
 func TestHandleDatabaseCRUD(t *testing.T) {
 	ctx := context.Background()
 	c := newFakeClient()
@@ -127,7 +196,8 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("name", "orders")
-	form.Set("workspace", "dev")
+	form.Set("project", "payments")
+	form.Set("environment", "dev")
 	req := httptest.NewRequest(http.MethodPost, "/databases/create", strings.NewReader(form.Encode()))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -159,7 +229,8 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("name", testAppName)
-	form.Set("workspace", "dev")
+	form.Set("project", "payments")
+	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
 	req = req.WithContext(ctx)
@@ -220,9 +291,9 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
-			Workspace: geassv1alpha1.WorkspaceDev,
-			Image:     "nginx:alpine",
-			Port:      8080,
+			Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+			Image: "nginx:alpine",
+			Port:  8080,
 		},
 	}
 	srv := &Server{Client: newFakeClient(app)}
@@ -238,7 +309,7 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 
 func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
 	cluster := &geassv1alpha1.GeassCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: testClusterName},
 		Spec: geassv1alpha1.GeassClusterSpec{
 			Version:   "v1",
 			ServerURL: "https://127.0.0.1:6443",
@@ -251,13 +322,13 @@ func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
 	srv.handleClusterOverview(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "default")
-	require.Contains(t, rec.Body.String(), "Namespace: default")
+	require.Contains(t, rec.Body.String(), testClusterName)
+	require.Contains(t, rec.Body.String(), "Namespace: "+testClusterName)
 }
 
 func TestHandleClusterOverviewWithMetrics(t *testing.T) {
 	cluster := &geassv1alpha1.GeassCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassClusterSpec{
 			Version:   "v1",
 			ServerURL: "https://127.0.0.1:6443",
@@ -281,7 +352,7 @@ func TestHandleClusterOverviewWithMetrics(t *testing.T) {
 	srv.handleClusterOverview(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	body, _ := io.ReadAll(rec.Body)
-	require.Contains(t, string(body), "default")
+	require.Contains(t, string(body), testClusterName)
 	require.Contains(t, string(body), "Nodes")
 	require.Contains(t, string(body), "3")
 }

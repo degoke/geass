@@ -14,11 +14,11 @@ import (
 const systemNamespace = platform.SystemNamespace
 
 const (
-	hxRequestHeader    = "HX-Request"
-	hxRequestTrue      = "true"
-	formFieldWorkspace = "workspace"
-	routeActionEdit    = "edit"
-	routeActionUpdate  = "update"
+	hxRequestHeader      = "HX-Request"
+	hxRequestTrue        = "true"
+	formFieldEnvironment = "environment"
+	routeActionEdit      = "edit"
+	routeActionUpdate    = "update"
 )
 
 func isHXRequest(r *http.Request) bool {
@@ -34,7 +34,16 @@ func layout(title, body string) string {
 	<script src="https://unpkg.com/htmx.org@2.0.4"></script>
 	<style>
 		body { font-family: system-ui, sans-serif; margin: 2rem; }
+		:root { color-scheme: light; --blue: #1677ff; --ink: #172033; --muted: #667085; --line: #e5e7eb; }
+		body { color: var(--ink); background: #f8fafc; max-width: 1100px; margin: 0 auto; padding: 2rem; }
 		nav a { margin-right: 1rem; }
+		nav { padding-bottom: 2rem; border-bottom: 1px solid var(--line); margin-bottom: 2rem; }
+		a { color: var(--blue); text-decoration: none; } a:hover { text-decoration: underline; }
+		.button, button { display: inline-block; background: var(--blue); color: white; border: 0; border-radius: 6px; padding: .65rem 1rem; cursor: pointer; }
+		.eyebrow { color: var(--blue); font-size: .75rem; letter-spacing: .12em; font-weight: 700; }
+		.hero, .card { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 2px #00000008; }
+		.hero { padding: 3rem; margin-bottom: 1.5rem; } .cards { display: flex; flex-wrap: wrap; gap: 1rem; } .cards .card { min-width: 230px; flex: 1; }
+		.page-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 		table { border-collapse: collapse; width: 100%%; }
 		th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
 		.card { border: 1px solid #ddd; padding: 1rem; margin: 1rem 0; border-radius: 4px; display: inline-block; min-width: 180px; vertical-align: top; }
@@ -48,9 +57,14 @@ func layout(title, body string) string {
 		<a href="/">Home</a>
 		<a href="/apps">Apps</a>
 		<a href="/databases">Databases</a>
+		<a href="/logical-databases">Logical DBs</a>
 		<a href="/caches">Caches</a>
 		<a href="/object-stores">Object Storage</a>
 		<a href="/cluster">Cluster</a>
+		<a href="/ha-readiness">HA readiness</a>
+		<a href="/cloud-connections">Cloud connections</a>
+		<a href="/settings">Settings</a>
+		<a href="/projects">Projects</a>
 	</nav>
 	<main>%s</main>
 </body>
@@ -86,6 +100,12 @@ func pageTitle(r *http.Request) string {
 		return "Object Storage"
 	case strings.HasPrefix(r.URL.Path, "/cluster"):
 		return "Cluster Overview"
+	case strings.HasPrefix(r.URL.Path, "/ha-readiness"):
+		return "HA Readiness"
+	case strings.HasPrefix(r.URL.Path, "/cloud-connections"):
+		return "Cloud Connections"
+	case strings.HasPrefix(r.URL.Path, "/settings"):
+		return "Platform Settings"
 	default:
 		return "Geass Dashboard"
 	}
@@ -100,15 +120,22 @@ func conditionStatus(conditions []metav1.Condition, conditionType string) string
 	return "Unknown"
 }
 
-func workspaceSelect(selected string) string {
+func environmentSelect(selected string) string {
+	return environmentSelectOptions(selected, []string{"dev", "staging", "production"})
+}
+
+func environmentSelectOptions(selected string, options []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `<label>Workspace<select name="%s" required>`, formFieldWorkspace)
-	for _, ws := range platform.DefaultWorkspaces {
+	fmt.Fprintf(&b, `<label>Environment<select name="%s" required>`, formFieldEnvironment)
+	if selected == "" {
+		b.WriteString(`<option value="" selected disabled>Select environment</option>`)
+	}
+	for _, env := range options {
 		sel := ""
-		if ws == selected {
+		if string(env) == selected {
 			sel = " selected"
 		}
-		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, ws, sel, ws)
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, env, sel, env)
 	}
 	b.WriteString(`</select></label>`)
 	return b.String()
