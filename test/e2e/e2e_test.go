@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -261,6 +262,87 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+
+		It("creates all isolated project environments", func() {
+			By("creating cluster token secret")
+			secretManifest := `apiVersion: v1
+kind: Secret
+metadata:
+  name: geass-token
+  namespace: geass-system
+type: Opaque
+stringData:
+  token: e2e-token
+`
+			apply := exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(secretManifest)
+			_, err := utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating GeassCluster with addons disabled")
+			clusterManifest := `apiVersion: geass.geass.dev/v1alpha1
+kind: GeassCluster
+metadata:
+  name: default
+  namespace: geass-system
+spec:
+  version: v1
+  serverURL: https://127.0.0.1:6443
+  tokenSecretRef:
+    name: geass-token
+  addons:
+    certManager:
+      enabled: false
+    monitoring:
+      enabled: false
+`
+			apply = exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(clusterManifest)
+			_, err = utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "geasscluster", "default", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}).Should(Succeed())
+
+			By("creating GeassProject")
+			projectManifest := `apiVersion: geass.geass.dev/v1alpha1
+kind: GeassProject
+metadata:
+  name: e2e-platform
+  namespace: geass-system
+spec:
+  displayName: E2E Platform
+  clusterRef:
+    name: default
+  environments:
+    - dev
+    - staging
+    - production
+`
+			apply = exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(projectManifest)
+			_, err = utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "geassproject", "e2e-platform", "-n", namespace, "--ignore-not-found"))
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "geasscluster", "default", "-n", namespace, "--ignore-not-found"))
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret", "geass-token", "-n", namespace, "--ignore-not-found"))
+			})
+
+			for _, environment := range []string{"dev", "staging", "production"} {
+				env := environment
+				Eventually(func() error {
+					_, err := utils.Run(exec.Command("kubectl", "get", "namespace", "e2e-platform-"+env))
+					return err
+				}).Should(Succeed())
+			}
+		})
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying
