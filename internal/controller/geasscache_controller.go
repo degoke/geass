@@ -87,16 +87,16 @@ func (r *GeassCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	values := fmt.Sprintf(`architecture: standalone
 commonLabels:
-  geass.dev/managed-by: geass
-  geass.dev/project: %s
-  geass.dev/environment: %s
+  %s: %s
+  %s: %s
+  %s: %s
 auth:
   enabled: true
   password: "%s"
 master:
   persistence:
     enabled: false
-`, cache.Spec.Project, cache.Spec.Environment, password)
+`, platform.LabelManagedBy, platform.ManagedByValue, platform.LabelProject, cache.Spec.Project, platform.LabelEnvironment, cache.Spec.Environment, password)
 	spec := helmv1.HelmChartSpec{
 		Chart:           platform.RedisReleaseChart,
 		Repo:            platform.RedisChartRepo,
@@ -164,8 +164,10 @@ func (r *GeassCacheReconciler) reconcileConnectionSecret(ctx context.Context, ca
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, cache, "GeassCache")
 		secret.Data = map[string][]byte{
-			"host": []byte(host), "port": []byte("6379"), "password": []byte(password),
-			"uri": []byte(fmt.Sprintf("redis://:%s@%s:6379", password, host)),
+			platform.ConnectionKeyHost:     []byte(host),
+			platform.ConnectionKeyPort:     []byte(platform.RedisDefaultPort),
+			platform.ConnectionKeyPassword: []byte(password),
+			platform.ConnectionKeyURI:      fmt.Appendf(nil, "redis://:%s@%s:%s", password, host, platform.RedisDefaultPort),
 		}
 		return setSameNamespaceOwner(cache, secret, r.Scheme)
 	})

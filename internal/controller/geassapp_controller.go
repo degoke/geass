@@ -147,10 +147,10 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *GeassAppReconciler) appLabels(app *geassv1alpha1.GeassApp) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       app.Name,
-		"app.kubernetes.io/managed-by": "geass",
-		"geass.dev/project":            app.Spec.Project,
-		"geass.dev/environment":        string(app.Spec.Environment),
+		"app.kubernetes.io/name":   app.Name,
+		platform.K8sLabelManagedBy: platform.ManagedByValue,
+		platform.LabelProject:      app.Spec.Project,
+		platform.LabelEnvironment:  string(app.Spec.Environment),
 	}
 }
 

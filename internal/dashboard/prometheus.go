@@ -36,9 +36,9 @@ func defaultPrometheusURL() string {
 }
 
 func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (string, error) {
-	client := p.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+	httpClient := p.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 5 * time.Second}
 	}
 	base := p.BaseURL
 	if base == "" {
@@ -56,7 +56,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -111,7 +111,7 @@ func (s *Server) metricsCards(ctx context.Context) string {
 		prometheusURL := ""
 		if s.Client != nil {
 			config := &geassv1alpha1.GeassPlatformConfig{}
-			if err := s.Client.Get(ctx, client.ObjectKey{Name: "platform", Namespace: platform.SystemNamespace}, config); err == nil {
+			if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
 				prometheusURL = config.Spec.PrometheusURL
 			}
 		}

@@ -231,11 +231,17 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasshareadiness")
 		os.Exit(1)
 	}
-	if err := (&controller.GeassPlatformConfigReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.GeassPlatformConfigReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassplatformconfig")
 		os.Exit(1)
 	}
-	if err := (&controller.GeassCloudConnectionReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.GeassCloudConnectionReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscloudconnection")
 		os.Exit(1)
 	}

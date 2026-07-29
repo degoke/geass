@@ -119,6 +119,33 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ CI
+
+.PHONY: ci
+ci: go-mod-tidy ci-lint ci-test ci-build ci-build-geass ci-e2e ## Run all CI checks (requires Docker and Kind).
+
+.PHONY: ci-local
+ci-local: go-mod-tidy ci-lint ci-test ci-build ## Run CI checks without Docker or Kind.
+
+.PHONY: go-mod-tidy
+go-mod-tidy: ## Tidy go.mod and go.sum.
+	go mod tidy
+
+.PHONY: ci-lint
+ci-lint: lint-config lint ## Run the CI lint job.
+
+.PHONY: ci-test
+ci-test: test ## Run the CI unit test job.
+
+.PHONY: ci-build
+ci-build: build ## Build the manager binary.
+
+.PHONY: ci-build-geass
+ci-build-geass: build-geass ## Build the geass installer (requires Docker).
+
+.PHONY: ci-e2e
+ci-e2e: test-e2e ## Run the CI e2e job (requires Docker and Kind).
+
 ##@ Build
 
 .PHONY: build
@@ -146,8 +173,16 @@ INSTALLER_OPERATOR_MANIFESTS ?= pkg/installer/assets/operator.yaml
 GEASS_GOOS ?= linux
 GEASS_GOARCH ?= amd64
 
+.PHONY: require-docker
+require-docker: ## Fail fast when the container tool daemon is unavailable.
+	@$(CONTAINER_TOOL) info >/dev/null 2>&1 || { \
+		echo "Docker is required but $(CONTAINER_TOOL) is not available or the daemon is not running."; \
+		echo "Start Docker and retry, or run: make ci-local"; \
+		exit 1; \
+	}
+
 .PHONY: prepare-installer-assets
-prepare-installer-assets: manifests generate kustomize ## Build operator image and export embeddable install assets.
+prepare-installer-assets: require-docker manifests generate kustomize ## Build operator image and export embeddable install assets.
 	mkdir -p pkg/installer/assets
 	$(CONTAINER_TOOL) build -t $(OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) save $(OPERATOR_IMAGE) -o $(INSTALLER_OPERATOR_TAR)

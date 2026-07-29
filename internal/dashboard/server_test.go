@@ -19,8 +19,12 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-const testAppName = "demo"
-const testClusterName = "default"
+const (
+	testAppName       = "demo"
+	testClusterName   = "default"
+	testProjectName   = "payments"
+	testWorkerAppName = "worker"
+)
 
 type fakeMetrics struct {
 	values map[string]string
@@ -43,7 +47,7 @@ func TestHandleAppsList(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
-			Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+			Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 			Image: "nginx:alpine",
 		},
 	}
@@ -61,10 +65,10 @@ func TestHandleAppsList(t *testing.T) {
 
 func TestHandleProjectCreateAndDetail(t *testing.T) {
 	ctx := context.Background()
-	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}}
+	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace}}
 	c := newFakeClient(cluster)
 	srv := &Server{Client: c}
-	form := url.Values{"name": {"payments"}, "displayName": {"Payments"}, "cluster": {"default"}, "environments": {"dev,staging"}}
+	form := url.Values{formFieldName: {testProjectName}, "displayName": {"Payments"}, "cluster": {testClusterName}, "environments": {"dev,staging"}}
 	req := httptest.NewRequest(http.MethodPost, "/projects/create", strings.NewReader(form.Encode())).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -72,7 +76,7 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 
 	var project geassv1alpha1.GeassProject
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "payments", Namespace: platform.SystemNamespace}, &project))
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testProjectName, Namespace: platform.SystemNamespace}, &project))
 	require.Equal(t, "Payments", project.Spec.DisplayName)
 
 	detail := httptest.NewRecorder()
@@ -83,9 +87,9 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 
 func TestProjectResourceUsesProjectReference(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
-	req.Form = url.Values{"environment": {"staging"}, "project": {"payments"}}
+	req.Form = url.Values{"environment": {"staging"}, "project": {testProjectName}}
 	app := (&Server{}).appFromForm("api", "ghcr.io/acme/api:1", req)
-	require.Equal(t, "payments", app.Spec.Project)
+	require.Equal(t, testProjectName, app.Spec.Project)
 	require.Equal(t, geassv1alpha1.EnvironmentStaging, app.Spec.Environment)
 }
 
@@ -93,7 +97,7 @@ func TestHandleAppCreateValidation(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 
 	form := url.Values{}
-	form.Set("name", "")
+	form.Set(formFieldName, "")
 	form.Set("image", "")
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -109,8 +113,8 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	srv := &Server{Client: c}
 
 	form := url.Values{}
-	form.Set("name", testAppName)
-	form.Set("project", "payments")
+	form.Set(formFieldName, testAppName)
+	form.Set("project", testProjectName)
 	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
 	form.Set("port", "8080")
@@ -126,7 +130,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 
 	updateForm := url.Values{}
 	updateForm.Set("environment", "staging")
-	updateForm.Set("project", "payments")
+	updateForm.Set("project", testProjectName)
 	updateForm.Set("image", "nginx:1.25")
 	updateForm.Set("port", "9090")
 	upReq := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(updateForm.Encode()))
@@ -157,7 +161,7 @@ func TestHandleAppCreateRecordsDeployment(t *testing.T) {
 	ctx := context.Background()
 	c := newFakeClient()
 	srv := &Server{Client: c}
-	form := url.Values{"name": {"worker"}, "project": {"payments"}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:1"}}
+	form := url.Values{formFieldName: {testWorkerAppName}, "project": {testProjectName}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:1"}}
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -165,18 +169,18 @@ func TestHandleAppCreateRecordsDeployment(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 
 	var deployments geassv1alpha1.GeassDeploymentList
-	require.NoError(t, c.List(ctx, &deployments, client.MatchingLabels{"geass.dev/app": "worker"}))
+	require.NoError(t, c.List(ctx, &deployments, client.MatchingLabels{platform.LabelApp: testWorkerAppName}))
 	require.Len(t, deployments.Items, 1)
 	require.Equal(t, "ghcr.io/acme/worker:1", deployments.Items[0].Spec.Image)
 }
 
 func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	ctx := context.Background()
-	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: "payments", Image: "nginx"}}
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: testProjectName, Image: "nginx"}}
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "postgres", Namespace: platform.SystemNamespace}, Status: geassv1alpha1.GeassDatabaseStatus{ConnectionSecret: "postgres-connection"}}
 	c := newFakeClient(app, db)
 	srv := &Server{Client: c}
-	form := url.Values{"kind": {"database"}, "name": {"postgres"}}
+	form := url.Values{"kind": {"database"}, formFieldName: {"postgres"}}
 	req := httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -195,8 +199,8 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 	srv := &Server{Client: c}
 
 	form := url.Values{}
-	form.Set("name", "orders")
-	form.Set("project", "payments")
+	form.Set(formFieldName, "orders")
+	form.Set("project", testProjectName)
 	form.Set("environment", "dev")
 	req := httptest.NewRequest(http.MethodPost, "/databases/create", strings.NewReader(form.Encode()))
 	req = req.WithContext(ctx)
@@ -228,8 +232,8 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	srv := &Server{Client: c}
 
 	form := url.Values{}
-	form.Set("name", testAppName)
-	form.Set("project", "payments")
+	form.Set(formFieldName, testAppName)
+	form.Set("project", testProjectName)
 	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
@@ -291,7 +295,7 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
-			Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+			Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 			Image: "nginx:alpine",
 			Port:  8080,
 		},

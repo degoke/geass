@@ -24,6 +24,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
 
@@ -375,7 +376,7 @@ func (r *GeassNodeReconciler) resolveToken(
 		return "", err
 	}
 
-	for _, key := range []string{"token", "value", "k3s-token"} {
+	for _, key := range []string{platform.SecretKeyToken, platform.SecretKeyValue, platform.SecretKeyK3sToken} {
 		if v, ok := secret.Data[key]; ok {
 			return string(v), nil
 		}

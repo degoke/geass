@@ -92,13 +92,13 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 	values := fmt.Sprintf(`mode: standalone
 commonLabels:
-  geass.dev/managed-by: geass
-  geass.dev/project: %s
-  geass.dev/environment: %s
+  %s: %s
+  %s: %s
+  %s: %s
 rootUser: "%s"
 rootPassword: "%s"
 buckets:
-%s`, store.Spec.Project, store.Spec.Environment, accessKey, secretKey, bucketLines.String())
+%s`, platform.LabelManagedBy, platform.ManagedByValue, platform.LabelProject, store.Spec.Project, platform.LabelEnvironment, store.Spec.Environment, accessKey, secretKey, bucketLines.String())
 	spec := helmv1.HelmChartSpec{
 		Chart:           platform.MinIOReleaseChart,
 		Repo:            platform.MinIOChartRepo,

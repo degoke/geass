@@ -3,6 +3,11 @@ package controller
 import "github.com/degoke/geass/pkg/platform"
 
 const (
+	testProjectName      = "payments"
+	testClusterName      = "default"
+	testEnvDev           = "dev"
+	testEnvStaging       = "staging"
+	testEnvProduction    = "production"
 	testDevTargetNS      = "payments-dev"
 	testHelmChartNS      = platform.HelmChartNamespace
 	testAppName          = "demo"

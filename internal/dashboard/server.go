@@ -272,7 +272,7 @@ func (s *Server) handleHAReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 	healthy := 0
 	for _, node := range nodes.Items {
-		ready, schedulable := false, node.Spec.Unschedulable == false
+		ready, schedulable := false, !node.Spec.Unschedulable
 		for _, c := range node.Status.Conditions {
 			if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
 				ready = true
@@ -291,7 +291,7 @@ func (s *Server) handleHAReadinessCheck(w http.ResponseWriter, r *http.Request) 
 	if !requirePost(w, r) {
 		return
 	}
-	readiness := &geassv1alpha1.GeassHAReadiness{ObjectMeta: metav1.ObjectMeta{Name: "platform", Namespace: systemNamespace}}
+	readiness := &geassv1alpha1.GeassHAReadiness{ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: systemNamespace}}
 	if err := s.Client.Create(r.Context(), readiness); err != nil && !apierrors.IsAlreadyExists(err) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -346,7 +346,7 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handlePlatformSettings(w http.ResponseWriter, r *http.Request) {
 	config := &geassv1alpha1.GeassPlatformConfig{}
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: "platform", Namespace: systemNamespace}, config); err != nil && !apierrors.IsNotFound(err) {
+	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, config); err != nil && !apierrors.IsNotFound(err) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -358,9 +358,9 @@ func (s *Server) handlePlatformSettingsSave(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	config := &geassv1alpha1.GeassPlatformConfig{}
-	err := s.Client.Get(r.Context(), client.ObjectKey{Name: "platform", Namespace: systemNamespace}, config)
+	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, config)
 	if apierrors.IsNotFound(err) {
-		config = &geassv1alpha1.GeassPlatformConfig{ObjectMeta: metav1.ObjectMeta{Name: "platform", Namespace: systemNamespace}}
+		config = &geassv1alpha1.GeassPlatformConfig{ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: systemNamespace}}
 	} else if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -383,10 +383,6 @@ func (s *Server) handlePlatformSettingsSave(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 	s.renderFragment(w, r, s.appsTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) appsTable(ctx context.Context) string {
-	return s.appsTableFiltered(ctx, "", "")
 }
 
 func (s *Server) appsTableFiltered(ctx context.Context, project, environment string) string {
@@ -479,7 +475,12 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: app.Name + "-",
 			Namespace:    systemNamespace,
-			Labels:       map[string]string{"geass.dev/managed-by": "geass", "geass.dev/app": app.Name, "geass.dev/project": app.Spec.Project, "geass.dev/environment": string(app.Spec.Environment)},
+			Labels: map[string]string{
+				platform.LabelManagedBy:   platform.ManagedByValue,
+				platform.LabelApp:         app.Name,
+				platform.LabelProject:     app.Spec.Project,
+				platform.LabelEnvironment: string(app.Spec.Environment),
+			},
 		},
 		Spec: geassv1alpha1.GeassDeploymentSpec{
 			App: app.Name, Project: app.Spec.Project,
@@ -734,7 +735,7 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 
 func (s *Server) deploymentHistory(ctx context.Context, appName string) string {
 	var list geassv1alpha1.GeassDeploymentList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace), client.MatchingLabels{"geass.dev/app": appName}); err != nil {
+	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: appName}); err != nil {
 		return `<p class="error">Unable to load deployment history</p>`
 	}
 	if len(list.Items) == 0 {
@@ -859,7 +860,7 @@ func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name 
 		http.Error(w, "deployment revision not found", http.StatusNotFound)
 		return
 	}
-	if revision.Labels["geass.dev/app"] != name {
+	if revision.Labels[platform.LabelApp] != name {
 		http.Error(w, "deployment revision does not belong to app", http.StatusBadRequest)
 		return
 	}
@@ -880,10 +881,6 @@ func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name 
 
 func (s *Server) handleDatabases(w http.ResponseWriter, r *http.Request) {
 	s.renderFragment(w, r, s.databasesTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) databasesTable(ctx context.Context) string {
-	return s.databasesTableFiltered(ctx, "", "")
 }
 
 func (s *Server) databasesTableFiltered(ctx context.Context, project, environment string) string {
@@ -1098,10 +1095,6 @@ func (s *Server) handleCaches(w http.ResponseWriter, r *http.Request) {
 	s.renderFragment(w, r, s.cachesTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
 }
 
-func (s *Server) cachesTable(ctx context.Context) string {
-	return s.cachesTableFiltered(ctx, "", "")
-}
-
 func (s *Server) cachesTableFiltered(ctx context.Context, project, environment string) string {
 	var list geassv1alpha1.GeassCacheList
 	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
@@ -1253,10 +1246,6 @@ func (s *Server) handleCacheUpdate(w http.ResponseWriter, r *http.Request, name 
 
 func (s *Server) handleObjectStores(w http.ResponseWriter, r *http.Request) {
 	s.renderFragment(w, r, s.objectStoresTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) objectStoresTable(ctx context.Context) string {
-	return s.objectStoresTableFiltered(ctx, "", "")
 }
 
 func (s *Server) objectStoresTableFiltered(ctx context.Context, project, environment string) string {

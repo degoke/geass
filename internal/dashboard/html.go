@@ -16,6 +16,7 @@ const systemNamespace = platform.SystemNamespace
 const (
 	hxRequestHeader      = "HX-Request"
 	hxRequestTrue        = "true"
+	formFieldName        = "name"
 	formFieldEnvironment = "environment"
 	routeActionEdit      = "edit"
 	routeActionUpdate    = "update"
@@ -132,7 +133,7 @@ func environmentSelectOptions(selected string, options []string) string {
 	}
 	for _, env := range options {
 		sel := ""
-		if string(env) == selected {
+		if env == selected {
 			sel = " selected"
 		}
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, env, sel, env)

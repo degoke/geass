@@ -62,12 +62,28 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	jobName := logical.Name + "-create"
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: server.Status.TargetNamespace}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, job, func() error {
-		job.Labels = map[string]string{"geass.dev/managed-by": "geass", "geass.dev/project": logical.Spec.Project, "geass.dev/environment": string(logical.Spec.Environment), "geass.dev/logical-database": logical.Name}
+		job.Labels = map[string]string{
+			platform.LabelManagedBy:       platform.ManagedByValue,
+			platform.LabelProject:         logical.Spec.Project,
+			platform.LabelEnvironment:     string(logical.Spec.Environment),
+			platform.LabelLogicalDatabase: logical.Name,
+		}
 		if job.Status.Succeeded == 0 {
 			job.Spec.BackoffLimit = int32ptr(6)
 			job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
-			job.Spec.Template.Spec.Containers = []corev1.Container{{Name: "create-database", Image: "postgres:16-alpine", Env: []corev1.EnvVar{{Name: "PGHOST", ValueFrom: secretKey(server.Status.ConnectionSecret, "host")}, {Name: "PGPORT", ValueFrom: secretKey(server.Status.ConnectionSecret, "port")}, {Name: "PGUSER", ValueFrom: secretKey(server.Status.ConnectionSecret, "username")}, {Name: "PGPASSWORD", ValueFrom: secretKey(server.Status.ConnectionSecret, "password")}, {Name: "DB_NAME", Value: logical.Spec.DatabaseName}}, Command: []string{"/bin/sh", "-ceu", `if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then exit 0; fi
-psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB_NAME\""`}}}
+			job.Spec.Template.Spec.Containers = []corev1.Container{{
+				Name:  "create-database",
+				Image: "postgres:16-alpine",
+				Env: []corev1.EnvVar{
+					{Name: "PGHOST", ValueFrom: secretKey(server.Status.ConnectionSecret, platform.ConnectionKeyHost)},
+					{Name: "PGPORT", ValueFrom: secretKey(server.Status.ConnectionSecret, platform.ConnectionKeyPort)},
+					{Name: "PGUSER", ValueFrom: secretKey(server.Status.ConnectionSecret, platform.ConnectionKeyUsername)},
+					{Name: "PGPASSWORD", ValueFrom: secretKey(server.Status.ConnectionSecret, platform.ConnectionKeyPassword)},
+					{Name: "DB_NAME", Value: logical.Spec.DatabaseName},
+				},
+				Command: []string{"/bin/sh", "-ceu", `if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then exit 0; fi
+psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB_NAME\""`},
+			}}
 		}
 		return nil
 	}); err != nil {
@@ -87,8 +103,14 @@ psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB_NAME\""`}}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{
-			"host": []byte(parentSecret.Data["host"]), "port": []byte("5432"), "database": []byte(logical.Spec.DatabaseName),
-			"uri": []byte(fmt.Sprintf("postgresql://%s/%s", string(parentSecret.Data["host"]), logical.Spec.DatabaseName)),
+			platform.ConnectionKeyHost:     parentSecret.Data[platform.ConnectionKeyHost],
+			platform.ConnectionKeyPort:     []byte(platform.PostgresDefaultPort),
+			platform.ConnectionKeyDatabase: []byte(logical.Spec.DatabaseName),
+			platform.ConnectionKeyURI: fmt.Appendf(nil,
+				"postgresql://%s/%s",
+				string(parentSecret.Data[platform.ConnectionKeyHost]),
+				logical.Spec.DatabaseName,
+			),
 		}
 		return nil
 	}); err != nil {

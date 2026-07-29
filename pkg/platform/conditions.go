@@ -9,6 +9,7 @@ import (
 const (
 	ConditionReady       = "Ready"
 	ConditionAddonsReady = "AddonsReady"
+	ConditionReasonReady = "Ready"
 )
 
 // SetCondition upserts a condition on the provided slice and returns the updated slice.

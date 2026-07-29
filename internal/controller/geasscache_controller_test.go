@@ -37,7 +37,7 @@ var _ = Describe("GeassCache Controller", func() {
 		cache := &geassv1alpha1.GeassCache{
 			ObjectMeta: metav1.ObjectMeta{Name: testCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.CacheEngineRedis,
 			},
 		}
@@ -66,7 +66,7 @@ var _ = Describe("GeassCache Controller", func() {
 		cache := &geassv1alpha1.GeassCache{
 			ObjectMeta: metav1.ObjectMeta{Name: testTempCacheName, Namespace: ns},
 			Spec: geassv1alpha1.GeassCacheSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.CacheEngineRedis,
 			},
 		}

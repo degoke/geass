@@ -92,17 +92,17 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 	Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: platform.SystemNamespace}})).To(Succeed())
-	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassClusterSpec{Version: "v1", ServerURL: "https://cluster.example", TokenSecretRef: corev1.SecretReference{Name: "token"}}}
+	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassClusterSpec{Version: "v1", ServerURL: "https://cluster.example", TokenSecretRef: corev1.SecretReference{Name: "token"}}}
 	Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
-	cluster.Status.Conditions = []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue, Reason: "Ready", Message: "Cluster is ready", LastTransitionTime: metav1.Now()}}
+	cluster.Status.Conditions = []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue, Reason: platform.ConditionReasonReady, Message: "Cluster is ready", LastTransitionTime: metav1.Now()}}
 	Expect(k8sClient.Status().Update(ctx, cluster)).To(Succeed())
-	project := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: "default"}, Environments: []string{"dev", "staging", "production"}}}
+	project := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{testEnvDev, testEnvStaging, testEnvProduction}}}
 	Expect(k8sClient.Create(ctx, project)).To(Succeed())
 	project.Status.Environments = []geassv1alpha1.GeassProjectEnvironmentStatus{{Name: string(geassv1alpha1.EnvironmentDev), Namespace: "payments-dev"}, {Name: string(geassv1alpha1.EnvironmentStaging), Namespace: "payments-staging"}, {Name: string(geassv1alpha1.EnvironmentProduction), Namespace: "payments-production"}}
 	project.Status.Conditions = []metav1.Condition{{
-		Type:               "Ready",
+		Type:               platform.ConditionReady,
 		Status:             metav1.ConditionTrue,
-		Reason:             "Ready",
+		Reason:             platform.ConditionReasonReady,
 		Message:            "Project environments are ready",
 		LastTransitionTime: metav1.Now(),
 	}}

@@ -37,7 +37,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testObjectStoreName, Namespace: ns},
 			Spec: geassv1alpha1.GeassObjectStoreSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.ObjectStoreEngineMinIO,
 			},
 		}
@@ -71,7 +71,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testTempStoreName, Namespace: ns},
 			Spec: geassv1alpha1.GeassObjectStoreSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.ObjectStoreEngineMinIO,
 			},
 		}

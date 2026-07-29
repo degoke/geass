@@ -21,16 +21,29 @@ func TestProjectReconcilerCreatesEnvironmentNamespaces(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
-	cluster := &geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassClusterSpec{Version: "v1", ServerURL: "https://cluster.example", TokenSecretRef: corev1.SecretReference{Name: "token"}}, Status: geassv1alpha1.GeassClusterStatus{Conditions: []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue}}}}
-	project := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: "default"}, Environments: []string{"dev", "staging"}}}
+	cluster := &geassv1alpha1.GeassCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassClusterSpec{
+			Version: "v1", ServerURL: "https://cluster.example",
+			TokenSecretRef: corev1.SecretReference{Name: "token"},
+		},
+		Status: geassv1alpha1.GeassClusterStatus{Conditions: []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue}}},
+	}
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassProjectSpec{
+			ClusterRef:   corev1.LocalObjectReference{Name: testClusterName},
+			Environments: []string{testEnvDev, testEnvStaging},
+		},
+	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(project, cluster).WithObjects(project, cluster).Build()
 	r := &GeassProjectReconciler{Client: c, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), requestFor(project))
 	require.NoError(t, err)
 	for _, env := range project.Spec.Environments {
 		var ns corev1.Namespace
-		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "payments-" + env}, &ns))
-		require.Equal(t, "payments", ns.Labels["geass.dev/project"])
+		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: testProjectName + "-" + env}, &ns))
+		require.Equal(t, testProjectName, ns.Labels[platform.LabelProject])
 	}
 	var updated geassv1alpha1.GeassProject
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(project), &updated))

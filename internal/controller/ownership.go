@@ -15,11 +15,9 @@ import (
 )
 
 const (
-	labelManagedBy     = "geass.dev/managed-by"
 	labelGeassKind     = "geass.dev/kind"
 	labelGeassName     = "geass.dev/name"
 	labelGeassSystemNS = "geass.dev/system-namespace"
-	managedByValue     = "geass"
 )
 
 func resourceNamespace(project, environment string) (string, error) {
@@ -28,20 +26,20 @@ func resourceNamespace(project, environment string) (string, error) {
 
 func geassResourceLabels(owner client.Object, kind string) map[string]string {
 	labels := map[string]string{
-		labelManagedBy:     managedByValue,
-		labelGeassKind:     kind,
-		labelGeassName:     owner.GetName(),
-		labelGeassSystemNS: owner.GetNamespace(),
+		platform.LabelManagedBy: platform.ManagedByValue,
+		labelGeassKind:          kind,
+		labelGeassName:          owner.GetName(),
+		labelGeassSystemNS:      owner.GetNamespace(),
 	}
 	switch resource := owner.(type) {
 	case *geassv1alpha1.GeassApp:
-		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	case *geassv1alpha1.GeassDatabase:
-		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	case *geassv1alpha1.GeassCache:
-		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	case *geassv1alpha1.GeassObjectStore:
-		labels["geass.dev/project"], labels["geass.dev/environment"] = resource.Spec.Project, string(resource.Spec.Environment)
+		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	}
 	return labels
 }

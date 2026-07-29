@@ -254,12 +254,15 @@ func (r *GeassDatabaseReconciler) reconcileConnectionSecret(ctx context.Context,
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, db, "GeassDatabase")
 		secret.StringData = map[string]string{
-			"host":     host,
-			"port":     "5432",
-			"database": db.Name,
-			"username": username,
-			"password": password,
-			"uri":      fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", username, password, host, db.Name),
+			platform.ConnectionKeyHost:     host,
+			platform.ConnectionKeyPort:     platform.PostgresDefaultPort,
+			platform.ConnectionKeyDatabase: db.Name,
+			platform.ConnectionKeyUsername: username,
+			platform.ConnectionKeyPassword: password,
+			platform.ConnectionKeyURI: fmt.Sprintf(
+				"postgresql://%s:%s@%s:%s/%s",
+				username, password, host, platform.PostgresDefaultPort, db.Name,
+			),
 		}
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})

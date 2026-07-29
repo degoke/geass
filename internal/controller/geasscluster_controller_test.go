@@ -211,7 +211,7 @@ var _ = Describe("GeassApp Controller", func() {
 		app := &geassv1alpha1.GeassApp{
 			ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Image:    "nginx:alpine",
 				Replicas: &replicas,
 				Port:     8080,
@@ -253,7 +253,7 @@ var _ = Describe("GeassApp Controller", func() {
 		app := &geassv1alpha1.GeassApp{
 			ObjectMeta: metav1.ObjectMeta{Name: testMetricsAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Image:   "nginx:alpine",
 				Metrics: geassv1alpha1.GeassAppMetricsSpec{Enabled: true},
 			},
@@ -288,12 +288,12 @@ var _ = Describe("GeassDatabase Controller", func() {
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testDevTargetNS}})
 		_ = k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testHelmChartNS}})
-		readiness := &geassv1alpha1.GeassHAReadiness{ObjectMeta: metav1.ObjectMeta{Name: "platform", Namespace: ns}}
+		readiness := &geassv1alpha1.GeassHAReadiness{ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: ns}}
 		if err := k8sClient.Create(ctx, readiness); err == nil {
 			readiness.Status.Conditions = []metav1.Condition{{
 				Type:               platform.ConditionReady,
 				Status:             metav1.ConditionTrue,
-				Reason:             "Ready",
+				Reason:             platform.ConditionReasonReady,
 				Message:            "HA checks passed",
 				LastTransitionTime: metav1.Now(),
 			}}
@@ -305,7 +305,7 @@ var _ = Describe("GeassDatabase Controller", func() {
 		db := &geassv1alpha1.GeassDatabase{
 			ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: ns},
 			Spec: geassv1alpha1.GeassDatabaseSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.DatabaseEnginePostgres,
 			},
 		}
@@ -350,7 +350,7 @@ var _ = Describe("GeassDatabase Controller", func() {
 		db := &geassv1alpha1.GeassDatabase{
 			ObjectMeta: metav1.ObjectMeta{Name: testCleanupDBName, Namespace: ns},
 			Spec: geassv1alpha1.GeassDatabaseSpec{
-				Project: "payments", Environment: geassv1alpha1.EnvironmentDev,
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
 				Engine: geassv1alpha1.DatabaseEnginePostgres,
 			},
 		}

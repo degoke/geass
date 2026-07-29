@@ -42,7 +42,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		for env := range environments {
 			if namespace, err := platform.ProjectNamespace(project.Name, env); err == nil {
-				_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"geass.dev/project": project.Name}}}))
+				_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{platform.LabelProject: project.Name}}}))
 			}
 		}
 		controllerutil.RemoveFinalizer(&project, platform.FinalizerProject)
@@ -78,10 +78,10 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		desired[env] = namespace
 		if err := ensureNamespace(ctx, r.Client, namespace, map[string]string{
-			"geass.dev/managed-by":  "geass",
-			"geass.dev/project":     project.Name,
-			"geass.dev/environment": env,
-			"geass.dev/cluster":     cluster.Name,
+			platform.LabelManagedBy:   platform.ManagedByValue,
+			platform.LabelProject:     project.Name,
+			platform.LabelEnvironment: env,
+			platform.LabelCluster:     cluster.Name,
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -93,7 +93,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		namespace, err := platform.ProjectNamespace(project.Name, current.Name)
 		if err == nil {
-			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"geass.dev/project": project.Name}}}))
+			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{platform.LabelProject: project.Name}}}))
 		}
 	}
 
