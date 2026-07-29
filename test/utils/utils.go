@@ -54,7 +54,7 @@ func Run(cmd *exec.Cmd) (string, error) {
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "delete", "-f", url)
+	cmd := exec.Command("kubectl", "delete", "-f", url, "--ignore-not-found", "--wait=false")
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
 	}
@@ -73,8 +73,29 @@ func UninstallCertManager() {
 	}
 }
 
+// EnsureCertManagerNamespaceAbsent waits until cert-manager namespace is fully removed.
+func EnsureCertManagerNamespaceAbsent() error {
+	cmd := exec.Command("kubectl", "get", "namespace", "cert-manager", "-o", "name")
+	output, err := Run(cmd)
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+
+	UninstallCertManager()
+	waitCmd := exec.Command("kubectl", "wait", "--for=delete", "namespace/cert-manager", "--timeout=3m")
+	_, err = Run(waitCmd)
+	return err
+}
+
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
+	if err := EnsureCertManagerNamespaceAbsent(); err != nil {
+		return fmt.Errorf("wait for cert-manager namespace deletion: %w", err)
+	}
+
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
 	cmd := exec.Command("kubectl", "apply", "-f", url)
 	if _, err := Run(cmd); err != nil {
@@ -92,7 +113,7 @@ func InstallCertManager() error {
 	return err
 }
 
-// IsCertManagerCRDsInstalled checks if any Cert Manager CRDs are installed
+// IsCertManagerCRDsInstalled checks if all core Cert Manager CRDs are installed
 // by verifying the existence of key CRDs related to Cert Manager.
 func IsCertManagerCRDsInstalled() bool {
 	// List of common Cert Manager CRDs
@@ -115,14 +136,19 @@ func IsCertManagerCRDsInstalled() bool {
 	// Check if any of the Cert Manager CRDs are present
 	crdList := GetNonEmptyLines(output)
 	for _, crd := range certManagerCRDs {
+		found := false
 		for _, line := range crdList {
 			if strings.Contains(line, crd) {
-				return true
+				found = true
+				break
 			}
+		}
+		if !found {
+			return false
 		}
 	}
 
-	return false
+	return true
 }
 
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster

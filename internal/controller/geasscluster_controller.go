@@ -184,7 +184,6 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassCluster{}).

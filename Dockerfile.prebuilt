@@ -1,0 +1,6 @@
+# Package a locally built manager binary without pulling builder base images.
+# Build the Linux binary first: make build-linux
+FROM scratch
+COPY .build/manager /manager
+USER 65532:65532
+ENTRYPOINT ["/manager"]

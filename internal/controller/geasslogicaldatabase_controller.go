@@ -31,6 +31,7 @@ type GeassLogicalDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+
 func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var logical geassv1alpha1.GeassLogicalDatabase
 	if err := r.Get(ctx, req.NamespacedName, &logical); err != nil {

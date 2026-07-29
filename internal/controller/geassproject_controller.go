@@ -24,8 +24,9 @@ type GeassProjectReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
+
 func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var project geassv1alpha1.GeassProject
 	if err := r.Get(ctx, req.NamespacedName, &project); err != nil {

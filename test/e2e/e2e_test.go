@@ -61,10 +61,32 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
+		By("waiting for Geass CRDs to be established")
+		for _, crd := range []string{
+			"geassclusters.geass.geass.dev",
+			"geassprojects.geass.geass.dev",
+		} {
+			crdName := crd
+			Eventually(func(g Gomega) {
+				waitCmd := exec.Command("kubectl", "wait", "--for=condition=Established",
+					"crd/"+crdName, "--timeout=10s")
+				_, waitErr := utils.Run(waitCmd)
+				g.Expect(waitErr).NotTo(HaveOccurred())
+			}).WithTimeout(2 * time.Minute).WithPolling(2 * time.Second).Should(Succeed())
+		}
+
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("waiting for controller-manager rollout")
+		Eventually(func(g Gomega) {
+			rolloutCmd := exec.Command("kubectl", "rollout", "status",
+				"deployment/geass-controller-manager", "-n", namespace, "--timeout=10s")
+			_, rolloutErr := utils.Run(rolloutCmd)
+			g.Expect(rolloutErr).NotTo(HaveOccurred())
+		}).WithTimeout(3 * time.Minute).WithPolling(2 * time.Second).Should(Succeed())
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -99,6 +121,13 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
 			} else {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+			}
+
+			By("Fetching previous controller manager pod logs")
+			cmd = exec.Command("kubectl", "logs", controllerPodName, "-n", namespace, "--previous")
+			previousLogs, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Previous controller logs:\n %s", previousLogs)
 			}
 
 			By("Fetching Kubernetes events")
@@ -164,6 +193,92 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
 			}
 			Eventually(verifyControllerUp).Should(Succeed())
+		})
+
+		It("creates all isolated project environments", func() {
+			By("creating cluster token secret")
+			secretManifest := `apiVersion: v1
+kind: Secret
+metadata:
+  name: geass-token
+  namespace: geass-system
+type: Opaque
+stringData:
+  token: e2e-token
+`
+			apply := exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(secretManifest)
+			_, err := utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating GeassCluster with addons disabled")
+			clusterManifest := `apiVersion: geass.geass.dev/v1alpha1
+kind: GeassCluster
+metadata:
+  name: default
+  namespace: geass-system
+spec:
+  version: v1
+  serverURL: https://127.0.0.1:6443
+  tokenSecretRef:
+    name: geass-token
+  addons:
+    certManager:
+      enabled: false
+    monitoring:
+      enabled: false
+`
+			apply = exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(clusterManifest)
+			_, err = utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "geasscluster", "default", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				if output != "True" {
+					describeCmd := exec.Command("kubectl", "get", "geasscluster", "default", "-n", namespace, "-o", "yaml")
+					clusterYAML, _ := utils.Run(describeCmd)
+					GinkgoWriter.Printf("GeassCluster status while waiting for Ready:\n%s\n", clusterYAML)
+				}
+				g.Expect(output).To(Equal("True"))
+			}).Should(Succeed())
+
+			By("creating GeassProject")
+			projectManifest := `apiVersion: geass.geass.dev/v1alpha1
+kind: GeassProject
+metadata:
+  name: e2e-platform
+  namespace: geass-system
+spec:
+  displayName: E2E Platform
+  clusterRef:
+    name: default
+  environments:
+    - dev
+    - staging
+    - production
+`
+			apply = exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(projectManifest)
+			_, err = utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred())
+
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "geassproject", "e2e-platform", "-n", namespace, "--ignore-not-found"))
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "geasscluster", "default", "-n", namespace, "--ignore-not-found"))
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret", "geass-token", "-n", namespace, "--ignore-not-found"))
+			})
+
+			for _, environment := range []string{"dev", "staging", "production"} {
+				env := environment
+				Eventually(func() error {
+					_, err := utils.Run(exec.Command("kubectl", "get", "namespace", "e2e-platform-"+env))
+					return err
+				}).Should(Succeed())
+			}
 		})
 
 		It("should ensure the metrics endpoint is serving metrics", func() {
@@ -262,87 +377,6 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		It("creates all isolated project environments", func() {
-			By("creating cluster token secret")
-			secretManifest := `apiVersion: v1
-kind: Secret
-metadata:
-  name: geass-token
-  namespace: geass-system
-type: Opaque
-stringData:
-  token: e2e-token
-`
-			apply := exec.Command("kubectl", "apply", "-f", "-")
-			apply.Stdin = strings.NewReader(secretManifest)
-			_, err := utils.Run(apply)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("creating GeassCluster with addons disabled")
-			clusterManifest := `apiVersion: geass.geass.dev/v1alpha1
-kind: GeassCluster
-metadata:
-  name: default
-  namespace: geass-system
-spec:
-  version: v1
-  serverURL: https://127.0.0.1:6443
-  tokenSecretRef:
-    name: geass-token
-  addons:
-    certManager:
-      enabled: false
-    monitoring:
-      enabled: false
-`
-			apply = exec.Command("kubectl", "apply", "-f", "-")
-			apply.Stdin = strings.NewReader(clusterManifest)
-			_, err = utils.Run(apply)
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "geasscluster", "default", "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"))
-			}).Should(Succeed())
-
-			By("creating GeassProject")
-			projectManifest := `apiVersion: geass.geass.dev/v1alpha1
-kind: GeassProject
-metadata:
-  name: e2e-platform
-  namespace: geass-system
-spec:
-  displayName: E2E Platform
-  clusterRef:
-    name: default
-  environments:
-    - dev
-    - staging
-    - production
-`
-			apply = exec.Command("kubectl", "apply", "-f", "-")
-			apply.Stdin = strings.NewReader(projectManifest)
-			_, err = utils.Run(apply)
-			Expect(err).NotTo(HaveOccurred())
-
-			DeferCleanup(func() {
-				_, _ = utils.Run(exec.Command("kubectl", "delete", "geassproject", "e2e-platform", "-n", namespace, "--ignore-not-found"))
-				_, _ = utils.Run(exec.Command("kubectl", "delete", "geasscluster", "default", "-n", namespace, "--ignore-not-found"))
-				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret", "geass-token", "-n", namespace, "--ignore-not-found"))
-			})
-
-			for _, environment := range []string{"dev", "staging", "production"} {
-				env := environment
-				Eventually(func() error {
-					_, err := utils.Run(exec.Command("kubectl", "get", "namespace", "e2e-platform-"+env))
-					return err
-				}).Should(Succeed())
-			}
-		})
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying

@@ -23,6 +23,12 @@ import (
 	"github.com/degoke/geass/test/utils"
 )
 
+func init() {
+	if image := os.Getenv("E2E_MANAGER_IMAGE"); image != "" {
+		managerImage = image
+	}
+}
+
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/geass:v0.0.1"
@@ -31,11 +37,15 @@ var (
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager.
+// The default setup requires Kind. Cert-manager is not installed unless requested.
 //
 // To enable kubectl kuberc (use custom kubectl configurations), set: KUBECTL_KUBERC=true
 // By default, kuberc is disabled to ensure consistent test behavior across different environments.
-// To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
+// To install CertManager for webhook tests, set: CERT_MANAGER_INSTALL=true
+// To skip CertManager installation explicitly, set: CERT_MANAGER_INSTALL_SKIP=true
+// To skip the image build (image must already exist locally), set: E2E_SKIP_DOCKER_BUILD=true
+// To use the full multi-stage Dockerfile (pulls golang/distroless), set: E2E_DOCKER_BUILD=full
+// To override the manager image tag, set: E2E_MANAGER_IMAGE=example.com/geass:v0.0.1
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting geass e2e test suite\n")
@@ -43,15 +53,24 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
+	if os.Getenv("E2E_SKIP_DOCKER_BUILD") != "true" {
+		buildTarget := "docker-build-prebuilt"
+		if os.Getenv("E2E_DOCKER_BUILD") == "full" {
+			buildTarget = "docker-build"
+		}
+
+		By(fmt.Sprintf("building the manager image (%s)", buildTarget))
+		cmd := exec.Command("make", buildTarget, fmt.Sprintf("IMG=%s", managerImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping manager image build (E2E_SKIP_DOCKER_BUILD=true)\n")
+	}
 
 	// TODO(user): If you want to change the e2e test vendor from Kind,
 	// ensure the image is built and available, then remove the following block.
 	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
+	err := utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
 	configureKubectlKubeRC()
@@ -77,11 +96,11 @@ func configureKubectlKubeRC() {
 	}
 }
 
-// setupCertManager installs CertManager if needed for webhook tests.
-// Skips installation if CERT_MANAGER_INSTALL_SKIP=true or if already present.
+// setupCertManager installs CertManager when enabled for webhook tests.
+// Skips installation by default; set CERT_MANAGER_INSTALL=true to opt in.
 func setupCertManager() {
-	if os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true" {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager installation (CERT_MANAGER_INSTALL_SKIP=true)\n")
+	if !certManagerInstallEnabled() {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager installation (set CERT_MANAGER_INSTALL=true to enable)\n")
 		return
 	}
 
@@ -96,6 +115,13 @@ func setupCertManager() {
 
 	By("installing CertManager")
 	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+}
+
+func certManagerInstallEnabled() bool {
+	if os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true" {
+		return false
+	}
+	return os.Getenv("CERT_MANAGER_INSTALL") == "true"
 }
 
 // teardownCertManager uninstalls CertManager if it was installed by setupCertManager.

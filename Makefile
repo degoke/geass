@@ -45,7 +45,7 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -76,8 +76,8 @@ test-k3s-integration: ## Run K3s HelmChart integration tests (requires K3S_INTEG
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # kubectl kuberc is disabled by default for test isolation; enable with:
 # - KUBECTL_KUBERC=true
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# CertManager is skipped by default; enable webhook e2e setup with:
+# - CERT_MANAGER_INSTALL=true
 KIND_CLUSTER ?= geass-test-e2e
 
 .PHONY: setup-test-e2e
@@ -159,9 +159,18 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
+.PHONY: build-linux
+build-linux: ## Build manager binary for Linux containers.
+	@mkdir -p .build
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell go env GOARCH) go build -o .build/manager cmd/main.go
+
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
+
+.PHONY: docker-build-prebuilt
+docker-build-prebuilt: build-linux ## Build docker image from a local Linux binary (no registry pull).
+	$(CONTAINER_TOOL) build -f Dockerfile.prebuilt -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

@@ -19,6 +19,7 @@ type GeassPlatformConfigReconciler struct {
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs/status,verbs=get;update;patch
+
 func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var config geassv1alpha1.GeassPlatformConfig
 	if err := r.Get(ctx, req.NamespacedName, &config); err != nil {
@@ -43,6 +44,7 @@ type GeassCloudConnectionReconciler struct {
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections/status,verbs=get;update;patch
+
 func (r *GeassCloudConnectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var connection geassv1alpha1.GeassCloudConnection
 	if err := r.Get(ctx, req.NamespacedName, &connection); err != nil {

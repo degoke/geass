@@ -6,6 +6,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,13 +39,18 @@ func Ensure(ctx context.Context, c client.Client, name string, spec helmv1.HelmC
 func Delete(ctx context.Context, c client.Client, name string) error {
 	chart := &helmv1.HelmChart{}
 	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: platform.HelmChartNamespace}, chart)
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return c.Delete(ctx, chart)
+	if err := c.Delete(ctx, chart); apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // IsReady reports whether the HelmChart install job completed successfully.

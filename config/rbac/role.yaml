@@ -8,6 +8,7 @@ rules:
   - ""
   resources:
   - configmaps
+  - namespaces
   - secrets
   - services
   verbs:
@@ -43,18 +44,27 @@ rules:
   resources:
   - jobs
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - geass.geass.dev
   resources:
   - geassapps
   - geasscaches
+  - geasscloudconnections
   - geassclusters
   - geassdatabases
+  - geasshareadinesses
+  - geasslogicaldatabases
   - geassnodes
   - geassobjectstores
+  - geassplatformconfigs
+  - geassprojects
   verbs:
   - create
   - delete
@@ -72,6 +82,7 @@ rules:
   - geassdatabases/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
+  - geassprojects/finalizers
   verbs:
   - update
 - apiGroups:
@@ -79,22 +90,19 @@ rules:
   resources:
   - geassapps/status
   - geasscaches/status
+  - geasscloudconnections/status
   - geassclusters/status
   - geassdatabases/status
+  - geasshareadinesses/status
+  - geasslogicaldatabases/status
   - geassnodes/status
   - geassobjectstores/status
+  - geassplatformconfigs/status
+  - geassprojects/status
   verbs:
   - get
   - patch
   - update
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasshareadinesses
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - helm.cattle.io
   resources:
@@ -142,4 +150,12 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
   - watch

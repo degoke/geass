@@ -5,6 +5,7 @@
 *.so
 *.dylib
 bin/*
+.build/
 pkg/installer/assets/geass-operator.tar
 pkg/installer/assets/operator.yaml
 Dockerfile.cross
