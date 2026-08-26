@@ -61,10 +61,8 @@ spec:
                 type: string
               environment:
                 description: Environment is the project environment.
-                enum:
-                - dev
-                - staging
-                - production
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               project:
                 description: Project is the owning project.

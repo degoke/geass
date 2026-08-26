@@ -1,0 +1,88 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassconsolesessions.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassConsoleSession
+    listKind: GeassConsoleSessionList
+    plural: geassconsolesessions
+    singular: geassconsolesession
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              actor:
+                type: string
+              app:
+                type: string
+              command:
+                items:
+                  type: string
+                type: array
+              container:
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                type: string
+              pod:
+                type: string
+              project:
+                type: string
+              timeoutSeconds:
+                format: int32
+                type: integer
+            required:
+            - app
+            - container
+            - environment
+            - pod
+            - project
+            type: object
+          status:
+            properties:
+              endedAt:
+                format: date-time
+                type: string
+              phase:
+                type: string
+              reason:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

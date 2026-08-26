@@ -1,0 +1,4521 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+    control-plane: controller-manager
+  name: geass-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassapps.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassApp
+    listKind: GeassAppList
+    plural: geassapps
+    singular: geassapp
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.environment
+      name: Environment
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassApp is the Schema for the geassapps API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GeassAppSpec defines the desired state of GeassApp.
+            properties:
+              autoscaling:
+                description: Autoscaling configures optional CPU-based horizontal
+                  pod autoscaling.
+                properties:
+                  maxReplicas:
+                    description: MaxReplicas is the upper bound for autoscaling.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minReplicas:
+                    description: MinReplicas is the lower bound for autoscaling.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  targetCPUUtilization:
+                    description: CPUUtilization is the target average CPU utilization
+                      percentage.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                required:
+                - maxReplicas
+                type: object
+              build:
+                description: Build configures image command and working directory
+                  behavior.
+                properties:
+                  args:
+                    description: Args overrides image arguments when set.
+                    items:
+                      type: string
+                    type: array
+                  argsFrom:
+                    description: ArgsFrom contains Secret references. Values are never
+                      copied to status or logs.
+                    items:
+                      description: |-
+                        LocalObjectReference contains enough information to let you locate the
+                        referenced object inside the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                  cache:
+                    type: boolean
+                  command:
+                    description: Command overrides the image entrypoint when set.
+                    items:
+                      type: string
+                    type: array
+                  registry:
+                    description: GeassAppRegistrySpec configures the destination image
+                      registry.
+                    properties:
+                      credentialRef:
+                        description: |-
+                          LocalObjectReference contains enough information to let you locate the
+                          referenced object inside the same namespace.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      repository:
+                        type: string
+                    type: object
+                  workingDir:
+                    description: WorkingDir sets the container working directory.
+                    type: string
+                type: object
+              configData:
+                additionalProperties:
+                  type: string
+                description: ConfigData is key/value data stored in an owned ConfigMap.
+                type: object
+              configMapRefs:
+                description: ConfigMapRefs lists existing ConfigMaps in the target
+                  namespace to mount under /config/refs/<name>.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              deploy:
+                description: Deploy configures rollout, restart, and health behavior.
+                properties:
+                  failureThreshold:
+                    description: FailureThreshold is the number of failed rollout
+                      health observations before action.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  livenessProbe:
+                    description: LivenessProbe restarts an unhealthy container.
+                    properties:
+                      exec:
+                        description: Exec specifies a command to execute in the container.
+                        properties:
+                          command:
+                            description: |-
+                              Command is the command line to execute inside the container, the working directory for the
+                              command  is root ('/') in the container's filesystem. The command is simply exec'd, it is
+                              not run inside a shell, so traditional shell instructions ('|', etc) won't work. To use
+                              a shell, you need to explicitly call out to that shell.
+                              Exit status of 0 is treated as live/healthy and non-zero is unhealthy.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      failureThreshold:
+                        description: |-
+                          Minimum consecutive failures for the probe to be considered failed after having succeeded.
+                          Defaults to 3. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      grpc:
+                        description: GRPC specifies a GRPC HealthCheckRequest.
+                        properties:
+                          port:
+                            description: Port number of the gRPC service. Number must
+                              be in the range 1 to 65535.
+                            format: int32
+                            type: integer
+                          service:
+                            default: ""
+                            description: |-
+                              Service is the name of the service to place in the gRPC HealthCheckRequest
+                              (see https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+                              If this is not specified, the default behavior is defined by gRPC.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      httpGet:
+                        description: HTTPGet specifies an HTTP GET request to perform.
+                        properties:
+                          host:
+                            description: |-
+                              Host name to connect to, defaults to the pod IP. You probably want to set
+                              "Host" in httpHeaders instead.
+                            type: string
+                          httpHeaders:
+                            description: Custom headers to set in the request. HTTP
+                              allows repeated headers.
+                            items:
+                              description: HTTPHeader describes a custom header to
+                                be used in HTTP probes
+                              properties:
+                                name:
+                                  description: |-
+                                    The header field name.
+                                    This will be canonicalized upon output, so case-variant names will be understood as the same header.
+                                  type: string
+                                value:
+                                  description: The header field value
+                                  type: string
+                              required:
+                              - name
+                              - value
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          path:
+                            description: Path to access on the HTTP server.
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Name or number of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                          scheme:
+                            description: |-
+                              Scheme to use for connecting to the host.
+                              Defaults to HTTP.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      initialDelaySeconds:
+                        description: |-
+                          Number of seconds after the container has started before liveness probes are initiated.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: |-
+                          How often (in seconds) to perform the probe.
+                          Default to 10 seconds. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      successThreshold:
+                        description: |-
+                          Minimum consecutive successes for the probe to be considered successful after having failed.
+                          Defaults to 1. Must be 1 for liveness and startup. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      tcpSocket:
+                        description: TCPSocket specifies a connection to a TCP port.
+                        properties:
+                          host:
+                            description: 'Optional: Host name to connect to, defaults
+                              to the pod IP.'
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Number or name of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - port
+                        type: object
+                      terminationGracePeriodSeconds:
+                        description: |-
+                          Optional duration in seconds the pod needs to terminate gracefully upon probe failure.
+                          The grace period is the duration in seconds after the processes running in the pod are sent
+                          a termination signal and the time when the processes are forcibly halted with a kill signal.
+                          Set this value longer than the expected cleanup time for your process.
+                          If this value is nil, the pod's terminationGracePeriodSeconds will be used. Otherwise, this
+                          value overrides the value provided by the pod spec.
+                          Value must be non-negative integer. The value zero indicates stop immediately via
+                          the kill signal (no opportunity to shut down).
+                          This is a beta field and requires enabling ProbeTerminationGracePeriod feature gate.
+                          Minimum value is 1. spec.terminationGracePeriodSeconds is used if unset.
+                        format: int64
+                        type: integer
+                      timeoutSeconds:
+                        description: |-
+                          Number of seconds after which the probe times out.
+                          Defaults to 1 second. Minimum value is 1.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                    type: object
+                  pauseOnFailure:
+                    description: PauseOnFailure pauses further rollout processing
+                      when true.
+                    type: boolean
+                  readinessProbe:
+                    description: ReadinessProbe is the probe used to determine whether
+                      traffic is safe.
+                    properties:
+                      exec:
+                        description: Exec specifies a command to execute in the container.
+                        properties:
+                          command:
+                            description: |-
+                              Command is the command line to execute inside the container, the working directory for the
+                              command  is root ('/') in the container's filesystem. The command is simply exec'd, it is
+                              not run inside a shell, so traditional shell instructions ('|', etc) won't work. To use
+                              a shell, you need to explicitly call out to that shell.
+                              Exit status of 0 is treated as live/healthy and non-zero is unhealthy.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      failureThreshold:
+                        description: |-
+                          Minimum consecutive failures for the probe to be considered failed after having succeeded.
+                          Defaults to 3. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      grpc:
+                        description: GRPC specifies a GRPC HealthCheckRequest.
+                        properties:
+                          port:
+                            description: Port number of the gRPC service. Number must
+                              be in the range 1 to 65535.
+                            format: int32
+                            type: integer
+                          service:
+                            default: ""
+                            description: |-
+                              Service is the name of the service to place in the gRPC HealthCheckRequest
+                              (see https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+                              If this is not specified, the default behavior is defined by gRPC.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      httpGet:
+                        description: HTTPGet specifies an HTTP GET request to perform.
+                        properties:
+                          host:
+                            description: |-
+                              Host name to connect to, defaults to the pod IP. You probably want to set
+                              "Host" in httpHeaders instead.
+                            type: string
+                          httpHeaders:
+                            description: Custom headers to set in the request. HTTP
+                              allows repeated headers.
+                            items:
+                              description: HTTPHeader describes a custom header to
+                                be used in HTTP probes
+                              properties:
+                                name:
+                                  description: |-
+                                    The header field name.
+                                    This will be canonicalized upon output, so case-variant names will be understood as the same header.
+                                  type: string
+                                value:
+                                  description: The header field value
+                                  type: string
+                              required:
+                              - name
+                              - value
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          path:
+                            description: Path to access on the HTTP server.
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Name or number of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                          scheme:
+                            description: |-
+                              Scheme to use for connecting to the host.
+                              Defaults to HTTP.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      initialDelaySeconds:
+                        description: |-
+                          Number of seconds after the container has started before liveness probes are initiated.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: |-
+                          How often (in seconds) to perform the probe.
+                          Default to 10 seconds. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      successThreshold:
+                        description: |-
+                          Minimum consecutive successes for the probe to be considered successful after having failed.
+                          Defaults to 1. Must be 1 for liveness and startup. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      tcpSocket:
+                        description: TCPSocket specifies a connection to a TCP port.
+                        properties:
+                          host:
+                            description: 'Optional: Host name to connect to, defaults
+                              to the pod IP.'
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Number or name of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - port
+                        type: object
+                      terminationGracePeriodSeconds:
+                        description: |-
+                          Optional duration in seconds the pod needs to terminate gracefully upon probe failure.
+                          The grace period is the duration in seconds after the processes running in the pod are sent
+                          a termination signal and the time when the processes are forcibly halted with a kill signal.
+                          Set this value longer than the expected cleanup time for your process.
+                          If this value is nil, the pod's terminationGracePeriodSeconds will be used. Otherwise, this
+                          value overrides the value provided by the pod spec.
+                          Value must be non-negative integer. The value zero indicates stop immediately via
+                          the kill signal (no opportunity to shut down).
+                          This is a beta field and requires enabling ProbeTerminationGracePeriod feature gate.
+                          Minimum value is 1. spec.terminationGracePeriodSeconds is used if unset.
+                        format: int64
+                        type: integer
+                      timeoutSeconds:
+                        description: |-
+                          Number of seconds after which the probe times out.
+                          Defaults to 1 second. Minimum value is 1.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                    type: object
+                  restartPolicy:
+                    default: Always
+                    description: RestartPolicy controls pod restart behavior. Kubernetes
+                      deployments support Always.
+                    enum:
+                    - Always
+                    type: string
+                  rollbackOnFailure:
+                    description: RollbackOnFailure requests rollback metadata to be
+                      recorded after a failed rollout.
+                    type: boolean
+                  startupProbe:
+                    description: |-
+                      Probe describes a health check to be performed against a container to determine whether it is
+                      alive or ready to receive traffic.
+                    properties:
+                      exec:
+                        description: Exec specifies a command to execute in the container.
+                        properties:
+                          command:
+                            description: |-
+                              Command is the command line to execute inside the container, the working directory for the
+                              command  is root ('/') in the container's filesystem. The command is simply exec'd, it is
+                              not run inside a shell, so traditional shell instructions ('|', etc) won't work. To use
+                              a shell, you need to explicitly call out to that shell.
+                              Exit status of 0 is treated as live/healthy and non-zero is unhealthy.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      failureThreshold:
+                        description: |-
+                          Minimum consecutive failures for the probe to be considered failed after having succeeded.
+                          Defaults to 3. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      grpc:
+                        description: GRPC specifies a GRPC HealthCheckRequest.
+                        properties:
+                          port:
+                            description: Port number of the gRPC service. Number must
+                              be in the range 1 to 65535.
+                            format: int32
+                            type: integer
+                          service:
+                            default: ""
+                            description: |-
+                              Service is the name of the service to place in the gRPC HealthCheckRequest
+                              (see https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+                              If this is not specified, the default behavior is defined by gRPC.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      httpGet:
+                        description: HTTPGet specifies an HTTP GET request to perform.
+                        properties:
+                          host:
+                            description: |-
+                              Host name to connect to, defaults to the pod IP. You probably want to set
+                              "Host" in httpHeaders instead.
+                            type: string
+                          httpHeaders:
+                            description: Custom headers to set in the request. HTTP
+                              allows repeated headers.
+                            items:
+                              description: HTTPHeader describes a custom header to
+                                be used in HTTP probes
+                              properties:
+                                name:
+                                  description: |-
+                                    The header field name.
+                                    This will be canonicalized upon output, so case-variant names will be understood as the same header.
+                                  type: string
+                                value:
+                                  description: The header field value
+                                  type: string
+                              required:
+                              - name
+                              - value
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          path:
+                            description: Path to access on the HTTP server.
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Name or number of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                          scheme:
+                            description: |-
+                              Scheme to use for connecting to the host.
+                              Defaults to HTTP.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      initialDelaySeconds:
+                        description: |-
+                          Number of seconds after the container has started before liveness probes are initiated.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: |-
+                          How often (in seconds) to perform the probe.
+                          Default to 10 seconds. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      successThreshold:
+                        description: |-
+                          Minimum consecutive successes for the probe to be considered successful after having failed.
+                          Defaults to 1. Must be 1 for liveness and startup. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      tcpSocket:
+                        description: TCPSocket specifies a connection to a TCP port.
+                        properties:
+                          host:
+                            description: 'Optional: Host name to connect to, defaults
+                              to the pod IP.'
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Number or name of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - port
+                        type: object
+                      terminationGracePeriodSeconds:
+                        description: |-
+                          Optional duration in seconds the pod needs to terminate gracefully upon probe failure.
+                          The grace period is the duration in seconds after the processes running in the pod are sent
+                          a termination signal and the time when the processes are forcibly halted with a kill signal.
+                          Set this value longer than the expected cleanup time for your process.
+                          If this value is nil, the pod's terminationGracePeriodSeconds will be used. Otherwise, this
+                          value overrides the value provided by the pod spec.
+                          Value must be non-negative integer. The value zero indicates stop immediately via
+                          the kill signal (no opportunity to shut down).
+                          This is a beta field and requires enabling ProbeTerminationGracePeriod feature gate.
+                          Minimum value is 1. spec.terminationGracePeriodSeconds is used if unset.
+                        format: int64
+                        type: integer
+                      timeoutSeconds:
+                        description: |-
+                          Number of seconds after which the probe times out.
+                          Defaults to 1 second. Minimum value is 1.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
+              env:
+                description: Env is a list of environment variables injected into
+                  the container.
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              envFrom:
+                description: EnvFrom loads environment variables from referenced ConfigMaps
+                  and Secrets in the target namespace.
+                items:
+                  description: EnvFromSource represents the source of a set of ConfigMaps
+                    or Secrets
+                  properties:
+                    configMapRef:
+                      description: The ConfigMap to select from
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                        optional:
+                          description: Specify whether the ConfigMap must be defined
+                          type: boolean
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    prefix:
+                      description: |-
+                        Optional text to prepend to the name of each environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    secretRef:
+                      description: The Secret to select from
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                        optional:
+                          description: Specify whether the Secret must be defined
+                          type: boolean
+                      type: object
+                      x-kubernetes-map-type: atomic
+                  type: object
+                type: array
+              environment:
+                description: Environment is the project environment for this app.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              image:
+                description: Image is the container image to run (deprecated; use
+                  source.image.image).
+                type: string
+              ingress:
+                description: Ingress configures Traefik ingress exposure.
+                properties:
+                  dnsVerification:
+                    description: DNSVerification records the desired DNS verification
+                      behavior.
+                    type: boolean
+                  host:
+                    description: Host is the ingress hostname.
+                    type: string
+                  path:
+                    default: /
+                    description: Path is the HTTP path prefix.
+                    type: string
+                  rules:
+                    description: Rules allows multiple host/path routes. Host and
+                      Path remain the shorthand form.
+                    items:
+                      properties:
+                        host:
+                          type: string
+                        path:
+                          type: string
+                      required:
+                      - host
+                      type: object
+                    type: array
+                  tlsEnabled:
+                    description: TLSEnabled requests TLS termination via cert-manager
+                      when true.
+                    type: boolean
+                type: object
+              logs:
+                description: Logs configures durable log archival without exposing
+                  log contents in status.
+                properties:
+                  archiveStoreRef:
+                    description: ArchiveStoreRef selects the GeassObjectStore used
+                      for durable logs/history.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  retentionHours:
+                    description: RetentionHours bounds archived application and deployment
+                      logs.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              metrics:
+                description: Metrics configures optional Prometheus scraping.
+                properties:
+                  enabled:
+                    description: Enabled creates a ServiceMonitor when true.
+                    type: boolean
+                  path:
+                    default: /metrics
+                    description: Path is the metrics HTTP path.
+                    type: string
+                  port:
+                    default: http
+                    description: Port is the metrics port name or number on the Service.
+                    type: string
+                type: object
+              port:
+                default: 8080
+                description: Port is the primary container and Service port.
+                format: int32
+                minimum: 1
+                type: integer
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
+              replicas:
+                default: 1
+                description: Replicas is the desired Deployment replica count.
+                format: int32
+                minimum: 0
+                type: integer
+              resources:
+                description: Resources configures CPU and memory requests/limits for
+                  the app container.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              secretData:
+                additionalProperties:
+                  type: string
+                description: SecretData is key/value data stored in an owned Secret.
+                type: object
+              secretRef:
+                description: SecretRef points to the system-namespace Secret containing
+                  dashboard-managed app secrets.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              secretRefs:
+                description: SecretRefs lists existing Secrets in the target namespace
+                  to mount under /secrets/refs/<name>.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              sharedVariableRefs:
+                description: |-
+                  SharedVariableRefs selects project shared variables to inject into this app.
+                  When empty, all shared variables for the app environment remain available for backward compatibility.
+                items:
+                  pattern: ^[A-Z_][A-Z0-9_]*$
+                  type: string
+                type: array
+              source:
+                description: |-
+                  Source selects exactly one image or Git source. Image is retained as a deprecated
+                  compatibility field for existing resources.
+                properties:
+                  git:
+                    description: GeassAppGitSource identifies a GitHub source revision.
+                    properties:
+                      branch:
+                        type: string
+                      commit:
+                        description: Commit pins the source when supplied.
+                        type: string
+                      connectionRef:
+                        description: ConnectionRef identifies a project GitHub connection
+                          Secret.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      context:
+                        default: .
+                        description: Context is the build context relative to the
+                          repository root.
+                        type: string
+                      dockerfile:
+                        default: Dockerfile
+                        description: Dockerfile is relative to Context.
+                        type: string
+                      repository:
+                        type: string
+                      waitForCI:
+                        description: WaitForCI requires successful checks for the
+                          selected commit.
+                        type: boolean
+                      watchPatterns:
+                        description: WatchPatterns limits webhook-triggered builds.
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - branch
+                    - connectionRef
+                    - repository
+                    type: object
+                  image:
+                    description: GeassAppImageSource identifies an existing image
+                      artifact.
+                    properties:
+                      image:
+                        type: string
+                      pullSecret:
+                        description: PullSecret references a Secret containing registry
+                          pull credentials.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - image
+                    type: object
+                type: object
+            required:
+            - environment
+            - project
+            type: object
+          status:
+            description: GeassAppStatus defines the observed state of GeassApp.
+            properties:
+              activeBuild:
+                description: ActiveBuild references the current Git build.
+                type: string
+              conditions:
+                description: conditions represent the current state of the GeassApp
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              dnsMessage:
+                type: string
+              dnsName:
+                description: DNSName is the hostname users should point at the Traefik
+                  entrypoint.
+                type: string
+              dnsVerified:
+                type: boolean
+              healthCheckFailures:
+                format: int32
+                type: integer
+              resolvedImage:
+                description: ResolvedImage is the immutable digest used by the active
+                  deployment.
+                type: string
+              rolloutPaused:
+                type: boolean
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
+                  in.
+                type: string
+              traefikTarget:
+                description: TraefikTarget is the observed ingress target when available.
+                type: string
+              url:
+                description: URL is the primary ingress URL when configured.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassbuilds.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassBuild
+    listKind: GeassBuildList
+    plural: geassbuilds
+    singular: geassbuild
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              app:
+                type: string
+              branch:
+                type: string
+              cache:
+                type: boolean
+              connectionRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              context:
+                type: string
+              credentialRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              dockerfile:
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                type: string
+              gitCredentialRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              logStoreRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              project:
+                type: string
+              registry:
+                type: string
+              repository:
+                type: string
+              revision:
+                type: string
+              waitForCI:
+                type: boolean
+            required:
+            - app
+            - environment
+            - project
+            type: object
+          status:
+            properties:
+              cancelRequested:
+                type: boolean
+              ciChecks:
+                items:
+                  type: string
+                type: array
+              ciState:
+                type: string
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureReason:
+                type: string
+              image:
+                type: string
+              imageDigest:
+                type: string
+              jobRef:
+                type: string
+              lastLogLine:
+                type: string
+              logRef:
+                type: string
+              phase:
+                type: string
+              retryCount:
+                format: int32
+                type: integer
+              sourceRevision:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geasscaches.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassCache
+    listKind: GeassCacheList
+    plural: geasscaches
+    singular: geasscache
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.environment
+      name: Environment
+      type: string
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassCache is the Schema for the geasscaches API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GeassCacheSpec defines the desired state of GeassCache.
+            properties:
+              engine:
+                description: Engine is the cache engine to provision.
+                enum:
+                - Redis
+                type: string
+              environment:
+                description: Environment is the project environment.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
+              version:
+                default: "7.4"
+                description: Version is the Redis chart/app version hint.
+                type: string
+            required:
+            - engine
+            - environment
+            - project
+            type: object
+          status:
+            description: GeassCacheStatus defines the observed state of GeassCache.
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassCache
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              connectionSecret:
+                description: ConnectionSecret is the name of the Secret containing
+                  Redis credentials.
+                type: string
+              host:
+                description: Host is the in-cluster Redis hostname.
+                type: string
+              port:
+                description: Port is the Redis port.
+                format: int32
+                type: integer
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
+                  in.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geasscloudconnections.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassCloudConnection
+    listKind: GeassCloudConnectionList
+    plural: geasscloudconnections
+    singular: geasscloudconnection
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              provider:
+                type: string
+            required:
+            - provider
+            type: object
+          status:
+            properties:
+              available:
+                type: boolean
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+            required:
+            - available
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassclusters.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassCluster
+    listKind: GeassClusterList
+    plural: geassclusters
+    singular: geasscluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassCluster is the Schema for the geassclusters API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GeassClusterSpec defines the desired state of GeassCluster.
+            properties:
+              addons:
+                description: Addons controls default platform add-ons reconciled by
+                  the cluster controller.
+                properties:
+                  certManager:
+                    description: CertManager controls cert-manager installation.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enabled installs cert-manager when true.
+                        type: boolean
+                    type: object
+                  monitoring:
+                    description: Monitoring controls kube-prometheus-stack installation.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enabled installs monitoring when true.
+                        type: boolean
+                      profile:
+                        default: lite
+                        description: Profile selects the monitoring footprint.
+                        enum:
+                        - lite
+                        - full
+                        type: string
+                    type: object
+                type: object
+              serverURL:
+                description: ServerURL is the URL of the GeassCluster server.
+                type: string
+              tokenSecretRef:
+                description: TokenSecretRef is the reference to the secret containing
+                  the token for the GeassCluster.
+                properties:
+                  name:
+                    description: name is unique within a namespace to reference a
+                      secret resource.
+                    type: string
+                  namespace:
+                    description: namespace defines the space within which the secret
+                      name must be unique.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              version:
+                description: Version is the version of the GeassCluster.
+                type: string
+            required:
+            - serverURL
+            - tokenSecretRef
+            - version
+            type: object
+          status:
+            description: GeassClusterStatus defines the observed state of GeassCluster.
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassCluster
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              phase:
+                description: Phase is the current phase of the GeassCluster.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassconsolesessions.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassConsoleSession
+    listKind: GeassConsoleSessionList
+    plural: geassconsolesessions
+    singular: geassconsolesession
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              actor:
+                type: string
+              app:
+                type: string
+              command:
+                items:
+                  type: string
+                type: array
+              container:
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                type: string
+              pod:
+                type: string
+              project:
+                type: string
+              timeoutSeconds:
+                format: int32
+                type: integer
+            required:
+            - app
+            - container
+            - environment
+            - pod
+            - project
+            type: object
+          status:
+            properties:
+              endedAt:
+                format: date-time
+                type: string
+              phase:
+                type: string
+              reason:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassdatabases.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassDatabase
+    listKind: GeassDatabaseList
+    plural: geassdatabases
+    singular: geassdatabase
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.environment
+      name: Environment
+      type: string
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassDatabase is the Schema for the geassdatabases API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GeassDatabaseSpec defines the desired state of GeassDatabase.
+            properties:
+              engine:
+                description: Engine is the database engine to provision.
+                enum:
+                - Postgres
+                type: string
+              environment:
+                description: Environment is the project environment.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              instances:
+                default: 1
+                description: Instances is the number of Postgres instances in the
+                  CNPG cluster.
+                format: int32
+                minimum: 1
+                type: integer
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
+              storageSize:
+                anyOf:
+                - type: integer
+                - type: string
+                default: 10Gi
+                description: StorageSize is the requested PVC size per instance.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              version:
+                default: "16"
+                description: Version is the Postgres major version.
+                type: string
+            required:
+            - engine
+            - environment
+            - project
+            type: object
+          status:
+            description: GeassDatabaseStatus defines the observed state of GeassDatabase.
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassDatabase
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              connectionSecret:
+                description: ConnectionSecret is the name of the Secret containing
+                  connection credentials.
+                type: string
+              host:
+                description: Host is the in-cluster database hostname.
+                type: string
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
+                  in.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassdeployments.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassDeployment
+    listKind: GeassDeploymentList
+    plural: geassdeployments
+    singular: geassdeployment
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              actor:
+                description: Actor identifies the user or automation actor when known.
+                type: string
+              app:
+                type: string
+              buildRef:
+                type: string
+              changeTitle:
+                description: ChangeTitle is the human-readable reason for this deployment.
+                type: string
+              commit:
+                description: Commit is the source revision when a repository-backed
+                  deployment provides one.
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              eventLogRef:
+                type: string
+              image:
+                type: string
+              imageDigest:
+                type: string
+              project:
+                minLength: 1
+                type: string
+              replicas:
+                format: int32
+                type: integer
+              rollbackRef:
+                type: string
+              source:
+                description: Source identifies the system that initiated the deployment.
+                type: string
+              trigger:
+                type: string
+            required:
+            - app
+            - environment
+            - image
+            - project
+            type: object
+          status:
+            properties:
+              availableReplicas:
+                format: int32
+                type: integer
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              healthCheck:
+                type: string
+              phase:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassgithubconnections.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassGitHubConnection
+    listKind: GeassGitHubConnectionList
+    plural: geassgithubconnections
+    singular: geassgithubconnection
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GeassGitHubConnection stores only references to authentication material. The
+              token and webhook secret remain in Kubernetes Secrets and are never exposed
+              through application resources or status.
+            properties:
+              secretRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              webhookSecretRef:
+                description: |-
+                  LocalObjectReference contains enough information to let you locate the
+                  referenced object inside the same namespace.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - secretRef
+            type: object
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              ready:
+                type: boolean
+            required:
+            - ready
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geasshareadinesses.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassHAReadiness
+    listKind: GeassHAReadinessList
+    plural: geasshareadinesses
+    singular: geasshareadiness
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              clusterRef:
+                type: string
+            type: object
+          status:
+            properties:
+              addonsReady:
+                type: boolean
+              clusterReady:
+                type: boolean
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              healthyNodes:
+                format: int32
+                type: integer
+              storageClassReady:
+                type: boolean
+            required:
+            - addonsReady
+            - clusterReady
+            - storageClassReady
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geasslogicaldatabases.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassLogicalDatabase
+    listKind: GeassLogicalDatabaseList
+    plural: geasslogicaldatabases
+    singular: geasslogicaldatabase
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              databaseName:
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              project:
+                minLength: 1
+                type: string
+              serverRef:
+                minLength: 1
+                type: string
+            required:
+            - databaseName
+            - environment
+            - project
+            - serverRef
+            type: object
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              connectionSecret:
+                type: string
+              jobName:
+                type: string
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassnetworklogs.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassNetworkLog
+    listKind: GeassNetworkLogList
+    plural: geassnetworklogs
+    singular: geassnetworklog
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GeassNetworkLog is a structured Traefik HTTP access-log record. It contains
+              request metadata only; request and response bodies are never stored.
+            properties:
+              app:
+                type: string
+              environment:
+                description: GeassEnvironment identifies an opt-in isolated environment
+                  within a project.
+                type: string
+              host:
+                type: string
+              latencyMillis:
+                format: int64
+                type: integer
+              method:
+                type: string
+              path:
+                type: string
+              project:
+                type: string
+              status:
+                format: int32
+                type: integer
+              timestamp:
+                format: date-time
+                type: string
+              upstreamOutcome:
+                type: string
+            required:
+            - app
+            - environment
+            - project
+            - timestamp
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassnodes.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassNode
+    listKind: GeassNodeList
+    plural: geassnodes
+    singular: geassnode
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassNode is the Schema for the geassnodes API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of GeassNode
+            properties:
+              clusterRef:
+                description: ClusterRef is the reference to the GeassCluster resource.
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              default:
+                description: Default marks a pre-existing cluster control plane node
+                  that the operator should not provision.
+                type: boolean
+              eip:
+                description: EIP is the Elastic IP address of the node.
+                type: string
+              role:
+                description: Role is the role of the node in the cluster.
+                enum:
+                - ControlPlane
+                - Worker
+                type: string
+              sshKeySecretRef:
+                description: |-
+                  SSHKeySecretRef is the reference to the secret containing the SSH private key.
+                  Required for worker nodes; optional for control plane nodes.
+                properties:
+                  name:
+                    description: name is unique within a namespace to reference a
+                      secret resource.
+                    type: string
+                  namespace:
+                    description: namespace defines the space within which the secret
+                      name must be unique.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              sshPort:
+                default: 22
+                description: SSHPort is the port number for the SSH server.
+                type: integer
+              sshUser:
+                description: SSHUser is the username for the SSH server.
+                type: string
+            required:
+            - clusterRef
+            - role
+            type: object
+          status:
+            description: status defines the observed state of GeassNode
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the current state of the GeassNode resource.
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
+
+                  Standard condition types include:
+                  - "Available": the resource is fully functional
+                  - "Progressing": the resource is being created or updated
+                  - "Degraded": the resource failed to reach or maintain its desired state
+
+                  The status of each condition is one of True, False, or Unknown.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastHeartbeatTime:
+                description: LastHeartbeatTime is the last time the node was observed
+                  healthy.
+                format: date-time
+                type: string
+              message:
+                description: Message is a human-readable status message.
+                type: string
+              nodeName:
+                description: NodeName is the name of the Kubernetes node.
+                type: string
+              phase:
+                description: Phase is the current phase of the GeassNode.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassobjectstores.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassObjectStore
+    listKind: GeassObjectStoreList
+    plural: geassobjectstores
+    singular: geassobjectstore
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.environment
+      name: Environment
+      type: string
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassObjectStore is the Schema for the geassobjectstores API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GeassObjectStoreSpec defines the desired state of GeassObjectStore.
+            properties:
+              buckets:
+                description: Buckets is an optional list of buckets to create on provision.
+                items:
+                  type: string
+                type: array
+              engine:
+                description: Engine is the object store engine to provision.
+                enum:
+                - MinIO
+                type: string
+              environment:
+                description: Environment is the project environment.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              project:
+                description: Project is the owning project.
+                minLength: 1
+                type: string
+            required:
+            - engine
+            - environment
+            - project
+            type: object
+          status:
+            description: GeassObjectStoreStatus defines the observed state of GeassObjectStore.
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassObjectStore
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              connectionSecret:
+                description: ConnectionSecret is the name of the Secret containing
+                  credentials.
+                type: string
+              endpoint:
+                description: Endpoint is the in-cluster S3-compatible endpoint URL.
+                type: string
+              targetNamespace:
+                description: TargetNamespace is the namespace workloads were created
+                  in.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassplatformconfigs.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassPlatformConfig
+    listKind: GeassPlatformConfigList
+    plural: geassplatformconfigs
+    singular: geassplatformconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              dashboardExposure:
+                default: ingress
+                description: DashboardExposure selects how the dashboard is published
+                  (ingress on a server or Cloudflare Tunnel for local dev).
+                enum:
+                - ingress
+                - cloudflare-tunnel
+                type: string
+              dashboardURL:
+                description: |-
+                  DashboardURL is the public HTTPS URL where the Geass dashboard is reachable.
+                  It is used for GitHub App callback and webhook URLs.
+                pattern: ^https://[a-zA-Z0-9.-]+(?::[0-9]+)?$
+                type: string
+              defaultClusterRef:
+                description: DefaultClusterRef identifies the cluster new projects
+                  should use.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              defaultDomain:
+                type: string
+              githubAppRef:
+                description: GitHubAppRef references a Secret containing the platform
+                  GitHub App credentials.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              prometheusURL:
+                type: string
+              registry:
+                properties:
+                  credentialRef:
+                    description: |-
+                      LocalObjectReference contains enough information to let you locate the
+                      referenced object inside the same namespace.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  repository:
+                    type: string
+                type: object
+              rootDomain:
+                description: |-
+                  RootDomain is the operator's apex domain (e.g. example.com). Geass serves the
+                  dashboard at geass.<rootDomain> after DNS verification.
+                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
+                type: string
+              traefikAccessLogs:
+                properties:
+                  enabled:
+                    type: boolean
+                  format:
+                    type: string
+                  networkLogEndpoint:
+                    type: string
+                type: object
+              tunnelCNAMETarget:
+                description: TunnelCNAMETarget is the Cloudflare tunnel hostname (uuid.cfargotunnel.com)
+                  for dashboardExposure=cloudflare-tunnel.
+                pattern: ^[a-z0-9-]+(\.[a-z0-9-]+)+$
+                type: string
+            type: object
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassprojects.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassProject
+    listKind: GeassProjectList
+    plural: geassprojects
+    singular: geassproject
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              clusterRef:
+                description: ClusterRef identifies the GeassCluster that owns this
+                  project.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              displayName:
+                description: DisplayName is the user-facing project name shown by
+                  the dashboard (lowercase slug, e.g. morning-beach).
+                type: string
+              environments:
+                description: Environments are the isolated environments enabled for
+                  this project.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                minItems: 1
+                type: array
+              githubConnectionRef:
+                description: GitHubConnectionRef references a Secret containing GitHub
+                  credentials and webhook data.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              sharedVariables:
+                description: SharedVariables are environment-scoped values available
+                  to project services.
+                items:
+                  description: |-
+                    GeassSharedVariable is a project-scoped value materialized into each selected
+                    environment. Secret values are written to a Kubernetes Secret and are never
+                    copied into application status.
+                  properties:
+                    environment:
+                      description: Environment scopes the variable to one project
+                        environment.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    name:
+                      description: Name is the environment variable name.
+                      pattern: ^[A-Z_][A-Z0-9_]*$
+                      type: string
+                    secretRef:
+                      description: SecretRef points to a Kubernetes Secret containing
+                        the value when it is sensitive.
+                      properties:
+                        key:
+                          description: The key of the secret to select from.  Must
+                            be a valid secret key.
+                          type: string
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                        optional:
+                          description: Specify whether the Secret or its key must
+                            be defined
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    value:
+                      description: Value is the non-secret value to materialize.
+                      type: string
+                  required:
+                  - environment
+                  - name
+                  type: object
+                type: array
+            required:
+            - clusterRef
+            - environments
+            type: object
+          status:
+            properties:
+              clusterRef:
+                description: ClusterRef is the cluster observed by the controller.
+                  It prevents silent project migration.
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              environments:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: helmcharts.helm.cattle.io
+spec:
+  group: helm.cattle.io
+  names:
+    kind: HelmChart
+    listKind: HelmChartList
+    plural: helmcharts
+    singular: helmchart
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-controller-manager
+  namespace: geass-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-leader-election-role
+  namespace: geass-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassapp-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassapp-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassapp-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscache-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscache-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscache-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geasscaches/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscluster-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscluster-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geasscluster-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassdatabase-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassdatabase-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassdatabase-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassdatabases/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassnode-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassnode-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassnode-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnodes/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassobjectstore-admin-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores
+  verbs:
+  - '*'
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassobjectstore-editor-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-geassobjectstore-viewer-role
+rules:
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassobjectstores/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: geass-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - namespaces
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps
+  - geassbuilds
+  - geasscaches
+  - geasscloudconnections
+  - geassclusters
+  - geassconsolesessions
+  - geassdatabases
+  - geassgithubconnections
+  - geasshareadinesses
+  - geasslogicaldatabases
+  - geassnodes
+  - geassobjectstores
+  - geassplatformconfigs
+  - geassprojects
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/finalizers
+  - geasscaches/finalizers
+  - geassclusters/finalizers
+  - geassdatabases/finalizers
+  - geassnodes/finalizers
+  - geassobjectstores/finalizers
+  - geassprojects/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassapps/status
+  - geassbuilds/status
+  - geasscaches/status
+  - geasscloudconnections/status
+  - geassclusters/status
+  - geassconsolesessions/status
+  - geassdatabases/status
+  - geassgithubconnections/status
+  - geasshareadinesses/status
+  - geasslogicaldatabases/status
+  - geassnodes/status
+  - geassobjectstores/status
+  - geassplatformconfigs/status
+  - geassprojects/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnetworklogs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - helm.cattle.io
+  resources:
+  - helmcharts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: geass-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: geass-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-leader-election-rolebinding
+  namespace: geass-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: geass-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: geass-controller-manager
+  namespace: geass-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+  name: geass-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: geass-manager-role
+subjects:
+- kind: ServiceAccount
+  name: geass-controller-manager
+  namespace: geass-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: geass-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: geass-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: geass-controller-manager
+  namespace: geass-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+    control-plane: controller-manager
+  name: geass-controller-manager-metrics-service
+  namespace: geass-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: geass
+    control-plane: controller-manager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/name: geass
+  name: geass-geass-dashboard
+  namespace: geass-system
+spec:
+  ports:
+  - name: http
+    port: 8082
+    protocol: TCP
+    targetPort: dashboard
+  selector:
+    app.kubernetes.io/name: geass
+    control-plane: controller-manager
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: geass
+    control-plane: controller-manager
+  name: geass-controller-manager
+  namespace: geass-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: geass
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: geass
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --dashboard-bind-address=:8082
+        command:
+        - /manager
+        image: controller:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        - containerPort: 8082
+          name: dashboard
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 10m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts: []
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: geass-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes: []

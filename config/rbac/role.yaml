@@ -23,14 +23,39 @@ rules:
   - ""
   resources:
   - nodes
+  - pods
   verbs:
   - get
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
   - apps
   resources:
   - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
   verbs:
   - create
   - delete
@@ -55,10 +80,13 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps
+  - geassbuilds
   - geasscaches
   - geasscloudconnections
   - geassclusters
+  - geassconsolesessions
   - geassdatabases
+  - geassgithubconnections
   - geasshareadinesses
   - geasslogicaldatabases
   - geassnodes
@@ -89,10 +117,13 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps/status
+  - geassbuilds/status
   - geasscaches/status
   - geasscloudconnections/status
   - geassclusters/status
+  - geassconsolesessions/status
   - geassdatabases/status
+  - geassgithubconnections/status
   - geasshareadinesses/status
   - geasslogicaldatabases/status
   - geassnodes/status
@@ -103,6 +134,16 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - geass.geass.dev
+  resources:
+  - geassnetworklogs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - helm.cattle.io
   resources:

@@ -42,10 +42,8 @@ spec:
               environment:
                 description: GeassEnvironment identifies an opt-in isolated environment
                   within a project.
-                enum:
-                - dev
-                - staging
-                - production
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               project:
                 minLength: 1

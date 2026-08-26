@@ -37,9 +37,94 @@ spec:
             type: object
           spec:
             properties:
+              dashboardExposure:
+                default: ingress
+                description: DashboardExposure selects how the dashboard is published
+                  (ingress on a server or Cloudflare Tunnel for local dev).
+                enum:
+                - ingress
+                - cloudflare-tunnel
+                type: string
+              dashboardURL:
+                description: |-
+                  DashboardURL is the public HTTPS URL where the Geass dashboard is reachable.
+                  It is used for GitHub App callback and webhook URLs.
+                pattern: ^https://[a-zA-Z0-9.-]+(?::[0-9]+)?$
+                type: string
+              defaultClusterRef:
+                description: DefaultClusterRef identifies the cluster new projects
+                  should use.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               defaultDomain:
                 type: string
+              githubAppRef:
+                description: GitHubAppRef references a Secret containing the platform
+                  GitHub App credentials.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
               prometheusURL:
+                type: string
+              registry:
+                properties:
+                  credentialRef:
+                    description: |-
+                      LocalObjectReference contains enough information to let you locate the
+                      referenced object inside the same namespace.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  repository:
+                    type: string
+                type: object
+              rootDomain:
+                description: |-
+                  RootDomain is the operator's apex domain (e.g. example.com). Geass serves the
+                  dashboard at geass.<rootDomain> after DNS verification.
+                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
+                type: string
+              traefikAccessLogs:
+                properties:
+                  enabled:
+                    type: boolean
+                  format:
+                    type: string
+                  networkLogEndpoint:
+                    type: string
+                type: object
+              tunnelCNAMETarget:
+                description: TunnelCNAMETarget is the Cloudflare tunnel hostname (uuid.cfargotunnel.com)
+                  for dashboardExposure=cloudflare-tunnel.
+                pattern: ^[a-z0-9-]+(\.[a-z0-9-]+)+$
                 type: string
             type: object
           status:

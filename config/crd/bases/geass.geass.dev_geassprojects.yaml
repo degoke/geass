@@ -57,15 +57,85 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
               displayName:
-                description: DisplayName is the human-readable project name shown
-                  by the dashboard.
+                description: DisplayName is the user-facing project name shown by
+                  the dashboard (lowercase slug, e.g. morning-beach).
                 type: string
               environments:
                 description: Environments are the isolated environments enabled for
                   this project.
                 items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                   type: string
                 minItems: 1
+                type: array
+              githubConnectionRef:
+                description: GitHubConnectionRef references a Secret containing GitHub
+                  credentials and webhook data.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              sharedVariables:
+                description: SharedVariables are environment-scoped values available
+                  to project services.
+                items:
+                  description: |-
+                    GeassSharedVariable is a project-scoped value materialized into each selected
+                    environment. Secret values are written to a Kubernetes Secret and are never
+                    copied into application status.
+                  properties:
+                    environment:
+                      description: Environment scopes the variable to one project
+                        environment.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    name:
+                      description: Name is the environment variable name.
+                      pattern: ^[A-Z_][A-Z0-9_]*$
+                      type: string
+                    secretRef:
+                      description: SecretRef points to a Kubernetes Secret containing
+                        the value when it is sensitive.
+                      properties:
+                        key:
+                          description: The key of the secret to select from.  Must
+                            be a valid secret key.
+                          type: string
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                        optional:
+                          description: Specify whether the Secret or its key must
+                            be defined
+                          type: boolean
+                      required:
+                      - key
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    value:
+                      description: Value is the non-secret value to materialize.
+                      type: string
+                  required:
+                  - environment
+                  - name
+                  type: object
                 type: array
             required:
             - clusterRef

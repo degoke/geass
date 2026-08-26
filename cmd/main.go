@@ -32,6 +32,7 @@ import (
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/ssh"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -210,6 +211,35 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassBuildReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Kube:   kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassbuild")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassConsoleSessionReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassconsolesession")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassGitHubConnectionReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassgithubconnection")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassNetworkLogReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassnetworklog")
+		os.Exit(1)
+	}
 	if err := (&controller.GeassDatabaseReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -263,9 +293,11 @@ func main() {
 
 	if dashboardAddr != "0" {
 		if err := mgr.Add(&dashboard.Server{
-			Client: mgr.GetClient(),
-			Addr:   dashboardAddr,
-			Kube:   kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+			Client:    mgr.GetClient(),
+			Addr:      dashboardAddr,
+			Kube:      kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+			Config:    ctrl.GetConfigOrDie(),
+			GitHubApp: githubapp.LoadConfigFromEnv(),
 		}); err != nil {
 			setupLog.Error(err, "Failed to add dashboard server")
 			os.Exit(1)

@@ -212,7 +212,8 @@ var _ = Describe("GeassApp Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
 				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
-				Image:    "nginx:alpine",
+				Source:   geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx:alpine"}},
+				Deploy:   geassv1alpha1.GeassAppDeploySpec{Enabled: true},
 				Replicas: &replicas,
 				Port:     8080,
 				Ingress: geassv1alpha1.GeassAppIngressSpec{
@@ -254,7 +255,8 @@ var _ = Describe("GeassApp Controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: testMetricsAppName, Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
 				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
-				Image:   "nginx:alpine",
+				Source:  geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx:alpine"}},
+				Deploy:  geassv1alpha1.GeassAppDeploySpec{Enabled: true},
 				Metrics: geassv1alpha1.GeassAppMetricsSpec{Enabled: true},
 			},
 		}

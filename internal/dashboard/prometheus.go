@@ -106,26 +106,30 @@ var overviewMetrics = []metricCard{
 }
 
 func (s *Server) metricsCards(ctx context.Context) string {
-	mc := s.Metrics
-	if mc == nil {
-		prometheusURL := ""
-		if s.Client != nil {
-			config := &geassv1alpha1.GeassPlatformConfig{}
-			if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
-				prometheusURL = config.Spec.PrometheusURL
-			}
-		}
-		mc = &PrometheusClient{BaseURL: prometheusURL}
-	}
+	mc := s.metricsClient(ctx)
 	var b strings.Builder
-	b.WriteString(`<div class="metrics">`)
+	b.WriteString(`<div class="grid grid-cols-1 md:grid-cols-3 gap-4">`)
 	for _, m := range overviewMetrics {
 		val, err := mc.QueryInstant(ctx, m.Query)
 		if err != nil {
 			val = "unavailable"
 		}
-		fmt.Fprintf(&b, `<div class="card"><h3>%s</h3><p>%s</p></div>`, m.Title, val)
+		fmt.Fprintf(&b, `<div class="card"><div class="card-body"><h3 class="card-title">%s</h3><p class="text-xl font-semibold">%s</p></div></div>`, m.Title, val)
 	}
 	b.WriteString(`</div>`)
 	return b.String()
+}
+
+func (s *Server) metricsClient(ctx context.Context) MetricsClient {
+	if s.Metrics != nil {
+		return s.Metrics
+	}
+	prometheusURL := ""
+	if s.Client != nil {
+		config := &geassv1alpha1.GeassPlatformConfig{}
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
+			prometheusURL = config.Spec.PrometheusURL
+		}
+	}
+	return &PrometheusClient{BaseURL: prometheusURL}
 }

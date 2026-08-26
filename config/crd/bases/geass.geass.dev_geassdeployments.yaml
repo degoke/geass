@@ -37,17 +37,31 @@ spec:
             type: object
           spec:
             properties:
+              actor:
+                description: Actor identifies the user or automation actor when known.
+                type: string
               app:
+                type: string
+              buildRef:
+                type: string
+              changeTitle:
+                description: ChangeTitle is the human-readable reason for this deployment.
+                type: string
+              commit:
+                description: Commit is the source revision when a repository-backed
+                  deployment provides one.
                 type: string
               environment:
                 description: GeassEnvironment identifies an opt-in isolated environment
                   within a project.
-                enum:
-                - dev
-                - staging
-                - production
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              eventLogRef:
                 type: string
               image:
+                type: string
+              imageDigest:
                 type: string
               project:
                 minLength: 1
@@ -55,6 +69,13 @@ spec:
               replicas:
                 format: int32
                 type: integer
+              rollbackRef:
+                type: string
+              source:
+                description: Source identifies the system that initiated the deployment.
+                type: string
+              trigger:
+                type: string
             required:
             - app
             - environment
@@ -63,6 +84,9 @@ spec:
             type: object
           status:
             properties:
+              availableReplicas:
+                format: int32
+                type: integer
               completedAt:
                 format: date-time
                 type: string
@@ -122,6 +146,8 @@ spec:
                   - type
                   type: object
                 type: array
+              healthCheck:
+                type: string
               phase:
                 type: string
               startedAt:

@@ -28,7 +28,8 @@ type GeassCacheSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Project string `json:"project"`
 	// Environment is the project environment.
-	// +kubebuilder:validation:Enum=dev;staging;production
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Required
 	Environment GeassEnvironment `json:"environment"`
 

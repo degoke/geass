@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,8 @@ type GeassProjectReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;delete;get;list;patch;update;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=create;delete;get;list;patch;update;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
 
 func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -46,6 +49,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{platform.LabelProject: project.Name}}}))
 			}
 		}
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: project.Name + "-shared-secrets", Namespace: platform.SystemNamespace}}))
 		controllerutil.RemoveFinalizer(&project, platform.FinalizerProject)
 		return ctrl.Result{}, r.Update(ctx, &project)
 	}
@@ -86,6 +90,9 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.reconcileSharedVariables(ctx, &project, env, namespace); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	for _, current := range project.Status.Environments {
@@ -109,6 +116,55 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
 	return ctrl.Result{}, r.Status().Update(ctx, latest)
+}
+
+func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, project *geassv1alpha1.GeassProject, environment, namespace string) error {
+	configData := map[string]string{}
+	secretData := map[string][]byte{}
+	for _, variable := range project.Spec.SharedVariables {
+		if variable.Environment != environment || variable.Name == "" {
+			continue
+		}
+		if variable.SecretRef != nil {
+			secret := &corev1.Secret{}
+			if err := r.Get(ctx, client.ObjectKey{Name: variable.SecretRef.Name, Namespace: platform.SystemNamespace}, secret); err != nil {
+				return fmt.Errorf("shared variable %s secret reference: %w", variable.Name, err)
+			}
+			value, ok := secret.Data[variable.SecretRef.Key]
+			if !ok {
+				return fmt.Errorf("shared variable %s secret key %q was not found", variable.Name, variable.SecretRef.Key)
+			}
+			secretData[variable.Name] = value
+		} else {
+			configData[variable.Name] = variable.Value
+		}
+	}
+	labels := map[string]string{platform.LabelManagedBy: platform.ManagedByValue, platform.LabelProject: project.Name, platform.LabelEnvironment: environment}
+	if len(configData) > 0 {
+		config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-variables", Namespace: namespace}}
+		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, config, func() error {
+			config.Labels = labels
+			config.Data = configData
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else {
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-variables", Namespace: namespace}}))
+	}
+	if len(secretData) > 0 {
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-secrets", Namespace: namespace}}
+		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+			secret.Labels = labels
+			secret.Data = secretData
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else {
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-secrets", Namespace: namespace}}))
+	}
+	return nil
 }
 
 func (r *GeassProjectReconciler) setProjectNotReady(ctx context.Context, project *geassv1alpha1.GeassProject, reason, message string) (ctrl.Result, error) {

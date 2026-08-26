@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Geass social card</title>
+  <desc id="desc">Managed cloud experience on infrastructure you control.</desc>
+  <defs>
+    <radialGradient id="glow" cx="72%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#8B8CF8" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#8B8CF8" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#FFFFFF" stroke-opacity=".035"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="#0A0A0B"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <g transform="translate(88 72)">
+    <g transform="scale(.75)">
+      <path d="M47.75 15.9A23 23 0 1 0 52.8 39H34" fill="none" stroke="#8B8CF8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M52.8 39V51" fill="none" stroke="#8B8CF8" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="32" cy="32" r="4" fill="#F2F2F3"/>
+      <path d="M32 28V18M28.5 34 20 39M35.5 34 44 39" fill="none" stroke="#F2F2F3" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+    <text x="60" y="34" fill="#F2F2F3" font-family="Inter, Arial, sans-serif" font-size="29" font-weight="560" letter-spacing="-1">Geass</text>
+  </g>
+  <text x="88" y="275" fill="#F2F2F3" font-family="Inter, Arial, sans-serif" font-size="62" font-weight="560" letter-spacing="-2.6">
+    <tspan x="88" dy="0">Your infrastructure.</tspan>
+    <tspan x="88" dy="72">A managed cloud experience.</tspan>
+  </text>
+  <text x="90" y="452" fill="#A3A3AB" font-family="Inter, Arial, sans-serif" font-size="25">Powered by K3s. Built for VPS and bare-metal.</text>
+  <g transform="translate(900 224)">
+    <circle cx="88" cy="88" r="78" fill="#121214" stroke="#2A2A30" stroke-width="2"/>
+    <path d="M112 55.8A46 46 0 1 0 122 102H84" fill="none" stroke="#8B8CF8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M122 102v24" fill="none" stroke="#8B8CF8" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="80" cy="88" r="8" fill="#F2F2F3"/>
+    <path d="M80 80V60M73 92l-17 10M87 92l17 10" fill="none" stroke="#F2F2F3" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <text x="90" y="563" fill="#6F6F78" font-family="Geist Mono, monospace" font-size="18">geass.dev</text>
+</svg>

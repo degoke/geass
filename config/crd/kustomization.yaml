@@ -10,6 +10,10 @@ resources:
 - bases/geass.geass.dev_geassobjectstores.yaml
 - bases/geass.geass.dev_geassprojects.yaml
 - bases/geass.geass.dev_geassdeployments.yaml
+- bases/geass.geass.dev_geassbuilds.yaml
+- bases/geass.geass.dev_geassconsolesessions.yaml
+- bases/geass.geass.dev_geassgithubconnections.yaml
+- bases/geass.geass.dev_geassnetworklogs.yaml
 - bases/geass.geass.dev_geasslogicaldatabases.yaml
 - bases/geass.geass.dev_geasshareadinesses.yaml
 - bases/geass.geass.dev_geassplatformconfigs.yaml

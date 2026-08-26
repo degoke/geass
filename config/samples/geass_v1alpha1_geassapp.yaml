@@ -6,7 +6,9 @@ metadata:
 spec:
   project: payments
   environment: dev
-  image: nginx:alpine
+  source:
+    image:
+      image: nginx:alpine
   port: 8080
   ingress:
     host: demo.local

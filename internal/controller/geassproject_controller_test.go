@@ -50,6 +50,28 @@ func TestProjectReconcilerCreatesEnvironmentNamespaces(t *testing.T) {
 	require.Len(t, updated.Status.Environments, 2)
 }
 
+func TestProjectReconcilerCleansSharedSecretOnDeletion(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	deletionTime := metav1.Now()
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              testProjectName,
+			Namespace:         platform.SystemNamespace,
+			Finalizers:        []string{platform.FinalizerProject},
+			DeletionTimestamp: &deletionTime,
+		},
+		Spec: geassv1alpha1.GeassProjectSpec{Environments: []string{testEnvDev}},
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testProjectName + "-shared-secrets", Namespace: platform.SystemNamespace}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project, secret).Build()
+	r := &GeassProjectReconciler{Client: c, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), requestFor(project))
+	require.NoError(t, err)
+	require.Error(t, c.Get(context.Background(), client.ObjectKeyFromObject(secret), &corev1.Secret{}))
+}
+
 func requestFor(obj client.Object) ctrl.Request {
 	return ctrl.Request{NamespacedName: types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}}
 }

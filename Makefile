@@ -193,7 +193,7 @@ require-docker: ## Fail fast when the container tool daemon is unavailable.
 .PHONY: prepare-installer-assets
 prepare-installer-assets: require-docker manifests generate kustomize ## Build operator image and export embeddable install assets.
 	mkdir -p pkg/installer/assets
-	$(CONTAINER_TOOL) build -t $(OPERATOR_IMAGE) .
+	$(CONTAINER_TOOL) build --platform linux/$(GEASS_GOARCH) -t $(OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) save $(OPERATOR_IMAGE) -o $(INSTALLER_OPERATOR_TAR)
 	"$(KUSTOMIZE)" build config/default > $(INSTALLER_OPERATOR_MANIFESTS)
 
