@@ -9,7 +9,7 @@ func TestValidBucketName(t *testing.T) {
 			t.Fatalf("ValidBucketName(%q) = %v", name, err)
 		}
 	}
-	for _, name := range []string{"ab", "A", "Bad_Bucket", "-abc", "abc-", ".abc", "abc.", "a..b", "UPPER", ""} {
+	for _, name := range []string{"ab", "A", "Bad_Bucket", "-abc", "abc-", ".abc", "abc.", "a..b", "UPPER", "", "192.168.1.1"} {
 		if err := ValidBucketName(name); err == nil {
 			t.Fatalf("ValidBucketName(%q) = nil, want error", name)
 		}

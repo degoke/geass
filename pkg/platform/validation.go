@@ -3,7 +3,9 @@ package platform
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,6 +74,9 @@ func ValidBucketName(name string) error {
 		default:
 			return fmt.Errorf("bucket name %q may only contain lowercase letters, numbers, dots, and hyphens", name)
 		}
+	}
+	if ip := net.ParseIP(name); ip != nil && strings.Count(name, ".") == 3 {
+		return fmt.Errorf("bucket name %q must not be formatted as an IP address", name)
 	}
 	return nil
 }

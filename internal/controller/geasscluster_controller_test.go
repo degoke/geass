@@ -10,6 +10,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -31,22 +32,13 @@ import (
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
-func markHelmChartNotReady(ctx context.Context, name string) {
-	chart := &helmv1.HelmChart{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)).To(Succeed())
-	chart.Status.JobName = ""
-	if err := k8sClient.Status().Update(ctx, chart); err != nil {
-		Expect(k8sClient.Update(ctx, chart)).To(Succeed())
-	}
-}
-
 func markHelmChartReady(ctx context.Context, name string) {
 	chart := &helmv1.HelmChart{}
 	Eventually(func() error {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)
 	}).WithTimeout(5 * time.Second).Should(Succeed())
 
-	jobName := "helm-install-" + name
+	jobName := fmt.Sprintf("helm-install-%s-%d", name, time.Now().UnixNano())
 	chart.Status.JobName = jobName
 	if err := k8sClient.Status().Update(ctx, chart); err != nil {
 		Expect(k8sClient.Update(ctx, chart)).To(Succeed())

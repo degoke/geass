@@ -552,6 +552,7 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
   const [autoscaling, setAutoscaling] = useState(Boolean(item.spec?.autoscaling?.maxReplicas > 1));
   const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
   const [version, setVersion] = useState(item.spec?.version || "");
+  const [confirmDelete, setConfirmDelete] = useState("");
   const inCluster = kind === "apps" || (kind === "databases" && item.spec?.placement !== "External");
   const save = (event) => {
     event.preventDefault();
@@ -577,9 +578,14 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
         )}
         <div className="form-actions">
           <Button type="submit">Save changes</Button>
-          <Button type="button" variant="danger" onClick={() => { if (confirm(`Delete ${title}?`)) action(`/${kind}/${name}/delete`, { confirmName: name }).then(() => navigate({ to: `/projects/${resourceName(project)}` })); }}><Trash2 size={15} /> Delete</Button>
         </div>
       </form>
+      <div className="danger-zone">
+        <Field label={`Type ${title} to delete`}>
+          <Input value={confirmDelete} onChange={(event) => setConfirmDelete(event.target.value)} autoComplete="off" placeholder={title} />
+        </Field>
+        <Button type="button" variant="danger" disabled={confirmDelete !== title} onClick={() => action(`/${kind}/${name}/delete`, { confirmName: confirmDelete }).then(() => navigate({ to: `/projects/${resourceName(project)}` })).catch((error) => alert(error.message))}><Trash2 size={15} /> Delete</Button>
+      </div>
     </Card>
   );
 }

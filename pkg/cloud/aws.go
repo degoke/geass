@@ -95,6 +95,67 @@ func (c *AWSClient) EnsureBucketUser(buckets []string, userName, existingAccess,
 	return c.iamCreateAccessKey(userName)
 }
 
+// DeleteBucketUser removes the scoped IAM user, its access keys, and policy.
+// Missing users are treated as already deleted.
+func (c *AWSClient) DeleteBucketUser(userName string) error {
+	userName = iamUserName(userName)
+	keys, err := c.iamListAccessKeys(userName)
+	if err != nil && !isIAMNoSuchEntity(err) {
+		return err
+	}
+	for _, key := range keys {
+		if err := c.iamDeleteAccessKey(userName, key); err != nil && !isIAMNoSuchEntity(err) {
+			return err
+		}
+	}
+	if err := c.iamDeleteUserPolicy(userName); err != nil && !isIAMNoSuchEntity(err) {
+		return err
+	}
+	if err := c.iamDeleteUser(userName); err != nil && !isIAMNoSuchEntity(err) {
+		return err
+	}
+	return nil
+}
+
+func (c *AWSClient) iamListAccessKeys(userName string) ([]string, error) {
+	payload, err := c.iamCall(url.Values{"Action": {"ListAccessKeys"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Result struct {
+			Keys []struct {
+				AccessKeyID string `xml:"AccessKeyId"`
+			} `xml:"AccessKeyMetadata"`
+		} `xml:"ListAccessKeysResult"`
+	}
+	if err := xml.Unmarshal(payload, &parsed); err != nil {
+		return nil, fmt.Errorf("IAM ListAccessKeys: %w", err)
+	}
+	ids := make([]string, 0, len(parsed.Result.Keys))
+	for _, key := range parsed.Result.Keys {
+		if key.AccessKeyID != "" {
+			ids = append(ids, key.AccessKeyID)
+		}
+	}
+	return ids, nil
+}
+
+func (c *AWSClient) iamDeleteAccessKey(userName, accessKeyID string) error {
+	_, err := c.iamCall(url.Values{"Action": {"DeleteAccessKey"}, "UserName": {userName}, "AccessKeyId": {accessKeyID}, "Version": {"2010-05-08"}})
+	return err
+}
+
+func (c *AWSClient) iamDeleteUserPolicy(userName string) error {
+	_, err := c.iamCall(url.Values{"Action": {"DeleteUserPolicy"}, "UserName": {userName}, "PolicyName": {"geass-bucket"}, "Version": {"2010-05-08"}})
+	return err
+}
+
+func (c *AWSClient) iamDeleteUser(userName string) error {
+	_, err := c.iamCall(url.Values{"Action": {"DeleteUser"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	return err
+}
+
 func (c *AWSClient) iamCreateUser(userName string) error {
 	_, err := c.iamCall(url.Values{"Action": {"CreateUser"}, "UserName": {userName}, "Version": {"2010-05-08"}})
 	if err == nil || isIAMAlreadyExists(err) {
@@ -210,6 +271,10 @@ func iamError(payload []byte) (code, message string) {
 
 func isIAMAlreadyExists(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "EntityAlreadyExists")
+}
+
+func isIAMNoSuchEntity(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "NoSuchEntity")
 }
 
 func iamUserName(name string) string {

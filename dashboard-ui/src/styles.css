@@ -330,3 +330,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .pending-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated)); }
 .pending-banner strong { display: block; font-size: 14px; }
 .pending-banner p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
+.danger-zone { display: grid; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.danger-zone .ui-button { justify-self: start; }

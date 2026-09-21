@@ -16,14 +16,19 @@ import (
 	"net/http"
 	"strings"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/cloud"
@@ -79,6 +84,10 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if clusterServer {
 			_ = helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName)
 			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}))
+		} else if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal {
+			if err := r.deleteExternalBucketUser(ctx, &store); err != nil {
+				return ctrl.Result{}, err
+			}
 		} else {
 			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}}))
 			_ = r.ensureClusterMinIOHelm(ctx)
@@ -343,14 +352,11 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 	if err := r.ensureMinIOUserSecret(ctx, store, userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
+	previousGeneration, previousJobUID := r.clusterMinIOHelmSnapshot(ctx)
 	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	ready, err := helmChartReady(ctx, r.Client, chart)
+	ready, err := r.clusterMinIOHelmReady(ctx, previousGeneration, previousJobUID)
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
@@ -407,6 +413,75 @@ func (r *GeassObjectStoreReconciler) ensureMinIOUserSecret(ctx context.Context, 
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
 	return err
+}
+
+func (r *GeassObjectStoreReconciler) clusterMinIOHelmSnapshot(ctx context.Context) (int64, types.UID) {
+	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
+	if err != nil {
+		return 0, ""
+	}
+	if chart.Status.JobName == "" {
+		return chart.Generation, ""
+	}
+	job := &batchv1.Job{}
+	if err := r.Get(ctx, client.ObjectKey{Name: chart.Status.JobName, Namespace: chart.Namespace}, job); err != nil {
+		return chart.Generation, ""
+	}
+	return chart.Generation, job.UID
+}
+
+func (r *GeassObjectStoreReconciler) clusterMinIOHelmReady(ctx context.Context, previousGeneration int64, previousJobUID types.UID) (bool, error) {
+	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
+	if err != nil {
+		return false, err
+	}
+	ready, err := helmChartReady(ctx, r.Client, chart)
+	if err != nil || !ready {
+		return false, err
+	}
+	if previousJobUID == "" || chart.Generation <= previousGeneration {
+		return true, nil
+	}
+	job := &batchv1.Job{}
+	if err := r.Get(ctx, client.ObjectKey{Name: chart.Status.JobName, Namespace: chart.Namespace}, job); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if job.UID == previousJobUID {
+		return false, nil
+	}
+	return job.Status.Succeeded > 0, nil
+}
+
+func (r *GeassObjectStoreReconciler) deleteExternalBucketUser(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
+	if store.Spec.ConnectionRef == nil || store.Spec.ConnectionRef.Name == "" {
+		return nil
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS || connection.Spec.SecretRef.Name == "" {
+		return nil
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, secret); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	accessKey := secretValue(secret, platform.SecretKeyAccessKeyID)
+	secretKey := secretValue(secret, platform.SecretKeySecretAccessKey)
+	if accessKey == "" || secretKey == "" {
+		return nil
+	}
+	aws := &cloud.AWSClient{
+		HTTP:      r.HTTP,
+		AccessKey: accessKey,
+		SecretKey: secretKey,
+		Region:    firstNonEmpty(store.Spec.Region, connection.Spec.Region, secretValue(secret, platform.SecretKeyRegion), "us-east-1"),
+	}
+	return aws.DeleteBucketUser(store.Name)
 }
 
 func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
@@ -536,8 +611,26 @@ func randomCredential() (string, error) {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *GeassObjectStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	enqueueStores := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []ctrl.Request {
+		var list geassv1alpha1.GeassObjectStoreList
+		if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+			return nil
+		}
+		requests := make([]ctrl.Request, 0, len(list.Items))
+		for i := range list.Items {
+			store := &list.Items[i]
+			requests = append(requests, ctrl.Request{NamespacedName: types.NamespacedName{Name: store.Name, Namespace: store.Namespace}})
+		}
+		return requests
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassObjectStore{}).
+		Watches(&helmv1.HelmChart{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+			return obj.GetName() == platform.ClusterMinIOChartName
+		}))).
+		Watches(&batchv1.Job{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+			return obj.GetNamespace() == platform.HelmChartNamespace && strings.Contains(obj.GetName(), platform.ClusterMinIOChartName)
+		}))).
 		Named("geassobjectstore").
 		Complete(r)
 }

@@ -108,3 +108,45 @@ func TestEnsureBucketUserJSONEscapesBucketNames(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(policy), &parsed))
 	require.Equal(t, "arn:aws:s3:::uploads\"evil", parsed.Statement[0].Resource[0])
 }
+
+func TestDeleteBucketUserRemovesKeysPolicyAndUser(t *testing.T) {
+	var actions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		action := r.FormValue("Action")
+		actions = append(actions, action)
+		switch action {
+		case "ListAccessKeys":
+			require.Equal(t, "geass-assets", r.FormValue("UserName"))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<ListAccessKeysResponse><ListAccessKeysResult><AccessKeyMetadata><AccessKeyId>AKIASCOPED</AccessKeyId></AccessKeyMetadata></ListAccessKeysResult></ListAccessKeysResponse>`))
+		case "DeleteAccessKey":
+			require.Equal(t, "AKIASCOPED", r.FormValue("AccessKeyId"))
+			w.WriteHeader(http.StatusOK)
+		case "DeleteUserPolicy":
+			require.Equal(t, "geass-bucket", r.FormValue("PolicyName"))
+			w.WriteHeader(http.StatusOK)
+		case "DeleteUser":
+			require.Equal(t, "geass-assets", r.FormValue("UserName"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", IAMEndpoint: srv.URL}
+	require.NoError(t, client.DeleteBucketUser("assets"))
+	require.Equal(t, []string{"ListAccessKeys", "DeleteAccessKey", "DeleteUserPolicy", "DeleteUser"}, actions)
+}
+
+func TestDeleteBucketUserTreatsMissingUserAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>NoSuchEntity</Code><Message>user missing</Message></Error></ErrorResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", IAMEndpoint: srv.URL}
+	require.NoError(t, client.DeleteBucketUser("assets"))
+}

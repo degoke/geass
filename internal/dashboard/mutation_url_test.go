@@ -141,7 +141,9 @@ func TestDeleteFormDoesNotPushURL(t *testing.T) {
 	html := deleteForm("/apps/x/delete", "x")
 	require.Contains(t, html, `hx-push-url="false"`)
 	require.Contains(t, html, `hx-swap="none"`)
-	require.Contains(t, html, `name="confirmName" value="x"`)
+	require.Contains(t, html, `name="confirmName"`)
+	require.Contains(t, html, "Type x to confirm")
+	require.NotContains(t, html, `name="confirmName" value="x"`)
 	require.NotContains(t, html, `hx-push-url="true"`)
 }
 

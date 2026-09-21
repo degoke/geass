@@ -346,9 +346,9 @@ func projectFieldHTML(project string) string {
 func deleteForm(action, name string) string {
 	escaped := template.HTMLEscapeString(action)
 	escapedName := template.HTMLEscapeString(name)
-	return fmt.Sprintf(`<form method="POST" action="%s" hx-post="%s" hx-target="body" hx-swap="none" hx-push-url="false" class="form-inline" onsubmit="return confirm('Delete this resource? This action cannot be undone.')">
+	return fmt.Sprintf(`<form method="POST" action="%s" hx-post="%s" hx-target="body" hx-swap="none" hx-push-url="false" class="form-inline stack-sm">
 		<input type="hidden" name="_method" value="DELETE">
-		<input type="hidden" name="confirmName" value="%s">
+		<label class="field"><span class="field-label">Type %s to confirm</span><input class="input input-sm" name="confirmName" required autocomplete="off"></label>
 		%s
 	</form>`, escaped, escaped, escapedName, Button("Delete", ButtonOpts{Type: "submit", Variant: "danger", Size: "sm"}))
 }

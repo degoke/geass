@@ -151,7 +151,6 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}, latestServer)).To(Succeed())
 		latestServer.Status.Endpoint = s3.URL
 		Expect(k8sClient.Status().Update(ctx, latestServer)).To(Succeed())
-		markHelmChartNotReady(ctx, platform.ClusterMinIOChartName)
 
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testObjectStoreName, Namespace: ns},
