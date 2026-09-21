@@ -324,7 +324,7 @@ func (s *Server) handleProjectEnvironmentCreate(w http.ResponseWriter, r *http.R
 	environment := strings.TrimSpace(r.FormValue("environment"))
 	fallback = workspacePanelURL(name, s.projectDefaultEnvironment(r.Context(), name), "environments", "")
 	if _, err := platform.ProjectNamespace(name, environment); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	var project geassv1alpha1.GeassProject
@@ -432,7 +432,7 @@ func (s *Server) handleProjectVariableSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if _, err := platform.ProjectNamespace(name, environment); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	var project geassv1alpha1.GeassProject
@@ -632,7 +632,7 @@ func (s *Server) handleProjectSettingsSave(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		if _, err := platform.ProjectNamespace(name, environment); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		seen[environment] = true
@@ -823,29 +823,29 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validatePlacementForm(r); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	res, err := resourcesFromForm(r, platform.DefaultAppResources())
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	replicas := replicasFromForm(r, 1)
 	if _, err := platform.ProjectNamespace(project, string(environment)); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	app := s.appFromForm(name, image, r)
 	app.Spec.Resources = res
 	app.Spec.Replicas = &replicas
 	if err := applyAutoscalingFromForm(r, app); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if source == "git" {
 		if err := s.platformGitHubReadyError(r.Context()); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		connectionRef := strings.TrimSpace(r.FormValue("connectionRef"))
@@ -862,7 +862,7 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.validateGitConnectionForProject(r.Context(), project, connectionRef); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		app.Spec.Source.Image = nil
@@ -1656,7 +1656,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			environment = string(app.Spec.Environment)
 		}
 		if _, err := platform.ProjectNamespace(project, environment); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		if formHasValue(r, "environment") && environment != "" {
@@ -1722,14 +1722,14 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit") {
 		res, err := resourcesFromForm(r, app.Spec.Resources)
 		if err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		app.Spec.Resources = res
 	}
 	if formHasValue(r, "autoscaling", "maxReplicas", "minReplicas", "targetCPU") {
 		if err := applyAutoscalingFromForm(r, &app); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 	}
@@ -1947,7 +1947,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validatePlacementForm(r); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	placement := parseDatabasePlacement(r.FormValue("placement"))
@@ -1956,7 +1956,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	engine := parseDatabaseEngine(r.FormValue("engine"))
 	res, err := resourcesFromForm(r, defaultResourcesForEngine(engine))
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if placement != geassv1alpha1.DatabasePlacementExternal {
@@ -2061,7 +2061,7 @@ func (s *Server) handleLogicalDatabaseCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validatePlacementForm(r); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	logical := &geassv1alpha1.GeassLogicalDatabase{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassLogicalDatabaseSpec{Project: project, Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")), ServerRef: server, DatabaseName: database}}
@@ -2122,7 +2122,7 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
 		res, err := resourcesFromForm(r, databaseResources(&db))
 		if err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		db.Spec.Resources = res
@@ -2148,12 +2148,12 @@ func (s *Server) handleCacheCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validatePlacementForm(r); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	res, err := resourcesFromForm(r, platform.DefaultAppResources())
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("Redis database", res, 1)) {
@@ -2297,7 +2297,7 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := validatePlacementForm(r); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if placement != geassv1alpha1.ObjectStorePlacementExternal && engine != geassv1alpha1.ObjectStoreEngineS3 {
@@ -2329,12 +2329,12 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
 		if err := platform.ValidBucketName(bucket); err != nil {
-			redirectFormInternalError(w, r, fallback)
+			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		store.Spec.Buckets = []string{bucket}
 	} else if err := platform.ValidBucketName(name); err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if err := s.Client.Create(r.Context(), store); err != nil {
@@ -2357,7 +2357,7 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 	}
 	res, err := resourcesFromForm(r, platform.DefaultDatabaseResources())
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1)) {

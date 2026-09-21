@@ -177,7 +177,7 @@ func (s *Server) validateGitConnectionForProject(ctx context.Context, project, c
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("GitHub connection was not found")
 		}
-		return err
+		return fmt.Errorf("GitHub connection is unavailable")
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {

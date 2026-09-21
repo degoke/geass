@@ -216,6 +216,14 @@ func redirectFormInternalError(w http.ResponseWriter, r *http.Request, fallback 
 	redirectFormError(w, r, fallback, dashboardActionFailed)
 }
 
+func redirectFormUserError(w http.ResponseWriter, r *http.Request, fallback string, err error) {
+	if err == nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	redirectFormError(w, r, fallback, err.Error())
+}
+
 // formProjectFallback prefers the project workspace when the form includes project.
 func formProjectFallback(r *http.Request, listPath string) string {
 	project := strings.TrimSpace(r.FormValue("project"))

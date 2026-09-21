@@ -225,7 +225,7 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
 	if err := s.platformGitHubReadyError(r.Context()); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	gh, _, err := s.githubAppClientFromContext(r.Context())
