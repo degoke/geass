@@ -25,3 +25,19 @@ test("cloud connections allow AWS and PlanetScale", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Save connection" })).toBeVisible();
   await expect(page.getByText("Unavailable in this release")).toHaveCount(0);
 });
+
+test("cluster object storage settings can set up MinIO", async ({ page }) => {
+  await page.goto("/object-storage");
+  await expect(page.getByRole("heading", { name: "Object storage" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Set up MinIO server" })).toBeVisible();
+});
+
+test("in-cluster buckets stay disabled until MinIO is set up", async ({ page }) => {
+  await page.goto("/projects");
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.getByRole("button", { name: "Add the first resource" }).click();
+  await page.getByRole("button", { name: /Bucket/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("button", { name: /In-cluster bucket/ })).toBeDisabled();
+  await expect(page.getByText(/cluster settings first/)).toBeVisible();
+});

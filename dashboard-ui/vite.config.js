@@ -33,6 +33,7 @@ export default defineConfig({
       "/settings": pageOrMutationProxy(),
       "/ha-readiness": pageOrMutationProxy(),
       "/cloud-connections": pageOrMutationProxy(),
+      "/object-storage": pageOrMutationProxy(),
     },
   },
 });

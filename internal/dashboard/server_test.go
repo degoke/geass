@@ -94,6 +94,7 @@ func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
 	require.Contains(t, bootstrap.Body.String(), testProjectName)
 	require.Contains(t, bootstrap.Body.String(), `"awsAvailable"`)
 	require.Contains(t, bootstrap.Body.String(), `"planetScaleAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"minioAvailable"`)
 	require.Contains(t, bootstrap.Body.String(), `"haReady"`)
 }
 
@@ -635,6 +636,7 @@ func TestSettingsPageContainsPlatformNavigation(t *testing.T) {
 	body := rec.Body.String()
 	require.Contains(t, body, `href="/ha-readiness"`)
 	require.Contains(t, body, `href="/cloud-connections"`)
+	require.Contains(t, body, `href="/object-storage"`)
 	require.Contains(t, body, "Platform Settings")
 }
 
@@ -1035,6 +1037,79 @@ func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
 	require.Equal(t, []string{"geass-assets"}, store.Spec.Buckets)
 	require.True(t, store.Spec.CreateBucket)
 	require.Equal(t, "prod-aws", store.Spec.ConnectionRef.Name)
+}
+
+func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"cluster":   {"on"},
+		"engine":    {"MinIO"},
+		"placement": {"InCluster"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var store geassv1alpha1.GeassObjectStore
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace}, &store))
+	require.Equal(t, geassv1alpha1.ObjectStoreEngineMinIO, store.Spec.Engine)
+	require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
+	require.Empty(t, store.Spec.Project)
+}
+
+func TestAPIObjectStoreCreateInClusterRequiresMinIO(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"name":        {"assets"},
+		"project":     {testProjectName},
+		"environment": {"production"},
+		"engine":      {"MinIO"},
+		"placement":   {"InCluster"},
+		"bucket":      {"uploads"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "cluster settings")
+}
+
+func TestAPIObjectStoreCreateInClusterWithMinIO(t *testing.T) {
+	ctx := context.Background()
+	server := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	srv := &Server{Client: newFakeClient(server)}
+	form := url.Values{
+		"name":        {"assets"},
+		"project":     {testProjectName},
+		"environment": {"production"},
+		"engine":      {"MinIO"},
+		"placement":   {"InCluster"},
+		"bucket":      {"uploads"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var store geassv1alpha1.GeassObjectStore
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "assets", Namespace: platform.SystemNamespace}, &store))
+	require.Equal(t, geassv1alpha1.ObjectStoreEngineMinIO, store.Spec.Engine)
+	require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
+	require.Equal(t, testProjectName, store.Spec.Project)
+	require.Equal(t, []string{"uploads"}, store.Spec.Buckets)
+	require.Nil(t, store.Spec.ConnectionRef)
 }
 
 func TestHandleAppConfigAndSecrets(t *testing.T) {

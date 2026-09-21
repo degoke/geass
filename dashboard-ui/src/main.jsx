@@ -82,7 +82,7 @@ function Sidebar({ project, path }) {
   const links = project
     ? [[`/projects/${project}`, "Workspace", LayoutDashboard], [`/projects/${project}/settings`, "Project settings", Settings]]
     : [["/projects", "Projects", FolderKanban]];
-  const settings = [["/settings", "Settings", Settings], ["/ha-readiness", "HA readiness", ShieldCheck], ["/cloud-connections", "Cloud connections", Cloud]];
+  const settings = [["/settings", "Settings", Settings], ["/ha-readiness", "HA readiness", ShieldCheck], ["/cloud-connections", "Cloud connections", Cloud], ["/object-storage", "Object storage", HardDrive]];
   const item = ([href, label, Icon]) => {
     const base = href.split("?")[0];
     const active = path === base || (base !== "/projects" && path.startsWith(base));
@@ -243,6 +243,7 @@ function ResourceDialog({ project, environment, data }) {
   const servers = list(data, "databases").filter((item) => item.spec?.project === project && item.spec?.environment === environment && (item.spec?.engine === "Postgres" || item.spec?.engine === "MySQL" || !item.spec?.engine));
   const awsConnections = availableConnections(data, "AWS");
   const planetConnections = availableConnections(data, "PlanetScale");
+  const minioAvailable = Boolean(platform.minioAvailable);
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [type, setType] = useState("service");
@@ -274,7 +275,7 @@ function ResourceDialog({ project, environment, data }) {
       { value: "logical", label: "Logical database", description: servers.length ? "Create a database inside an existing server" : "Create a database server first", enabled: servers.length > 0 },
     ],
     bucket: [
-      { value: "minio", label: "In-cluster bucket", description: "S3-compatible storage in the cluster", enabled: true, placement: "InCluster" },
+      { value: "minio", label: "In-cluster bucket", description: minioAvailable ? "Create a bucket on the cluster MinIO server" : "Set up the MinIO server in cluster settings first", enabled: minioAvailable, placement: "InCluster" },
       { value: "s3", label: "AWS S3", description: awsConnections.length ? "Create or connect an S3 bucket" : "Add an AWS connection in cluster settings", enabled: awsConnections.length > 0, placement: "External" },
     ],
   };
@@ -313,7 +314,7 @@ function ResourceDialog({ project, environment, data }) {
         placement: kind === "s3" ? "External" : "InCluster",
         bucket: form.bucket || form.name,
         createBucket: form.createBucket ? "on" : "",
-        connectionRef: form.connectionRef || (awsConnections[0] && resourceName(awsConnections[0])),
+        connectionRef: kind === "s3" ? (form.connectionRef || (awsConnections[0] && resourceName(awsConnections[0]))) : "",
       });
     }
     action(endpoint, values).then(() => {
@@ -323,6 +324,7 @@ function ResourceDialog({ project, environment, data }) {
     }).catch((error) => alert(error.message));
   };
   const haDisabled = !platform.haReady;
+  const selectedKind = options[type]?.find((item) => item.value === kind);
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (next) setStep(1); }}>
       <DialogContent className="ui-dialog resource-dialog">
@@ -331,7 +333,7 @@ function ResourceDialog({ project, environment, data }) {
           <DialogDescription>Resources are created in {environment} and reconciled by the Geass controllers.</DialogDescription>
         </DialogHeader>
         <form className="stack" onSubmit={step < 3 ? (event) => { event.preventDefault(); setStep(step + 1); } : submit}>
-          {step === 1 && types.map((option) => <button type="button" key={option.value} className={cn("choice", type === option.value && "choice-selected")} onClick={() => { setType(option.value); setKind(options[option.value][0].value); }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
+          {step === 1 && types.map((option) => <button type="button" key={option.value} className={cn("choice", type === option.value && "choice-selected")} onClick={() => { setType(option.value); setKind(options[option.value].find((item) => item.enabled)?.value || options[option.value][0].value); }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
           {step === 2 && options[type].map((option) => <button type="button" key={option.value} disabled={!option.enabled} className={cn("choice", kind === option.value && "choice-selected")} onClick={() => { if (option.enabled) { setKind(option.value); if (option.engine) set("engine", option.engine); if (option.placement) set("placement", option.placement); if (option.provider) set("provider", option.provider); } }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
           {step === 3 && (
             <div className="stack">
@@ -375,7 +377,7 @@ function ResourceDialog({ project, environment, data }) {
           )}
           <DialogFooter>
             {step > 1 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)}><ArrowLeft size={15} /> Back</Button>}
-            <Button type="submit">{step < 3 ? <>Continue <ArrowRight size={15} /></> : "Create resource"}</Button>
+            <Button type="submit" disabled={step === 2 && selectedKind && !selectedKind.enabled}>{step < 3 ? <>Continue <ArrowRight size={15} /></> : "Create resource"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -577,6 +579,7 @@ function PlatformSettings({ data, page, reload }) {
   }
   if (page === "ha") return <HAReadiness data={data} />;
   if (page === "cloud") return <CloudConnections data={data} reload={reload} />;
+  if (page === "object") return <ObjectStorageSettings data={data} reload={reload} />;
   return (
     <>
       <PageHeader eyebrow="Platform" title="General settings" description="Configure the Geass control plane and inspect cluster health." />
@@ -594,6 +597,7 @@ function PlatformSettings({ data, page, reload }) {
           <AppLink className="setting-row" href="/settings/github"><div className="setting-icon"><GitBranch size={17} /></div><div><strong>GitHub</strong><small>Connect repositories for source-based deploys.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/ha-readiness"><div className="setting-icon"><ShieldCheck size={17} /></div><div><strong>HA readiness</strong><small>Check storage, nodes, and add-ons.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/cloud-connections"><div className="setting-icon"><Cloud size={17} /></div><div><strong>Cloud connections</strong><small>Connect AWS and PlanetScale.</small></div><ArrowRight size={16} /></AppLink>
+          <AppLink className="setting-row" href="/object-storage"><div className="setting-icon"><HardDrive size={17} /></div><div><strong>Object storage</strong><small>Set up the cluster MinIO server.</small></div><ArrowRight size={16} /></AppLink>
         </div>
       </Card>
     </>
@@ -646,6 +650,31 @@ function HAReadiness({ data }) {
           <div className="detail-row"><span>Ready</span><strong>{data?.platform?.haReady ? "Yes" : "No"}</strong></div>
         </div>
         <Button onClick={() => action("/ha-readiness/check").then(() => queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }))}><RefreshCw size={15} /> Run readiness check</Button>
+      </Card>
+    </>
+  );
+}
+
+function ObjectStorageSettings({ data, reload }) {
+  const items = list(data, "objectStores").filter((item) => !item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External");
+  const server = items[0];
+  const ready = condition(server) === "True";
+  return (
+    <>
+      <PageHeader eyebrow="Platform / Settings" title="Object storage" description="Set up one MinIO server for the cluster. Project buckets are created on this server." />
+      <Card>
+        {server ? (
+          <div className="setting-row">
+            <div className="setting-icon"><HardDrive size={17} /></div>
+            <div><strong>{resourceName(server)}</strong><small>{server.status?.endpoint || "Cluster MinIO server"}</small></div>
+            <Badge tone={ready ? "success" : "warning"}>{ready ? "Ready" : "Pending"}</Badge>
+          </div>
+        ) : (
+          <>
+            <p className="muted">In-cluster buckets stay disabled until this server exists.</p>
+            <Button onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster" }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
+          </>
+        )}
       </Card>
     </>
   );
@@ -709,7 +738,7 @@ function DashboardScreen({ mode }) {
     content = <ResourceDetail project={project} data={data} kind={kind} name={params.name} reload={refetch} />;
   } else if (mode === "settings" || mode.startsWith("settings:")) {
     const page = mode.split(":")[1] || "general";
-    title = page === "general" ? "Settings" : page === "github" ? "GitHub App" : page === "ha" ? "HA readiness" : page === "cloud" ? "Cloud connections" : "Domain";
+    title = page === "general" ? "Settings" : page === "github" ? "GitHub App" : page === "ha" ? "HA readiness" : page === "cloud" ? "Cloud connections" : page === "object" ? "Object storage" : "Domain";
     content = <PlatformSettings data={data} page={page} reload={refetch} />;
   } else {
     content = <Empty title="Page not found" description="The requested dashboard page does not exist." action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
@@ -739,6 +768,7 @@ const routeTree = rootRoute.addChildren([
   route("/ha-readiness", "settings:ha"),
   route("/cloud-connections", "settings:cloud"),
   route("/cloud-connections/new", "settings:cloud"),
+  route("/object-storage", "settings:object"),
 ]);
 const router = createRouter({ routeTree, defaultPreload: "intent" });
 const queryClient = new QueryClient();

@@ -2636,14 +2636,44 @@ func (s *Server) objectStoresTableFiltered(ctx context.Context, project, environ
 	`, project, environment, rows.String())
 }
 
+func isClusterMinIO(store *geassv1alpha1.GeassObjectStore) bool {
+	if store == nil || strings.TrimSpace(store.Spec.Project) != "" {
+		return false
+	}
+	if store.Spec.Placement == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
+		return false
+	}
+	return store.Spec.Engine == "" || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineMinIO
+}
+
+func (s *Server) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
+	var list geassv1alpha1.GeassObjectStoreList
+	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		if isClusterMinIO(&list.Items[i]) {
+			return &list.Items[i], nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/object-stores"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
 		return
 	}
+	project := strings.TrimSpace(r.FormValue("project"))
+	placement := parseObjectStorePlacement(r.FormValue("placement"))
+	engine := parseObjectStoreEngine(r.FormValue("engine"), r.FormValue("placement"))
+	cluster := r.FormValue("cluster") == "on" || r.FormValue("cluster") == "true"
+	if cluster || (project == "" && placement != geassv1alpha1.ObjectStorePlacementExternal && engine != geassv1alpha1.ObjectStoreEngineS3) {
+		s.handleClusterMinIOCreate(w, r)
+		return
+	}
 	fallback = formProjectFallback(r, "/object-stores")
 	name := strings.TrimSpace(r.FormValue("name"))
-	project := strings.TrimSpace(r.FormValue("project"))
 	if name == "" || project == "" {
 		redirectFormError(w, r, fallback, "name and project are required")
 		return
@@ -2652,19 +2682,32 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
+	if placement != geassv1alpha1.ObjectStorePlacementExternal && engine != geassv1alpha1.ObjectStoreEngineS3 {
+		server, err := s.clusterMinIO(r.Context())
+		if err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
+		if server == nil {
+			redirectFormError(w, r, fallback, "set up the MinIO server in cluster settings first")
+			return
+		}
+	}
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Project:      strings.TrimSpace(r.FormValue("project")),
+			Project:      project,
 			Environment:  geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
-			Engine:       parseObjectStoreEngine(r.FormValue("engine"), r.FormValue("placement")),
-			Placement:    parseObjectStorePlacement(r.FormValue("placement")),
+			Engine:       engine,
+			Placement:    placement,
 			Region:       strings.TrimSpace(r.FormValue("region")),
 			CreateBucket: r.FormValue("createBucket") == "on" || r.FormValue("createBucket") == "true",
 		},
 	}
-	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
-		store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+	if placement == geassv1alpha1.ObjectStorePlacementExternal {
+		if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
+			store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+		}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
 		store.Spec.Buckets = []string{bucket}
@@ -2674,6 +2717,39 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	redirectAfterResourceCreate(w, r, project, r.FormValue("environment"), "object-stores", name)
+}
+
+func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request) {
+	fallback := "/object-storage"
+	existing, err := s.clusterMinIO(r.Context())
+	if err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	if existing != nil {
+		redirectFormError(w, r, fallback, "MinIO server is already set up")
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		name = platform.ClusterMinIOName
+	}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	if err := s.Client.Create(r.Context(), store); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			redirectFormError(w, r, fallback, "MinIO server is already set up")
+			return
+		}
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	redirect(w, r, fallback)
 }
 
 func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request) {
@@ -2714,6 +2790,10 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 	var store geassv1alpha1.GeassObjectStore
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &store); err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if isClusterMinIO(&store) {
+		redirect(w, r, "/object-storage")
 		return
 	}
 	fallback = workspaceResourceURL(store.Spec.Project, string(store.Spec.Environment), "object-stores", name, "settings")

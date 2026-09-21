@@ -34,15 +34,14 @@ const (
 
 // GeassObjectStoreSpec defines the desired state of GeassObjectStore.
 type GeassObjectStoreSpec struct {
-	// Project is the owning project.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Project string `json:"project"`
-	// Environment is the project environment.
+	// Project is the owning project. Leave empty for the cluster MinIO server.
+	// +optional
+	Project string `json:"project,omitempty"`
+	// Environment is the project environment. Required when Project is set.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Required
-	Environment GeassEnvironment `json:"environment"`
+	// +optional
+	Environment GeassEnvironment `json:"environment,omitempty"`
 
 	// Engine is the object store engine to provision.
 	// +kubebuilder:validation:Enum=MinIO;S3
@@ -108,7 +107,6 @@ type GeassObjectStore struct {
 	// +required
 	Spec GeassObjectStoreSpec `json:"spec"`
 
-	// +optional
 	// +optional
 	Status GeassObjectStoreStatus `json:"status,omitempty"`
 }

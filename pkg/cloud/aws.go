@@ -18,6 +18,7 @@ type AWSClient struct {
 	AccessKey string
 	SecretKey string
 	Region    string
+	Endpoint  string
 }
 
 func (c *AWSClient) httpClient() *http.Client {
@@ -36,6 +37,9 @@ func (c *AWSClient) region() string {
 
 // EnsureBucket creates the bucket when it does not already exist.
 func (c *AWSClient) EnsureBucket(bucket string) error {
+	if strings.TrimSpace(c.Endpoint) != "" {
+		return c.ensurePathStyleBucket(bucket)
+	}
 	region := c.region()
 	host := fmt.Sprintf("%s.s3.%s.amazonaws.com", bucket, region)
 	if region == "us-east-1" {
@@ -65,6 +69,27 @@ func (c *AWSClient) EnsureBucket(bucket string) error {
 		return nil
 	}
 	return fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+}
+
+func (c *AWSClient) ensurePathStyleBucket(bucket string) error {
+	endpoint := strings.TrimRight(c.Endpoint, "/")
+	req, err := http.NewRequest(http.MethodPut, endpoint+"/"+bucket, http.NoBody)
+	if err != nil {
+		return err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 300 || resp.StatusCode == http.StatusConflict {
+		return nil
+	}
+	return fmt.Errorf("object store %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 }
 
 func (c *AWSClient) sign(req *http.Request, payload []byte, service string) error {

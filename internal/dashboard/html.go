@@ -116,7 +116,7 @@ func (s *Server) buildShellContext(r *http.Request, title string) shellContext {
 }
 
 func isSettingsPath(path string) bool {
-	return path == "/settings" || strings.HasPrefix(path, "/settings/") || strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections")
+	return path == "/settings" || strings.HasPrefix(path, "/settings/") || strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections") || strings.HasPrefix(path, "/object-storage")
 }
 
 func settingsFrame(path, body string) string {
@@ -129,6 +129,7 @@ func settingsFrame(path, body string) string {
 		{Href: "/settings/github", Label: "GitHub", Active: strings.HasPrefix(path, "/settings/github")},
 		{Href: "/ha-readiness", Label: "HA Readiness", Active: active("/ha-readiness")},
 		{Href: "/cloud-connections", Label: "Cloud Connections", Active: active("/cloud-connections")},
+		{Href: "/object-storage", Label: "Object Storage", Active: active("/object-storage")},
 	})
 	return `<div class="mb-6">` + Breadcrumbs([]BreadcrumbItem{
 		{Href: "/projects", Label: "Projects"},
@@ -237,6 +238,8 @@ func pageTitle(r *http.Request) string {
 		return "HA Readiness"
 	case strings.HasPrefix(r.URL.Path, "/cloud-connections"):
 		return "Cloud Connections"
+	case strings.HasPrefix(r.URL.Path, "/object-storage"):
+		return "Object Storage"
 	case strings.HasPrefix(r.URL.Path, "/settings"):
 		return "Platform Settings"
 	default:

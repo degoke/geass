@@ -37,6 +37,7 @@ type dashboardPlatform struct {
 	HealthyNodes         int32  `json:"healthyNodes"`
 	AWSAvailable         bool   `json:"awsAvailable"`
 	PlanetScaleAvailable bool   `json:"planetScaleAvailable"`
+	MinIOAvailable       bool   `json:"minioAvailable"`
 }
 
 type dashboardMetric struct {

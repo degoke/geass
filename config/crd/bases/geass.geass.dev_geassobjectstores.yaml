@@ -80,7 +80,8 @@ spec:
                 - S3
                 type: string
               environment:
-                description: Environment is the project environment.
+                description: Environment is the project environment. Required when
+                  Project is set.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
@@ -93,16 +94,14 @@ spec:
                 - External
                 type: string
               project:
-                description: Project is the owning project.
-                minLength: 1
+                description: Project is the owning project. Leave empty for the cluster
+                  MinIO server.
                 type: string
               region:
                 description: Region is the AWS region for external buckets.
                 type: string
             required:
             - engine
-            - environment
-            - project
             type: object
           status:
             description: GeassObjectStoreStatus defines the observed state of GeassObjectStore.

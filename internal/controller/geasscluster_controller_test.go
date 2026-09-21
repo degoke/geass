@@ -18,6 +18,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,7 +57,10 @@ func markHelmChartReady(ctx context.Context, name string) {
 			},
 		},
 	}
-	Expect(k8sClient.Create(ctx, job)).To(Succeed())
+	if err := k8sClient.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
+		Expect(err).NotTo(HaveOccurred())
+	}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: testHelmChartNS}, job)).To(Succeed())
 	job.Status.Succeeded = 1
 	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 }

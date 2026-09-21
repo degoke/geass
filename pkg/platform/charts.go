@@ -29,9 +29,11 @@ const (
 	MySQLChartVersion = "12.3.3"
 	MySQLReleaseChart = "mysql"
 
-	MinIOChartRepo    = "https://charts.min.io/"
-	MinIOChartVersion = "5.4.0"
-	MinIOReleaseChart = "minio"
+	MinIOChartRepo        = "https://charts.min.io/"
+	MinIOChartVersion     = "5.4.0"
+	MinIOReleaseChart     = "minio"
+	ClusterMinIOName      = "cluster-minio"
+	ClusterMinIOChartName = "geass-minio"
 
 	SQLiteImage = "rqlite/rqlite:8.36.16"
 )

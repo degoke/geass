@@ -64,6 +64,12 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 			info.PlanetScaleAvailable = true
 		}
 	}
+	for i := range data.ObjectStores.Items {
+		if isClusterMinIO(&data.ObjectStores.Items[i]) {
+			info.MinIOAvailable = true
+			break
+		}
+	}
 	return info
 }
 
