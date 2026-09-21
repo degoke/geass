@@ -26,20 +26,24 @@ func githubManifestStateCookieName(state string) string {
 	return githubManifestStateCookie + state
 }
 
+func newGitHubManifestStateCookie(r *http.Request, state, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     githubManifestStateCookieName(state),
+		Value:    value,
+		Path:     "/settings/github/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   dashboardCookieSecure(r),
+		MaxAge:   maxAge,
+	}
+}
+
 func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request) string {
 	state, err := randomHex(16)
 	if err != nil {
 		return ""
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubManifestStateCookieName(state),
-		Value:    state,
-		Path:     "/settings/github/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   dashboardCookieSecure(r),
-		MaxAge:   3600,
-	})
+	http.SetCookie(w, newGitHubManifestStateCookie(r, state, state, 3600))
 	return state
 }
 
@@ -63,13 +67,7 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		redirectProbe(w, r, "/settings/github", "error", "GitHub App creation state mismatch; try again from Geass")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubManifestStateCookieName(state),
-		Value:    "",
-		Path:     "/settings/github/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, newGitHubManifestStateCookie(r, state, "", -1))
 
 	converted, err := githubapp.ConvertManifestCode(r.Context(), s.HTTPClient, code)
 	if err != nil {

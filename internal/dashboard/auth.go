@@ -542,7 +542,11 @@ func parseDashboardUsersSecret(secret *corev1.Secret) ([]dashboardUser, error) {
 	if err := json.Unmarshal(raw, &users); err != nil {
 		return nil, err
 	}
-	return filterDashboardUsers(users, false), nil
+	filtered := filterDashboardUsers(users, false)
+	if len(filtered) == 0 {
+		return nil, errDashboardAuthUnconfigured
+	}
+	return filtered, nil
 }
 
 func parseDashboardUsersEnv(value string) []dashboardUser {

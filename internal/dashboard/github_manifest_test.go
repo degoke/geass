@@ -118,3 +118,15 @@ func TestGitHubManifestStateCookieSecureOnPublicHost(t *testing.T) {
 	require.True(t, cookie.HttpOnly)
 	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
 }
+
+func TestGitHubManifestStateCookieClearKeepsSecure(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	cookie := newGitHubManifestStateCookie(req, "0123456789abcdef0123456789abcdef", "", -1)
+	require.True(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+	require.Equal(t, -1, cookie.MaxAge)
+	require.Equal(t, "/settings/github/", cookie.Path)
+}
