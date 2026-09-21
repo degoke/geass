@@ -32,13 +32,12 @@ import (
 )
 
 func markHelmChartNotReady(ctx context.Context, name string) {
-	jobName := "helm-install-" + name
-	job := &batchv1.Job{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: testHelmChartNS}, job)).To(Succeed())
-	job.Status.Succeeded = 0
-	job.Status.Failed = 0
-	job.Status.Active = 1
-	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+	chart := &helmv1.HelmChart{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)).To(Succeed())
+	chart.Status.JobName = ""
+	if err := k8sClient.Status().Update(ctx, chart); err != nil {
+		Expect(k8sClient.Update(ctx, chart)).To(Succeed())
+	}
 }
 
 func markHelmChartReady(ctx context.Context, name string) {
