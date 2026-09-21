@@ -474,7 +474,7 @@ func TestProjectWorkspaceOpensServiceDrawer(t *testing.T) {
 	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), testAppName)
-	require.Contains(t, rec.Body.String(), "degoke/trassfa")
+	require.Contains(t, rec.Body.String(), `"git"`)
 	page := httptest.NewRecorder()
 	srv.handleSPA(page, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, page.Code)
@@ -554,8 +554,10 @@ func TestProjectWorkspaceOpensManagedResourceDrawer(t *testing.T) {
 	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "orders")
-	require.Contains(t, rec.Body.String(), "orders-connection")
+	require.Contains(t, rec.Body.String(), "Postgres")
+	require.NotContains(t, rec.Body.String(), "orders-connection")
 	require.NotContains(t, rec.Body.String(), "orders-password")
+	require.NotContains(t, rec.Body.String(), "orders-rw")
 }
 
 func TestSettingsPageContainsPlatformNavigation(t *testing.T) {

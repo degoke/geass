@@ -589,9 +589,11 @@ type conflictAuthClient struct {
 
 func (c *conflictAuthClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	if secret, ok := obj.(*corev1.Secret); ok && secret.Name == platform.DashboardAuthSecretName {
-		c.updates++
-		if c.updates == 1 {
-			return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secret.Name, fmt.Errorf("conflict"))
+		if _, ok := secret.Data[dashboardLoginLockoutsSecretKey]; ok {
+			c.updates++
+			if c.updates == 1 {
+				return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secret.Name, fmt.Errorf("conflict"))
+			}
 		}
 	}
 	return c.Client.Update(ctx, obj, opts...)
