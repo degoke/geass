@@ -213,7 +213,7 @@ func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db 
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, port, scheme); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	return r.setReady(ctx, db, wsNS, host, db.Spec.Engine+" database is ready")
+	return r.setReady(ctx, db, wsNS, host, string(db.Spec.Engine)+" database is ready")
 }
 
 func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (ctrl.Result, error) {

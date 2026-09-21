@@ -219,16 +219,13 @@ func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Conte
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
 		secret.StringData = map[string]string{
-			"endpoint":                      endpoint,
-			"accessKey":                     accessKey,
-			"secretKey":                     secretKey,
 			platform.ConnectionKeyEndpoint:  endpoint,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
-			"bucket":                        store.Name,
+			platform.ConnectionKeyBucket:    store.Name,
 		}
 		if len(store.Spec.Buckets) > 0 {
-			secret.StringData["bucket"] = store.Spec.Buckets[0]
+			secret.StringData[platform.ConnectionKeyBucket] = store.Spec.Buckets[0]
 		}
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
