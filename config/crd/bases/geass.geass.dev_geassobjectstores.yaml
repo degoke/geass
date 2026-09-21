@@ -56,6 +56,7 @@ spec:
                   minLength: 3
                   pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
                   type: string
+                maxItems: 32
                 type: array
                 x-kubernetes-validations:
                 - message: bucket names must not be formatted as an IP address

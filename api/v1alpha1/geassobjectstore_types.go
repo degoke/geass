@@ -67,6 +67,7 @@ type GeassObjectStoreSpec struct {
 
 	// Buckets is an optional list of buckets to create on provision.
 	// +optional
+	// +kubebuilder:validation:MaxItems=32
 	// +kubebuilder:validation:items:MinLength=3
 	// +kubebuilder:validation:items:MaxLength=63
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
