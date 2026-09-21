@@ -202,7 +202,6 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(projectAccess).NotTo(Equal(rootUser))
 		userSecret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "assets-minio-user", Namespace: ns}, userSecret)).To(Succeed())
-		chart := &helmv1.HelmChart{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("policy: \"geass-assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecret: \"assets-minio-user\""))
