@@ -32,6 +32,8 @@ type clusterCapacity struct {
 	Nodes                  []capacityNode                       `json:"nodes"`
 	Issues                 []capacityIssue                      `json:"issues"`
 	Estimates              map[string]platform.WorkloadEstimate `json:"estimates"`
+	CPUSizes               []platform.SizeOption                `json:"cpuSizes"`
+	MemorySizes            []platform.SizeOption                `json:"memorySizes"`
 	Message                string                               `json:"message,omitempty"`
 }
 
@@ -51,7 +53,7 @@ type capacityIssue struct {
 }
 
 func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
-	snapshot := clusterCapacity{Estimates: platform.WorkloadEstimates(), Message: "Node capacity is unavailable until the cluster reports schedulable nodes"}
+	snapshot := clusterCapacity{Estimates: platform.WorkloadEstimates(), CPUSizes: platform.CPUSizes(), MemorySizes: platform.MemorySizes(), Message: "Node capacity is unavailable until the cluster reports schedulable nodes"}
 	if s == nil || s.Client == nil {
 		return snapshot
 	}
@@ -207,8 +209,12 @@ func (c clusterCapacity) Fits(est platform.WorkloadEstimate) (bool, string) {
 }
 
 func (s *Server) rejectIfNoCapacity(w http.ResponseWriter, r *http.Request, fallback, kind string, ha bool, replicas int32) bool {
+	return s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateWorkload(kind, ha, replicas))
+}
+
+func (s *Server) rejectIfNoCapacityFor(w http.ResponseWriter, r *http.Request, fallback string, est platform.WorkloadEstimate) bool {
 	snapshot := s.clusterCapacity(r.Context())
-	ok, message := snapshot.Fits(platform.EstimateWorkload(kind, ha, replicas))
+	ok, message := snapshot.Fits(est)
 	if ok {
 		return false
 	}

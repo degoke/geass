@@ -8,14 +8,18 @@ test("creates a project with a generated name and production environment", async
   await expect(page.getByRole("button", { name: "Add the first resource" })).toBeVisible();
 });
 
-test("workspace add resource dialog covers services databases and buckets", async ({ page }) => {
+test("resource create dialog lets users assign CPU memory and autoscaling", async ({ page }) => {
   await page.goto("/projects");
   await page.getByRole("button", { name: "New project" }).click();
   await page.getByRole("button", { name: "Add the first resource" }).click();
-  await expect(page.getByRole("heading", { name: "Add a resource" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Service/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Database/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Bucket/ })).toBeVisible();
+  await page.getByRole("button", { name: /Service/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: /Docker image/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("CPU")).toBeVisible();
+  await expect(page.getByLabel("Memory")).toBeVisible();
+  await expect(page.getByLabel("Replicas")).toBeVisible();
+  await expect(page.getByText("Autoscaling")).toBeVisible();
 });
 
 test("cloud connections allow AWS and PlanetScale", async ({ page }) => {

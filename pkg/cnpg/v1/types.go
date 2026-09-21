@@ -49,10 +49,11 @@ type ClusterList struct {
 
 // ClusterSpec defines a CNPG cluster.
 type ClusterSpec struct {
-	Instances int32                  `json:"instances,omitempty"`
-	ImageName string                 `json:"imageName,omitempty"`
-	Storage   StorageConfiguration   `json:"storage,omitempty"`
-	Bootstrap BootstrapConfiguration `json:"bootstrap,omitempty"`
+	Instances int32                       `json:"instances,omitempty"`
+	ImageName string                      `json:"imageName,omitempty"`
+	Storage   StorageConfiguration        `json:"storage,omitempty"`
+	Bootstrap BootstrapConfiguration      `json:"bootstrap,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 // StorageConfiguration defines PVC settings.

@@ -129,6 +129,10 @@ type GeassDatabaseSpec struct {
 	// +kubebuilder:default="10Gi"
 	// +optional
 	StorageSize *resource.Quantity `json:"storageSize,omitempty"`
+
+	// Resources is the CPU and memory assigned to each in-cluster instance.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 // GeassDatabaseStatus defines the observed state of GeassDatabase.

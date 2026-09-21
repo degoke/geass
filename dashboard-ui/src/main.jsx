@@ -243,10 +243,56 @@ function workloadKind(type, kind) {
   return kind;
 }
 
+function defaultSizeForKind(type, kind) {
+  if (kind === "sqlite" || type === "service") return { cpu: "100m", memory: "128Mi" };
+  if (["postgres", "mysql", "redis", "minio"].includes(kind) || type === "database") return { cpu: "250m", memory: "512Mi" };
+  return { cpu: "100m", memory: "128Mi" };
+}
+
+function cpuMillis(value) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  if (text.endsWith("m")) return parseInt(text, 10) || 0;
+  const cores = parseFloat(text);
+  return Number.isFinite(cores) ? Math.round(cores * 1000) : 0;
+}
+
+function memoryBytes(value) {
+  const text = String(value || "").trim();
+  if (text.endsWith("Gi")) return (parseInt(text, 10) || 0) * 1024 ** 3;
+  if (text.endsWith("Mi")) return (parseInt(text, 10) || 0) * 1024 ** 2;
+  if (text.endsWith("Ki")) return (parseInt(text, 10) || 0) * 1024;
+  return parseInt(text, 10) || 0;
+}
+
+function sizeLabel(options, value, fallback) {
+  return options.find((option) => option.value === value)?.label || fallback || value;
+}
+
 function resourceEstimate(data, type, kind, ha) {
   const estimates = data?.platform?.capacity?.estimates || {};
   const key = ha && (kind === "postgres" || kind === "mysql" || kind === "redis") ? `${kind}-ha` : workloadKind(type, kind);
   return estimates[key] || estimates[workloadKind(type, kind)];
+}
+
+function liveEstimate(data, type, kind, form) {
+  const catalog = resourceEstimate(data, type, kind, form.highAvailability);
+  if (!catalog || (!catalog.cpuMillis && !catalog.memoryBytes)) return catalog;
+  const copies = type === "service"
+    ? (form.autoscaling ? Math.max(Number(form.maxReplicas) || 3, Number(form.replicas) || 1) : Number(form.replicas) || 1)
+    : (catalog.replicas || 1);
+  const cpu = form.cpu || catalog.perCpu;
+  const memory = form.memory || catalog.perMemory;
+  return {
+    ...catalog,
+    cpu,
+    memory,
+    replicas: copies,
+    cpuMillis: cpuMillis(cpu) * copies,
+    memoryBytes: memoryBytes(memory) * copies,
+    perCpuMillis: cpuMillis(cpu),
+    perMemoryBytes: memoryBytes(memory),
+  };
 }
 
 function capacityFits(capacity, estimate) {
@@ -254,6 +300,17 @@ function capacityFits(capacity, estimate) {
   if (!estimate.cpuMillis && !estimate.memoryBytes) return true;
   if (estimate.perCpuMillis > capacity.largestNodeCpuMillis || estimate.perMemoryBytes > capacity.largestNodeMemoryBytes) return false;
   return estimate.cpuMillis <= capacity.cpuAvailableMillis && estimate.memoryBytes <= capacity.memoryAvailableBytes;
+}
+
+function SizeFields({ cpu, memory, onChange, data }) {
+  const cpuSizes = data?.platform?.capacity?.cpuSizes || [{ value: "100m", label: "0.1 CPU" }, { value: "250m", label: "0.25 CPU" }, { value: "500m", label: "0.5 CPU" }, { value: "1", label: "1 CPU" }, { value: "2", label: "2 CPU" }];
+  const memorySizes = data?.platform?.capacity?.memorySizes || [{ value: "128Mi", label: "128 MB" }, { value: "256Mi", label: "256 MB" }, { value: "512Mi", label: "512 MB" }, { value: "1Gi", label: "1 GB" }, { value: "2Gi", label: "2 GB" }, { value: "4Gi", label: "4 GB" }];
+  return (
+    <div className="size-grid">
+      <Field label="CPU"><Select value={cpu} onChange={(event) => onChange("cpu", event.target.value)}>{cpuSizes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field>
+      <Field label="Memory"><Select value={memory} onChange={(event) => onChange("memory", event.target.value)}>{memorySizes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field>
+    </div>
+  );
 }
 
 function ResourceDialog({ project, environment, data }) {
@@ -269,10 +326,11 @@ function ResourceDialog({ project, environment, data }) {
   const [step, setStep] = useState(1);
   const [type, setType] = useState("service");
   const [kind, setKind] = useState("app");
-  const [form, setForm] = useState({ name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true });
+  const [form, setForm] = useState({ name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3 });
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const emptyForm = { name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3 };
   useEffect(() => {
-    const openDialog = () => { setStep(1); setType("service"); setKind("app"); setOpen(true); };
+    const openDialog = () => { setStep(1); setType("service"); setKind("app"); setForm(emptyForm); setOpen(true); };
     window.addEventListener("geass:open-resource", openDialog);
     return () => window.removeEventListener("geass:open-resource", openDialog);
   }, []);
@@ -306,10 +364,10 @@ function ResourceDialog({ project, environment, data }) {
     let endpoint = "/apps/create";
     if (type === "service" && kind === "app") {
       endpoint = "/apps/create";
-      Object.assign(values, { image: form.image, port: "80", name: form.name });
+      Object.assign(values, { image: form.image, port: "80", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
     } else if (type === "service" && kind === "github") {
       endpoint = "/apps/create";
-      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, deploy: "on" });
+      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, deploy: "on", cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
     } else if (kind === "logical") {
       endpoint = "/logical-databases/create";
       Object.assign(values, { server: form.server || (servers[0] && resourceName(servers[0])), database: form.databaseName || form.name });
@@ -327,6 +385,8 @@ function ResourceDialog({ project, environment, data }) {
         databaseName: form.databaseName,
         connectionRef: form.connectionRef || (option?.provider === "PlanetScale" ? planetConnections[0] && resourceName(planetConnections[0]) : option?.provider === "AWS" ? awsConnections[0] && resourceName(awsConnections[0]) : ""),
         highAvailability: form.highAvailability ? "on" : "",
+        cpu: form.cpu,
+        memory: form.memory,
       });
     } else {
       endpoint = "/object-stores/create";
@@ -346,7 +406,7 @@ function ResourceDialog({ project, environment, data }) {
   };
   const haDisabled = !platform.haReady;
   const selectedKind = options[type]?.find((item) => item.value === kind);
-  const estimate = resourceEstimate(data, type, kind, form.highAvailability);
+  const estimate = liveEstimate(data, type, kind, form);
   const capacity = platform.capacity || {};
   const fits = capacityFits(capacity, estimate);
   return (
@@ -357,8 +417,8 @@ function ResourceDialog({ project, environment, data }) {
           <DialogDescription>Resources are created in {environment} and reconciled by the Geass controllers.</DialogDescription>
         </DialogHeader>
         <form className="stack" onSubmit={step < 3 ? (event) => { event.preventDefault(); setStep(step + 1); } : submit}>
-          {step === 1 && types.map((option) => <button type="button" key={option.value} className={cn("choice", type === option.value && "choice-selected")} onClick={() => { setType(option.value); setKind(options[option.value].find((item) => item.enabled)?.value || options[option.value][0].value); }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
-          {step === 2 && options[type].map((option) => <button type="button" key={option.value} disabled={!option.enabled} className={cn("choice", kind === option.value && "choice-selected")} onClick={() => { if (option.enabled) { setKind(option.value); if (option.engine) set("engine", option.engine); if (option.placement) set("placement", option.placement); if (option.provider) set("provider", option.provider); } }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
+          {step === 1 && types.map((option) => <button type="button" key={option.value} className={cn("choice", type === option.value && "choice-selected")} onClick={() => { setType(option.value); const nextKind = options[option.value].find((item) => item.enabled)?.value || options[option.value][0].value; setKind(nextKind); setForm((current) => ({ ...current, ...defaultSizeForKind(option.value, nextKind) })); }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
+          {step === 2 && options[type].map((option) => <button type="button" key={option.value} disabled={!option.enabled} className={cn("choice", kind === option.value && "choice-selected")} onClick={() => { if (option.enabled) { setKind(option.value); setForm((current) => ({ ...current, ...defaultSizeForKind(type, option.value), ...(option.engine ? { engine: option.engine } : {}), ...(option.placement ? { placement: option.placement } : {}), ...(option.provider ? { provider: option.provider } : {}) })); } }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
           {step === 3 && (
             <div className="stack">
               <Field label="Name"><Input required value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="api" /></Field>
@@ -369,6 +429,18 @@ function ResourceDialog({ project, environment, data }) {
               </>}
               {type === "database" && kind !== "logical" && kind !== "planetscale" && kind !== "awsdb" && kind !== "sqlite" && (
                 <label className={cn("check-row", haDisabled && "is-disabled")}><input type="checkbox" disabled={haDisabled} checked={form.highAvailability} onChange={(event) => set("highAvailability", event.target.checked)} /> High availability {haDisabled && <small>(requires 3 healthy cluster nodes)</small>}</label>
+              )}
+              {(type === "service" || (type === "database" && kind !== "logical" && kind !== "planetscale" && kind !== "awsdb")) && (
+                <>
+                  <SizeFields cpu={form.cpu} memory={form.memory} onChange={set} data={data} />
+                  {type === "service" && (
+                    <>
+                      <Field label="Replicas"><Input type="number" min="1" value={form.replicas} onChange={(event) => set("replicas", Number(event.target.value) || 1)} /></Field>
+                      <label className="check-row"><input type="checkbox" checked={form.autoscaling} onChange={(event) => set("autoscaling", event.target.checked)} /> Autoscaling</label>
+                      {form.autoscaling && <Field label="Scale up to"><Input type="number" min={form.replicas || 1} value={form.maxReplicas} onChange={(event) => set("maxReplicas", Number(event.target.value) || 3)} /></Field>}
+                    </>
+                  )}
+                </>
               )}
               {kind === "planetscale" && <>
                 <Field label="Mode"><Select value={form.mode} onChange={(event) => set("mode", event.target.value)}><option>Create</option><option>Connect</option></Select></Field>
@@ -400,7 +472,7 @@ function ResourceDialog({ project, environment, data }) {
               {estimate && (
                 <p className={cn("form-help", !fits && "text-danger")}>
                   {estimate.cpuMillis || estimate.memoryBytes
-                    ? `This ${estimate.label} needs about ${estimate.cpu} CPU and ${estimate.memory} memory${estimate.replicas > 1 ? ` across ${estimate.replicas} instances` : ""}. Cluster has ${capacity.known ? `${capacity.cpuAvailable} CPU and ${capacity.memoryAvailable} memory` : "unknown capacity"} available.`
+                    ? `Each copy gets ${sizeLabel(data?.platform?.capacity?.cpuSizes || [], form.cpu, form.cpu)} and ${sizeLabel(data?.platform?.capacity?.memorySizes || [], form.memory, form.memory)}${estimate.replicas > 1 ? ` · ${estimate.replicas} copies` : ""}. Cluster has ${capacity.known ? `${capacity.cpuAvailable} CPU and ${capacity.memoryAvailable} memory` : "unknown capacity"} available.`
                     : "This resource does not consume in-cluster CPU or memory."}
                   {!fits && <> Scale up the cluster before creating it. <AppLink href="/cluster">View cluster capacity</AppLink></>}
                 </p>
@@ -414,6 +486,46 @@ function ResourceDialog({ project, environment, data }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ResourceSettings({ item, kind, name, title, data, project, reload, navigate }) {
+  const defaults = defaultSizeForKind(kind === "apps" ? "service" : "database", (item.spec?.engine || "postgres").toLowerCase());
+  const [cpu, setCpu] = useState(item.spec?.resources?.requests?.cpu || defaults.cpu);
+  const [memory, setMemory] = useState(item.spec?.resources?.requests?.memory || defaults.memory);
+  const [replicas, setReplicas] = useState(item.spec?.replicas || 1);
+  const [autoscaling, setAutoscaling] = useState(Boolean(item.spec?.autoscaling?.maxReplicas > 1));
+  const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
+  const [version, setVersion] = useState(item.spec?.version || "");
+  const inCluster = kind === "apps" || (kind === "databases" && item.spec?.placement !== "External");
+  const save = (event) => {
+    event.preventDefault();
+    const values = { project: item.spec?.project, environment: item.spec?.environment };
+    if (kind === "databases") values.version = version;
+    if (kind === "apps") Object.assign(values, { cpu, memory, replicas: String(replicas), autoscaling: autoscaling ? "on" : "", maxReplicas: String(maxReplicas) });
+    if (kind === "databases" && inCluster) Object.assign(values, { cpu, memory });
+    action(`/${kind}/${name}/update`, values).then(() => { reload(); alert("Settings saved"); }).catch((error) => alert(error.message));
+  };
+  return (
+    <Card>
+      <form className="form-grid" onSubmit={save}>
+        <Field label="Project"><Input readOnly value={item.spec?.project || ""} /></Field>
+        <Field label="Environment"><Input readOnly value={item.spec?.environment || ""} /></Field>
+        {kind === "databases" && <Field label="Version"><Input value={version} onChange={(event) => setVersion(event.target.value)} /></Field>}
+        {inCluster && <SizeFields cpu={cpu} memory={memory} onChange={(key, value) => { if (key === "cpu") setCpu(value); else setMemory(value); }} data={data} />}
+        {kind === "apps" && (
+          <>
+            <Field label="Replicas"><Input type="number" min="1" value={replicas} onChange={(event) => setReplicas(Number(event.target.value) || 1)} /></Field>
+            <label className="check-row"><input type="checkbox" checked={autoscaling} onChange={(event) => setAutoscaling(event.target.checked)} /> Autoscaling</label>
+            {autoscaling && <Field label="Scale up to"><Input type="number" min={replicas || 1} value={maxReplicas} onChange={(event) => setMaxReplicas(Number(event.target.value) || 3)} /></Field>}
+          </>
+        )}
+        <div className="form-actions">
+          <Button type="submit">Save changes</Button>
+          <Button type="button" variant="danger" onClick={() => { if (confirm(`Delete ${title}?`)) action(`/${kind}/${name}/delete`).then(() => navigate({ to: `/projects/${resourceName(project)}` })); }}><Trash2 size={15} /> Delete</Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -469,6 +581,8 @@ function ResourceDetail({ project, data, kind, name, reload }) {
               <div className="detail-row"><span>Project</span><strong>{item.spec?.project}</strong></div>
               <div className="detail-row"><span>Environment</span><strong>{item.spec?.environment}</strong></div>
               <div className="detail-row"><span>Source</span><strong>{item.spec?.source?.git?.repository || sourceImage || item.spec?.engine || item.spec?.placement || "—"}</strong></div>
+              {isApp && <div className="detail-row"><span>Replicas</span><strong>{item.spec?.replicas ?? 1}{item.spec?.autoscaling?.maxReplicas > 1 ? ` · autoscale to ${item.spec.autoscaling.maxReplicas}` : ""}</strong></div>}
+              {(isApp || (kind === "databases" && item.spec?.placement !== "External")) && <div className="detail-row"><span>Size</span><strong>{sizeLabel(data?.platform?.capacity?.cpuSizes || [], item.spec?.resources?.requests?.cpu, item.spec?.resources?.requests?.cpu || "0.1 CPU")} · {sizeLabel(data?.platform?.capacity?.memorySizes || [], item.spec?.resources?.requests?.memory, item.spec?.resources?.requests?.memory || "128 MB")}</strong></div>}
               <div className="detail-row"><span>Namespace</span><strong>{item.status?.targetNamespace || "Pending"}</strong></div>
             </div>
           </Card>
@@ -518,19 +632,7 @@ function ResourceDetail({ project, data, kind, name, reload }) {
         </Card>
       )}
       {view === "monitor" && <Card><div className="panel-metrics">{(data?.metrics || []).map((metric) => <div className="panel-metric" key={metric.title}><div className="eyebrow">{metric.title}</div><div className="stat-value">{metric.value}</div><div className="stat-detail">{metric.state}</div></div>)}</div></Card>}
-      {view === "settings" && (
-        <Card>
-          <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action(`/${kind}/${name}/update`, { project: item.spec?.project, environment: item.spec?.environment, version: event.target.version?.value }).then(() => { reload(); alert("Settings saved"); }).catch((error) => alert(error.message)); }}>
-            <Field label="Project"><Input readOnly value={item.spec?.project || ""} /></Field>
-            <Field label="Environment"><Input readOnly value={item.spec?.environment || ""} /></Field>
-            {kind === "databases" && <Field label="Version"><Input name="version" defaultValue={item.spec?.version || ""} /></Field>}
-            <div className="form-actions">
-              <Button type="submit">Save changes</Button>
-              <Button type="button" variant="danger" onClick={() => { if (confirm(`Delete ${title}?`)) action(`/${kind}/${name}/delete`).then(() => navigate({ to: `/projects/${resourceName(project)}` })); }}><Trash2 size={15} /> Delete</Button>
-            </div>
-          </form>
-        </Card>
-      )}
+      {view === "settings" && <ResourceSettings item={item} kind={kind} name={name} title={title} data={data} project={project} reload={reload} navigate={navigate} />}
     </>
   );
 }
@@ -745,8 +847,10 @@ function ObjectStorageSettings({ data, reload }) {
   const server = items[0];
   const ready = condition(server) === "True";
   const capacity = data?.platform?.capacity || {};
-  const estimate = capacity.estimates?.minio;
-  const fits = capacityFits(capacity, estimate);
+  const [cpu, setCpu] = useState("250m");
+  const [memory, setMemory] = useState("512Mi");
+  const live = { cpu, memory, cpuMillis: cpuMillis(cpu), memoryBytes: memoryBytes(memory), perCpuMillis: cpuMillis(cpu), perMemoryBytes: memoryBytes(memory), replicas: 1 };
+  const fits = capacityFits(capacity, live);
   return (
     <>
       <PageHeader eyebrow="Platform / Settings" title="Object storage" description="Set up one MinIO server for the cluster. Project buckets are created on this server." />
@@ -759,9 +863,10 @@ function ObjectStorageSettings({ data, reload }) {
           </div>
         ) : (
           <>
-            <p className="muted">In-cluster buckets stay disabled until this server exists. The MinIO server needs about {estimate?.cpu || "250m"} CPU and {estimate?.memory || "512Mi"} memory.</p>
+            <p className="muted">In-cluster buckets stay disabled until this server exists. Choose how much CPU and memory to assign to MinIO.</p>
+            <SizeFields cpu={cpu} memory={memory} onChange={(key, value) => { if (key === "cpu") setCpu(value); else setMemory(value); }} data={data} />
             {!fits && capacity.known && <p className="form-help text-danger">The cluster does not have enough capacity. <AppLink href="/cluster">Scale up from cluster capacity</AppLink> before creating MinIO.</p>}
-            <Button disabled={!fits && capacity.known} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster" }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
+            <Button disabled={!fits && capacity.known} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
           </>
         )}
       </Card>

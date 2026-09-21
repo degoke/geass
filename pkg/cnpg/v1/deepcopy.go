@@ -6,8 +6,13 @@ func (in *Cluster) DeepCopyInto(out *Cluster) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	out.Spec = in.Spec
+	in.Spec.DeepCopyInto(&out.Spec)
 	out.Status = in.Status
+}
+
+func (in *ClusterSpec) DeepCopyInto(out *ClusterSpec) {
+	*out = *in
+	in.Resources.DeepCopyInto(&out.Resources)
 }
 
 func (in *Cluster) DeepCopy() *Cluster {

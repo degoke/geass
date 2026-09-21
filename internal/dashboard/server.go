@@ -1275,7 +1275,13 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
-	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadService, false, 1) {
+	res, err := resourcesFromForm(r, platform.DefaultAppResources())
+	if err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	replicas := replicasFromForm(r, 1)
+	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("service", res, capacityCopiesFromForm(r, replicas))) {
 		return
 	}
 	if _, err := platform.ProjectNamespace(project, string(environment)); err != nil {
@@ -1283,6 +1289,12 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app := s.appFromForm(name, image, r)
+	app.Spec.Resources = res
+	app.Spec.Replicas = &replicas
+	if err := applyAutoscalingFromForm(r, app); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
 	if source == "git" {
 		if err := s.platformGitHubReadyError(r.Context()); err != nil {
 			redirectFormError(w, r, fallback, err.Error())
@@ -1997,6 +2009,137 @@ func parseResourceList(cpuValue, memoryValue string) (corev1.ResourceList, error
 	return values, nil
 }
 
+func formHasValue(r *http.Request, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := r.Form[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func formCPU(r *http.Request) string {
+	return firstFormValue(r, "cpu", "cpuRequest")
+}
+
+func formMemory(r *http.Request) string {
+	return firstFormValue(r, "memory", "memoryRequest")
+}
+
+func firstFormValue(r *http.Request, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(r.FormValue(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func resourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (corev1.ResourceRequirements, error) {
+	cpu, memory := formCPU(r), formMemory(r)
+	if cpu == "" && memory == "" && !formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
+		return fallback, nil
+	}
+	if formHasValue(r, "cpuLimit", "memoryLimit") && cpu == "" && memory == "" {
+		requests, err := parseResourceList(r.FormValue("cpuRequest"), r.FormValue("memoryRequest"))
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		limits, err := parseResourceList(r.FormValue("cpuLimit"), r.FormValue("memoryLimit"))
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		return corev1.ResourceRequirements{Requests: requests, Limits: limits}, nil
+	}
+	return platform.ResourcesFromSize(cpu, memory)
+}
+
+func replicasFromForm(r *http.Request, fallback int32) int32 {
+	value := strings.TrimSpace(r.FormValue("replicas"))
+	if value == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed < 0 {
+		return fallback
+	}
+	return int32(parsed)
+}
+
+func autoscalingEnabled(r *http.Request) bool {
+	value := strings.TrimSpace(r.FormValue("autoscaling"))
+	return value == "on" || value == "true" || value == "1"
+}
+
+func intFromForm(r *http.Request, key string, fallback int) int {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func applyAutoscalingFromForm(r *http.Request, app *geassv1alpha1.GeassApp) error {
+	replicas := appReplicas(*app)
+	maxReplicas := intFromForm(r, "maxReplicas", 1)
+	targetCPU := strings.TrimSpace(r.FormValue("targetCPU"))
+	if autoscalingEnabled(r) {
+		if maxReplicas <= int(replicas) {
+			maxReplicas = int(platform.DefaultAutoscalingMax(replicas))
+		}
+		target := int(platform.DefaultAutoscalingTargetCPU)
+		if targetCPU != "" {
+			if _, err := fmt.Sscanf(targetCPU, "%d", &target); err != nil || target < 1 || target > 100 {
+				return fmt.Errorf("target CPU must be between 1 and 100")
+			}
+		}
+		min := int(replicas)
+		if min < 1 {
+			min = 1
+		}
+		if value := strings.TrimSpace(r.FormValue("minReplicas")); value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &min); err != nil || min < 1 || min > maxReplicas {
+				return fmt.Errorf("minimum replicas must be between 1 and maximum replicas")
+			}
+		}
+		min32, target32 := int32(min), int32(target)
+		app.Spec.Autoscaling = &geassv1alpha1.GeassAppAutoscalingSpec{MinReplicas: &min32, MaxReplicas: int32(maxReplicas), TargetCPUUtilization: &target32}
+		return nil
+	}
+	if targetCPU == "" || maxReplicas <= 1 {
+		app.Spec.Autoscaling = nil
+		return nil
+	}
+	var target, min int
+	if _, err := fmt.Sscanf(targetCPU, "%d", &target); err != nil || target < 1 || target > 100 {
+		return fmt.Errorf("target CPU must be between 1 and 100")
+	}
+	min = 1
+	if value := strings.TrimSpace(r.FormValue("minReplicas")); value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &min); err != nil || min < 1 || min > maxReplicas {
+			return fmt.Errorf("minimum replicas must be between 1 and maximum replicas")
+		}
+	}
+	min32, target32 := int32(min), int32(target)
+	app.Spec.Autoscaling = &geassv1alpha1.GeassAppAutoscalingSpec{MinReplicas: &min32, MaxReplicas: int32(maxReplicas), TargetCPUUtilization: &target32}
+	return nil
+}
+
+func capacityCopiesFromForm(r *http.Request, replicas int32) int32 {
+	if !autoscalingEnabled(r) {
+		return replicas
+	}
+	maxReplicas := int32(intFromForm(r, "maxReplicas", int(platform.DefaultAutoscalingMax(replicas))))
+	if maxReplicas > replicas {
+		return maxReplicas
+	}
+	return platform.DefaultAutoscalingMax(replicas)
+}
+
 func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -2074,42 +2217,17 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			app.Spec.Replicas = &value
 		}
 	}
-	requests, err := parseResourceList(r.FormValue("cpuRequest"), r.FormValue("memoryRequest"))
-	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
-	}
-	limits, err := parseResourceList(r.FormValue("cpuLimit"), r.FormValue("memoryLimit"))
-	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
-	}
-	app.Spec.Resources.Requests, app.Spec.Resources.Limits = requests, limits
-	targetCPU := strings.TrimSpace(r.FormValue("targetCPU"))
-	maxReplicas := 1
-	if value := strings.TrimSpace(r.FormValue("maxReplicas")); value != "" {
-		if _, scanErr := fmt.Sscanf(value, "%d", &maxReplicas); scanErr != nil || maxReplicas < 1 {
-			redirectFormError(w, r, fallback, "maximum replicas must be a positive integer")
+	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit") {
+		res, err := resourcesFromForm(r, app.Spec.Resources)
+		if err != nil {
+			redirectFormError(w, r, fallback, err.Error())
 			return
 		}
+		app.Spec.Resources = res
 	}
-	if targetCPU == "" || maxReplicas <= 1 {
-		app.Spec.Autoscaling = nil
-	} else {
-		var target, min int
-		if _, scanErr := fmt.Sscanf(targetCPU, "%d", &target); scanErr != nil || target < 1 || target > 100 {
-			redirectFormError(w, r, fallback, "target CPU must be between 1 and 100")
-			return
-		}
-		min = 1
-		if value := strings.TrimSpace(r.FormValue("minReplicas")); value != "" {
-			if _, scanErr := fmt.Sscanf(value, "%d", &min); scanErr != nil || min < 1 || min > maxReplicas {
-				redirectFormError(w, r, fallback, "minimum replicas must be between 1 and maximum replicas")
-				return
-			}
-		}
-		min32, target32 := int32(min), int32(target)
-		app.Spec.Autoscaling = &geassv1alpha1.GeassAppAutoscalingSpec{MinReplicas: &min32, MaxReplicas: int32(maxReplicas), TargetCPUUtilization: &target32}
+	if err := applyAutoscalingFromForm(r, &app); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
 	}
 	app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
 	app.Spec.Ingress.TLSEnabled = r.FormValue("tls") == "on"
@@ -2342,8 +2460,16 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	placement := parseDatabasePlacement(r.FormValue("placement"))
 	provider := strings.TrimSpace(r.FormValue("provider"))
 	ha := r.FormValue("highAvailability") == "on" || r.FormValue("highAvailability") == "true"
+	engine := parseDatabaseEngine(r.FormValue("engine"))
+	res, err := resourcesFromForm(r, defaultResourcesForEngine(engine))
+	if err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
 	if placement != geassv1alpha1.DatabasePlacementExternal {
-		if s.rejectIfNoCapacity(w, r, fallback, databaseCreateWorkloadKind(parseDatabaseEngine(r.FormValue("engine"))), ha, 0) {
+		est := platform.EstimateWorkload(databaseCreateWorkloadKind(engine), ha, 0)
+		est = platform.EstimateFromResources(est.Label, res, est.Replicas)
+		if s.rejectIfNoCapacityFor(w, r, fallback, est) {
 			return
 		}
 	}
@@ -2352,7 +2478,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		Spec: geassv1alpha1.GeassDatabaseSpec{
 			Project:          strings.TrimSpace(r.FormValue("project")),
 			Environment:      geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
-			Engine:           parseDatabaseEngine(r.FormValue("engine")),
+			Engine:           engine,
 			Placement:        placement,
 			Provider:         geassv1alpha1.GeassDatabaseProvider(provider),
 			Mode:             parseDatabaseMode(r.FormValue("mode")),
@@ -2361,6 +2487,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 			ExternalHost:     strings.TrimSpace(r.FormValue("host")),
 			Username:         strings.TrimSpace(r.FormValue("username")),
 			Version:          strings.TrimSpace(r.FormValue("version")),
+			Resources:        res,
 		},
 	}
 	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
@@ -2500,6 +2627,14 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 	if v := strings.TrimSpace(r.FormValue("version")); v != "" {
 		db.Spec.Version = v
 	}
+	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
+		res, err := resourcesFromForm(r, databaseResources(&db))
+		if err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
+		db.Spec.Resources = res
+	}
 	if err := s.Client.Update(r.Context(), &db); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -2553,7 +2688,12 @@ func (s *Server) handleCacheCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
-	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadRedis, false, 1) {
+	res, err := resourcesFromForm(r, platform.DefaultAppResources())
+	if err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("Redis database", res, 1)) {
 		return
 	}
 	cache := &geassv1alpha1.GeassCache{
@@ -2745,7 +2885,12 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 		redirectFormError(w, r, fallback, "MinIO server is already set up")
 		return
 	}
-	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadMinIO, false, 1) {
+	res, err := resourcesFromForm(r, platform.DefaultDatabaseResources())
+	if err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1)) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -2864,6 +3009,23 @@ func databaseCreateWorkloadKind(engine geassv1alpha1.GeassDatabaseEngine) string
 	default:
 		return platform.WorkloadPostgres
 	}
+}
+
+func defaultResourcesForEngine(engine geassv1alpha1.GeassDatabaseEngine) corev1.ResourceRequirements {
+	if engine == geassv1alpha1.DatabaseEngineSQLite {
+		return platform.DefaultSQLiteResources()
+	}
+	return platform.DefaultDatabaseResources()
+}
+
+func databaseResources(db *geassv1alpha1.GeassDatabase) corev1.ResourceRequirements {
+	if db != nil && len(db.Spec.Resources.Requests) > 0 {
+		return db.Spec.Resources
+	}
+	if db == nil {
+		return platform.DefaultDatabaseResources()
+	}
+	return defaultResourcesForEngine(db.Spec.Engine)
 }
 
 func parseDatabasePlacement(value string) geassv1alpha1.GeassDatabasePlacement {

@@ -248,7 +248,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 			Image:     platform.SQLiteImage,
 			Args:      []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)},
 			Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: 4001}},
-			Resources: platform.DefaultSQLiteResources(),
+			Resources: databaseInstanceResources(db),
 			VolumeMounts: []corev1.VolumeMount{{
 				Name:      "data",
 				MountPath: "/rqlite/file",
@@ -458,6 +458,7 @@ func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *
 			Instances: instances,
 			ImageName: fmt.Sprintf("ghcr.io/cloudnative-pg/postgresql:%s", version),
 			Storage:   cnpgv1.StorageConfiguration{Size: storageSize},
+			Resources: databaseInstanceResources(db),
 			Bootstrap: cnpgv1.BootstrapConfiguration{
 				InitDB: cnpgv1.InitDBConfiguration{
 					Database: databaseName(db),
@@ -553,6 +554,7 @@ func mysqlValues(db *geassv1alpha1.GeassDatabase) string {
 		architecture = "replication"
 	}
 	password := db.Name + "-password"
+	res := databaseInstanceResources(db)
 	return fmt.Sprintf(`architecture: %s
 auth:
   rootPassword: "%s"
@@ -563,7 +565,16 @@ primary:
   persistence:
     enabled: true
     size: %s
-`, architecture, password, appContainerName, password, databaseName(db), storageSize(db))
+  resources:
+    requests:
+      cpu: %s
+      memory: %s
+    limits:
+      cpu: %s
+      memory: %s
+`, architecture, password, appContainerName, password, databaseName(db), storageSize(db),
+		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
+		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory))
 }
 
 func redisDatabaseValues(db *geassv1alpha1.GeassDatabase) string {
@@ -571,6 +582,7 @@ func redisDatabaseValues(db *geassv1alpha1.GeassDatabase) string {
 	if databaseWantsHA(db) {
 		architecture = "replication"
 	}
+	res := databaseInstanceResources(db)
 	return fmt.Sprintf(`architecture: %s
 auth:
   enabled: true
@@ -578,7 +590,36 @@ auth:
 master:
   persistence:
     enabled: false
-`, architecture, db.Name+"-password")
+  resources:
+    requests:
+      cpu: %s
+      memory: %s
+    limits:
+      cpu: %s
+      memory: %s
+`, architecture, db.Name+"-password",
+		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
+		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory))
+}
+
+func databaseInstanceResources(db *geassv1alpha1.GeassDatabase) corev1.ResourceRequirements {
+	if db != nil && len(db.Spec.Resources.Requests) > 0 {
+		return db.Spec.Resources
+	}
+	if db != nil && db.Spec.Engine == geassv1alpha1.DatabaseEngineSQLite {
+		return platform.DefaultSQLiteResources()
+	}
+	return platform.DefaultDatabaseResources()
+}
+
+func resourceQuantity(list corev1.ResourceList, name corev1.ResourceName) string {
+	if value, ok := list[name]; ok && !value.IsZero() {
+		return value.String()
+	}
+	if name == corev1.ResourceCPU {
+		return "250m"
+	}
+	return "512Mi"
 }
 
 func storageSize(db *geassv1alpha1.GeassDatabase) string {

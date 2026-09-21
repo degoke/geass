@@ -742,6 +742,42 @@ func TestAPIAppCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "Scale up")
 }
 
+func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"name":        {"api"},
+		"project":     {testProjectName},
+		"environment": {"dev"},
+		"image":       {"nginx:alpine"},
+		"cpu":         {"250m"},
+		"memory":      {"512Mi"},
+		"replicas":    {"2"},
+		"autoscaling": {"on"},
+		"maxReplicas": {"5"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var app geassv1alpha1.GeassApp
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &app))
+	require.NotNil(t, app.Spec.Replicas)
+	require.Equal(t, int32(2), *app.Spec.Replicas)
+	cpu := app.Spec.Resources.Requests[corev1.ResourceCPU]
+	memory := app.Spec.Resources.Requests[corev1.ResourceMemory]
+	require.Equal(t, "250m", cpu.String())
+	require.Equal(t, "512Mi", memory.String())
+	require.NotNil(t, app.Spec.Autoscaling)
+	require.Equal(t, int32(5), app.Spec.Autoscaling.MaxReplicas)
+	require.NotNil(t, app.Spec.Autoscaling.MinReplicas)
+	require.Equal(t, int32(2), *app.Spec.Autoscaling.MinReplicas)
+	require.NotNil(t, app.Spec.Autoscaling.TargetCPUUtilization)
+	require.Equal(t, platform.DefaultAutoscalingTargetCPU, *app.Spec.Autoscaling.TargetCPUUtilization)
+}
+
 func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
 	ctx := context.Background()
 	node := &corev1.Node{
@@ -821,6 +857,8 @@ func TestBootstrapIncludesKnownCapacity(t *testing.T) {
 	require.Contains(t, body, `"known":true`)
 	require.Contains(t, body, `"estimates"`)
 	require.Contains(t, body, `"cpuAvailable"`)
+	require.Contains(t, body, `"cpuSizes"`)
+	require.Contains(t, body, `"memorySizes"`)
 }
 
 func TestHandleAppCreateValidation(t *testing.T) {
