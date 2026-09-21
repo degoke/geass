@@ -4,7 +4,7 @@ import "@fontsource-variable/geist";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { action, api, condition, isReady, list, resourceName } from "@/lib/api";
+import { action, api, condition, list, resourceName } from "@/lib/api";
 import { Button as ShadcnButton } from "@/components/ui/button";
 import { Badge as ShadcnBadge } from "@/components/ui/badge";
 import { Card as ShadcnCard } from "@/components/ui/card";
@@ -388,7 +388,6 @@ function ResourceDialog({ project, environment, data }) {
 
 function ResourceDetail({ project, data, kind, name, reload }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const search = useRouterState({ select: (state) => state.location.search || {} });
   const view = search.view || "overview";
   const key = { apps: "apps", databases: "databases", caches: "caches", "object-stores": "objectStores", "logical-databases": "logicalDatabases" }[kind];
