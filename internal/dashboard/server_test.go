@@ -709,8 +709,10 @@ func TestProjectResourceUsesProjectReference(t *testing.T) {
 	app := (&Server{}).appFromForm("api", "ghcr.io/acme/api:1", req)
 	require.Equal(t, testProjectName, app.Spec.Project)
 	require.Equal(t, geassv1alpha1.EnvironmentStaging, app.Spec.Environment)
-	require.Equal(t, "100m", app.Spec.Resources.Requests[corev1.ResourceCPU].String())
-	require.Equal(t, "128Mi", app.Spec.Resources.Requests[corev1.ResourceMemory].String())
+	cpu := app.Spec.Resources.Requests[corev1.ResourceCPU]
+	memory := app.Spec.Resources.Requests[corev1.ResourceMemory]
+	require.Equal(t, "100m", cpu.String())
+	require.Equal(t, "128Mi", memory.String())
 }
 
 func TestAPIAppCreateRejectedWhenClusterIsTooSmall(t *testing.T) {

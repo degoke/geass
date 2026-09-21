@@ -26,8 +26,10 @@ func TestEstimateWorkloadExternalUsesNoClusterCPU(t *testing.T) {
 
 func TestDefaultAppResourcesSetsRequests(t *testing.T) {
 	res := DefaultAppResources()
-	require.Equal(t, "100m", res.Requests[corev1.ResourceCPU].String())
-	require.Equal(t, "128Mi", res.Requests[corev1.ResourceMemory].String())
+	cpu := res.Requests[corev1.ResourceCPU]
+	memory := res.Requests[corev1.ResourceMemory]
+	require.Equal(t, "100m", cpu.String())
+	require.Equal(t, "128Mi", memory.String())
 }
 
 func TestNodeTooSmallMessageAsksToScaleUp(t *testing.T) {
