@@ -1,8 +1,15 @@
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export async function api(path, options = {}) {
   const response = await fetch(path, { credentials: "same-origin", ...options });
   const type = response.headers.get("content-type") || "";
   const payload = type.includes("json") ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(payload?.error || payload || `Request failed (${response.status})`);
+  if (!response.ok) throw new ApiError(payload?.error || payload || `Request failed (${response.status})`, response.status);
   return payload;
 }
 

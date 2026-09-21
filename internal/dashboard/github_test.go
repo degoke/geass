@@ -359,7 +359,7 @@ func TestPlatformGitHubSettingsSaveStoresSecret(t *testing.T) {
 		"webhookSecret": {cfg.WebhookSecret},
 		"privateKey":    {cfg.PrivateKeyPEM},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformGitHubSettingsSave(rec, req)
@@ -379,7 +379,7 @@ func TestPlatformDomainSaveStoresDomain(t *testing.T) {
 	c := newFakeClient()
 	srv := &Server{Client: c}
 	form := url.Values{"domain": {"geass.example.com"}}
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainSave(rec, req)
@@ -396,7 +396,7 @@ func TestPlatformDomainSaveRejectsInvalidDomain(t *testing.T) {
 	ctx := context.Background()
 	srv := &Server{Client: newFakeClient()}
 	form := url.Values{"domain": {"not a domain"}}
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainSave(rec, req)

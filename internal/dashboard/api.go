@@ -72,6 +72,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	mutation.URL.RawPath = ""
 
 	switch {
+	case mutation.URL.Path == "/login":
+		s.handleDashboardLogin(w, mutation)
+	case mutation.URL.Path == "/logout":
+		s.handleDashboardLogout(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):

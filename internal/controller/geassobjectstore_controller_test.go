@@ -171,6 +171,15 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, pending)).To(Succeed())
 		Expect(conditionIsTrue(pending.Status.Conditions, platform.ConditionReady)).To(BeFalse())
 		Expect(conditionMessage(pending.Status.Conditions, platform.ConditionReady)).To(ContainSubstring("HelmChart"))
+		chart := &helmv1.HelmChart{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
+		Expect(chart.Annotations[platform.HelmStaleJobUIDAnnotation]).NotTo(BeEmpty())
+
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, pending)).To(Succeed())
+		Expect(conditionIsTrue(pending.Status.Conditions, platform.ConditionReady)).To(BeFalse())
+		Expect(conditionMessage(pending.Status.Conditions, platform.ConditionReady)).To(ContainSubstring("HelmChart"))
 
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
@@ -198,6 +207,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("policy: \"geass-assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecret: \"assets-minio-user\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecretKey: secretKey"))
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("accessKey: \"assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("secretKey: \""))
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})

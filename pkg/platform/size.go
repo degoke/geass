@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const DefaultAutoscalingTargetCPU int32 = 70
+const DefaultAutoscalingTargetCPU int32 = 50
 
 // SizeOption is a CPU or memory amount shown in the dashboard without
 // Kubernetes request/limit wording.
@@ -48,14 +48,15 @@ func DefaultDatabaseResources() corev1.ResourceRequirements {
 			corev1.ResourceMemory: resource.MustParse("512Mi"),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("500m"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
+			corev1.ResourceCPU:    resource.MustParse("250m"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
 		},
 	}
 }
 
 // ResourcesFromSize maps a user-facing CPU and memory assignment to Kubernetes
-// requests and limits. Limits are twice the assigned amount.
+// requests and limits. Limits match the assigned amount so burst cannot exceed
+// the capacity reserved for the workload.
 func ResourcesFromSize(cpu, memory string) (corev1.ResourceRequirements, error) {
 	cpu = strings.TrimSpace(cpu)
 	memory = strings.TrimSpace(memory)
@@ -84,7 +85,7 @@ func ResourcesFromSize(cpu, memory string) (corev1.ResourceRequirements, error) 
 	}
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpuQty, corev1.ResourceMemory: memQty},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: doubledQuantity(cpuQty), corev1.ResourceMemory: doubledQuantity(memQty)},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpuQty, corev1.ResourceMemory: memQty},
 	}, nil
 }
 
@@ -120,12 +121,6 @@ func DefaultAutoscalingMax(replicas int32) int32 {
 		return replicas * 2
 	}
 	return 3
-}
-
-func doubledQuantity(q resource.Quantity) resource.Quantity {
-	copy := q.DeepCopy()
-	copy.Add(q)
-	return copy
 }
 
 func allowedSize(value string, options []SizeOption) bool {

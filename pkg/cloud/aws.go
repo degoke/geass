@@ -117,6 +117,147 @@ func (c *AWSClient) DeleteBucketUser(userName string) error {
 	return nil
 }
 
+// DeleteBucket removes the bucket after deleting its objects. Missing buckets
+// are treated as already deleted.
+func (c *AWSClient) DeleteBucket(bucket string) error {
+	if err := c.emptyBucket(bucket); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	if err := c.deleteBucketRequest(bucket); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	return nil
+}
+
+func (c *AWSClient) emptyBucket(bucket string) error {
+	for {
+		keys, truncated, err := c.listBucketKeys(bucket)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if err := c.deleteObject(bucket, key); err != nil && !isS3NoSuchBucket(err) {
+				return err
+			}
+		}
+		if !truncated || len(keys) == 0 {
+			return nil
+		}
+	}
+}
+
+func (c *AWSClient) listBucketKeys(bucket string) ([]string, bool, error) {
+	req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?list-type=2", http.NoBody)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return nil, false, err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
+		return nil, false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+	}
+	if resp.StatusCode >= 300 {
+		return nil, false, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	var parsed struct {
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		IsTruncated bool `xml:"IsTruncated"`
+	}
+	if err := xml.Unmarshal(payload, &parsed); err != nil {
+		return nil, false, fmt.Errorf("S3 ListObjects: %w", err)
+	}
+	keys := make([]string, 0, len(parsed.Contents))
+	for _, item := range parsed.Contents {
+		if item.Key != "" {
+			keys = append(keys, item.Key)
+		}
+	}
+	return keys, parsed.IsTruncated, nil
+}
+
+func (c *AWSClient) deleteObject(bucket, key string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.objectURL(bucket, key), http.NoBody)
+	if err != nil {
+		return err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 300 || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+}
+
+func (c *AWSClient) deleteBucketRequest(bucket string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.bucketURL(bucket), http.NoBody)
+	if err != nil {
+		return err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 300 {
+		return nil
+	}
+	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
+		return fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+	}
+	return fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+}
+
+func (c *AWSClient) bucketURL(bucket string) string {
+	if endpoint := strings.TrimRight(c.Endpoint, "/"); endpoint != "" {
+		return endpoint + "/" + bucket
+	}
+	region := c.region()
+	host := fmt.Sprintf("%s.s3.%s.amazonaws.com", bucket, region)
+	if region == "us-east-1" {
+		host = fmt.Sprintf("%s.s3.amazonaws.com", bucket)
+	}
+	return "https://" + host
+}
+
+func (c *AWSClient) objectURL(bucket, key string) string {
+	escaped := strings.ReplaceAll(url.PathEscape(key), "%2F", "/")
+	return c.bucketURL(bucket) + "/" + escaped
+}
+
+func isS3NoSuchBucket(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "NoSuchBucket")
+}
+
+func isS3ErrorCode(payload []byte, code string) bool {
+	var parsed struct {
+		Code string `xml:"Code"`
+	}
+	if err := xml.Unmarshal(payload, &parsed); err != nil {
+		return false
+	}
+	return parsed.Code == code
+}
+
 func (c *AWSClient) iamListAccessKeys(userName string) ([]string, error) {
 	payload, err := c.iamCall(url.Values{"Action": {"ListAccessKeys"}, "UserName": {userName}, "Version": {"2010-05-08"}})
 	if err != nil {
@@ -338,7 +479,7 @@ func (c *AWSClient) signWithRegion(req *http.Request, payload []byte, service, r
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		path,
-		"",
+		req.URL.RawQuery,
 		canonicalHeaders,
 		signedHeaders,
 		payloadHash,

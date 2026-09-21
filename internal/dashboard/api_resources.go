@@ -19,6 +19,8 @@ import (
 
 func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/session":
+		s.handleDashboardSession(w, r)
 	case r.URL.Path == "/api/bootstrap":
 		s.handleBootstrap(w, r)
 	case r.URL.Path == "/api/settings/github":

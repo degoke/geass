@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +42,9 @@ type Server struct {
 	Config     *rest.Config
 	HTTPClient *http.Client
 	GitHubApp  githubapp.Config
+
+	authMu sync.Mutex
+	auth   *dashboardAuth
 }
 
 // Start implements manager.Runnable.
@@ -114,13 +118,15 @@ func logDashboardRequests(next http.Handler) http.Handler {
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/", s.handleAPI)
-	mux.HandleFunc("/assets/", serveFrontendAsset)
-	mux.HandleFunc("/geass-probe", s.handleGeassProbe)
-	mux.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
-	mux.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
-	mux.HandleFunc("/github/callback", s.handleGitHubCallback)
-	mux.HandleFunc("/", s.handleSPA)
+	inner := http.NewServeMux()
+	inner.HandleFunc("/api/", s.handleAPI)
+	inner.HandleFunc("/assets/", serveFrontendAsset)
+	inner.HandleFunc("/geass-probe", s.handleGeassProbe)
+	inner.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
+	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
+	inner.HandleFunc("/github/callback", s.handleGitHubCallback)
+	inner.HandleFunc("/", s.handleSPA)
+	mux.Handle("/", s.withAuth(inner))
 }
 
 func (s *Server) handleNetworkLogs(w http.ResponseWriter, r *http.Request) {

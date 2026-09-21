@@ -150,3 +150,35 @@ func TestDeleteBucketUserTreatsMissingUserAsSuccess(t *testing.T) {
 	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", IAMEndpoint: srv.URL}
 	require.NoError(t, client.DeleteBucketUser("assets"))
 }
+
+func TestDeleteBucketRemovesObjectsThenBucket(t *testing.T) {
+	var methods []string
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>logo.png</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeleteBucket("uploads"))
+	require.Equal(t, []string{http.MethodGet, http.MethodDelete, http.MethodDelete}, methods)
+	require.Equal(t, "/uploads/logo.png", paths[1])
+}
+
+func TestDeleteBucketTreatsMissingBucketAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchBucket</Code><Message>missing</Message></Error>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeleteBucket("uploads"))
+}

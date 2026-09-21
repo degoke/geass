@@ -17,7 +17,7 @@ import { Table as ShadcnTable, TableBody, TableHead, TableHeader, TableRow, Tabl
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Activity, ArrowLeft, ArrowRight, Box, Check, Cloud, Cpu, Database, FolderKanban, GitBranch,
-  HardDrive, LayoutDashboard, Menu, Moon, Plus, RefreshCw, Search, Server, Settings,
+  HardDrive, LayoutDashboard, Lock, Menu, Moon, Plus, RefreshCw, Search, Server, Settings,
   ShieldCheck, Sun, Terminal, Trash2, X,
 } from "lucide-react";
 import "./styles.css";
@@ -119,7 +119,15 @@ function NoticeHost() {
   return <div className="notice-stack" aria-live="polite">{notices.map((notice) => <div className={cn("notice", `notice-${notice.tone || "neutral"}`)} key={notice.id}><span>{notice.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}><X size={14} /></button></div>)}</div>;
 }
 
-function useBootstrap() { return useQuery({ queryKey: ["dashboard", "bootstrap"], queryFn: () => api("/api/bootstrap"), staleTime: 4000, refetchInterval: 8000 }); }
+function useBootstrap() {
+  return useQuery({
+    queryKey: ["dashboard", "bootstrap"],
+    queryFn: () => api("/api/bootstrap"),
+    staleTime: 4000,
+    retry: (count, error) => error?.status !== 401 && count < 2,
+    refetchInterval: (query) => (query.state.error?.status === 401 ? false : 8000),
+  });
+}
 
 function Sidebar({ project, path }) {
   const [open, setOpen] = useState(false);
@@ -143,6 +151,7 @@ function Sidebar({ project, path }) {
         <nav>{settings.map(item)}</nav>
         <ShadcnSeparator className="ui-separator" />
         <Button variant="ghost" className="theme-button" onClick={() => setDark(!dark)}>{dark ? <Sun size={17} /> : <Moon size={17} />}<span>{dark ? "Light mode" : "Dark mode"}</span></Button>
+        <Button variant="ghost" className="theme-button" onClick={() => action("/logout").then(() => window.location.reload()).catch((error) => alert(error.message))}><Lock size={17} /><span>Sign out</span></Button>
       </aside>
       <Button variant="outline" size="icon" className="mobile-nav" onClick={() => setOpen(!open)}>{open ? <X size={18} /> : <Menu size={18} />}</Button>
     </>
@@ -374,9 +383,9 @@ function ResourceDialog({ project, environment, data }) {
   const [step, setStep] = useState(1);
   const [type, setType] = useState("service");
   const [kind, setKind] = useState("app");
-  const [form, setForm] = useState({ name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3 });
+  const [form, setForm] = useState({ name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3, targetCPU: 50 });
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const emptyForm = { name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3 };
+  const emptyForm = { name: "", image: "nginx:alpine", repository: "", branch: "main", engine: "Postgres", placement: "InCluster", provider: "", mode: "Create", host: "", username: "", password: "", databaseName: "", server: "", bucket: "", connectionRef: "", highAvailability: false, createBucket: true, cpu: "100m", memory: "128Mi", replicas: 1, autoscaling: false, maxReplicas: 3, targetCPU: 50 };
   useEffect(() => {
     const openDialog = () => { setStep(1); setType("service"); setKind("app"); setForm(emptyForm); setOpen(true); };
     window.addEventListener("geass:open-resource", openDialog);
@@ -412,10 +421,10 @@ function ResourceDialog({ project, environment, data }) {
     let endpoint = "/apps/create";
     if (type === "service" && kind === "app") {
       endpoint = "/apps/create";
-      Object.assign(values, { image: form.image, port: "80", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
+      Object.assign(values, { image: form.image, port: "80", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3), targetCPU: String(form.targetCPU || 50) });
     } else if (type === "service" && kind === "github") {
       endpoint = "/apps/create";
-      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
+      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3), targetCPU: String(form.targetCPU || 50) });
     } else if (kind === "logical") {
       endpoint = "/logical-databases/create";
       Object.assign(values, { server: form.server || (servers[0] && resourceName(servers[0])), database: form.databaseName || form.name });
@@ -490,7 +499,10 @@ function ResourceDialog({ project, environment, data }) {
                     <>
                       <Field label="Replicas"><Input type="number" min="1" value={form.replicas} onChange={(event) => set("replicas", Number(event.target.value) || 1)} /></Field>
                       <label className="check-row"><input type="checkbox" checked={form.autoscaling} onChange={(event) => set("autoscaling", event.target.checked)} /> Autoscaling</label>
-                      {form.autoscaling && <Field label="Scale up to"><Input type="number" min={form.replicas || 1} value={form.maxReplicas} onChange={(event) => set("maxReplicas", Number(event.target.value) || 3)} /></Field>}
+                      {form.autoscaling && <>
+                        <Field label="Scale up to"><Input type="number" min={form.replicas || 1} value={form.maxReplicas} onChange={(event) => set("maxReplicas", Number(event.target.value) || 3)} /></Field>
+                        <Field label="CPU target %"><Input type="number" min="1" max="100" value={form.targetCPU} onChange={(event) => set("targetCPU", Number(event.target.value) || 50)} /></Field>
+                      </>}
                     </>
                   )}
                 </>
@@ -551,6 +563,7 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
   const [replicas, setReplicas] = useState(item.spec?.replicas || 1);
   const [autoscaling, setAutoscaling] = useState(Boolean(item.spec?.autoscaling?.maxReplicas > 1));
   const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
+  const [targetCPU, setTargetCPU] = useState(item.spec?.autoscaling?.targetCPUUtilization || 50);
   const [version, setVersion] = useState(item.spec?.version || "");
   const [confirmDelete, setConfirmDelete] = useState("");
   const inCluster = kind === "apps" || (kind === "databases" && item.spec?.placement !== "External");
@@ -558,7 +571,7 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
     event.preventDefault();
     const values = { project: item.spec?.project, environment: item.spec?.environment };
     if (kind === "databases") values.version = version;
-    if (kind === "apps") Object.assign(values, { cpu, memory, replicas: String(replicas), autoscaling: autoscaling ? "on" : "", maxReplicas: String(maxReplicas) });
+    if (kind === "apps") Object.assign(values, { cpu, memory, replicas: String(replicas), autoscaling: autoscaling ? "on" : "", maxReplicas: String(maxReplicas), targetCPU: String(targetCPU) });
     if (kind === "databases" && inCluster) Object.assign(values, { cpu, memory });
     action(`/${kind}/${name}/update`, values).then(() => { reload(); alert(kind === "apps" ? "Settings saved. Deploy to apply them." : "Settings saved"); }).catch((error) => alert(error.message));
   };
@@ -573,7 +586,10 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
           <>
             <Field label="Replicas"><Input type="number" min="1" value={replicas} onChange={(event) => setReplicas(Number(event.target.value) || 1)} /></Field>
             <label className="check-row"><input type="checkbox" checked={autoscaling} onChange={(event) => setAutoscaling(event.target.checked)} /> Autoscaling</label>
-            {autoscaling && <Field label="Scale up to"><Input type="number" min={replicas || 1} value={maxReplicas} onChange={(event) => setMaxReplicas(Number(event.target.value) || 3)} /></Field>}
+            {autoscaling && <>
+              <Field label="Scale up to"><Input type="number" min={replicas || 1} value={maxReplicas} onChange={(event) => setMaxReplicas(Number(event.target.value) || 3)} /></Field>
+              <Field label="CPU target %"><Input type="number" min="1" max="100" value={targetCPU} onChange={(event) => setTargetCPU(Number(event.target.value) || 50)} /></Field>
+            </>}
           </>
         )}
         <div className="form-actions">
@@ -970,12 +986,34 @@ function CloudConnections({ data, reload }) {
   );
 }
 
+function LoginScreen({ onSuccess }) {
+  const [password, setPassword] = useState("");
+  const [pending, setPending] = useState(false);
+  const submit = (event) => {
+    event.preventDefault();
+    setPending(true);
+    action("/login", { password }).then(() => onSuccess()).catch((error) => alert(error.message)).finally(() => setPending(false));
+  };
+  return (
+    <div className="error-screen">
+      <div className="brand-mark" aria-hidden="true">G</div>
+      <h1>Sign in to Geass</h1>
+      <p>Enter the dashboard password to continue.</p>
+      <form className="form-grid" style={{ width: "min(320px, 100%)" }} onSubmit={submit}>
+        <Field label="Password"><Input type="password" required autoFocus value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+        <Button type="submit" disabled={pending}>{pending ? "Signing in…" : "Continue"}</Button>
+      </form>
+    </div>
+  );
+}
+
 function DashboardScreen({ mode }) {
   const { data, error, isPending, refetch } = useBootstrap();
   const navigate = useNavigate();
   const routeState = useRouterState({ select: (state) => ({ location: state.location, params: state.matches.at(-1)?.params || {} }) });
   const search = routeState.location.search || {};
   const params = routeState.params;
+  if (error?.status === 401) return <LoginScreen onSuccess={() => refetch()} />;
   if (error) return <div className="error-screen"><h1>Dashboard unavailable</h1><p>{error.message}</p><Button onClick={() => refetch()}>Try again</Button></div>;
   if (isPending || !data) return <div className="loading-screen"><div className="spinner" />Loading Geass…</div>;
   const projects = list(data, "projects");

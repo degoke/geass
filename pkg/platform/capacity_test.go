@@ -30,6 +30,8 @@ func TestDefaultAppResourcesSetsRequests(t *testing.T) {
 	memory := res.Requests[corev1.ResourceMemory]
 	require.Equal(t, "100m", cpu.String())
 	require.Equal(t, "128Mi", memory.String())
+	require.Equal(t, cpu.String(), res.Limits[corev1.ResourceCPU].String())
+	require.Equal(t, memory.String(), res.Limits[corev1.ResourceMemory].String())
 }
 
 func TestNodeTooSmallMessageAsksToScaleUp(t *testing.T) {

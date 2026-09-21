@@ -21,7 +21,7 @@ func TestRequireMutationGETRedirectsAwayFromSave(t *testing.T) {
 
 func TestRedirectProbeEncodesMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
 	redirectProbe(rec, req, "/settings/github", "error", "type remove-github to confirm")
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	loc := rec.Header().Get("Location")
@@ -34,7 +34,7 @@ func TestRedirectProbeEncodesMessage(t *testing.T) {
 
 func TestRedirectProbeHXUsesHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/save", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", nil))
 	req.Header.Set("HX-Request", "true")
 	redirectProbe(rec, req, "/settings/domain", "error", "enter your main domain")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -44,7 +44,7 @@ func TestRedirectProbeHXUsesHeader(t *testing.T) {
 
 func TestRedirectFormErrorUsesCurrentPage(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
 	req.Header.Set("HX-Current-URL", "http://localhost:8082/projects/payments?panel=apps")
 	req.Host = "localhost:8082"
 	redirectFormError(rec, req, "/apps", "name is required")
@@ -59,7 +59,7 @@ func TestRedirectFormErrorUsesCurrentPage(t *testing.T) {
 
 func TestJSONMutationResponsesDoNotRedirect(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
 	req.Header.Set("Accept", "application/json")
 	redirect(rec, req, "/projects/demo")
 
@@ -71,7 +71,7 @@ func TestJSONMutationResponsesDoNotRedirect(t *testing.T) {
 func TestAPIMutationValidationReturnsJSON(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/apps/create", nil))
 
 	srv.handleAPI(rec, req)
 
@@ -82,7 +82,7 @@ func TestAPIMutationValidationReturnsJSON(t *testing.T) {
 
 func TestRedirectFormErrorHXSetsRedirectHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
 	req.Header.Set("HX-Request", "true")
 	req.Header.Set("HX-Current-URL", "http://geass.test/projects/demo")
 	req.Host = "geass.test"
@@ -102,7 +102,7 @@ func TestFlashAlertRendersErrorAndProbe(t *testing.T) {
 }
 
 func TestFormReturnPathIgnoresMutationReferer(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
 	req.Header.Set("Referer", "http://localhost/apps/create")
 	req.Host = "localhost"
 	require.Equal(t, "/apps", formReturnPath(req, "/apps"))
@@ -126,8 +126,24 @@ func TestDomainSaveGETRedirectsToSettingsPage(t *testing.T) {
 	require.Equal(t, "/settings/domain", rec.Header().Get("Location"))
 }
 
-func TestRequireMutationRejectsCrossOriginPost(t *testing.T) {
+func TestRequireMutationRejectsMissingOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "geass.example.com"
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.Contains(t, rec.Header().Get("Location"), "request+origin")
+}
+
+func TestRequireMutationAcceptsSameOrigin(t *testing.T) {
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
+	req.Host = "example.com"
+	rec := httptest.NewRecorder()
+	require.True(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationRejectsCrossOriginPost(t *testing.T) {
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
 	req.Host = "geass.example.com"
 	req.Header.Set("Origin", "https://attacker.example")
 	rec := httptest.NewRecorder()
@@ -150,7 +166,7 @@ func TestDeleteFormDoesNotPushURL(t *testing.T) {
 func TestAppConfigFormErrorReturnsPanelAlertForHX(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", nil))
 	req.Header.Set("HX-Request", "true")
 	srv.appConfigFormError(rec, req, "demo", "key is required")
 	require.Equal(t, http.StatusOK, rec.Code)

@@ -15,7 +15,7 @@ func TestResourcesFromSizeSetsAssignedCPUAndMemory(t *testing.T) {
 	require.Equal(t, "250m", cpu.String())
 	require.Equal(t, "512Mi", memory.String())
 	limitCPU := res.Limits[corev1.ResourceCPU]
-	require.Equal(t, "500m", limitCPU.String())
+	require.Equal(t, "250m", limitCPU.String())
 }
 
 func TestEstimateFromResourcesMultipliesCopies(t *testing.T) {

@@ -62,7 +62,7 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 	c := newFakeClient(config)
 	srv := &Server{Client: c}
 
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx))
 	req.Header.Set("HX-Request", "true")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainVerify(rec, req)
@@ -89,7 +89,7 @@ func TestHandlePlatformDomainVerifyProbesAndUpdatesStatus(t *testing.T) {
 	c := newFakeClient(config)
 	srv := &Server{Client: c, HTTPClient: probe.Client()}
 
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx))
 	req.Header.Set("HX-Request", "true")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainVerify(rec, req)

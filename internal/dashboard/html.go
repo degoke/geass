@@ -559,15 +559,14 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 }
 
 // sameOriginMutation prevents cross-site form posts from mutating cluster state.
-// Requests without Origin/Referer are allowed for CLI and internal probes; when
-// a browser supplies either header, it must point back to this dashboard host.
+// Origin or Referer is required and must match this dashboard host.
 func sameOriginMutation(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		origin = strings.TrimSpace(r.Header.Get("Referer"))
 	}
 	if origin == "" || r.Host == "" {
-		return true
+		return false
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" {

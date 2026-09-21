@@ -120,8 +120,8 @@ func TestRegisterRoutesExposesSPAAndAPIOnly(t *testing.T) {
 
 	for _, path := range []string{"/projects/create", "/apps/create", "/settings/domain/save", "/network-logs"} {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
-		require.Equal(t, http.StatusNotFound, rec.Code, path)
+		mux.ServeHTTP(rec, withOrigin(httptest.NewRequest(http.MethodPost, path, nil)))
+		require.Equal(t, http.StatusUnauthorized, rec.Code, path)
 	}
 
 	page := httptest.NewRecorder()
@@ -177,7 +177,7 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 	require.NoError(t, c.List(ctx, &emptyList, client.InNamespace(platform.SystemNamespace)))
 	require.Empty(t, emptyList.Items)
 
-	req := httptest.NewRequest(http.MethodPost, "/projects/create", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/create", nil).WithContext(ctx))
 	rec := httptest.NewRecorder()
 	srv.handleProjectCreate(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -218,7 +218,7 @@ func TestProjectWorkspaceResourceRouteAndSettings(t *testing.T) {
 	require.Contains(t, workspace.Body.String(), `option value="staging" selected`)
 
 	form := url.Values{"displayName": {"Payments Platform"}, "environments": {"dev", "production"}}
-	settings := httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	settings := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	settings.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	srv.handleProjectRoutes(response, settings)
@@ -256,7 +256,7 @@ func TestProjectSettingsSectionsAndSharedVariableSave(t *testing.T) {
 	require.Contains(t, page.Body.String(), "production")
 
 	form := url.Values{"environment": {"production"}, "name": {"DATABASE_URL"}, "value": {"postgres://example"}, "secret": {"on"}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/payments/variables/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/variables/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleProjectRoutes(rec, req)
@@ -273,7 +273,7 @@ func TestProjectSettingsSectionsAndSharedVariableSave(t *testing.T) {
 	require.Equal(t, []byte("postgres://example"), secret.Data["production__DATABASE_URL"])
 
 	deleteForm := url.Values{"environment": {"production"}, "name": {"DATABASE_URL"}}
-	deleteReq := httptest.NewRequest(http.MethodPost, "/projects/payments/variables/delete", strings.NewReader(deleteForm.Encode())).WithContext(ctx)
+	deleteReq := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/variables/delete", strings.NewReader(deleteForm.Encode())).WithContext(ctx))
 	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	deleteRec := httptest.NewRecorder()
 	srv.handleProjectRoutes(deleteRec, deleteReq)
@@ -321,7 +321,7 @@ func TestProjectEnvironmentsShowHealthAndArchiveCustomEnvironment(t *testing.T) 
 	require.Equal(t, http.StatusOK, settingsPage.Code)
 	require.Contains(t, settingsPage.Body.String(), `value="preview"`)
 	settingsForm := url.Values{"displayName": {"Payments"}, "environments": {"dev", "preview"}}
-	settingsReq := httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(settingsForm.Encode())).WithContext(ctx)
+	settingsReq := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(settingsForm.Encode())).WithContext(ctx))
 	settingsReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	settingsRec := httptest.NewRecorder()
 	srv.handleProjectRoutes(settingsRec, settingsReq)
@@ -334,7 +334,7 @@ func TestProjectEnvironmentsShowHealthAndArchiveCustomEnvironment(t *testing.T) 
 	require.Contains(t, page.Body.String(), "Archive environment")
 
 	form := url.Values{"environment": {"preview"}, "confirmName": {"preview"}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/payments/environments/archive", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/environments/archive", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleProjectRoutes(rec, req)
@@ -367,7 +367,7 @@ func TestAppSharedVariableReferences(t *testing.T) {
 	require.Contains(t, page.Header().Get("Location"), "view=variables")
 
 	form := url.Values{"sharedVariable": {"LOG_LEVEL"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/shared-variables/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/shared-variables/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppRoutes(rec, req)
@@ -391,7 +391,7 @@ func TestAppSettingsDangerFlow(t *testing.T) {
 	require.Contains(t, page.Body.String(), "Delete service")
 
 	form := url.Values{"confirmName": {testAppName}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppRoutes(rec, req)
@@ -459,7 +459,7 @@ func TestAppScaleIsPendingUntilDeploy(t *testing.T) {
 	c := newFakeClient(app)
 	srv := &Server{Client: c}
 	form := url.Values{"replicas": {"3"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/scale", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/scale", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppScale(rec, req, testAppName)
@@ -493,7 +493,7 @@ func TestAppNetworkingShowsPublicPrivateEndpointsAndRemoval(t *testing.T) {
 	require.Contains(t, page.Body.String(), "Remove public endpoint")
 
 	form := url.Values{"confirmName": {testAppName}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/networking/delete", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/networking/delete", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppRoutes(rec, req)
@@ -559,7 +559,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	srv := &Server{Client: newFakeClient(project, app, roomyTestNode())}
 
 	form := url.Values{"project": {testProjectName}, "image": {"nginx:alpine"}, "port": {"8081"}, "replicas": {"1"}, "maxReplicas": {"1"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set(hxRequestHeader, hxRequestTrue)
 	req.Header.Set("HX-Target", "#service-pending-banner")
@@ -576,7 +576,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	require.Equal(t, "1", saved.Annotations[platform.AppPendingUpdatesAnnotation])
 	require.Equal(t, pendingChangeSettings, saved.Annotations[platform.AppPendingChangesAnnotation])
 
-	deployReq := httptest.NewRequest(http.MethodPost, "/apps/demo/deploy", nil).WithContext(ctx)
+	deployReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/deploy", nil).WithContext(ctx))
 	deployReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	deployRec := httptest.NewRecorder()
 	srv.handleAppDeploy(deployRec, deployReq, testAppName)
@@ -723,7 +723,7 @@ func TestFilterActiveProjects(t *testing.T) {
 }
 
 func TestProjectResourceUsesProjectReference(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
 	req.Form = url.Values{"environment": {"staging"}, "project": {testProjectName}}
 	app := (&Server{}).appFromForm("api", "ghcr.io/acme/api:1", req)
 	require.Equal(t, testProjectName, app.Spec.Project)
@@ -753,7 +753,7 @@ func TestAPIAppCreateDraftSkipsCapacityUntilDeploy(t *testing.T) {
 		"environment": {"dev"},
 		"image":       {"nginx:alpine"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -764,7 +764,7 @@ func TestAPIAppCreateDraftSkipsCapacityUntilDeploy(t *testing.T) {
 	require.False(t, app.Spec.Deploy.Enabled)
 	require.Equal(t, pendingChangeCreated, app.Annotations[platform.AppPendingChangesAnnotation])
 
-	deployReq := httptest.NewRequest(http.MethodPost, "/api/apps/api/deploy", nil).WithContext(ctx)
+	deployReq := withOrigin(httptest.NewRequest(http.MethodPost, "/api/apps/api/deploy", nil).WithContext(ctx))
 	deployRec := httptest.NewRecorder()
 	srv.handleAPI(deployRec, deployReq)
 	require.Equal(t, http.StatusBadRequest, deployRec.Code)
@@ -787,7 +787,7 @@ func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
 		"autoscaling": {"on"},
 		"maxReplicas": {"5"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -801,6 +801,8 @@ func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
 	memory := app.Spec.Resources.Requests[corev1.ResourceMemory]
 	require.Equal(t, "250m", cpu.String())
 	require.Equal(t, "512Mi", memory.String())
+	limitCPU := app.Spec.Resources.Limits[corev1.ResourceCPU]
+	require.Equal(t, "250m", limitCPU.String())
 	require.NotNil(t, app.Spec.Autoscaling)
 	require.Equal(t, int32(5), app.Spec.Autoscaling.MaxReplicas)
 	require.NotNil(t, app.Spec.Autoscaling.MinReplicas)
@@ -836,7 +838,7 @@ func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
 		"placement":        {"InCluster"},
 		"highAvailability": {"on"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -868,7 +870,7 @@ func TestAPIExternalDatabaseCreateSkipsCapacityGate(t *testing.T) {
 		"databaseName":  {"app"},
 		"connectionRef": {"ps-prod"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -904,7 +906,7 @@ func TestHandleAppCreateValidation(t *testing.T) {
 	form := url.Values{}
 	form.Set(formFieldName, "")
 	form.Set("image", "")
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppCreate(rec, req)
@@ -924,7 +926,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
 	form.Set("port", "8080")
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -939,7 +941,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	updateForm.Set("project", testProjectName)
 	updateForm.Set("image", "nginx:1.25")
 	updateForm.Set("port", "9090")
-	upReq := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(updateForm.Encode()))
+	upReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(updateForm.Encode())))
 	upReq = upReq.WithContext(ctx)
 	upReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	upRec := httptest.NewRecorder()
@@ -953,7 +955,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	delForm := url.Values{}
 	delForm.Set("_method", "DELETE")
 	delForm.Set("confirmName", testAppName)
-	delReq := httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(delForm.Encode()))
+	delReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(delForm.Encode())))
 	delReq = delReq.WithContext(ctx)
 	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	delRec := httptest.NewRecorder()
@@ -969,7 +971,7 @@ func TestHandleAppCreateStoresDraftWithoutDeployment(t *testing.T) {
 	c := newFakeClient()
 	srv := &Server{Client: c}
 	form := url.Values{formFieldName: {testWorkerAppName}, "project": {testProjectName}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:1"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppCreate(rec, req)
@@ -1016,7 +1018,7 @@ func TestHandleAppDeployEnablesDraftAndRecordsDeployment(t *testing.T) {
 	}
 	c := newFakeClient(app, roomyTestNode())
 	srv := &Server{Client: c}
-	req := httptest.NewRequest(http.MethodPost, "/apps/worker/deploy", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/worker/deploy", nil).WithContext(ctx))
 	rec := httptest.NewRecorder()
 	srv.handleAppDeploy(rec, req, testWorkerAppName)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -1045,7 +1047,7 @@ func TestHandleAppUpdateDraftDeploysSavedConfiguration(t *testing.T) {
 		"project": {testProjectName}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:2"},
 		"port": {"9090"}, "deploy": {"on"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/apps/worker/update", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/worker/update", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppUpdate(rec, req, testWorkerAppName)
@@ -1068,7 +1070,7 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	c := newFakeClient(app, db)
 	srv := &Server{Client: c}
 	form := url.Values{"kind": {"database"}, formFieldName: {"postgres"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppAttach(rec, req, "api")
@@ -1090,7 +1092,7 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 	form.Set(formFieldName, "orders")
 	form.Set("project", testProjectName)
 	form.Set("environment", "dev")
-	req := httptest.NewRequest(http.MethodPost, "/databases/create", strings.NewReader(form.Encode()))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/databases/create", strings.NewReader(form.Encode())))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -1108,7 +1110,7 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 	delForm := url.Values{}
 	delForm.Set("_method", "DELETE")
 	delForm.Set("confirmName", "orders")
-	delReq := httptest.NewRequest(http.MethodPost, "/databases/orders", strings.NewReader(delForm.Encode()))
+	delReq := withOrigin(httptest.NewRequest(http.MethodPost, "/databases/orders", strings.NewReader(delForm.Encode())))
 	delReq = delReq.WithContext(ctx)
 	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	delRec := httptest.NewRecorder()
@@ -1128,7 +1130,7 @@ func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 		"placement":        {"InCluster"},
 		"highAvailability": {"on"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1152,7 +1154,7 @@ func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 		"databaseName":  {"app"},
 		"connectionRef": {"ps-prod"},
 	}
-	extReq := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(external.Encode())).WithContext(ctx)
+	extReq := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(external.Encode())).WithContext(ctx))
 	extReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	extRec := httptest.NewRecorder()
 	srv.handleAPI(extRec, extReq)
@@ -1177,7 +1179,7 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 		"secretAccessKey": {"secret"},
 		"region":          {"us-east-1"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(aws.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(aws.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1194,7 +1196,7 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 		"organization": {"acme"},
 		"token":        {"pscale_token"},
 	}
-	psReq := httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(ps.Encode())).WithContext(ctx)
+	psReq := withOrigin(httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(ps.Encode())).WithContext(ctx))
 	psReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	psRec := httptest.NewRecorder()
 	srv.handleAPI(psRec, psReq)
@@ -1220,7 +1222,7 @@ func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
 		"createBucket":  {"on"},
 		"connectionRef": {"prod-aws"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1243,7 +1245,7 @@ func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
 		"engine":    {"MinIO"},
 		"placement": {"InCluster"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1267,7 +1269,7 @@ func TestAPIObjectStoreCreateInClusterRequiresMinIO(t *testing.T) {
 		"placement":   {"InCluster"},
 		"bucket":      {"uploads"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1293,7 +1295,7 @@ func TestAPIObjectStoreCreateInClusterWithMinIO(t *testing.T) {
 		"placement":   {"InCluster"},
 		"bucket":      {"uploads"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
@@ -1319,7 +1321,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	form.Set("project", testProjectName)
 	form.Set("environment", "dev")
 	form.Set("image", "nginx:alpine")
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode()))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form.Encode())))
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -1329,7 +1331,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	cfgForm := url.Values{}
 	cfgForm.Set("key", "LOG_LEVEL")
 	cfgForm.Set("value", "debug")
-	cfgReq := httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", strings.NewReader(cfgForm.Encode()))
+	cfgReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", strings.NewReader(cfgForm.Encode())))
 	cfgReq = cfgReq.WithContext(ctx)
 	cfgReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	cfgReq.Header.Set(hxRequestHeader, hxRequestTrue)
@@ -1346,7 +1348,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 
 	rawForm := url.Values{}
 	rawForm.Set("configJSON", `{"LOG_LEVEL":"info"}`)
-	rawReq := httptest.NewRequest(http.MethodPost, "/apps/demo/config/raw", strings.NewReader(rawForm.Encode()))
+	rawReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/config/raw", strings.NewReader(rawForm.Encode())))
 	rawReq = rawReq.WithContext(ctx)
 	rawReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rawReq.Header.Set(hxRequestHeader, hxRequestTrue)
@@ -1360,7 +1362,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	secForm := url.Values{}
 	secForm.Set("key", "API_TOKEN")
 	secForm.Set("value", "secret-value")
-	secReq := httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/set", strings.NewReader(secForm.Encode()))
+	secReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/set", strings.NewReader(secForm.Encode())))
 	secReq = secReq.WithContext(ctx)
 	secReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	secReq.Header.Set(hxRequestHeader, hxRequestTrue)
@@ -1380,7 +1382,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	workspaceSecretForm := url.Values{}
 	workspaceSecretForm.Set("key", "SERVICE_URL")
 	workspaceSecretForm.Set("value", "https://service.example")
-	workspaceSecretReq := httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/set", strings.NewReader(workspaceSecretForm.Encode())).WithContext(ctx)
+	workspaceSecretReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/set", strings.NewReader(workspaceSecretForm.Encode())).WithContext(ctx))
 	workspaceSecretReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	workspaceSecretReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	workspaceSecretReq.Header.Set("HX-Target", "#service-variables")
@@ -1391,7 +1393,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	require.Contains(t, workspaceSecretRec.Body.String(), "SERVICE_URL")
 
 	settingsForm := url.Values{"project": {testProjectName}, "image": {"nginx:alpine"}, "port": {"8080"}, "replicas": {"1"}, "maxReplicas": {"1"}}
-	settingsReq := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(settingsForm.Encode())).WithContext(ctx)
+	settingsReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(settingsForm.Encode())).WithContext(ctx))
 	settingsReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	settingsRec := httptest.NewRecorder()
 	srv.handleAppUpdate(settingsRec, settingsReq, testAppName)
@@ -1409,7 +1411,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 
 	delCfg := url.Values{}
 	delCfg.Set("key", "LOG_LEVEL")
-	delCfgReq := httptest.NewRequest(http.MethodPost, "/apps/demo/config/delete", strings.NewReader(delCfg.Encode()))
+	delCfgReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/config/delete", strings.NewReader(delCfg.Encode())))
 	delCfgReq = delCfgReq.WithContext(ctx)
 	delCfgReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	delCfgReq.Header.Set(hxRequestHeader, hxRequestTrue)
@@ -1422,14 +1424,14 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 
 	delSecret := url.Values{}
 	delSecret.Set("key", "API_TOKEN")
-	delSecretReq := httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/delete", strings.NewReader(delSecret.Encode()))
+	delSecretReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/delete", strings.NewReader(delSecret.Encode())))
 	delSecretReq = delSecretReq.WithContext(ctx)
 	delSecretReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	delSecretReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	delSecretRec := httptest.NewRecorder()
 	srv.handleAppSecretDelete(delSecretRec, delSecretReq, testAppName)
 	require.Equal(t, http.StatusOK, delSecretRec.Code)
-	lastSecretReq := httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/delete", strings.NewReader(url.Values{"key": {"SERVICE_URL"}}.Encode())).WithContext(ctx)
+	lastSecretReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/secrets/delete", strings.NewReader(url.Values{"key": {"SERVICE_URL"}}.Encode())).WithContext(ctx))
 	lastSecretReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	lastSecretReq.Header.Set(hxRequestHeader, hxRequestTrue)
 	lastSecretRec := httptest.NewRecorder()
@@ -1463,7 +1465,7 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 	require.Contains(t, rec.Header().Get("Location"), "view=settings")
 
 	form := url.Values{"project": {testProjectName}, "environment": {"dev"}, "image": {"nginx:alpine"}, "port": {"8080"}, "replicas": {"1"}, "readinessPath": {"/ready"}, "readinessPort": {"9090"}, "readinessTimeout": {"4"}, "readinessPeriod": {"12"}, "readinessFailureThreshold": {"5"}}
-	updateReq := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx)
+	updateReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx))
 	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	updateRec := httptest.NewRecorder()
 	srv.handleAppRoutes(updateRec, updateReq)
@@ -1552,7 +1554,7 @@ func TestAppSettingsPartialPatchKeepsImageAndMarksPending(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(app)}
 	form := url.Values{"project": {testProjectName}, "environment": {"dev"}, "cpu": {"250m"}, "memory": {"512Mi"}, "replicas": {"2"}}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppUpdate(rec, req, testAppName)
@@ -1590,7 +1592,7 @@ func TestResourceDeletePathsRemoveDatabasesCachesAndStores(t *testing.T) {
 		{"/object-stores/assets/delete", srv.handleObjectStoreRoutes, &geassv1alpha1.GeassObjectStore{}, "assets"},
 		{"/logical-databases/appdb/delete", srv.handleLogicalDatabaseRoutes, &geassv1alpha1.GeassLogicalDatabase{}, "appdb"},
 	} {
-		req := httptest.NewRequest(http.MethodPost, item.path, strings.NewReader(url.Values{"confirmName": {item.name}}.Encode())).WithContext(ctx)
+		req := withOrigin(httptest.NewRequest(http.MethodPost, item.path, strings.NewReader(url.Values{"confirmName": {item.name}}.Encode())).WithContext(ctx))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		item.fn(rec, req)
@@ -1604,7 +1606,7 @@ func TestResourceDeleteRequiresConfirmName(t *testing.T) {
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
 	c := newFakeClient(db)
 	srv := &Server{Client: c}
-	req := httptest.NewRequest(http.MethodPost, "/databases/orders/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/databases/orders/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleDatabaseRoutes(rec, req)
@@ -1617,21 +1619,21 @@ func TestAppDeleteRequiresConfirmName(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Source: imageAppSource("nginx:alpine")}}
 	c := newFakeClient(app)
 	srv := &Server{Client: c}
-	req := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppRoutes(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
 
-	bypass := httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(url.Values{"_method": {"DELETE"}}.Encode())).WithContext(ctx)
+	bypass := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(url.Values{"_method": {"DELETE"}}.Encode())).WithContext(ctx))
 	bypass.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	bypassRec := httptest.NewRecorder()
 	srv.handleAppRoutes(bypassRec, bypass)
 	require.Equal(t, http.StatusSeeOther, bypassRec.Code)
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
 
-	ok := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{"confirmName": {testAppName}}.Encode())).WithContext(ctx)
+	ok := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{"confirmName": {testAppName}}.Encode())).WithContext(ctx))
 	ok.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	okRec := httptest.NewRecorder()
 	srv.handleAppRoutes(okRec, ok)
@@ -1644,7 +1646,7 @@ func TestDatabaseUpdateKeepsEnvironmentWithoutFormField(t *testing.T) {
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Version: "16"}}
 	c := newFakeClient(db)
 	srv := &Server{Client: c}
-	req := httptest.NewRequest(http.MethodPost, "/databases/orders/update", strings.NewReader(url.Values{"version": {"17"}}.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/databases/orders/update", strings.NewReader(url.Values{"version": {"17"}}.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleDatabaseUpdate(rec, req, "orders")
@@ -1662,7 +1664,7 @@ func TestCacheAndObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
 	c := newFakeClient(cache, store)
 	srv := &Server{Client: c}
 
-	cacheReq := httptest.NewRequest(http.MethodPost, "/caches/sessions/update", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	cacheReq := withOrigin(httptest.NewRequest(http.MethodPost, "/caches/sessions/update", strings.NewReader(url.Values{}.Encode())).WithContext(ctx))
 	cacheReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	cacheRec := httptest.NewRecorder()
 	srv.handleCacheUpdate(cacheRec, cacheReq, "sessions")
@@ -1672,7 +1674,7 @@ func TestCacheAndObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
 	require.Equal(t, testProjectName, updatedCache.Spec.Project)
 	require.Equal(t, geassv1alpha1.EnvironmentDev, updatedCache.Spec.Environment)
 
-	storeReq := httptest.NewRequest(http.MethodPost, "/object-stores/assets/update", strings.NewReader(url.Values{"project": {""}, "environment": {""}}.Encode())).WithContext(ctx)
+	storeReq := withOrigin(httptest.NewRequest(http.MethodPost, "/object-stores/assets/update", strings.NewReader(url.Values{"project": {""}, "environment": {""}}.Encode())).WithContext(ctx))
 	storeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	storeRec := httptest.NewRecorder()
 	srv.handleObjectStoreUpdate(storeRec, storeReq, "assets")
@@ -1694,7 +1696,7 @@ func TestAPIObjectStoreCreateRejectsInvalidBucket(t *testing.T) {
 		"placement":   {"External"},
 		"bucket":      {"Bad_Bucket"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)

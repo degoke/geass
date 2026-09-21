@@ -110,6 +110,30 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
+	if app.Spec.Source.Git != nil {
+		build, ready, err := r.ensureGitBuild(ctx, &app)
+		if err != nil {
+			return r.setNotReady(ctx, &app, err.Error())
+		}
+		if ready {
+			app.Status.ResolvedImage = build.Status.ImageDigest
+			app.Status.ActiveBuild = build.Name
+		}
+		if !app.Spec.Deploy.Enabled {
+			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+				r.deleteTargetResources(ctx, &app, prevNS)
+			}
+			r.deleteTargetResources(ctx, &app, wsNS)
+			if !ready {
+				return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
+			}
+			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
+		}
+		if !ready {
+			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
+		}
+	}
+
 	if !app.Spec.Deploy.Enabled {
 		if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
 			r.deleteTargetResources(ctx, &app, prevNS)
@@ -123,17 +147,6 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	if app.Status.RolloutPaused {
 		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
-	if app.Spec.Source.Git != nil {
-		build, ready, err := r.ensureGitBuild(ctx, &app)
-		if err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
-		if !ready {
-			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
-		}
-		app.Status.ResolvedImage = build.Status.ImageDigest
-		app.Status.ActiveBuild = build.Name
 	}
 
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
@@ -770,6 +783,10 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	if app.Status.ResolvedImage != "" {
+		latest.Status.ResolvedImage = app.Status.ResolvedImage
+		latest.Status.ActiveBuild = app.Status.ActiveBuild
+	}
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
