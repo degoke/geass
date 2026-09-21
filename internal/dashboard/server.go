@@ -1175,7 +1175,6 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		Spec: geassv1alpha1.GeassCloudConnectionSpec{
 			Provider:     provider,
 			SecretRef:    corev1.LocalObjectReference{Name: secret.Name},
-			Project:      strings.TrimSpace(r.FormValue("project")),
 			Region:       strings.TrimSpace(r.FormValue("region")),
 			Organization: strings.TrimSpace(r.FormValue("organization")),
 		},

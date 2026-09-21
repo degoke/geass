@@ -135,11 +135,8 @@ function projectResources(data, projectName, environment) {
   };
 }
 
-function availableConnections(data, provider, project) {
-  return list(data, "cloudConnections").filter((item) => {
-    if (item.spec?.provider !== provider || !item.status?.available) return false;
-    return !item.spec?.project || item.spec.project === project;
-  });
+function availableConnections(data, provider) {
+  return list(data, "cloudConnections").filter((item) => item.spec?.provider === provider && item.status?.available && !item.spec?.project);
 }
 
 function Projects({ data }) {
@@ -244,8 +241,8 @@ function ResourceDialog({ project, environment, data }) {
   const currentProject = list(data, "projects").find((item) => resourceName(item) === project);
   const githubReady = Boolean(currentProject?.spec?.githubConnectionRef?.name) && platform.hasGitHubApp;
   const servers = list(data, "databases").filter((item) => item.spec?.project === project && item.spec?.environment === environment && (item.spec?.engine === "Postgres" || item.spec?.engine === "MySQL" || !item.spec?.engine));
-  const awsConnections = availableConnections(data, "AWS", project);
-  const planetConnections = availableConnections(data, "PlanetScale", project);
+  const awsConnections = availableConnections(data, "AWS");
+  const planetConnections = availableConnections(data, "PlanetScale");
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [type, setType] = useState("service");
@@ -272,13 +269,13 @@ function ResourceDialog({ project, environment, data }) {
       { value: "mysql", label: "MySQL", description: "In-cluster MySQL", enabled: true, engine: "MySQL", placement: "InCluster" },
       { value: "sqlite", label: "SQLite", description: "In-cluster SQLite", enabled: true, engine: "SQLite", placement: "InCluster" },
       { value: "redis", label: "Redis", description: "In-cluster Redis", enabled: true, engine: "Redis", placement: "InCluster" },
-      { value: "planetscale", label: "PlanetScale", description: planetConnections.length ? "Create or connect a PlanetScale database" : "Add a PlanetScale connection in project or cluster settings", enabled: planetConnections.length > 0, engine: "MySQL", placement: "External", provider: "PlanetScale" },
-      { value: "awsdb", label: "AWS", description: awsConnections.length ? "Connect an AWS database" : "Add an AWS connection in project or cluster settings", enabled: awsConnections.length > 0, engine: "Postgres", placement: "External", provider: "AWS" },
+      { value: "planetscale", label: "PlanetScale", description: planetConnections.length ? "Create or connect a PlanetScale database" : "Add a PlanetScale connection in cluster settings", enabled: planetConnections.length > 0, engine: "MySQL", placement: "External", provider: "PlanetScale" },
+      { value: "awsdb", label: "AWS", description: awsConnections.length ? "Connect an AWS database" : "Add an AWS connection in cluster settings", enabled: awsConnections.length > 0, engine: "Postgres", placement: "External", provider: "AWS" },
       { value: "logical", label: "Logical database", description: servers.length ? "Create a database inside an existing server" : "Create a database server first", enabled: servers.length > 0 },
     ],
     bucket: [
       { value: "minio", label: "In-cluster bucket", description: "S3-compatible storage in the cluster", enabled: true, placement: "InCluster" },
-      { value: "s3", label: "AWS S3", description: awsConnections.length ? "Create or connect an S3 bucket" : "Add an AWS connection in project or cluster settings", enabled: awsConnections.length > 0, placement: "External" },
+      { value: "s3", label: "AWS S3", description: awsConnections.length ? "Create or connect an S3 bucket" : "Add an AWS connection in cluster settings", enabled: awsConnections.length > 0, placement: "External" },
     ],
   };
   const submit = (event) => {
@@ -543,16 +540,6 @@ function ProjectSettings({ project, data, reload }) {
           <p className="muted">{project.spec?.githubConnectionRef?.name ? `Connected as ${project.spec.githubConnectionRef.name}` : "Install the platform GitHub App on this project to deploy from repositories."}</p>
           <form method="POST" action={`/api/projects/${name}/github/install`}><Button type="submit">Connect GitHub</Button></form>
         </Card>
-        <Card>
-          <div className="card-heading"><div><div className="eyebrow">Cloud</div><h2>AWS and PlanetScale</h2></div></div>
-          <p className="muted">Project connections are used first. Cluster-wide connections remain available when a project connection is not set.</p>
-          {list(data, "cloudConnections").filter((item) => !item.spec?.project || item.spec.project === name).map((item) => (
-            <div className="panel-list-row" key={resourceName(item)}>
-              <div><strong>{resourceName(item)}</strong><small>{item.spec?.provider} · {item.spec?.project ? "Project" : "Cluster"} · {item.status?.available ? "Ready" : "Pending"}</small></div>
-            </div>
-          ))}
-          <ProjectCloudForm project={name} reload={reload} />
-        </Card>
       </div>
     </>
   );
@@ -664,50 +651,38 @@ function HAReadiness({ data }) {
   );
 }
 
-function CloudConnections({ data, reload, project }) {
-  const items = list(data, "cloudConnections").filter((item) => !project || !item.spec?.project || item.spec.project === project);
+function CloudConnections({ data, reload }) {
+  const items = list(data, "cloudConnections").filter((item) => !item.spec?.project);
   const [provider, setProvider] = useState("AWS");
   const [form, setForm] = useState({ name: "", accessKeyId: "", secretAccessKey: "", region: "us-east-1", token: "", organization: "" });
   return (
     <>
-      <PageHeader eyebrow="Platform / Settings" title="Cloud connections" description="Connect AWS and PlanetScale. External databases and buckets stay disabled until a connection is ready." />
+      <PageHeader eyebrow="Platform / Settings" title="Cloud connections" description="Connect AWS and PlanetScale once for the cluster. External databases and buckets stay disabled until a connection is ready." />
       <Card>
         {items.length ? items.map((item) => (
           <div className="setting-row" key={resourceName(item)}>
             <div className="setting-icon"><Cloud size={17} /></div>
-            <div><strong>{resourceName(item)}</strong><small>{item.spec?.provider}{item.spec?.project ? ` · ${item.spec.project}` : " · Cluster"}</small></div>
+            <div><strong>{resourceName(item)}</strong><small>{item.spec?.provider}</small></div>
             <Badge tone={item.status?.available ? "success" : "warning"}>{item.status?.available ? "Ready" : "Pending"}</Badge>
           </div>
         )) : <p className="muted">No cloud connections yet.</p>}
       </Card>
       <Card>
-        <CloudConnectionForm project="" form={form} setForm={setForm} provider={provider} setProvider={setProvider} reload={reload} />
+        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/cloud-connections/create", { ...form, provider }).then(() => { reload(); alert("Connection saved"); setForm({ name: "", accessKeyId: "", secretAccessKey: "", region: "us-east-1", token: "", organization: "" }); }).catch((error) => alert(error.message)); }}>
+          <Field label="Name"><Input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="prod-aws" /></Field>
+          <Field label="Provider"><Select value={provider} onChange={(event) => setProvider(event.target.value)}><option>AWS</option><option>PlanetScale</option></Select></Field>
+          {provider === "AWS" ? <>
+            <Field label="Access key ID"><Input required value={form.accessKeyId} onChange={(event) => setForm({ ...form, accessKeyId: event.target.value })} /></Field>
+            <Field label="Secret access key"><Input required type="password" value={form.secretAccessKey} onChange={(event) => setForm({ ...form, secretAccessKey: event.target.value })} /></Field>
+            <Field label="Region"><Input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value })} /></Field>
+          </> : <>
+            <Field label="Organization"><Input required value={form.organization} onChange={(event) => setForm({ ...form, organization: event.target.value })} /></Field>
+            <Field label="Service token"><Input required type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} /></Field>
+          </>}
+          <Button type="submit">Save connection</Button>
+        </form>
       </Card>
     </>
-  );
-}
-
-function ProjectCloudForm({ project, reload }) {
-  const [provider, setProvider] = useState("AWS");
-  const [form, setForm] = useState({ name: "", accessKeyId: "", secretAccessKey: "", region: "us-east-1", token: "", organization: "" });
-  return <CloudConnectionForm project={project} form={form} setForm={setForm} provider={provider} setProvider={setProvider} reload={reload} />;
-}
-
-function CloudConnectionForm({ project, form, setForm, provider, setProvider, reload }) {
-  return (
-    <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/cloud-connections/create", { ...form, provider, project }).then(() => { reload(); alert("Connection saved"); setForm({ name: "", accessKeyId: "", secretAccessKey: "", region: "us-east-1", token: "", organization: "" }); }).catch((error) => alert(error.message)); }}>
-      <Field label="Name"><Input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={project ? `${project}-aws` : "prod-aws"} /></Field>
-      <Field label="Provider"><Select value={provider} onChange={(event) => setProvider(event.target.value)}><option>AWS</option><option>PlanetScale</option></Select></Field>
-      {provider === "AWS" ? <>
-        <Field label="Access key ID"><Input required value={form.accessKeyId} onChange={(event) => setForm({ ...form, accessKeyId: event.target.value })} /></Field>
-        <Field label="Secret access key"><Input required type="password" value={form.secretAccessKey} onChange={(event) => setForm({ ...form, secretAccessKey: event.target.value })} /></Field>
-        <Field label="Region"><Input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value })} /></Field>
-      </> : <>
-        <Field label="Organization"><Input required value={form.organization} onChange={(event) => setForm({ ...form, organization: event.target.value })} /></Field>
-        <Field label="Service token"><Input required type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} /></Field>
-      </>}
-      <Button type="submit">Save connection</Button>
-    </form>
   );
 }
 

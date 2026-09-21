@@ -995,7 +995,6 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 		"provider":     {"PlanetScale"},
 		"organization": {"acme"},
 		"token":        {"pscale_token"},
-		"project":      {testProjectName},
 	}
 	psReq := httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(ps.Encode())).WithContext(ctx)
 	psReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1006,7 +1005,7 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 	var planet geassv1alpha1.GeassCloudConnection
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "proj-ps", Namespace: platform.SystemNamespace}, &planet))
 	require.Equal(t, geassv1alpha1.CloudProviderPlanetScale, planet.Spec.Provider)
-	require.Equal(t, testProjectName, planet.Spec.Project)
+	require.Empty(t, planet.Spec.Project)
 	require.Equal(t, "acme", planet.Spec.Organization)
 }
 
