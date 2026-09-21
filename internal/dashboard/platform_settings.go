@@ -40,10 +40,15 @@ func (s *Server) handlePlatformGitHubSettings(w http.ResponseWriter, r *http.Req
 	hasClientSecret := secret != nil && len(secret.Data[githubapp.SecretKeyClientSecret]) > 0
 	hasWebhookSecret := secret != nil && len(secret.Data[githubapp.SecretKeyWebhookSecret]) > 0
 
-	state := s.beginGitHubManifestState(w, r)
-	body := `<p class="overline">Platform</p>` + PageHeader("GitHub App", "Create a GitHub App for repository deploys.") +
-		githubAppManifestForm(readiness.DashboardURL, state) +
-		Card(`<h3 class="card-title">GitHub App URLs</h3><p class="text-secondary">These values are included automatically when you create the app with Geass. Use them if you create or edit the app manually.</p>`+githubAppSetupInstructions(readiness.DashboardURL)) +
+	state := ""
+	if s.sessionCanMutate(r) {
+		state = s.beginGitHubManifestState(w, r)
+	}
+	body := `<p class="overline">Platform</p>` + PageHeader("GitHub App", "Create a GitHub App for repository deploys.")
+	if state != "" {
+		body += githubAppManifestForm(readiness.DashboardURL, state)
+	}
+	body += Card(`<h3 class="card-title">GitHub App URLs</h3><p class="text-secondary">These values are included automatically when you create the app with Geass. Use them if you create or edit the app manually.</p>`+githubAppSetupInstructions(readiness.DashboardURL)) +
 		FormOpen("/settings/github/save", "POST", "") +
 		Card(
 			`<h3 class="card-title">Or paste credentials manually</h3>`+

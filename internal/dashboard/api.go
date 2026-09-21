@@ -173,6 +173,9 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	data.Platform = s.dashboardPlatform(ctx, data)
 	data.Platform.Session = s.dashboardSession(r)
+	if !s.sessionCanMutate(r) {
+		sanitizeDashboardForViewer(&data)
+	}
 	for _, metric := range overviewMetrics {
 		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
 		state := "measured"
@@ -194,79 +197,19 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	serveFrontend(w)
 }
 
-func isDashboardMutation(path string) bool {
-	for _, suffix := range []string{"/create", "/save", "/delete", "/update", "/verify", "/test", "/clear", "/install", "/disconnect", "/archive", "/deploy", "/scale", "/rollback", "/build", "/check", "/set", "/raw"} {
-		if len(path) >= len(suffix) && path[len(path)-len(suffix):] == suffix {
-			return true
+func sanitizeDashboardForViewer(data *dashboardBootstrap) {
+	if data == nil {
+		return
+	}
+	for i := range data.Apps.Items {
+		data.Apps.Items[i].Spec.ConfigData = nil
+	}
+	for i := range data.Projects.Items {
+		for j := range data.Projects.Items[i].Spec.SharedVariables {
+			data.Projects.Items[i].Spec.SharedVariables[j].Value = ""
 		}
 	}
-	return false
-}
-
-func (s *Server) handleFrontendProjects(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
+	for i := range data.CloudConnections.Items {
+		data.CloudConnections.Items[i].Spec.SecretRef.Name = ""
 	}
-	switch r.URL.Path {
-	case "/projects/create":
-		s.handleProjectCreate(w, r)
-	default:
-		s.handleProjectRoutes(w, r)
-	}
-}
-
-func (s *Server) handleFrontendProjectRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) {
-		serveFrontend(w)
-		return
-	}
-	s.handleProjectRoutes(w, r)
-}
-
-func (s *Server) handleFrontendApps(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && r.URL.Path != "/apps" {
-		serveFrontend(w)
-		return
-	}
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppCreate(w, r)
-}
-
-func (s *Server) handleFrontendAppRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && !containsPathPart(r.URL.Path, "stream") {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppRoutes(w, r)
-}
-
-func (s *Server) handleFrontendResourceList(w http.ResponseWriter, r *http.Request, handler func(http.ResponseWriter, *http.Request)) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	handler(w, r)
-}
-
-func containsPathPart(path, part string) bool {
-	for _, segment := range splitPath(path) {
-		if segment == part {
-			return true
-		}
-	}
-	return false
-}
-
-func splitPath(path string) []string {
-	var parts []string
-	for _, part := range strings.Split(path, "/") {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return parts
 }

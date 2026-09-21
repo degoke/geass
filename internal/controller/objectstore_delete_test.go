@@ -8,8 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -121,4 +124,83 @@ func TestDeleteExternalStoreRequiresConnectionRef(t *testing.T) {
 	err := r.deleteExternalStore(context.Background(), store)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "AWS connection is required")
+}
+
+func TestDeleteClusterMinIOBlockedByProjectBuckets(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	now := metav1.Now()
+	cluster := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              platform.ClusterMinIOName,
+			Namespace:         platform.SystemNamespace,
+			Finalizers:        []string{objectStoreFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	project := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Project:   "payments",
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	r := &GeassObjectStoreReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, project).Build(),
+		Scheme: scheme,
+	}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "project buckets")
+	latest := &geassv1alpha1.GeassObjectStore{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace}, latest))
+	require.Contains(t, latest.Finalizers, objectStoreFinalizer)
+}
+
+func TestDeleteProjectBucketSucceedsWhenClusterMinIOMissing(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	now := metav1.Now()
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "uploads",
+			Namespace:         platform.SystemNamespace,
+			Finalizers:        []string{objectStoreFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Project:     "payments",
+			Environment: "dev",
+			Engine:      geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement:   geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	r := &GeassObjectStoreReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(store).Build(),
+		Scheme: scheme,
+	}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: store.Name, Namespace: store.Namespace}})
+	require.NoError(t, err)
+	latest := &geassv1alpha1.GeassObjectStore{}
+	err = r.Get(context.Background(), types.NamespacedName{Name: store.Name, Namespace: store.Namespace}, latest)
+	require.True(t, err != nil && apierrors.IsNotFound(err) || err == nil && !containsFinalizer(latest, objectStoreFinalizer))
+}
+
+func containsFinalizer(store *geassv1alpha1.GeassObjectStore, name string) bool {
+	if store == nil {
+		return false
+	}
+	for _, item := range store.Finalizers {
+		if item == name {
+			return true
+		}
+	}
+	return false
 }

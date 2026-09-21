@@ -128,50 +128,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
 	inner.HandleFunc("/github/callback", s.handleGitHubCallback)
 	inner.HandleFunc("/", s.handleSPA)
-	mux.Handle("/", s.withAuth(inner))
+	mux.Handle("/", securityHeaders(s.withAuth(inner)))
 }
 
-func (s *Server) handleNetworkLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		var input geassv1alpha1.GeassNetworkLogSpec
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&input); err != nil {
-			http.Error(w, "invalid network log", http.StatusBadRequest)
-			return
-		}
-		if input.Project == "" || input.App == "" || input.Timestamp.Time.IsZero() {
-			http.Error(w, "project, app, and timestamp are required", http.StatusBadRequest)
-			return
-		}
-		log := &geassv1alpha1.GeassNetworkLog{ObjectMeta: metav1.ObjectMeta{GenerateName: "network-", Namespace: systemNamespace, Labels: map[string]string{platform.LabelApp: input.App, platform.LabelProject: input.Project, platform.LabelEnvironment: string(input.Environment)}}, Spec: input}
-		if err := s.Client.Create(r.Context(), log); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"name": log.Name})
-		return
-	}
-	var logs geassv1alpha1.GeassNetworkLogList
-	if err := s.Client.List(r.Context(), &logs, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	app, project, environment := r.URL.Query().Get("app"), r.URL.Query().Get("project"), r.URL.Query().Get("environment")
-	filtered := make([]geassv1alpha1.GeassNetworkLog, 0, len(logs.Items))
-	for _, log := range logs.Items {
-		if app != "" && log.Spec.App != app {
-			continue
-		}
-		if project != "" && log.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(log.Spec.Environment) != environment {
-			continue
-		}
-		filtered = append(filtered, log)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(filtered)
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("Referrer-Policy", "same-origin")
+		header.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self' https://github.com")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
@@ -2911,6 +2879,28 @@ func (s *Server) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectSt
 	return nil, nil
 }
 
+func (s *Server) attachedProjectMinIONames(ctx context.Context) ([]string, error) {
+	var list geassv1alpha1.GeassObjectStoreList
+	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
+		return nil, err
+	}
+	var names []string
+	for i := range list.Items {
+		item := &list.Items[i]
+		if isClusterMinIO(item) || !item.DeletionTimestamp.IsZero() || strings.TrimSpace(item.Spec.Project) == "" {
+			continue
+		}
+		if item.Spec.Placement == geassv1alpha1.ObjectStorePlacementExternal || item.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
+			continue
+		}
+		if item.Spec.Engine != "" && item.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
+			continue
+		}
+		names = append(names, item.Name)
+	}
+	return names, nil
+}
+
 func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/object-stores"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -3094,6 +3084,17 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 	if err := s.Client.Get(r.Context(), key, obj); err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterMinIO(store) {
+		attached, err := s.attachedProjectMinIONames(r.Context())
+		if err != nil {
+			redirectFormError(w, r, listPath, err.Error())
+			return
+		}
+		if len(attached) > 0 {
+			redirectFormError(w, r, listPath, "delete project buckets before removing the MinIO server")
+			return
+		}
 	}
 	if err := s.Client.Delete(r.Context(), obj); err != nil {
 		redirectFormError(w, r, listPath, err.Error())

@@ -58,10 +58,18 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), HTTP: s3.Client()}
 		var list geassv1alpha1.GeassObjectStoreList
 		_ = k8sClient.List(ctx, &list, client.InNamespace(ns))
+		var clusterStores, projectStores []geassv1alpha1.GeassObjectStore
 		for i := range list.Items {
-			item := &list.Items[i]
-			_ = k8sClient.Delete(ctx, item)
-			_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: item.Name, Namespace: ns}})
+			if isClusterObjectStore(&list.Items[i]) {
+				clusterStores = append(clusterStores, list.Items[i])
+				continue
+			}
+			projectStores = append(projectStores, list.Items[i])
+		}
+		for _, item := range append(projectStores, clusterStores...) {
+			current := item
+			_ = k8sClient.Delete(ctx, &current)
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: current.Name, Namespace: ns}})
 		}
 	})
 

@@ -68,14 +68,9 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	clusterServer := isClusterObjectStore(&store)
 	wsNS := platform.SystemNamespace
 	if !clusterServer {
-		if err := platform.ValidateProjectPlacement(ctx, r.Client, store.Spec.Project, store.Spec.Environment); err != nil {
-			return r.setNotReady(ctx, &store, err.Error())
+		if ns, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment)); err == nil {
+			wsNS = ns
 		}
-		ns, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment))
-		if err != nil {
-			return r.setNotReady(ctx, &store, err.Error())
-		}
-		wsNS = ns
 	}
 
 	if !controllerutil.ContainsFinalizer(&store, objectStoreFinalizer) {
@@ -85,6 +80,13 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	if !store.DeletionTimestamp.IsZero() {
 		if clusterServer {
+			attached, attachErr := r.attachedProjectMinIONames(ctx)
+			if attachErr != nil {
+				return ctrl.Result{}, attachErr
+			}
+			if len(attached) > 0 {
+				return ctrl.Result{}, fmt.Errorf("delete project buckets before removing the MinIO server: %s", strings.Join(attached, ", "))
+			}
 			if err := helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -99,12 +101,27 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			if err := r.deleteInClusterBuckets(ctx, &store); err != nil {
 				return ctrl.Result{}, err
 			}
-			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}}))
-			_ = r.ensureClusterMinIOHelm(ctx)
+			if err := client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}})); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.ensureClusterMinIOHelm(ctx); err != nil && !errors.Is(err, errClusterMinIOMissing) {
+				return ctrl.Result{}, err
+			}
 		}
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}))
 		controllerutil.RemoveFinalizer(&store, objectStoreFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &store)
+	}
+
+	if !clusterServer {
+		if err := platform.ValidateProjectPlacement(ctx, r.Client, store.Spec.Project, store.Spec.Environment); err != nil {
+			return r.setNotReady(ctx, &store, err.Error())
+		}
+		ns, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment))
+		if err != nil {
+			return r.setNotReady(ctx, &store, err.Error())
+		}
+		wsNS = ns
 	}
 
 	if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
@@ -610,6 +627,28 @@ func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1
 		return item, nil
 	}
 	return nil, errClusterMinIOMissing
+}
+
+func (r *GeassObjectStoreReconciler) attachedProjectMinIONames(ctx context.Context) ([]string, error) {
+	var list geassv1alpha1.GeassObjectStoreList
+	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil, err
+	}
+	var names []string
+	for i := range list.Items {
+		item := &list.Items[i]
+		if isClusterObjectStore(item) || !item.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if objectStorePlacement(item) == geassv1alpha1.ObjectStorePlacementExternal {
+			continue
+		}
+		if item.Spec.Engine != "" && item.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
+			continue
+		}
+		names = append(names, item.Name)
+	}
+	return names, nil
 }
 
 func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS string) (ctrl.Result, error) {

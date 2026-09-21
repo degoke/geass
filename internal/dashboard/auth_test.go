@@ -1,7 +1,10 @@
 package dashboard
 
 import (
+	"context"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,7 +13,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -131,19 +137,6 @@ func TestDashboardViewerCannotMutate(t *testing.T) {
 	require.Contains(t, createRec.Body.String(), "viewer role")
 }
 
-func TestDashboardAuthReloadsExistingSecretOnAlreadyExists(t *testing.T) {
-	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "stored-pass", Role: dashboardRoleAdmin})
-	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"admin"}, "password": {"stored-pass"}}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-}
-
 func TestDashboardAuthDoesNotGeneratePassword(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	form := url.Values{"username": {"admin"}, "password": {"anything"}}
@@ -246,6 +239,154 @@ func TestDashboardCookieSecureOnPublicHost(t *testing.T) {
 	require.False(t, loopbackCookie.Secure)
 }
 
+func TestDashboardAuthReloadsExistingSecretOnAlreadyExists(t *testing.T) {
+	ctx := t.Context()
+	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", "stored-pass")
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "stored-pass", Role: dashboardRoleAdmin})
+	secret.Data["session-key"] = []byte(dashboardSessionKeyPrefix + hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
+	inner := newFakeClient(secret)
+	srv := &Server{Client: &alreadyExistsAuthClient{Client: inner}}
+	form := url.Values{"username": {"admin"}, "password": {"stored-pass"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestDashboardPlaceholderPasswordIsRejected(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: dashboardPlaceholderPassword, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	form := url.Values{"username": {"admin"}, "password": {dashboardPlaceholderPassword}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable")
+}
+
+func TestDashboardSessionAllowsColonInUsername(t *testing.T) {
+	ctx := t.Context()
+	secret := dashboardUsersSecret(dashboardUser{Username: "ops:admin", Password: "test-password", Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	form := url.Values{"username": {"ops:admin"}, "password": {"test-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"username":"ops:admin"`)
+
+	var cookie *http.Cookie
+	for _, item := range rec.Result().Cookies() {
+		if item.Name == platform.DashboardSessionCookie {
+			cookie = item
+		}
+	}
+	require.NotNil(t, cookie)
+	bootstrap := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx)
+	bootstrap.AddCookie(cookie)
+	bootRec := httptest.NewRecorder()
+	mux.ServeHTTP(bootRec, bootstrap)
+	require.Equal(t, http.StatusOK, bootRec.Code)
+	require.Contains(t, bootRec.Body.String(), `"username":"ops:admin"`)
+}
+
+func TestDashboardViewerCannotReadLogs(t *testing.T) {
+	ctx := t.Context()
+	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
+	srv := &Server{Client: newFakeClient(secret)}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var cookie *http.Cookie
+	for _, item := range rec.Result().Cookies() {
+		if item.Name == platform.DashboardSessionCookie {
+			cookie = item
+		}
+	}
+	require.NotNil(t, cookie)
+
+	logs := httptest.NewRequest(http.MethodGet, "/api/apps/demo/logs", nil).WithContext(ctx)
+	logs.AddCookie(cookie)
+	logsRec := httptest.NewRecorder()
+	mux.ServeHTTP(logsRec, logs)
+	require.Equal(t, http.StatusForbidden, logsRec.Code)
+
+	repos := httptest.NewRequest(http.MethodGet, "/api/projects/payments/github/repos", nil).WithContext(ctx)
+	repos.AddCookie(cookie)
+	reposRec := httptest.NewRecorder()
+	mux.ServeHTTP(reposRec, repos)
+	require.Equal(t, http.StatusForbidden, reposRec.Code)
+}
+
+func TestDashboardSecurityHeaders(t *testing.T) {
+	srv := &Server{Client: newFakeClient()}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	require.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+}
+
+func TestDashboardLoginRateLimitIsPerUsername(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	for i := 0; i < loginFailureLimit; i++ {
+		form := url.Values{"username": {"admin"}, "password": {"wrong"}}
+		req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		req.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", i+2)
+		rec := httptest.NewRecorder()
+		srv.handleAPI(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	}
+	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.RemoteAddr = "10.8.0.1:1234"
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid username or password")
+}
+
+func TestDashboardHashesEnvUsersIntoSecret(t *testing.T) {
+	ctx := t.Context()
+	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", "env-password")
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	secret := &corev1.Secret{}
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret))
+	require.True(t, isBcryptHash(string(secret.Data["users"])) || strings.Contains(string(secret.Data["users"]), "$2"))
+	require.True(t, strings.HasPrefix(string(secret.Data["session-key"]), dashboardSessionKeyPrefix))
+}
+
 func withDashboardSession(t *testing.T, srv *Server, r *http.Request, username, role string) *http.Request {
 	t.Helper()
 	if r.Host == "" {
@@ -257,4 +398,26 @@ func withDashboardSession(t *testing.T, srv *Server, r *http.Request, username, 
 	require.NoError(t, err)
 	r.AddCookie(dashboardSessionCookie(r, token, 3600))
 	return r
+}
+
+type alreadyExistsAuthClient struct {
+	client.Client
+	gets int
+}
+
+func (c *alreadyExistsAuthClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if key.Name == platform.DashboardAuthSecretName {
+		c.gets++
+		if c.gets == 1 {
+			return apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, key.Name)
+		}
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func (c *alreadyExistsAuthClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if secret, ok := obj.(*corev1.Secret); ok && secret.Name == platform.DashboardAuthSecretName {
+		return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, secret.Name)
+	}
+	return c.Client.Create(ctx, obj, opts...)
 }

@@ -97,7 +97,7 @@ func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request)
 		"hasGitHubApp":    readiness.HasGitHubApp,
 		"dashboardURL":    readiness.DashboardURL,
 	}
-	if readiness.HasDashboardURL {
+	if readiness.HasDashboardURL && s.sessionCanMutate(r) {
 		state := s.beginGitHubManifestState(w, r)
 		appName := githubapp.DefaultGeassAppName(readiness.DashboardURL)
 		manifest := githubapp.NewGeassAppManifest(readiness.DashboardURL, appName)
@@ -222,12 +222,21 @@ func (s *Server) handleAPIAppVariables(w http.ResponseWriter, r *http.Request) {
 	for key := range secrets {
 		keys = append(keys, key)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"config":             app.Spec.ConfigData,
+	payload := map[string]any{
 		"secrets":            keys,
 		"sharedVariableRefs": app.Spec.SharedVariableRefs,
 		"env":                envNames(app.Spec.Env),
-	})
+	}
+	if s.sessionCanMutate(r) {
+		payload["config"] = app.Spec.ConfigData
+	} else {
+		configKeys := make([]string, 0, len(app.Spec.ConfigData))
+		for key := range app.Spec.ConfigData {
+			configKeys = append(configKeys, key)
+		}
+		payload["config"] = configKeys
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func envNames(env []corev1.EnvVar) []map[string]string {

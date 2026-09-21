@@ -634,7 +634,7 @@ function ResourceDetail({ project, data, kind, name, reload }) {
   const title = resourceName(item);
   const isApp = kind === "apps";
   const isDatabase = kind === "databases" || kind === "caches" || kind === "logical-databases";
-  const tabs = ["overview", ...(isApp ? ["logs", "metrics", "deployments", "variables", "console"] : []), ...(isDatabase ? ["console", "monitor"] : []), "settings"];
+  const tabs = ["overview", ...(isApp ? [...(canMutate(data) ? ["logs"] : []), "metrics", "deployments", "variables", "console"] : []), ...(isDatabase ? ["console", "monitor"] : []), "settings"];
   const sourceImage = typeof item.spec?.source?.image === "string" ? item.spec.source.image : item.spec?.source?.image?.image;
   const deployments = list(data, "deployments").filter((entry) => entry.spec?.app === name);
   const shared = (project.spec?.sharedVariables || []).filter((entry) => entry.environment === item.spec?.environment);
@@ -730,11 +730,12 @@ function ResourceDetail({ project, data, kind, name, reload }) {
   );
 }
 
-function ProjectSettings({ project, data, reload }) {
+function ProjectSettings({ project, data, reload, environment: workspaceEnvironment }) {
   const name = resourceName(project);
   const [displayName, setDisplayName] = useState(project.spec?.displayName || name);
   const [environment, setEnvironment] = useState("");
-  const [variable, setVariable] = useState({ environment: project.spec?.environments?.[0] || "", name: "", value: "", secret: false });
+  const githubEnvironment = workspaceEnvironment || project.spec?.environments?.[0] || "";
+  const [variable, setVariable] = useState({ environment: githubEnvironment, name: "", value: "", secret: false });
   return (
     <>
       <PageHeader eyebrow="Project" title="Project settings" description="Environments, shared variables, and GitHub access for this project." />
@@ -766,8 +767,8 @@ function ProjectSettings({ project, data, reload }) {
         </Card>
         <Card>
           <div className="card-heading"><div><div className="eyebrow">GitHub</div><h2>Repository access</h2></div></div>
-          <p className="muted">{project.spec?.githubConnectionRef?.name ? `Connected as ${project.spec.githubConnectionRef.name}` : "Install the platform GitHub App on this project to deploy from repositories."}</p>
-          {canMutate(data) && <Button type="button" onClick={() => action(`/projects/${name}/github/install`, { environment: project.spec?.environments?.[0] || "" }).then((result) => { if (result.url) window.location.assign(result.url); else reload(); }).catch((error) => alert(error.message))}>Connect GitHub</Button>}
+          <p className="muted">{project.spec?.githubConnectionRef?.name ? `Connected as ${project.spec.githubConnectionRef.name}` : githubEnvironment ? `Install the platform GitHub App for ${githubEnvironment} to deploy from repositories.` : "Install the platform GitHub App on this project to deploy from repositories."}</p>
+          {canMutate(data) && <Button type="button" onClick={() => action(`/projects/${name}/github/install`, { environment: githubEnvironment }).then((result) => { if (result.url) window.location.assign(result.url); else reload(); }).catch((error) => alert(error.message))}>Connect GitHub</Button>}
         </Card>
       </div>
     </>
@@ -944,18 +945,33 @@ function ObjectStorageSettings({ data, reload }) {
   const capacity = data?.platform?.capacity || {};
   const [cpu, setCpu] = useState("250m");
   const [memory, setMemory] = useState("512Mi");
+  const [confirmDelete, setConfirmDelete] = useState("");
   const live = { cpu, memory, cpuMillis: cpuMillis(cpu), memoryBytes: memoryBytes(memory), perCpuMillis: cpuMillis(cpu), perMemoryBytes: memoryBytes(memory), replicas: 1 };
   const fits = capacityFits(capacity, live);
+  const projectBuckets = list(data, "objectStores").filter((item) => item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External");
+  const serverName = resourceName(server);
   return (
     <>
       <PageHeader eyebrow="Platform / Settings" title="Object storage" description="Set up one MinIO server for the cluster. Project buckets are created on this server." />
       <Card>
         {server ? (
+          <>
           <div className="setting-row">
             <div className="setting-icon"><HardDrive size={17} /></div>
-            <div><strong>{resourceName(server)}</strong><small>{server.status?.endpoint || "Cluster MinIO server"}</small></div>
+            <div><strong>{serverName}</strong><small>{server.status?.endpoint || "Cluster MinIO server"}</small></div>
             <Badge tone={ready ? "success" : "warning"}>{ready ? "Ready" : "Pending"}</Badge>
           </div>
+          {canMutate(data) && (
+            projectBuckets.length
+              ? <p className="form-help">Delete project buckets before removing the MinIO server.</p>
+              : (
+                <div className="panel-form">
+                  <Field label={`Type ${serverName} to remove the MinIO server`}><Input value={confirmDelete} onChange={(event) => setConfirmDelete(event.target.value)} autoComplete="off" placeholder={serverName} /></Field>
+                  <Button type="button" variant="danger" disabled={confirmDelete !== serverName} onClick={() => action(`/object-stores/${serverName}/delete`, { confirmName: confirmDelete }).then(() => { reload(); alert("MinIO server removed"); }).catch((error) => alert(error.message))}><Trash2 size={15} /> Remove MinIO server</Button>
+                </div>
+              )
+          )}
+          </>
         ) : (
           <>
             <p className="muted">In-cluster buckets stay disabled until this server exists. Choose how much CPU and memory to assign to MinIO.</p>
@@ -1044,7 +1060,7 @@ function DashboardScreen({ mode }) {
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   if (mode === "projects") { title = "Projects"; content = <Projects data={data} />; }
   else if (mode === "workspace" && project) { title = project.spec?.displayName || resourceName(project); content = <Workspace project={project} data={data} environment={environment} />; }
-  else if (mode === "project-settings" && project) { title = "Project settings"; content = <ProjectSettings project={project} data={data} reload={refetch} />; }
+  else if (mode === "project-settings" && project) { title = "Project settings"; content = <ProjectSettings project={project} data={data} reload={refetch} environment={environment} />; }
   else if (mode.startsWith("resource:") && project) {
     const kind = mode.slice("resource:".length);
     title = params.name;

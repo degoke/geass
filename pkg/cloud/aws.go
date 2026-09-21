@@ -471,7 +471,7 @@ func isS3Unsupported(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "AWS S3 400") || strings.Contains(msg, "AWS S3 405") || strings.Contains(msg, "NotImplemented") || strings.Contains(msg, "MethodNotAllowed")
+	return strings.Contains(msg, "AWS S3 405") || strings.Contains(msg, "NotImplemented") || strings.Contains(msg, "MethodNotAllowed")
 }
 
 func isS3ErrorCode(payload []byte, code string) bool {

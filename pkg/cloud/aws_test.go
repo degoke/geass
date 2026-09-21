@@ -273,3 +273,23 @@ func TestDeleteBucketTreatsMissingBucketAsSuccess(t *testing.T) {
 	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
 	require.NoError(t, client.DeleteBucket("uploads"))
 }
+
+func TestDeleteBucketDoesNotTreatGeneric400AsUnsupported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`<Error><Code>InvalidRequest</Code></Error>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "400")
+}
