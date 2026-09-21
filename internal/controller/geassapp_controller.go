@@ -288,6 +288,13 @@ func deploymentReplicas(app *geassv1alpha1.GeassApp) int32 {
 	return *app.Spec.Replicas
 }
 
+func appContainerResources(app *geassv1alpha1.GeassApp) corev1.ResourceRequirements {
+	if app == nil || len(app.Spec.Resources.Requests) == 0 {
+		return platform.DefaultAppResources()
+	}
+	return app.Spec.Resources
+}
+
 func appSourceCommit(app *geassv1alpha1.GeassApp) string {
 	if app.Spec.Source.Git != nil {
 		return app.Spec.Source.Git.Commit
@@ -464,7 +471,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 					ReadinessProbe: app.Spec.Deploy.ReadinessProbe,
 					LivenessProbe:  app.Spec.Deploy.LivenessProbe,
 					StartupProbe:   app.Spec.Deploy.StartupProbe,
-					Resources:      app.Spec.Resources,
+					Resources:      appContainerResources(app),
 					VolumeMounts:   volumeMounts,
 				}},
 				Volumes: volumes,

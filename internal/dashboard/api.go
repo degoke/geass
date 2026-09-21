@@ -30,14 +30,15 @@ type dashboardBootstrap struct {
 }
 
 type dashboardPlatform struct {
-	HasDashboardURL      bool   `json:"hasDashboardURL"`
-	HasGitHubApp         bool   `json:"hasGitHubApp"`
-	DashboardURL         string `json:"dashboardURL"`
-	HAReady              bool   `json:"haReady"`
-	HealthyNodes         int32  `json:"healthyNodes"`
-	AWSAvailable         bool   `json:"awsAvailable"`
-	PlanetScaleAvailable bool   `json:"planetScaleAvailable"`
-	MinIOAvailable       bool   `json:"minioAvailable"`
+	HasDashboardURL      bool            `json:"hasDashboardURL"`
+	HasGitHubApp         bool            `json:"hasGitHubApp"`
+	DashboardURL         string          `json:"dashboardURL"`
+	HAReady              bool            `json:"haReady"`
+	HealthyNodes         int32           `json:"healthyNodes"`
+	AWSAvailable         bool            `json:"awsAvailable"`
+	PlanetScaleAvailable bool            `json:"planetScaleAvailable"`
+	MinIOAvailable       bool            `json:"minioAvailable"`
+	Capacity             clusterCapacity `json:"capacity"`
 }
 
 type dashboardMetric struct {

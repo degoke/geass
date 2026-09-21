@@ -70,6 +70,10 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 			break
 		}
 	}
+	info.Capacity = s.clusterCapacity(ctx)
+	if info.HealthyNodes == 0 && info.Capacity.HealthyNodes > 0 {
+		info.HealthyNodes = int32(info.Capacity.HealthyNodes)
+	}
 	return info
 }
 

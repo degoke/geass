@@ -1275,6 +1275,9 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
+	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadService, false, 1) {
+		return
+	}
 	if _, err := platform.ProjectNamespace(project, string(environment)); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -1439,6 +1442,7 @@ func (s *Server) appFromForm(name, image string, r *http.Request) *geassv1alpha1
 			Metrics: geassv1alpha1.GeassAppMetricsSpec{
 				Enabled: r.FormValue("metrics") == "on",
 			},
+			Resources: platform.DefaultAppResources(),
 		},
 	}
 	if host := strings.TrimSpace(r.FormValue("host")); host != "" {
@@ -2335,16 +2339,24 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
+	placement := parseDatabasePlacement(r.FormValue("placement"))
+	provider := strings.TrimSpace(r.FormValue("provider"))
+	ha := r.FormValue("highAvailability") == "on" || r.FormValue("highAvailability") == "true"
+	if placement != geassv1alpha1.DatabasePlacementExternal {
+		if s.rejectIfNoCapacity(w, r, fallback, databaseCreateWorkloadKind(parseDatabaseEngine(r.FormValue("engine"))), ha, 0) {
+			return
+		}
+	}
 	db := &geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassDatabaseSpec{
 			Project:          strings.TrimSpace(r.FormValue("project")),
 			Environment:      geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
 			Engine:           parseDatabaseEngine(r.FormValue("engine")),
-			Placement:        parseDatabasePlacement(r.FormValue("placement")),
-			Provider:         geassv1alpha1.GeassDatabaseProvider(strings.TrimSpace(r.FormValue("provider"))),
+			Placement:        placement,
+			Provider:         geassv1alpha1.GeassDatabaseProvider(provider),
 			Mode:             parseDatabaseMode(r.FormValue("mode")),
-			HighAvailability: r.FormValue("highAvailability") == "on" || r.FormValue("highAvailability") == "true",
+			HighAvailability: ha,
 			DatabaseName:     strings.TrimSpace(r.FormValue("databaseName")),
 			ExternalHost:     strings.TrimSpace(r.FormValue("host")),
 			Username:         strings.TrimSpace(r.FormValue("username")),
@@ -2541,6 +2553,9 @@ func (s *Server) handleCacheCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
+	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadRedis, false, 1) {
+		return
+	}
 	cache := &geassv1alpha1.GeassCache{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassCacheSpec{
@@ -2730,6 +2745,9 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 		redirectFormError(w, r, fallback, "MinIO server is already set up")
 		return
 	}
+	if s.rejectIfNoCapacity(w, r, fallback, platform.WorkloadMinIO, false, 1) {
+		return
+	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
 		name = platform.ClusterMinIOName
@@ -2832,6 +2850,19 @@ func parseDatabaseEngine(value string) geassv1alpha1.GeassDatabaseEngine {
 		return geassv1alpha1.DatabaseEngineRedis
 	default:
 		return geassv1alpha1.DatabaseEnginePostgres
+	}
+}
+
+func databaseCreateWorkloadKind(engine geassv1alpha1.GeassDatabaseEngine) string {
+	switch engine {
+	case geassv1alpha1.DatabaseEngineMySQL:
+		return platform.WorkloadMySQL
+	case geassv1alpha1.DatabaseEngineSQLite:
+		return platform.WorkloadSQLite
+	case geassv1alpha1.DatabaseEngineRedis:
+		return platform.WorkloadRedis
+	default:
+		return platform.WorkloadPostgres
 	}
 }
 

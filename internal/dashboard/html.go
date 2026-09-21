@@ -116,7 +116,7 @@ func (s *Server) buildShellContext(r *http.Request, title string) shellContext {
 }
 
 func isSettingsPath(path string) bool {
-	return path == "/settings" || strings.HasPrefix(path, "/settings/") || strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections") || strings.HasPrefix(path, "/object-storage")
+	return path == "/settings" || strings.HasPrefix(path, "/settings/") || strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections") || strings.HasPrefix(path, "/object-storage") || path == "/cluster" || strings.HasPrefix(path, "/cluster/")
 }
 
 func settingsFrame(path, body string) string {
@@ -127,6 +127,7 @@ func settingsFrame(path, body string) string {
 		{Href: "/settings", Label: "General", Active: path == "/settings"},
 		{Href: "/settings/domain", Label: "Domain", Active: strings.HasPrefix(path, "/settings/domain")},
 		{Href: "/settings/github", Label: "GitHub", Active: strings.HasPrefix(path, "/settings/github")},
+		{Href: "/cluster", Label: "Cluster", Active: active("/cluster")},
 		{Href: "/ha-readiness", Label: "HA Readiness", Active: active("/ha-readiness")},
 		{Href: "/cloud-connections", Label: "Cloud Connections", Active: active("/cloud-connections")},
 		{Href: "/object-storage", Label: "Object Storage", Active: active("/object-storage")},
@@ -228,8 +229,8 @@ func pageTitle(r *http.Request) string {
 		return "Caches"
 	case strings.HasPrefix(r.URL.Path, "/object-stores"):
 		return "Object Storage"
-	case strings.HasPrefix(r.URL.Path, "/cluster"):
-		return "Clusters"
+	case r.URL.Path == "/cluster" || strings.HasPrefix(r.URL.Path, "/cluster/"):
+		return "Cluster"
 	case strings.HasPrefix(r.URL.Path, "/observability"):
 		return "Observability"
 	case strings.HasPrefix(r.URL.Path, "/docs"):

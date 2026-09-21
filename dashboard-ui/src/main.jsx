@@ -16,7 +16,7 @@ import { Separator as ShadcnSeparator } from "@/components/ui/separator";
 import { Table as ShadcnTable, TableBody, TableHead, TableHeader, TableRow, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  Activity, ArrowLeft, ArrowRight, Box, Check, Cloud, Database, FolderKanban, GitBranch,
+  Activity, ArrowLeft, ArrowRight, Box, Check, Cloud, Cpu, Database, FolderKanban, GitBranch,
   HardDrive, LayoutDashboard, Menu, Moon, Plus, RefreshCw, Search, Server, Settings,
   ShieldCheck, Sun, Terminal, Trash2, X,
 } from "lucide-react";
@@ -82,7 +82,7 @@ function Sidebar({ project, path }) {
   const links = project
     ? [[`/projects/${project}`, "Workspace", LayoutDashboard], [`/projects/${project}/settings`, "Project settings", Settings]]
     : [["/projects", "Projects", FolderKanban]];
-  const settings = [["/settings", "Settings", Settings], ["/ha-readiness", "HA readiness", ShieldCheck], ["/cloud-connections", "Cloud connections", Cloud], ["/object-storage", "Object storage", HardDrive]];
+  const settings = [["/settings", "Settings", Settings], ["/cluster", "Cluster", Cpu], ["/ha-readiness", "HA readiness", ShieldCheck], ["/cloud-connections", "Cloud connections", Cloud], ["/object-storage", "Object storage", HardDrive]];
   const item = ([href, label, Icon]) => {
     const base = href.split("?")[0];
     const active = path === base || (base !== "/projects" && path.startsWith(base));
@@ -235,6 +235,27 @@ function Workspace({ project, data, environment }) {
   );
 }
 
+function workloadKind(type, kind) {
+  if (type === "service") return "service";
+  if (kind === "logical") return "logical";
+  if (kind === "planetscale" || kind === "awsdb" || kind === "s3") return "external";
+  if (kind === "minio") return "bucket";
+  return kind;
+}
+
+function resourceEstimate(data, type, kind, ha) {
+  const estimates = data?.platform?.capacity?.estimates || {};
+  const key = ha && (kind === "postgres" || kind === "mysql" || kind === "redis") ? `${kind}-ha` : workloadKind(type, kind);
+  return estimates[key] || estimates[workloadKind(type, kind)];
+}
+
+function capacityFits(capacity, estimate) {
+  if (!capacity?.known || !estimate) return true;
+  if (!estimate.cpuMillis && !estimate.memoryBytes) return true;
+  if (estimate.perCpuMillis > capacity.largestNodeCpuMillis || estimate.perMemoryBytes > capacity.largestNodeMemoryBytes) return false;
+  return estimate.cpuMillis <= capacity.cpuAvailableMillis && estimate.memoryBytes <= capacity.memoryAvailableBytes;
+}
+
 function ResourceDialog({ project, environment, data }) {
   const queryClient = useQueryClient();
   const platform = data?.platform || {};
@@ -325,6 +346,9 @@ function ResourceDialog({ project, environment, data }) {
   };
   const haDisabled = !platform.haReady;
   const selectedKind = options[type]?.find((item) => item.value === kind);
+  const estimate = resourceEstimate(data, type, kind, form.highAvailability);
+  const capacity = platform.capacity || {};
+  const fits = capacityFits(capacity, estimate);
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (next) setStep(1); }}>
       <DialogContent className="ui-dialog resource-dialog">
@@ -373,11 +397,19 @@ function ResourceDialog({ project, environment, data }) {
                 <Field label="Bucket name"><Input value={form.bucket} onChange={(event) => set("bucket", event.target.value)} placeholder={form.name || "uploads"} /></Field>
                 {awsConnections.length > 0 && <Field label="AWS connection"><Select value={form.connectionRef || resourceName(awsConnections[0])} onChange={(event) => set("connectionRef", event.target.value)}>{awsConnections.map((item) => <option key={resourceName(item)}>{resourceName(item)}</option>)}</Select></Field>}
               </>}
+              {estimate && (
+                <p className={cn("form-help", !fits && "text-danger")}>
+                  {estimate.cpuMillis || estimate.memoryBytes
+                    ? `This ${estimate.label} needs about ${estimate.cpu} CPU and ${estimate.memory} memory${estimate.replicas > 1 ? ` across ${estimate.replicas} instances` : ""}. Cluster has ${capacity.known ? `${capacity.cpuAvailable} CPU and ${capacity.memoryAvailable} memory` : "unknown capacity"} available.`
+                    : "This resource does not consume in-cluster CPU or memory."}
+                  {!fits && <> Scale up the cluster before creating it. <AppLink href="/cluster">View cluster capacity</AppLink></>}
+                </p>
+              )}
             </div>
           )}
           <DialogFooter>
             {step > 1 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)}><ArrowLeft size={15} /> Back</Button>}
-            <Button type="submit" disabled={step === 2 && selectedKind && !selectedKind.enabled}>{step < 3 ? <>Continue <ArrowRight size={15} /></> : "Create resource"}</Button>
+            <Button type="submit" disabled={(step === 2 && selectedKind && !selectedKind.enabled) || (step === 3 && !fits)}>{step < 3 ? <>Continue <ArrowRight size={15} /></> : "Create resource"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -578,6 +610,7 @@ function PlatformSettings({ data, page, reload }) {
     );
   }
   if (page === "ha") return <HAReadiness data={data} />;
+  if (page === "cluster") return <ClusterCapacity data={data} />;
   if (page === "cloud") return <CloudConnections data={data} reload={reload} />;
   if (page === "object") return <ObjectStorageSettings data={data} reload={reload} />;
   return (
@@ -595,6 +628,7 @@ function PlatformSettings({ data, page, reload }) {
         <div className="setting-list">
           <AppLink className="setting-row" href="/settings/domain"><div className="setting-icon"><Server size={17} /></div><div><strong>Domain</strong><small>Configure exposure and DNS verification.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/settings/github"><div className="setting-icon"><GitBranch size={17} /></div><div><strong>GitHub</strong><small>Connect repositories for source-based deploys.</small></div><ArrowRight size={16} /></AppLink>
+          <AppLink className="setting-row" href="/cluster"><div className="setting-icon"><Cpu size={17} /></div><div><strong>Cluster capacity</strong><small>Inspect CPU, memory, and node pressure before creating resources.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/ha-readiness"><div className="setting-icon"><ShieldCheck size={17} /></div><div><strong>HA readiness</strong><small>Check storage, nodes, and add-ons.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/cloud-connections"><div className="setting-icon"><Cloud size={17} /></div><div><strong>Cloud connections</strong><small>Connect AWS and PlanetScale.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/object-storage"><div className="setting-icon"><HardDrive size={17} /></div><div><strong>Object storage</strong><small>Set up the cluster MinIO server.</small></div><ArrowRight size={16} /></AppLink>
@@ -638,6 +672,57 @@ function GitHubManualForm({ reload }) {
   );
 }
 
+function ClusterCapacity({ data }) {
+  const capacity = data?.platform?.capacity || {};
+  const cpuUsed = capacity.cpuAllocatableMillis ? Math.min(100, Math.round((capacity.cpuRequestedMillis / capacity.cpuAllocatableMillis) * 100)) : 0;
+  const memUsed = capacity.memoryAllocatableBytes ? Math.min(100, Math.round((capacity.memoryRequestedBytes / capacity.memoryAllocatableBytes) * 100)) : 0;
+  const barClass = (used) => cn("capacity-bar", used >= 90 && "is-full", used >= 70 && used < 90 && "is-tight");
+  return (
+    <>
+      <PageHeader eyebrow="Platform / Settings" title="Cluster" description="Compare allocatable CPU and memory to current requests before creating services or databases. If a resource will not fit, scale up instead of creating it." />
+      {!capacity.known ? (
+        <Card><p className="muted">{capacity.message || "Node capacity is unavailable until the cluster reports schedulable nodes."}</p></Card>
+      ) : (
+        <div className="stat-grid">
+          <Card>
+            <div className="stat-label">CPU available</div>
+            <div className="stat-value">{capacity.cpuAvailable}</div>
+            <div className="stat-detail">{capacity.cpuRequested} requested of {capacity.cpuAllocatable}</div>
+            <div className={barClass(cpuUsed)}><span style={{ width: `${cpuUsed}%` }} /></div>
+          </Card>
+          <Card>
+            <div className="stat-label">Memory available</div>
+            <div className="stat-value">{capacity.memoryAvailable}</div>
+            <div className="stat-detail">{capacity.memoryRequested} requested of {capacity.memoryAllocatable}</div>
+            <div className={barClass(memUsed)}><span style={{ width: `${memUsed}%` }} /></div>
+          </Card>
+          <Card>
+            <div className="stat-label">Healthy nodes</div>
+            <div className="stat-value">{capacity.healthyNodes ?? 0}</div>
+            <div className="stat-detail">{capacity.schedulableNodes ?? 0} schedulable</div>
+          </Card>
+        </div>
+      )}
+      {capacity.issues?.length > 0 && (
+        <Card>
+          <div className="card-heading"><div><div className="eyebrow">Issues</div><h2>Capacity and node pressure</h2></div></div>
+          {capacity.issues.map((issue, index) => <div className="signal-row" key={`${issue.message}-${index}`}><span className={cn("signal-icon", issue.severity === "danger" ? "signal-danger" : "signal-warning")}><Cpu size={15} /></span><span>{issue.message}</span></div>)}
+        </Card>
+      )}
+      <Card>
+        <div className="card-heading"><div><div className="eyebrow">Nodes</div><h2>Schedulable capacity</h2></div></div>
+        {capacity.nodes?.length ? capacity.nodes.map((node) => (
+          <div className="setting-row" key={node.name}>
+            <div className="setting-icon"><Server size={17} /></div>
+            <div><strong>{node.name}</strong><small>{node.role} · {node.cpuAllocatable} CPU · {node.memoryAllocatable} memory{node.pressure?.length ? ` · ${node.pressure.join(", ")}` : ""}</small></div>
+            <Badge tone={!node.ready ? "danger" : !node.schedulable ? "warning" : "success"}>{!node.ready ? "Not ready" : !node.schedulable ? "Unschedulable" : "Ready"}</Badge>
+          </div>
+        )) : <p className="muted">No Kubernetes nodes are visible yet.</p>}
+      </Card>
+    </>
+  );
+}
+
 function HAReadiness({ data }) {
   const queryClient = useQueryClient();
   const report = list(data, "haReadiness")[0];
@@ -659,6 +744,9 @@ function ObjectStorageSettings({ data, reload }) {
   const items = list(data, "objectStores").filter((item) => !item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External");
   const server = items[0];
   const ready = condition(server) === "True";
+  const capacity = data?.platform?.capacity || {};
+  const estimate = capacity.estimates?.minio;
+  const fits = capacityFits(capacity, estimate);
   return (
     <>
       <PageHeader eyebrow="Platform / Settings" title="Object storage" description="Set up one MinIO server for the cluster. Project buckets are created on this server." />
@@ -671,8 +759,9 @@ function ObjectStorageSettings({ data, reload }) {
           </div>
         ) : (
           <>
-            <p className="muted">In-cluster buckets stay disabled until this server exists.</p>
-            <Button onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster" }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
+            <p className="muted">In-cluster buckets stay disabled until this server exists. The MinIO server needs about {estimate?.cpu || "250m"} CPU and {estimate?.memory || "512Mi"} memory.</p>
+            {!fits && capacity.known && <p className="form-help text-danger">The cluster does not have enough capacity. <AppLink href="/cluster">Scale up from cluster capacity</AppLink> before creating MinIO.</p>}
+            <Button disabled={!fits && capacity.known} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster" }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
           </>
         )}
       </Card>
@@ -738,7 +827,7 @@ function DashboardScreen({ mode }) {
     content = <ResourceDetail project={project} data={data} kind={kind} name={params.name} reload={refetch} />;
   } else if (mode === "settings" || mode.startsWith("settings:")) {
     const page = mode.split(":")[1] || "general";
-    title = page === "general" ? "Settings" : page === "github" ? "GitHub App" : page === "ha" ? "HA readiness" : page === "cloud" ? "Cloud connections" : page === "object" ? "Object storage" : "Domain";
+    title = page === "general" ? "Settings" : page === "github" ? "GitHub App" : page === "ha" ? "HA readiness" : page === "cluster" ? "Cluster" : page === "cloud" ? "Cloud connections" : page === "object" ? "Object storage" : "Domain";
     content = <PlatformSettings data={data} page={page} reload={refetch} />;
   } else {
     content = <Empty title="Page not found" description="The requested dashboard page does not exist." action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
@@ -766,6 +855,7 @@ const routeTree = rootRoute.addChildren([
   route("/settings/domain", "settings:domain"),
   route("/settings/github", "settings:github"),
   route("/ha-readiness", "settings:ha"),
+  route("/cluster", "settings:cluster"),
   route("/cloud-connections", "settings:cloud"),
   route("/cloud-connections/new", "settings:cloud"),
   route("/object-storage", "settings:object"),

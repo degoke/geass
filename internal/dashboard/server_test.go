@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -95,6 +96,7 @@ func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
 	require.Contains(t, bootstrap.Body.String(), `"awsAvailable"`)
 	require.Contains(t, bootstrap.Body.String(), `"planetScaleAvailable"`)
 	require.Contains(t, bootstrap.Body.String(), `"minioAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"capacity"`)
 	require.Contains(t, bootstrap.Body.String(), `"haReady"`)
 }
 
@@ -637,6 +639,7 @@ func TestSettingsPageContainsPlatformNavigation(t *testing.T) {
 	require.Contains(t, body, `href="/ha-readiness"`)
 	require.Contains(t, body, `href="/cloud-connections"`)
 	require.Contains(t, body, `href="/object-storage"`)
+	require.Contains(t, body, `href="/cluster"`)
 	require.Contains(t, body, "Platform Settings")
 }
 
@@ -706,6 +709,116 @@ func TestProjectResourceUsesProjectReference(t *testing.T) {
 	app := (&Server{}).appFromForm("api", "ghcr.io/acme/api:1", req)
 	require.Equal(t, testProjectName, app.Spec.Project)
 	require.Equal(t, geassv1alpha1.EnvironmentStaging, app.Spec.Environment)
+	require.Equal(t, "100m", app.Spec.Resources.Requests[corev1.ResourceCPU].String())
+	require.Equal(t, "128Mi", app.Spec.Resources.Requests[corev1.ResourceMemory].String())
+}
+
+func TestAPIAppCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "tiny"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	srv := &Server{Client: newFakeClient(node)}
+	form := url.Values{
+		"name":        {"api"},
+		"project":     {testProjectName},
+		"environment": {"dev"},
+		"image":       {"nginx:alpine"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "Scale up")
+}
+
+func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "tiny"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	srv := &Server{Client: newFakeClient(node)}
+	form := url.Values{
+		"name":             {"orders"},
+		"project":          {testProjectName},
+		"environment":      {"dev"},
+		"engine":           {"Postgres"},
+		"placement":        {"InCluster"},
+		"highAvailability": {"on"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "Scale up")
+}
+
+func TestAPIExternalDatabaseCreateSkipsCapacityGate(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "tiny"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	srv := &Server{Client: newFakeClient(node)}
+	form := url.Values{
+		"name":          {"orders-ps"},
+		"project":       {testProjectName},
+		"environment":   {"production"},
+		"engine":        {"MySQL"},
+		"placement":     {"External"},
+		"provider":      {"PlanetScale"},
+		"mode":          {"Create"},
+		"databaseName":  {"app"},
+		"connectionRef": {"ps-prod"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestBootstrapIncludesKnownCapacity(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2"),
+				corev1.ResourceMemory: resource.MustParse("4Gi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	srv := &Server{Client: newFakeClient(node)}
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, `"known":true`)
+	require.Contains(t, body, `"estimates"`)
+	require.Contains(t, body, `"cpuAvailable"`)
 }
 
 func TestHandleAppCreateValidation(t *testing.T) {

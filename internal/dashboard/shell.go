@@ -11,7 +11,7 @@ func activeNavForPath(path string) string {
 	switch {
 	case path == "/" || strings.HasPrefix(path, "/projects"):
 		return "projects"
-	case strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections") || strings.HasPrefix(path, "/object-storage") || strings.HasPrefix(path, "/settings/"):
+	case strings.HasPrefix(path, "/ha-readiness") || strings.HasPrefix(path, "/cloud-connections") || strings.HasPrefix(path, "/object-storage") || strings.HasPrefix(path, "/cluster") || strings.HasPrefix(path, "/settings/"):
 		return "settings"
 	case isSettingsPath(path):
 		return "settings"

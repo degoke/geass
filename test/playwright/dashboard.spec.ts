@@ -26,6 +26,12 @@ test("cloud connections allow AWS and PlanetScale", async ({ page }) => {
   await expect(page.getByText("Unavailable in this release")).toHaveCount(0);
 });
 
+test("cluster capacity page shows CPU and memory", async ({ page }) => {
+  await page.goto("/cluster");
+  await expect(page.getByRole("heading", { name: "Cluster" })).toBeVisible();
+  await expect(page.getByText(/allocatable CPU and memory|Node capacity is unavailable/i)).toBeVisible();
+});
+
 test("cluster object storage settings can set up MinIO", async ({ page }) => {
   await page.goto("/object-storage");
   await expect(page.getByRole("heading", { name: "Object storage" })).toBeVisible();
