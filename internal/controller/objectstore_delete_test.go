@@ -111,3 +111,14 @@ func TestDeleteExternalStoreRequiresCredentials(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "credentials")
 }
+
+func TestDeleteExternalStoreRequiresConnectionRef(t *testing.T) {
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassObjectStoreSpec{CreateBucket: true},
+	}
+	r := &GeassObjectStoreReconciler{}
+	err := r.deleteExternalStore(context.Background(), store)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "AWS connection is required")
+}

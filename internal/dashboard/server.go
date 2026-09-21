@@ -43,8 +43,10 @@ type Server struct {
 	HTTPClient *http.Client
 	GitHubApp  githubapp.Config
 
-	authMu sync.Mutex
-	auth   *dashboardAuth
+	authMu        sync.Mutex
+	auth          *dashboardAuth
+	loginMu       sync.Mutex
+	loginFailures map[string]loginAttempt
 }
 
 // Start implements manager.Runnable.

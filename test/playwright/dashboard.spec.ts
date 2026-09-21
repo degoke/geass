@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./auth";
+
+test.beforeEach(async ({ page }) => {
+  await signIn(page);
+});
 
 test("creates a project with a generated name and production environment", async ({ page }) => {
   await page.goto("/projects");

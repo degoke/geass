@@ -331,7 +331,7 @@ var _ = Describe("GeassApp Controller", func() {
 		Expect(unchanged.Spec.Source.Image.Image).To(Equal("nginx:pending"))
 	})
 
-	It("starts a Git build for draft services before deploy", func() {
+	It("does not start a Git build for draft services", func() {
 		app := &geassv1alpha1.GeassApp{
 			ObjectMeta: metav1.ObjectMeta{Name: "git-draft", Namespace: ns},
 			Spec: geassv1alpha1.GeassAppSpec{
@@ -360,9 +360,12 @@ var _ = Describe("GeassApp Controller", func() {
 				break
 			}
 		}
-		Expect(found).To(BeTrue())
+		Expect(found).To(BeFalse())
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "git-draft", Namespace: testDevTargetNS}, &appsv1.Deployment{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		latest := &geassv1alpha1.GeassApp{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "git-draft", Namespace: ns}, latest)).To(Succeed())
+		Expect(conditionMessage(latest.Status.Conditions, platform.ConditionReady)).To(ContainSubstring("waiting for deployment"))
 	})
 })
 

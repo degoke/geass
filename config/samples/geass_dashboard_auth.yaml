@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: geass-dashboard-auth
+  namespace: geass-system
+type: Opaque
+stringData:
+  # Replace the password before applying. Geass hashes it on first login.
+  users: |
+    [{"username":"admin","password":"CHANGE_ME","role":"admin"}]

@@ -300,8 +300,15 @@ func (s *Server) nextGitHubAppName(ctx context.Context, repository string) strin
 }
 
 func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Request, project string) {
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-	fallback := workspaceCreateURL(project, environment, "app-git")
+	fallback := workspaceCreateURL(project, "", "app-git")
+	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
+		return
+	}
+	environment := strings.TrimSpace(r.FormValue("environment"))
+	if environment == "" {
+		environment = strings.TrimSpace(r.URL.Query().Get("environment"))
+	}
+	fallback = workspaceCreateURL(project, environment, "app-git")
 	if prerequisite := s.platformGitHubPrerequisiteHTML(r.Context()); prerequisite != "" {
 		redirectFormError(w, r, fallback, "GitHub App is not configured")
 		return
@@ -316,11 +323,20 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
-	redirect(w, r, gh.Config.InstallURL(state))
+	installURL := gh.Config.InstallURL(state)
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "url": installURL})
+		return
+	}
+	redirect(w, r, installURL)
 }
 
 func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	fallback := "/settings/github"
+	if !s.sessionCanMutate(r) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
 	installationRaw := strings.TrimSpace(r.URL.Query().Get("installation_id"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if installationRaw == "" || state == "" {

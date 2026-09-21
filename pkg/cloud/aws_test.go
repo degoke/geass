@@ -222,6 +222,47 @@ func TestDeleteBucketFollowsContinuationToken(t *testing.T) {
 	require.Equal(t, []string{"", "page-2"}, tokens)
 }
 
+func TestDeleteBucketFailsWhenListVersionsForbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "403")
+}
+
+func TestDeleteBucketTreatsUnsupportedVersionsAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`<Error><Code>NotImplemented</Code></Error>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`<Error><Code>NotImplemented</Code></Error>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeleteBucket("uploads"))
+}
+
 func TestDeleteBucketTreatsMissingBucketAsSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

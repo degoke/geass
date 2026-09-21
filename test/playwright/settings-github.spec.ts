@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { signIn } from "./auth";
+
+test.beforeEach(async ({ page }) => {
+  await signIn(page);
+});
 
 test("general settings shows cluster overview and domain tab", async ({ page }) => {
   await page.goto("/settings");

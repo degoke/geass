@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,6 +63,10 @@ func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.sessionCanMutate(r) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if code == "" {
@@ -217,7 +222,50 @@ func requestIsHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return forwardedProto(r) == "https"
+}
+
+func forwardedProto(r *http.Request) string {
+	forwarded := strings.TrimSpace(r.Header.Get("Forwarded"))
+	if forwarded == "" {
+		return ""
+	}
+	for _, element := range strings.Split(forwarded, ",") {
+		for _, field := range strings.Split(element, ";") {
+			key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+			if !ok || !strings.EqualFold(key, "proto") {
+				continue
+			}
+			return strings.ToLower(strings.Trim(value, `"'`))
+		}
+	}
+	return ""
+}
+
+func requestIsLoopback(r *http.Request) bool {
+	host := normalizeRequestHost(r.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func dashboardCookieSecure(r *http.Request) bool {
+	if requestIsHTTPS(r) {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "http") || forwardedProto(r) == "http" {
+		return false
+	}
+	return !requestIsLoopback(r)
 }
 
 func randomHex(n int) (string, error) {

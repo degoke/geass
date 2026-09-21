@@ -49,7 +49,7 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	config.Spec.RootDomain = "example.com"
 	config.ObjectMeta.Generation = 1
 	config.Status.Conditions = platform.SetConditionForGeneration(nil, platform.ConditionDashboardDomainReady, metav1.ConditionTrue, "Verified", "ok", 1)
-	c := newFakeClient(config)
+	c := newFakeClient(config, dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))
 	srv := &Server{
 		Client:     c,
 		HTTPClient: &http.Client{Transport: roundTripRewrite{target: api.URL}},
@@ -58,6 +58,7 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	state := "0123456789abcdef0123456789abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback?code=code-1&state="+state, nil).WithContext(ctx)
 	req.AddCookie(&http.Cookie{Name: githubManifestStateCookieName(state), Value: state})
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	rec := httptest.NewRecorder()
 	srv.handleGitHubManifestCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -77,10 +78,11 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 }
 
 func TestHandleGitHubManifestCallbackRejectsStateMismatch(t *testing.T) {
-	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.example.com"))}
+	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.example.com"), dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))}
 	state := "0123456789abcdef0123456789abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback?code=code-1&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: githubManifestStateCookieName(state), Value: "other"})
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	rec := httptest.NewRecorder()
 	srv.handleGitHubManifestCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)

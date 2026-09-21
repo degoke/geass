@@ -144,6 +144,9 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 		if next == "" {
 			break
 		}
+		if page == 999 {
+			return fmt.Errorf("bucket %s still contains objects", bucket)
+		}
 		token = next
 	}
 	if err := c.emptyBucketVersions(bucket); err != nil && !isS3NoSuchBucket(err) {
@@ -210,7 +213,10 @@ func (c *AWSClient) emptyBucketVersions(bucket string) error {
 			if isS3NoSuchBucket(err) {
 				return err
 			}
-			return nil
+			if isS3Unsupported(err) {
+				return nil
+			}
+			return err
 		}
 		for _, version := range versions {
 			if err := c.deleteObject(bucket, version.key, version.versionID); err != nil && !isS3NoSuchBucket(err) {
@@ -219,6 +225,9 @@ func (c *AWSClient) emptyBucketVersions(bucket string) error {
 		}
 		if !truncated || len(versions) == 0 {
 			return nil
+		}
+		if page == 999 {
+			return fmt.Errorf("bucket %s still contains object versions", bucket)
 		}
 		keyMarker, versionMarker = nextKey, nextVersion
 	}
@@ -295,7 +304,10 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 			if isS3NoSuchBucket(err) {
 				return err
 			}
-			return nil
+			if isS3Unsupported(err) {
+				return nil
+			}
+			return err
 		}
 		for _, upload := range uploads {
 			if err := c.abortMultipartUpload(bucket, upload.key, upload.uploadID); err != nil && !isS3NoSuchBucket(err) {
@@ -304,6 +316,9 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 		}
 		if !truncated || len(uploads) == 0 {
 			return nil
+		}
+		if page == 999 {
+			return fmt.Errorf("bucket %s still contains multipart uploads", bucket)
 		}
 		keyMarker, uploadMarker = nextKey, nextUpload
 	}
@@ -449,6 +464,14 @@ func (c *AWSClient) objectURL(bucket, key string) string {
 
 func isS3NoSuchBucket(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NoSuchBucket")
+}
+
+func isS3Unsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "AWS S3 400") || strings.Contains(msg, "AWS S3 405") || strings.Contains(msg, "NotImplemented") || strings.Contains(msg, "MethodNotAllowed")
 }
 
 func isS3ErrorCode(payload []byte, code string) bool {

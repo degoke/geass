@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -38,6 +39,8 @@ import (
 )
 
 const objectStoreFinalizer = platform.FinalizerObjectStore
+
+var errClusterMinIOMissing = errors.New("set up the MinIO server in cluster settings first")
 
 // GeassObjectStoreReconciler reconciles a GeassObjectStore object.
 type GeassObjectStoreReconciler struct {
@@ -82,8 +85,12 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	if !store.DeletionTimestamp.IsZero() {
 		if clusterServer {
-			_ = helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName)
-			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}))
+			if err := helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}); client.IgnoreNotFound(err) != nil {
+				return ctrl.Result{}, err
+			}
 		} else if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal {
 			if err := r.deleteExternalStore(ctx, &store); err != nil {
 				return ctrl.Result{}, err
@@ -227,7 +234,7 @@ existingSecret: "%s"
 	}
 	b.WriteString("users:\n")
 	for _, user := range users {
-		fmt.Fprintf(&b, "  - accessKey: '{{ index (lookup \"v1\" \"Secret\" \"%s\" \"%s\").data \"%s\" | b64dec }}'\n    existingSecret: \"%s\"\n    existingSecretKey: secretKey\n    policy: \"%s\"\n", platform.SystemNamespace, user.existingSecret, platform.ConnectionKeyAccessKey, user.existingSecret, user.policy)
+		fmt.Fprintf(&b, "  - accessKey: '{{ required \"MinIO user accessKey is missing\" (index (lookup \"v1\" \"Secret\" \"%s\" \"%s\").data \"%s\" | b64dec) }}'\n    existingSecret: \"%s\"\n    existingSecretKey: secretKey\n    policy: \"%s\"\n", platform.SystemNamespace, user.existingSecret, platform.ConnectionKeyAccessKey, user.existingSecret, user.policy)
 	}
 	b.WriteString("policies:\n")
 	for _, policy := range policies {
@@ -371,6 +378,9 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 	if !ready {
 		return r.setNotReady(ctx, store, "MinIO HelmChart is not ready")
 	}
+	if err := r.clearStaleMinIOHelmJob(ctx); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
 	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
@@ -488,13 +498,29 @@ func (r *GeassObjectStoreReconciler) clusterMinIOHelmReady(ctx context.Context) 
 	return job.Status.Succeeded > 0, nil
 }
 
+func (r *GeassObjectStoreReconciler) clearStaleMinIOHelmJob(ctx context.Context) error {
+	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
+	if err != nil {
+		return err
+	}
+	if chart.Annotations == nil || chart.Annotations[platform.HelmStaleJobUIDAnnotation] == "" {
+		return nil
+	}
+	latest := chart.DeepCopy()
+	if err := r.Get(ctx, client.ObjectKeyFromObject(chart), latest); err != nil {
+		return err
+	}
+	delete(latest.Annotations, platform.HelmStaleJobUIDAnnotation)
+	return r.Update(ctx, latest)
+}
+
 func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
 	if store.Spec.ConnectionRef == nil || store.Spec.ConnectionRef.Name == "" {
-		return nil
+		return fmt.Errorf("AWS connection is required to delete this store")
 	}
 	connection := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
-		return client.IgnoreNotFound(err)
+		return fmt.Errorf("AWS connection is unavailable: %w", err)
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS || connection.Spec.SecretRef.Name == "" {
 		return fmt.Errorf("AWS connection is unavailable")
@@ -535,10 +561,13 @@ func (r *GeassObjectStoreReconciler) deleteExternalAWS(store *geassv1alpha1.Geas
 func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
 	server, err := r.clusterMinIO(ctx)
 	if err != nil {
-		return nil
+		if errors.Is(err, errClusterMinIOMissing) {
+			return nil
+		}
+		return err
 	}
 	if server.Status.Endpoint == "" {
-		return nil
+		return fmt.Errorf("cluster MinIO endpoint is unavailable")
 	}
 	rootSecret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
@@ -580,7 +609,7 @@ func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1
 		}
 		return item, nil
 	}
-	return nil, fmt.Errorf("set up the MinIO server in cluster settings first")
+	return nil, errClusterMinIOMissing
 }
 
 func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS string) (ctrl.Result, error) {

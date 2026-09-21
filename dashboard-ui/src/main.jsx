@@ -755,7 +755,7 @@ function ProjectSettings({ project, data, reload }) {
         </Card>
         <Card>
           <div className="card-heading"><div><div className="eyebrow">Shared variables</div><h2>Project values</h2></div></div>
-          {(project.spec?.sharedVariables || []).map((entry) => <div className="panel-list-row" key={`${entry.environment}-${entry.name}`}><div><strong className="panel-code">{entry.name}</strong><small>{entry.environment} · {entry.secretRef ? "Secret" : "Literal"}</small></div><Button type="button" variant="ghost" size="sm" onClick={() => action(`/projects/${name}/variables/delete`, { environment: entry.environment, name: entry.name }).then(() => { reload(); alert("Shared variable deleted"); })}>Delete</Button></div>)}
+          {(project.spec?.sharedVariables || []).map((entry) => <div className="panel-list-row" key={`${entry.environment}-${entry.name}`}><div><strong className="panel-code">{entry.name}</strong><small>{entry.environment} · {entry.secretRef ? "Secret" : "Literal"}</small></div>{canMutate(data) && <Button type="button" variant="ghost" size="sm" onClick={() => action(`/projects/${name}/variables/delete`, { environment: entry.environment, name: entry.name }).then(() => { reload(); alert("Shared variable deleted"); })}>Delete</Button>}</div>)}
           <form className="panel-form" onSubmit={(event) => { event.preventDefault(); action(`/projects/${name}/variables/save`, { ...variable, secret: variable.secret ? "on" : "" }).then(() => { reload(); setVariable({ ...variable, name: "", value: "" }); alert("Shared variable saved"); }).catch((error) => alert(error.message)); }}>
             <Field label="Environment"><Select value={variable.environment} onChange={(event) => setVariable({ ...variable, environment: event.target.value })}>{(project.spec?.environments || []).map((env) => <option key={env}>{env}</option>)}</Select></Field>
             <Field label="Name"><Input required value={variable.name} onChange={(event) => setVariable({ ...variable, name: event.target.value })} placeholder="DATABASE_URL" /></Field>
@@ -767,7 +767,7 @@ function ProjectSettings({ project, data, reload }) {
         <Card>
           <div className="card-heading"><div><div className="eyebrow">GitHub</div><h2>Repository access</h2></div></div>
           <p className="muted">{project.spec?.githubConnectionRef?.name ? `Connected as ${project.spec.githubConnectionRef.name}` : "Install the platform GitHub App on this project to deploy from repositories."}</p>
-          <form method="POST" action={`/api/projects/${name}/github/install`}><Button type="submit" disabled={!canMutate(data)}>Connect GitHub</Button></form>
+          {canMutate(data) && <Button type="button" onClick={() => action(`/projects/${name}/github/install`, { environment: project.spec?.environments?.[0] || "" }).then((result) => { if (result.url) window.location.assign(result.url); else reload(); }).catch((error) => alert(error.message))}>Connect GitHub</Button>}
         </Card>
       </div>
     </>
@@ -960,8 +960,8 @@ function ObjectStorageSettings({ data, reload }) {
           <>
             <p className="muted">In-cluster buckets stay disabled until this server exists. Choose how much CPU and memory to assign to MinIO.</p>
             <SizeFields cpu={cpu} memory={memory} onChange={(key, value) => { if (key === "cpu") setCpu(value); else setMemory(value); }} data={data} />
-            {!fits && capacity.known && <p className="form-help text-danger">The cluster does not have enough capacity. <AppLink href="/cluster">Scale up from cluster capacity</AppLink> before creating MinIO.</p>}
-            <Button disabled={!canMutate(data) || (!fits && capacity.known)} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
+            {!fits && <p className="form-help text-danger">The cluster does not have enough capacity. <AppLink href="/cluster">Scale up from cluster capacity</AppLink> before creating MinIO.</p>}
+            <Button disabled={!canMutate(data) || !fits} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
           </>
         )}
       </Card>

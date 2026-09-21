@@ -201,6 +201,8 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
+		Expect(chart.Annotations[platform.HelmStaleJobUIDAnnotation]).To(BeEmpty())
 
 		Expect(createdPath).To(Equal("/uploads"))
 		secret := &corev1.Secret{}
@@ -224,6 +226,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecret: \"assets-minio-user\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecretKey: secretKey"))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("lookup"))
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("required"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("accessKey: \"assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("secretKey: \""))

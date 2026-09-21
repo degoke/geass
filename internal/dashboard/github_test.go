@@ -210,7 +210,7 @@ func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
 		Spec:       geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}},
 	}
-	c := newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))
+	c := newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg), dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -239,7 +239,8 @@ func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state="+url.QueryEscape(state), nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state="+url.QueryEscape(state), nil).WithContext(ctx))
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	srv.handleGitHubCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	require.Contains(t, rec.Header().Get("Location"), "create=app-git")
@@ -309,6 +310,14 @@ func TestGitHubAPIRequestReadsBody(t *testing.T) {
 	require.Contains(t, string(data), "geass")
 }
 
+func TestGitHubCallbackRequiresAdminSession(t *testing.T) {
+	srv := &Server{Client: newFakeClient()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state=nope", nil)
+	srv.handleGitHubCallback(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
 func TestGitHubInstallRedirectsToGitHubApp(t *testing.T) {
 	ctx := context.Background()
 	cfg := testGitHubAppConfig(t)
@@ -319,12 +328,36 @@ func TestGitHubInstallRedirectsToGitHubApp(t *testing.T) {
 	srv := &Server{
 		Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg)),
 	}
+	form := url.Values{"environment": {"dev"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/github/install", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments/github/install?environment=dev", nil).WithContext(ctx))
+	srv.handleProjectRoutes(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	location := rec.Header().Get("Location")
 	require.True(t, strings.HasPrefix(location, "https://github.com/apps/geass/installations/new"))
 	require.Contains(t, location, "state=")
+}
+
+func TestGitHubInstallJSONReturnsURL(t *testing.T) {
+	ctx := context.Background()
+	cfg := testGitHubAppConfig(t)
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}},
+	}
+	srv := &Server{
+		Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg)),
+	}
+	form := url.Values{"environment": {"dev"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/projects/payments/github/install", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"url"`)
+	require.Contains(t, rec.Body.String(), "https://github.com/apps/geass/installations/new")
 }
 
 func TestPlatformGitHubSettingsRequiresDashboardURL(t *testing.T) {

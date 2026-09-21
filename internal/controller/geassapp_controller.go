@@ -111,6 +111,13 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if app.Spec.Source.Git != nil {
+		if !app.Spec.Deploy.Enabled {
+			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+				r.deleteTargetResources(ctx, &app, prevNS)
+			}
+			r.deleteTargetResources(ctx, &app, wsNS)
+			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
+		}
 		build, ready, err := r.ensureGitBuild(ctx, &app)
 		if err != nil {
 			return r.setNotReady(ctx, &app, err.Error())
@@ -118,16 +125,6 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if ready {
 			app.Status.ResolvedImage = build.Status.ImageDigest
 			app.Status.ActiveBuild = build.Name
-		}
-		if !app.Spec.Deploy.Enabled {
-			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
-				r.deleteTargetResources(ctx, &app, prevNS)
-			}
-			r.deleteTargetResources(ctx, &app, wsNS)
-			if !ready {
-				return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
-			}
-			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
 		}
 		if !ready {
 			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")

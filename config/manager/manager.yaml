@@ -64,6 +64,10 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
           - --dashboard-bind-address=:8082
+        # Dashboard login is required. Create Secret geass-dashboard-auth
+        # (see config/samples/geass_dashboard_auth.yaml) or set
+        # GEASS_DASHBOARD_PASSWORD / GEASS_DASHBOARD_USERS. Geass does not
+        # generate a password.
         image: geass-operator:v0.0.1
         name: manager
         ports:
