@@ -48,8 +48,8 @@ func planetScaleAuthorization(token string) string {
 	if token == "" {
 		return token
 	}
-	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
-		return token
+	if len(token) >= 7 && strings.EqualFold(token[:7], "Bearer ") {
+		token = strings.TrimSpace(token[7:])
 	}
 	return "Bearer " + token
 }

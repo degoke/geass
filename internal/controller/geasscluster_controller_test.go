@@ -282,7 +282,7 @@ var _ = Describe("GeassApp Controller", func() {
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testMetricsAppName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testMetricsAppName, Namespace: testDevTargetNS}, &monitoringv1.ServiceMonitor{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app-metrics", Namespace: testDevTargetNS}, &monitoringv1.ServiceMonitor{})).To(Succeed())
 	})
 
 	It("reconciles the last deployed snapshot while changes are pending", func() {
