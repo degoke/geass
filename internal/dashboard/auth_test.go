@@ -158,11 +158,11 @@ func TestDashboardAuthDoesNotGeneratePassword(t *testing.T) {
 
 func TestDashboardUnknownRoleIsNotAdmin(t *testing.T) {
 	secret := dashboardUsersSecret(
-		dashboardUser{Username: "ops", Password: "ops-pass", Role: "operator"},
-		dashboardUser{Username: "admin", Password: "admin-pass", Role: dashboardRoleAdmin},
+		dashboardUser{Username: "ops", Password: "test-unknown-role", Role: "operator"},
+		dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin},
 	)
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"ops"}, "password": {"ops-pass"}}
+	form := url.Values{"username": {"ops"}, "password": {"test-unknown-role"}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
