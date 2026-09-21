@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"net/http"
-	"strings"
 )
 
 func (s *Server) handlePlatformGitHubSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -38,9 +37,16 @@ func githubCredentialError(err error) string {
 	if err == nil {
 		return "could not save GitHub App credentials"
 	}
-	message := err.Error()
-	if strings.Contains(message, "required") || strings.Contains(message, "invalid") {
-		return message
+	switch err.Error() {
+	case "app ID, client ID, and slug are required",
+		"client secret, webhook secret, and private key are required",
+		"GitHub App credentials are incomplete",
+		"GitHub webhook secret is not configured",
+		"GitHub App public URL must use HTTPS",
+		"GitHub App private key is not valid PEM",
+		"GitHub App private key is not RSA":
+		return err.Error()
+	default:
+		return "could not save GitHub App credentials"
 	}
-	return "could not save GitHub App credentials"
 }

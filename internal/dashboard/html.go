@@ -257,7 +257,8 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 
 // sameOriginMutation prevents cross-site form posts from mutating cluster state.
 // Origin or Referer is required and must match this dashboard host. Forwarded hosts
-// are trusted only when the process Host is internal (loopback, private, or cluster DNS).
+// are trusted only when Host is a Kubernetes service DNS name, not loopback,
+// private IPs, or a public hostname that happens to contain ".svc".
 func sameOriginMutation(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -304,7 +305,7 @@ func requestHosts(r *http.Request) []string {
 		}
 	}
 	add(r.Host)
-	if !requestHostIsInternal(r.Host) {
+	if !requestHostIsClusterService(r.Host) {
 		return hosts
 	}
 	add(r.Header.Get("X-Forwarded-Host"))
@@ -322,7 +323,7 @@ func requestHosts(r *http.Request) []string {
 	return hosts
 }
 
-func requestHostIsInternal(host string) bool {
+func requestHostIsClusterService(host string) bool {
 	host = normalizeRequestHost(host)
 	if host == "" {
 		return false
@@ -330,17 +331,7 @@ func requestHostIsInternal(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	if strings.Contains(host, ".svc") || strings.HasSuffix(host, ".cluster.local") || strings.HasSuffix(host, ".internal") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	return strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc")
 }
 
 func normalizeRequestHost(host string) string {

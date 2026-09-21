@@ -293,7 +293,11 @@ func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, ma
 		if len(sessionKey) == 0 {
 			sessionKey = secret.Data["session-key"]
 		}
-		epochs = parseDashboardSessionEpochs(secret)
+		parsedEpochs, parseErr := parseDashboardSessionEpochs(secret)
+		if parseErr != nil {
+			return nil, nil, nil, nil, err, parseErr
+		}
+		epochs = parsedEpochs
 	} else if !apierrors.IsNotFound(err) {
 		return nil, nil, nil, nil, err, err
 	}
@@ -452,7 +456,11 @@ func (s *Server) revokeDashboardSession(r *http.Request, username string) error 
 	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	epochs := map[string]int64{}
 	if err == nil {
-		epochs = parseDashboardSessionEpochs(secret)
+		parsedEpochs, parseErr := parseDashboardSessionEpochs(secret)
+		if parseErr != nil {
+			return parseErr
+		}
+		epochs = parsedEpochs
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -615,15 +623,18 @@ func normalizeDashboardRole(role string) string {
 	return parsed
 }
 
-func parseDashboardSessionEpochs(secret *corev1.Secret) map[string]int64 {
+func parseDashboardSessionEpochs(secret *corev1.Secret) (map[string]int64, error) {
 	epochs := map[string]int64{}
 	if secret == nil || len(secret.Data["session-epochs"]) == 0 {
-		return epochs
+		return epochs, nil
 	}
 	if err := json.Unmarshal(secret.Data["session-epochs"], &epochs); err != nil {
-		return map[string]int64{}
+		return nil, err
 	}
-	return epochs
+	if epochs == nil {
+		epochs = map[string]int64{}
+	}
+	return epochs, nil
 }
 
 func hashDashboardUsers(users []dashboardUser) (bool, error) {

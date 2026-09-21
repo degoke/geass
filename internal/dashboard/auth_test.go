@@ -240,6 +240,15 @@ func TestDashboardCookieSecureOnPublicHost(t *testing.T) {
 	require.False(t, loopbackCookie.Secure)
 }
 
+func TestDashboardCookieSecureIgnoresForwardedHTTPOnPublicHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	req.Header.Set("Forwarded", "for=1.1.1.1;proto=http")
+	cookie := dashboardSessionCookie(req, "token", 60)
+	require.True(t, cookie.Secure)
+}
+
 func TestDashboardAuthReloadsExistingSecretOnAlreadyExists(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
@@ -524,6 +533,27 @@ func TestDashboardLoginLockoutFailsClosedOnCorruptJSON(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "unavailable")
 	require.NotContains(t, rec.Body.String(), `"authenticated":true`)
+}
+
+func TestDashboardAuthFailsClosedOnCorruptSessionEpochs(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret.Data["session-epochs"] = []byte("{not-json")
+	srv := &Server{Client: newFakeClient(secret)}
+	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable")
+	require.NotContains(t, rec.Body.String(), `"authenticated":true`)
+
+	token, err := issueDashboardSession([]byte("0123456789abcdef0123456789abcdef"), "admin", dashboardRoleAdmin, 0)
+	require.NoError(t, err)
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	sessionReq.AddCookie(&http.Cookie{Name: platform.DashboardSessionCookie, Value: token})
+	require.Nil(t, srv.currentSession(sessionReq))
 }
 
 func TestDashboardLoginIsCaseInsensitive(t *testing.T) {

@@ -70,7 +70,7 @@ func (s *Server) probeURL(ctx context.Context, probeURL string) (string, bool) {
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Sprintf("could not reach %s: %v", probeURL, err), false
+		return "could not reach the dashboard URL", false
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))

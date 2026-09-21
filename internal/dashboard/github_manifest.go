@@ -243,9 +243,7 @@ func dashboardCookieSecure(r *http.Request) bool {
 	if requestIsHTTPS(r) {
 		return true
 	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "http") || forwardedProto(r) == "http" {
-		return false
-	}
+	// Ignore client X-Forwarded-Proto=http. Only loopback HTTP may omit Secure.
 	return !requestIsLoopback(r)
 }
 

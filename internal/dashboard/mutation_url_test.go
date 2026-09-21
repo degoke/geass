@@ -153,7 +153,7 @@ func TestRequireMutationAcceptsForwardedHost(t *testing.T) {
 
 func TestRequireMutationAcceptsForwardedHeaderHost(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
-	req.Host = "10.0.0.12:8082"
+	req.Host = "geass-dashboard.geass-system.svc.cluster.local:8082"
 	req.Header.Set("Origin", "https://geass.example.com")
 	req.Header.Set("Forwarded", `for=10.1.1.1;host=geass.example.com;proto=https`)
 	rec := httptest.NewRecorder()
@@ -172,6 +172,33 @@ func TestRequireMutationRejectsCrossOriginWithUnrelatedForwardedHost(t *testing.
 func TestRequireMutationIgnoresForwardedHostWhenRequestHostIsPublic(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
 	req.Host = "geass.example.com"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationIgnoresForwardedHostOnLoopback(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "127.0.0.1:8082"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationIgnoresForwardedHostOnPrivateIP(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "10.0.0.12:8082"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationIgnoresForwardedHostWhenSvcIsInPublicName(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "app.svc.example.net"
 	req.Header.Set("Origin", "https://attacker.example")
 	req.Header.Set("X-Forwarded-Host", "attacker.example")
 	rec := httptest.NewRecorder()

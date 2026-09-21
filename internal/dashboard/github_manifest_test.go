@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -89,4 +90,11 @@ func (t roundTripRewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	target.Header = req.Header.Clone()
 	return http.DefaultTransport.RoundTrip(target)
+}
+
+func TestGitHubCredentialErrorHidesKubernetesAndCryptoText(t *testing.T) {
+	require.Equal(t, "app ID, client ID, and slug are required", githubCredentialError(fmt.Errorf("app ID, client ID, and slug are required")))
+	require.Equal(t, "client secret, webhook secret, and private key are required", githubCredentialError(fmt.Errorf("client secret, webhook secret, and private key are required")))
+	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf(`Secret "platform-github-app" is invalid: spec.data: Required value`)))
+	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)")))
 }

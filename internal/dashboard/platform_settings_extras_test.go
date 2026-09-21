@@ -99,3 +99,12 @@ func TestVerifyDashboardURLWarnsWhenOnlyInternalProbeWorks(t *testing.T) {
 	require.Equal(t, "warning", status)
 	require.Contains(t, message, "responds locally")
 }
+
+func TestProbeURLHidesDialError(t *testing.T) {
+	srv := &Server{HTTPClient: http.DefaultClient}
+	message, ok := srv.probeURL(context.Background(), "http://127.0.0.1:1")
+	require.False(t, ok)
+	require.Equal(t, "could not reach the dashboard URL", message)
+	require.NotContains(t, message, "connect")
+	require.NotContains(t, message, "127.0.0.1:1")
+}
