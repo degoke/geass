@@ -2127,17 +2127,6 @@ func applyAutoscalingFromForm(r *http.Request, app *geassv1alpha1.GeassApp) erro
 	return nil
 }
 
-func capacityCopiesFromForm(r *http.Request, replicas int32) int32 {
-	if !autoscalingEnabled(r) {
-		return replicas
-	}
-	maxReplicas := int32(intFromForm(r, "maxReplicas", int(platform.DefaultAutoscalingMax(replicas))))
-	if maxReplicas > replicas {
-		return maxReplicas
-	}
-	return platform.DefaultAutoscalingMax(replicas)
-}
-
 func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {

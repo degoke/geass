@@ -554,7 +554,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	srv.handleAppUpdate(rec, req, testAppName)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "You made these changes")
-	require.Contains(t, rec.Body.String(), "settings")
+	require.Contains(t, rec.Body.String(), "Settings")
 	require.Contains(t, rec.Body.String(), "Do you want to deploy")
 	require.Contains(t, rec.Body.String(), "Deploy to update")
 
