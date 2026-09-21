@@ -158,6 +158,19 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 	return nil
 }
 
+const s3ListResponseLimit = 1 << 20
+
+func readS3ListBody(r io.Reader) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(r, s3ListResponseLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > s3ListResponseLimit {
+		return nil, fmt.Errorf("S3 listing response exceeded %d bytes", s3ListResponseLimit)
+	}
+	return payload, nil
+}
+
 func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, string, error) {
 	query := url.Values{"list-type": {"2"}}
 	if continuation != "" {
@@ -175,7 +188,10 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readS3ListBody(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
 	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
 		return nil, "", fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
 	}
@@ -260,7 +276,10 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 		return nil, "", "", false, err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readS3ListBody(resp.Body)
+	if err != nil {
+		return nil, "", "", false, err
+	}
 	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
 		return nil, "", "", false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
 	}
@@ -350,7 +369,10 @@ func (c *AWSClient) listMultipartUploads(bucket, keyMarker, uploadMarker string)
 		return nil, "", "", false, err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readS3ListBody(resp.Body)
+	if err != nil {
+		return nil, "", "", false, err
+	}
 	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
 		return nil, "", "", false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
 	}

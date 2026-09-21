@@ -121,54 +121,58 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !s.sessionCanMutate(r) {
+		s.writeViewerBootstrap(w, r)
+		return
+	}
 	ctx := r.Context()
 	data := dashboardBootstrap{}
 	if err := s.Client.List(ctx, &data.Projects, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Apps, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Databases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.LogicalDatabases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Caches, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.ObjectStores, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.CloudConnections, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Clusters); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Deployments, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Builds, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	data.Platform = s.dashboardPlatform(ctx, data)
@@ -181,12 +185,26 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		data.Metrics = append(data.Metrics, dashboardMetric{Title: metric.Title, Value: value, State: state})
 	}
-	if !s.sessionCanMutate(r) {
-		sanitizeDashboardForViewer(&data)
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) writeViewerBootstrap(w http.ResponseWriter, r *http.Request) {
+	data := dashboardBootstrap{Platform: dashboardPlatform{Session: s.dashboardSession(r)}}
+	if readiness, err := s.platformReadiness(r.Context()); err == nil {
+		data.Platform.HasDashboardURL = readiness.HasDashboardURL
+		data.Platform.HasGitHubApp = readiness.HasGitHubApp
+		data.Platform.DashboardURL = readiness.DashboardURL
+	}
+	sanitizeDashboardForViewer(&data)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func writeDashboardUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load dashboard"})
 }
 
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {

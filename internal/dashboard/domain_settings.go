@@ -152,9 +152,8 @@ func (s *Server) handlePlatformDomainVerify(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	result := s.verifyDashboardDomain(r.Context())
-	html := domainVerifyResultHTML(result)
-	if isHXRequest(r) {
-		s.render(w, html)
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": result.State == "success", "state": result.State, "message": result.Message})
 		return
 	}
 	switch result.State {

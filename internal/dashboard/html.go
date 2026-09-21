@@ -40,37 +40,9 @@ func layoutForPath(title, body, path string) string {
 	return appShell(shellContext{title: title, path: path}, body)
 }
 
-func fragment(html string) string {
-	return html
-}
-
 func (s *Server) render(w http.ResponseWriter, html string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
-}
-
-func (s *Server) renderFragment(w http.ResponseWriter, r *http.Request, html string) {
-	html = flashAlert(r) + html
-	if project := projectIDFromContext(r); project != "" {
-		html = workspaceFrame(html)
-	} else if isSettingsPath(r.URL.Path) {
-		html = settingsFrame(r.URL.Path, html)
-	}
-	if isHXRequest(r) {
-		s.render(w, fragment(html))
-		return
-	}
-	s.render(w, appShell(s.buildShellContext(r, pageTitle(r)), html))
-}
-
-func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, title, body string) {
-	body = flashAlert(r) + body
-	if project := projectIDFromContext(r); project != "" {
-		body = workspaceFrame(body)
-	} else if isSettingsPath(r.URL.Path) {
-		body = settingsFrame(r.URL.Path, body)
-	}
-	s.render(w, appShell(s.buildShellContext(r, title), body))
 }
 
 func projectIDFromContext(r *http.Request) string {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -344,6 +345,23 @@ func TestDeleteBucketFailsWhenTruncatedMultipartPageIsEmpty(t *testing.T) {
 	err := client.DeleteBucket("uploads")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "multipart listing did not advance")
+}
+
+func TestDeleteBucketFailsWhenListingResponseExceedsLimit(t *testing.T) {
+	body := strings.Repeat("a", s3ListResponseLimit+1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded")
 }
 
 func TestDeleteBucketDoesNotTreatGeneric400AsUnsupported(t *testing.T) {

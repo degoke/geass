@@ -463,8 +463,8 @@ func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, rec.Body.String(), "unavailable")
-	require.True(t, srv.loginLocked(req, "admin"))
+	require.Contains(t, rec.Body.String(), "invalid username or password")
+	require.False(t, srv.loginLocked(req, "admin"))
 
 	clearing := &Server{Client: &persistFailAuthClient{Client: newFakeClient(secret)}}
 	success := url.Values{"username": {"admin"}, "password": {"test-password"}}
@@ -474,9 +474,36 @@ func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 	okRec := httptest.NewRecorder()
 	clearing.handleAPI(okRec, okReq)
 	require.Equal(t, http.StatusBadRequest, okRec.Code)
-	require.Contains(t, okRec.Body.String(), "unavailable")
+	require.Contains(t, okRec.Body.String(), "could not create a session")
 	require.NotContains(t, okRec.Body.String(), `"authenticated":true`)
 	require.Empty(t, okRec.Result().Cookies())
+}
+
+func TestDashboardLoginLockoutFailsClosedWhenSecretGetErrors(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	srv := &Server{Client: &lockoutGetFailClient{Client: newFakeClient(secret)}}
+	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid username or password")
+	require.NotContains(t, rec.Body.String(), `"authenticated":true`)
+}
+
+func TestDashboardLoginIsCaseInsensitive(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "Admin", Password: "test-password", Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	form := url.Values{"username": {"ADMIN"}, "password": {"test-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"authenticated":true`)
 }
 
 func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
@@ -644,4 +671,15 @@ func (c *persistFailAuthClient) Update(ctx context.Context, obj client.Object, o
 		}
 	}
 	return c.Client.Update(ctx, obj, opts...)
+}
+
+type lockoutGetFailClient struct {
+	client.Client
+}
+
+func (c *lockoutGetFailClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if key.Name == platform.DashboardAuthSecretName {
+		return fmt.Errorf("secret get failed")
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
 }

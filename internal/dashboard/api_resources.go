@@ -227,21 +227,12 @@ func (s *Server) handleAPIAppVariables(w http.ResponseWriter, r *http.Request) {
 	for key := range secrets {
 		keys = append(keys, key)
 	}
-	payload := map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"secrets":            keys,
 		"sharedVariableRefs": app.Spec.SharedVariableRefs,
 		"env":                envNames(app.Spec.Env),
-	}
-	if s.sessionCanMutate(r) {
-		payload["config"] = app.Spec.ConfigData
-	} else {
-		configKeys := make([]string, 0, len(app.Spec.ConfigData))
-		for key := range app.Spec.ConfigData {
-			configKeys = append(configKeys, key)
-		}
-		payload["config"] = configKeys
-	}
-	writeJSON(w, http.StatusOK, payload)
+		"config":             app.Spec.ConfigData,
+	})
 }
 
 func envNames(env []corev1.EnvVar) []map[string]string {
