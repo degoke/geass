@@ -9,36 +9,69 @@ License at LICENSE or https://www.elastic.co/licensing/elastic-license.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GeassObjectStoreEngine identifies the object store engine type.
-// +kubebuilder:validation:Enum=MinIO
+// +kubebuilder:validation:Enum=MinIO;S3
 type GeassObjectStoreEngine string
 
 const (
 	ObjectStoreEngineMinIO GeassObjectStoreEngine = "MinIO"
+	ObjectStoreEngineS3    GeassObjectStoreEngine = "S3"
+)
+
+// GeassObjectStorePlacement selects in-cluster or external object storage.
+// +kubebuilder:validation:Enum=InCluster;External
+type GeassObjectStorePlacement string
+
+const (
+	ObjectStorePlacementInCluster GeassObjectStorePlacement = "InCluster"
+	ObjectStorePlacementExternal  GeassObjectStorePlacement = "External"
 )
 
 // GeassObjectStoreSpec defines the desired state of GeassObjectStore.
 type GeassObjectStoreSpec struct {
-	// Project is the owning project.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Project string `json:"project"`
-	// Environment is the project environment.
+	// Project is the owning project. Leave empty for the cluster MinIO server.
+	// +optional
+	Project string `json:"project,omitempty"`
+	// Environment is the project environment. Required when Project is set.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Required
-	Environment GeassEnvironment `json:"environment"`
+	// +optional
+	Environment GeassEnvironment `json:"environment,omitempty"`
 
 	// Engine is the object store engine to provision.
-	// +kubebuilder:validation:Enum=MinIO
+	// +kubebuilder:validation:Enum=MinIO;S3
 	Engine GeassObjectStoreEngine `json:"engine"`
+
+	// Placement selects in-cluster MinIO or an external S3 provider.
+	// +kubebuilder:validation:Enum=InCluster;External
+	// +kubebuilder:default=InCluster
+	// +optional
+	Placement GeassObjectStorePlacement `json:"placement,omitempty"`
+
+	// ConnectionRef identifies a GeassCloudConnection used for AWS S3.
+	// +optional
+	ConnectionRef *corev1.LocalObjectReference `json:"connectionRef,omitempty"`
+
+	// Region is the AWS region for external buckets.
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// CreateBucket requests that Geass create the named buckets when possible.
+	// +optional
+	CreateBucket bool `json:"createBucket,omitempty"`
 
 	// Buckets is an optional list of buckets to create on provision.
 	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=3
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
+	// +kubebuilder:validation:XValidation:rule="self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))",message="bucket names must not be formatted as an IP address or contain consecutive periods"
 	Buckets []string `json:"buckets,omitempty"`
 }
 
@@ -79,7 +112,6 @@ type GeassObjectStore struct {
 	// +required
 	Spec GeassObjectStoreSpec `json:"spec"`
 
-	// +optional
 	// +optional
 	Status GeassObjectStoreStatus `json:"status,omitempty"`
 }

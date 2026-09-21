@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"fmt"
-	"html/template"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -117,30 +116,6 @@ func (s *Server) githubAppConfigured(ctx context.Context) bool {
 	return readiness.HasGitHubApp
 }
 
-func (s *Server) platformGitHubPrerequisiteHTML(ctx context.Context) string {
-	readiness, err := s.platformReadiness(ctx)
-	if err != nil {
-		return Alert("error", "Could not load platform settings.")
-	}
-	if !readiness.HasDashboardURL {
-		return s.githubPrerequisitePanel(
-			"Set your dashboard domain before connecting GitHub.",
-			"Geass needs a stable public HTTPS domain for GitHub App callbacks and webhooks.",
-			"/settings/domain",
-			"Configure domain",
-		)
-	}
-	if !readiness.HasGitHubApp {
-		return s.githubPrerequisitePanel(
-			"Configure your GitHub App before connecting repositories.",
-			"Create a GitHub App on github.com using the callback and webhook URLs shown in platform settings, then paste the app credentials into Geass.",
-			"/settings/github",
-			"Configure GitHub App",
-		)
-	}
-	return ""
-}
-
 func (s *Server) platformGitHubReadyError(ctx context.Context) error {
 	readiness, err := s.platformReadiness(ctx)
 	if err != nil {
@@ -164,21 +139,4 @@ func (s *Server) platformGitHubWebhookSecret(ctx context.Context) (string, error
 		return readiness.GitHubApp.WebhookSecret, nil
 	}
 	return "", nil
-}
-
-func (s *Server) githubPrerequisitePanel(title, description, href, buttonLabel string) string {
-	return Card(`<h3 class="card-title">` + template.HTMLEscapeString(title) + `</h3><p class="text-secondary">` + template.HTMLEscapeString(description) + `</p><div class="row-wrap mt-2">` + Button(buttonLabel, ButtonOpts{Href: href, Variant: "primary"}) + `</div>`)
-}
-
-func githubAppSetupInstructions(dashboardURL string) string {
-	callbackURL := dashboardURL + "/github/callback"
-	webhookURL := dashboardURL + "/webhooks/github"
-	copyButton := func(value string) string {
-		return `<button type="button" class="btn btn-ghost btn-sm" data-copy-value="` + template.HTMLEscapeString(value) + `">Copy</button>`
-	}
-	return fmt.Sprintf(`<div class="settings-copy-grid"><div><span class="field-label">Homepage URL</span><div class="copy-row"><code class="copy-value">%s</code>%s</div></div><div><span class="field-label">Callback URL</span><div class="copy-row"><code class="copy-value">%s</code>%s</div></div><div><span class="field-label">Webhook URL</span><div class="copy-row"><code class="copy-value">%s</code>%s</div></div><div><span class="field-label">Permissions</span><span class="text-secondary text-sm">Contents (Read), Metadata (Read), Push events</span></div></div>`,
-		template.HTMLEscapeString(dashboardURL), copyButton(dashboardURL),
-		template.HTMLEscapeString(callbackURL), copyButton(callbackURL),
-		template.HTMLEscapeString(webhookURL), copyButton(webhookURL),
-	)
 }

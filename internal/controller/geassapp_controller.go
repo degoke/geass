@@ -75,6 +75,29 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
+		controllerutil.AddFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if !app.DeletionTimestamp.IsZero() {
+		if wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment)); err == nil {
+			r.deleteTargetResources(ctx, &app, wsNS)
+		}
+		controllerutil.RemoveFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
+		snapshot, ok := platform.LastDeployedSpec(&app)
+		if !ok {
+			return r.setNotReady(ctx, &app, "Service has pending changes and no last deployed snapshot")
+		}
+		app.Spec = snapshot
+		app.Spec.Deploy.Enabled = true
+	}
+
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, app.Spec.Project, app.Spec.Environment); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
@@ -87,22 +110,27 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
-	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
-		controllerutil.AddFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
+	if app.Spec.Source.Git != nil {
+		if !app.Spec.Deploy.Enabled {
+			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+				r.deleteTargetResources(ctx, &app, prevNS)
+			}
+			r.deleteTargetResources(ctx, &app, wsNS)
+			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
+		}
+		build, ready, err := r.ensureGitBuild(ctx, &app)
+		if err != nil {
+			return r.setNotReady(ctx, &app, err.Error())
+		}
+		if ready {
+			app.Status.ResolvedImage = build.Status.ImageDigest
+			app.Status.ActiveBuild = build.Name
+		}
+		if !ready {
+			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
+		}
 	}
 
-	if !app.DeletionTimestamp.IsZero() {
-		r.deleteTargetResources(ctx, &app, wsNS)
-		controllerutil.RemoveFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
-	}
-	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
-		// Keep the last deployed workload running while dashboard changes are
-		// saved as desired state. The dashboard clears this marker explicitly
-		// when the user deploys the pending configuration.
-		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
 	if !app.Spec.Deploy.Enabled {
 		if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
 			r.deleteTargetResources(ctx, &app, prevNS)
@@ -116,17 +144,6 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	if app.Status.RolloutPaused {
 		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
-	if app.Spec.Source.Git != nil {
-		build, ready, err := r.ensureGitBuild(ctx, &app)
-		if err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
-		if !ready {
-			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
-		}
-		app.Status.ResolvedImage = build.Status.ImageDigest
-		app.Status.ActiveBuild = build.Name
 	}
 
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
@@ -286,6 +303,13 @@ func deploymentReplicas(app *geassv1alpha1.GeassApp) int32 {
 		return 1
 	}
 	return *app.Spec.Replicas
+}
+
+func appContainerResources(app *geassv1alpha1.GeassApp) corev1.ResourceRequirements {
+	if app == nil || len(app.Spec.Resources.Requests) == 0 {
+		return platform.DefaultAppResources()
+	}
+	return app.Spec.Resources
 }
 
 func appSourceCommit(app *geassv1alpha1.GeassApp) string {
@@ -464,7 +488,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 					ReadinessProbe: app.Spec.Deploy.ReadinessProbe,
 					LivenessProbe:  app.Spec.Deploy.LivenessProbe,
 					StartupProbe:   app.Spec.Deploy.StartupProbe,
-					Resources:      app.Spec.Resources,
+					Resources:      appContainerResources(app),
 					VolumeMounts:   volumeMounts,
 				}},
 				Volumes: volumes,
@@ -756,6 +780,10 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	if app.Status.ResolvedImage != "" {
+		latest.Status.ResolvedImage = app.Status.ResolvedImage
+		latest.Status.ActiveBuild = app.Status.ActiveBuild
+	}
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}

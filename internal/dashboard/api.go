@@ -22,7 +22,24 @@ type dashboardBootstrap struct {
 	Clusters         geassv1alpha1.GeassClusterList         `json:"clusters"`
 	CloudConnections geassv1alpha1.GeassCloudConnectionList `json:"cloudConnections"`
 	PlatformConfig   geassv1alpha1.GeassPlatformConfigList  `json:"platformConfig"`
+	Deployments      geassv1alpha1.GeassDeploymentList      `json:"deployments"`
+	Builds           geassv1alpha1.GeassBuildList           `json:"builds"`
+	HAReadiness      geassv1alpha1.GeassHAReadinessList     `json:"haReadiness"`
+	Platform         dashboardPlatform                      `json:"platform"`
 	Metrics          []dashboardMetric                      `json:"metrics"`
+}
+
+type dashboardPlatform struct {
+	HasDashboardURL      bool                 `json:"hasDashboardURL"`
+	HasGitHubApp         bool                 `json:"hasGitHubApp"`
+	DashboardURL         string               `json:"dashboardURL"`
+	HAReady              bool                 `json:"haReady"`
+	HealthyNodes         int32                `json:"healthyNodes"`
+	AWSAvailable         bool                 `json:"awsAvailable"`
+	PlanetScaleAvailable bool                 `json:"planetScaleAvailable"`
+	MinIOAvailable       bool                 `json:"minioAvailable"`
+	Capacity             clusterCapacity      `json:"capacity"`
+	Session              dashboardSessionInfo `json:"session"`
 }
 
 type dashboardMetric struct {
@@ -32,8 +49,8 @@ type dashboardMetric struct {
 }
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api/bootstrap" && r.Method == http.MethodGet {
-		s.handleBootstrap(w, r)
+	if r.Method == http.MethodGet {
+		s.handleAPIRead(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -56,6 +73,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	mutation.URL.RawPath = ""
 
 	switch {
+	case mutation.URL.Path == "/login":
+		s.handleDashboardLogin(w, mutation)
+	case mutation.URL.Path == "/logout":
+		s.handleDashboardLogout(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):
@@ -100,44 +121,62 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !s.sessionCanMutate(r) {
+		s.writeViewerBootstrap(w, r)
+		return
+	}
 	ctx := r.Context()
 	data := dashboardBootstrap{}
 	if err := s.Client.List(ctx, &data.Projects, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Apps, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Databases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.LogicalDatabases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Caches, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.ObjectStores, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.CloudConnections, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
 	if err := s.Client.List(ctx, &data.Clusters); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDashboardUnavailable(w)
 		return
 	}
+	if err := s.Client.List(ctx, &data.Deployments, client.InNamespace(systemNamespace)); err != nil {
+		writeDashboardUnavailable(w)
+		return
+	}
+	if err := s.Client.List(ctx, &data.Builds, client.InNamespace(systemNamespace)); err != nil {
+		writeDashboardUnavailable(w)
+		return
+	}
+	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
+		writeDashboardUnavailable(w)
+		return
+	}
+	data.Platform = s.dashboardPlatform(ctx, data)
+	data.Platform.Session = s.dashboardSession(r)
 	for _, metric := range overviewMetrics {
 		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
 		state := "measured"
@@ -151,6 +190,18 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func (s *Server) writeViewerBootstrap(w http.ResponseWriter, r *http.Request) {
+	data := dashboardBootstrap{Platform: dashboardPlatform{Session: s.dashboardSession(r)}}
+	sanitizeDashboardForViewer(&data)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func writeDashboardUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load dashboard"})
+}
+
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
@@ -159,79 +210,10 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	serveFrontend(w)
 }
 
-func isDashboardMutation(path string) bool {
-	for _, suffix := range []string{"/create", "/save", "/delete", "/update", "/verify", "/test", "/clear", "/install", "/disconnect", "/archive", "/deploy", "/scale", "/rollback", "/build", "/check", "/set", "/raw"} {
-		if len(path) >= len(suffix) && path[len(path)-len(suffix):] == suffix {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) handleFrontendProjects(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
+func sanitizeDashboardForViewer(data *dashboardBootstrap) {
+	if data == nil {
 		return
 	}
-	switch r.URL.Path {
-	case "/projects/create":
-		s.handleProjectCreate(w, r)
-	default:
-		s.handleProjectRoutes(w, r)
-	}
-}
-
-func (s *Server) handleFrontendProjectRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) {
-		serveFrontend(w)
-		return
-	}
-	s.handleProjectRoutes(w, r)
-}
-
-func (s *Server) handleFrontendApps(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && r.URL.Path != "/apps" {
-		serveFrontend(w)
-		return
-	}
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppCreate(w, r)
-}
-
-func (s *Server) handleFrontendAppRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && !containsPathPart(r.URL.Path, "stream") {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppRoutes(w, r)
-}
-
-func (s *Server) handleFrontendResourceList(w http.ResponseWriter, r *http.Request, handler func(http.ResponseWriter, *http.Request)) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	handler(w, r)
-}
-
-func containsPathPart(path, part string) bool {
-	for _, segment := range splitPath(path) {
-		if segment == part {
-			return true
-		}
-	}
-	return false
-}
-
-func splitPath(path string) []string {
-	var parts []string
-	for _, part := range strings.Split(path, "/") {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return parts
+	session := data.Platform.Session
+	*data = dashboardBootstrap{Platform: dashboardPlatform{Session: session}}
 }

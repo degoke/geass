@@ -24,7 +24,7 @@ func TestHandleAppCreateRejectsGitWithoutPlatformGitHub(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project)}
 	form := "source=git&name=api&project=payments&environment=dev&repository=org/repo&branch=main&connectionRef=payments-github"
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form)).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form)).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppCreate(rec, req)
@@ -40,7 +40,7 @@ func TestPlatformGitHubClearRemovesSecret(t *testing.T) {
 	c := newFakeClient(testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))
 	srv := &Server{Client: c}
 	form := "confirm=remove-github"
-	req := httptest.NewRequest(http.MethodPost, "/settings/github/clear", strings.NewReader(form)).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/clear", strings.NewReader(form)).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformGitHubClear(rec, req)
@@ -59,7 +59,7 @@ func TestPlatformGitHubClearRequiresConfirm(t *testing.T) {
 	cfg := testGitHubAppConfig(t)
 	c := newFakeClient(testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))
 	srv := &Server{Client: c}
-	req := httptest.NewRequest(http.MethodPost, "/settings/github/clear", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/clear", nil).WithContext(ctx))
 	rec := httptest.NewRecorder()
 	srv.handlePlatformGitHubClear(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -98,4 +98,13 @@ func TestVerifyDashboardURLWarnsWhenOnlyInternalProbeWorks(t *testing.T) {
 	message, status := srv.verifyDashboardURL(context.Background(), "http://127.0.0.1:1")
 	require.Equal(t, "warning", status)
 	require.Contains(t, message, "responds locally")
+}
+
+func TestProbeURLHidesDialError(t *testing.T) {
+	srv := &Server{HTTPClient: http.DefaultClient}
+	message, ok := srv.probeURL(context.Background(), "http://127.0.0.1:1")
+	require.False(t, ok)
+	require.Equal(t, "could not reach the dashboard URL", message)
+	require.NotContains(t, message, "connect")
+	require.NotContains(t, message, "127.0.0.1:1")
 }

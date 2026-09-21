@@ -98,11 +98,9 @@ func TestGitHubDeployShowsDashboardURLPrerequisite(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Configure domain")
-	require.Contains(t, body, "/settings/domain")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":false`)
 }
 
 func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {
@@ -114,11 +112,10 @@ func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {
 	platformConfig := testPlatformConfig("https://geass.test")
 	srv := &Server{Client: newFakeClient(project, platformConfig)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Configure GitHub App")
-	require.Contains(t, body, "/settings/github")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
+	require.Contains(t, rec.Body.String(), `"hasGitHubApp":false`)
 }
 
 func TestGitHubDeployShowsConnectPanelWhenPlatformReady(t *testing.T) {
@@ -130,11 +127,10 @@ func TestGitHubDeployShowsConnectPanelWhenPlatformReady(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Connect GitHub")
-	require.Contains(t, body, "/projects/payments/github/install")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
+	require.Contains(t, rec.Body.String(), `"hasGitHubApp":true`)
 }
 
 func TestGitHubDeployListsRepositoriesWhenConnected(t *testing.T) {
@@ -189,18 +185,11 @@ func TestGitHubDeployListsRepositoriesWhenConnected(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/projects/payments/github/repos", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, `class="github-picker-modal"`)
 	require.Contains(t, body, "geass-dev/api")
 	require.Contains(t, body, "geass-dev/web")
-	require.Contains(t, body, "Configure GitHub App")
-	require.Contains(t, body, `placeholder="Search repositories, or paste a URL..."`)
-	require.Contains(t, body, `class="github-repo-form"`)
-	require.NotContains(t, body, "Configure service")
-	require.NotContains(t, body, "Create a draft service")
-	require.NotContains(t, body, `target="_blank"`)
 }
 
 func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
@@ -210,7 +199,7 @@ func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
 		Spec:       geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}},
 	}
-	c := newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))
+	c := newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg), dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))
 
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -239,7 +228,8 @@ func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state="+url.QueryEscape(state), nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state="+url.QueryEscape(state), nil).WithContext(ctx))
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	srv.handleGitHubCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	require.Contains(t, rec.Header().Get("Location"), "create=app-git")
@@ -309,6 +299,14 @@ func TestGitHubAPIRequestReadsBody(t *testing.T) {
 	require.Contains(t, string(data), "geass")
 }
 
+func TestGitHubCallbackRequiresAdminSession(t *testing.T) {
+	srv := &Server{Client: newFakeClient()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/github/callback?installation_id=99&state=nope", nil)
+	srv.handleGitHubCallback(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
 func TestGitHubInstallRedirectsToGitHubApp(t *testing.T) {
 	ctx := context.Background()
 	cfg := testGitHubAppConfig(t)
@@ -319,26 +317,50 @@ func TestGitHubInstallRedirectsToGitHubApp(t *testing.T) {
 	srv := &Server{
 		Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg)),
 	}
+	form := url.Values{"environment": {"dev"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/github/install", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments/github/install?environment=dev", nil).WithContext(ctx))
+	srv.handleProjectRoutes(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	location := rec.Header().Get("Location")
 	require.True(t, strings.HasPrefix(location, "https://github.com/apps/geass/installations/new"))
 	require.Contains(t, location, "state=")
 }
 
+func TestGitHubInstallJSONReturnsURL(t *testing.T) {
+	ctx := context.Background()
+	cfg := testGitHubAppConfig(t)
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}},
+	}
+	srv := &Server{
+		Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg)),
+	}
+	form := url.Values{"environment": {"dev"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/projects/payments/github/install", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"url"`)
+	require.Contains(t, rec.Body.String(), "https://github.com/apps/geass/installations/new")
+}
+
 func TestPlatformGitHubSettingsRequiresDashboardURL(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	srv.handlePlatformGitHubSettings(rec, httptest.NewRequest(http.MethodGet, "/settings/github", nil))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/settings/github", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "Configure your dashboard domain")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":false`)
 }
 
 func TestPlatformGitHubSettingsShowsCallbackURLs(t *testing.T) {
 	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.test"))}
 	rec := httptest.NewRecorder()
-	srv.handlePlatformGitHubSettings(rec, httptest.NewRequest(http.MethodGet, "/settings/github", nil))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/settings/github", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	require.Contains(t, body, "https://geass.test/github/callback")
@@ -359,7 +381,7 @@ func TestPlatformGitHubSettingsSaveStoresSecret(t *testing.T) {
 		"webhookSecret": {cfg.WebhookSecret},
 		"privateKey":    {cfg.PrivateKeyPEM},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformGitHubSettingsSave(rec, req)
@@ -374,12 +396,25 @@ func TestPlatformGitHubSettingsSaveStoresSecret(t *testing.T) {
 	require.Equal(t, platformGitHubAppSecretName, config.Spec.GitHubAppRef.Name)
 }
 
+func TestPlatformGitHubSettingsSaveJSONReportsError(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.test"))}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/settings/github/save", strings.NewReader("appID=&clientID=&slug=")).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "required")
+	require.NotContains(t, rec.Body.String(), `"ok":true`)
+}
+
 func TestPlatformDomainSaveStoresDomain(t *testing.T) {
 	ctx := context.Background()
 	c := newFakeClient()
 	srv := &Server{Client: c}
 	form := url.Values{"domain": {"geass.example.com"}}
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainSave(rec, req)
@@ -396,7 +431,7 @@ func TestPlatformDomainSaveRejectsInvalidDomain(t *testing.T) {
 	ctx := context.Background()
 	srv := &Server{Client: newFakeClient()}
 	form := url.Values{"domain": {"not a domain"}}
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainSave(rec, req)

@@ -3,8 +3,6 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"html/template"
 	"net/http"
 	"slices"
 	"strings"
@@ -16,32 +14,48 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (s *Server) appPanelFormError(w http.ResponseWriter, r *http.Request, name, message, panelHTML string) {
-	if isHXRequest(r) {
-		s.render(w, Alert("error", message)+panelHTML)
+func (s *Server) appConfigFormError(w http.ResponseWriter, r *http.Request, name, message string) {
+	s.appPanelFormError(w, r, name, message)
+}
+
+func (s *Server) appSecretsFormError(w http.ResponseWriter, r *http.Request, name, message string) {
+	s.appPanelFormError(w, r, name, message)
+}
+
+func (s *Server) appPanelFormError(w http.ResponseWriter, r *http.Request, name, message string) {
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
 		return
 	}
 	redirectFormError(w, r, "/apps/"+name, message)
 }
 
-func (s *Server) appConfigFormError(w http.ResponseWriter, r *http.Request, name, message string) {
-	panel := ""
-	if app, err := s.getApp(r, name); err == nil {
-		panel = appConfigPanel(app.Name, app.Spec.ConfigData)
-	}
-	s.appPanelFormError(w, r, name, message, panel)
+func (s *Server) writeAppConfigJSON(w http.ResponseWriter, app *geassv1alpha1.GeassApp) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"config":  app.Spec.ConfigData,
+		"pending": appPendingKinds(app),
+	})
 }
 
-func (s *Server) appSecretsFormError(w http.ResponseWriter, r *http.Request, name, message string) {
-	panel := ""
-	if app, err := s.getApp(r, name); err == nil {
-		if isHXRequest(r) && r.Header.Get("HX-Target") == "#service-variables" {
-			panel = s.appSharedVariablesPanel(r.Context(), app)
-		} else {
-			panel = appSecretsPanel(app.Name, s.appSecretKeys(r.Context(), app))
-		}
-	}
-	s.appPanelFormError(w, r, name, message, panel)
+func (s *Server) writeAppSecretsJSON(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"secrets": sortedKeys(s.appSecretKeys(r.Context(), app)),
+		"pending": appPendingKinds(app),
+	})
+}
+
+func writeAppPendingJSON(w http.ResponseWriter, app *geassv1alpha1.GeassApp) {
+	title, detail, button := appPendingBannerCopy(app)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"pending":  appPendingKinds(app),
+		"deployed": app.Spec.Deploy.Enabled,
+		"title":    title,
+		"detail":   detail,
+		"button":   button,
+	})
 }
 
 func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name string) {
@@ -64,9 +78,9 @@ func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name
 		app.Spec.ConfigData = map[string]string{}
 	}
 	app.Spec.ConfigData[key] = value
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -91,9 +105,9 @@ func (s *Server) handleAppConfigDelete(w http.ResponseWriter, r *http.Request, n
 	if len(app.Spec.ConfigData) == 0 {
 		app.Spec.ConfigData = nil
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -124,9 +138,9 @@ func (s *Server) handleAppConfigRaw(w http.ResponseWriter, r *http.Request, name
 	if len(values) == 0 {
 		app.Spec.ConfigData = nil
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -185,9 +199,9 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 	}
 	app.Spec.SecretRef = &corev1.LocalObjectReference{Name: secretName}
 	app.Spec.SecretData = nil
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appSecretsFormError(w, r, name, err.Error())
+		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppSecretsPanel(w, r, app)
@@ -215,16 +229,16 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 			delete(secret.Data, key)
 			if len(secret.Data) == 0 {
 				if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
-					s.appSecretsFormError(w, r, name, err.Error())
+					s.appSecretsFormError(w, r, name, dashboardActionFailed)
 					return
 				}
 				app.Spec.SecretRef = nil
 			} else if err := s.Client.Update(r.Context(), secret); err != nil {
-				s.appSecretsFormError(w, r, name, err.Error())
+				s.appSecretsFormError(w, r, name, dashboardActionFailed)
 				return
 			}
 		} else if !apierrors.IsNotFound(err) {
-			s.appSecretsFormError(w, r, name, err.Error())
+			s.appSecretsFormError(w, r, name, dashboardActionFailed)
 			return
 		}
 	} else {
@@ -233,9 +247,9 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 			app.Spec.SecretData = nil
 		}
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appSecretsFormError(w, r, name, err.Error())
+		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppSecretsPanel(w, r, app)
@@ -250,21 +264,16 @@ func (s *Server) getApp(r *http.Request, name string) (*geassv1alpha1.GeassApp, 
 }
 
 func (s *Server) renderAppConfigPanel(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp) {
-	html := appConfigPanel(app.Name, app.Spec.ConfigData)
-	if isHXRequest(r) {
-		s.render(w, html)
+	if isHXRequest(r) || isJSONRequest(r) {
+		s.writeAppConfigJSON(w, app)
 		return
 	}
 	redirect(w, r, "/apps/"+app.Name)
 }
 
 func (s *Server) renderAppSecretsPanel(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp) {
-	if isHXRequest(r) {
-		if r.Header.Get("HX-Target") == "#service-variables" {
-			s.render(w, s.appPendingBannerOOB(r.Context(), app)+s.appSharedVariablesPanel(r.Context(), app))
-			return
-		}
-		s.render(w, appSecretsPanel(app.Name, s.appSecretKeys(r.Context(), app)))
+	if isHXRequest(r) || isJSONRequest(r) {
+		s.writeAppSecretsJSON(w, r, app)
 		return
 	}
 	redirect(w, r, workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", app.Name, "variables"))
@@ -285,86 +294,6 @@ func (s *Server) appSecretKeys(ctx context.Context, app *geassv1alpha1.GeassApp)
 	return keys
 }
 
-func (s *Server) appSecretsPanel(ctx context.Context, app *geassv1alpha1.GeassApp) string {
-	return appSecretsPanel(app.Name, s.appSecretKeys(ctx, app))
-}
-
-func appConfigPanel(name string, data map[string]string) string {
-	var rows strings.Builder
-	keys := sortedKeys(data)
-	if len(keys) == 0 {
-		rows.WriteString(`<tr><td colspan="3"><em class="text-muted">No config entries yet</em></td></tr>`)
-	} else {
-		for _, k := range keys {
-			fmt.Fprintf(&rows, `<tr data-variable-row data-variable-key="%s">
-				<td class="font-medium">%s</td>
-				<td><code class="badge">%s</code></td>
-				<td>
-					<form method="POST" action="/apps/%s/config/delete" hx-post="/apps/%s/config/delete"
-						hx-target="#app-config" hx-swap="outerHTML" hx-push-url="false" class="inline">
-						<input type="hidden" name="key" value="%s">
-						<button class="btn btn-xs btn-ghost" type="submit">Remove</button>
-					</form>
-				</td>
-			</tr>`, esc(k), esc(k), esc(data[k]), esc(name), esc(name), esc(k))
-		}
-	}
-	raw, _ := json.MarshalIndent(data, "", "  ")
-	return fmt.Sprintf(`<section id="app-config" class="card mb-4"><div class="card-body">
-		<div class="row-between"><div><h2 class="card-title">Config</h2>
-		<p class="text-secondary text-sm">Environment-style settings for this app. Changes roll out on the next reconcile.</p>
-		</div><label class="field"><span class="field-label">Search variables</span><input class="input input-sm" data-variable-search placeholder="Search by key" type="search"></label></div>
-		<div class="overflow-x-auto"><table class="table table-sm">
-			<thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
-			<tbody>%s</tbody>
-		</table></div>
-		<form method="POST" action="/apps/%s/config/set" hx-post="/apps/%s/config/set"
-			hx-target="#app-config" hx-swap="outerHTML" hx-push-url="false" class="flex items-end gap-2 mt-3">
-			<label class="field"><span class="field-label">Key</span><input class="input input-sm" name="key" required placeholder="LOG_LEVEL"></label>
-			<label class="field"><span class="field-label">Value</span><input class="input input-sm" name="value" placeholder="debug"></label>
-			<button class="btn btn-sm btn-primary" type="submit">Save config</button>
-		</form>
-		<details class="mt-4"><summary class="link">Raw editor</summary><p class="text-secondary text-sm">Edit non-secret config as a JSON object. Secrets are intentionally excluded.</p><form method="POST" action="/apps/%s/config/raw" hx-post="/apps/%s/config/raw" hx-target="#app-config" hx-swap="outerHTML" hx-push-url="false" class="stack-sm"><textarea class="textarea font-mono" name="configJSON" rows="8" aria-label="Raw config JSON">%s</textarea><button class="btn btn-sm btn-ghost" type="submit">Validate and save raw config</button></form></details>
-	</div></section>`, rows.String(), esc(name), esc(name), esc(name), esc(name), esc(string(raw)))
-}
-
-func appSecretsPanel(name string, data map[string]string) string {
-	var rows strings.Builder
-	keys := sortedKeys(data)
-	if len(keys) == 0 {
-		rows.WriteString(`<tr><td colspan="3"><em class="text-muted">No secrets yet</em></td></tr>`)
-	} else {
-		for _, k := range keys {
-			fmt.Fprintf(&rows, `<tr data-variable-row data-variable-key="%s">
-				<td class="font-medium">%s</td>
-				<td>••••••••</td>
-				<td>
-					<form method="POST" action="/apps/%s/secrets/delete" hx-post="/apps/%s/secrets/delete"
-						hx-target="#app-secrets" hx-swap="outerHTML" hx-push-url="false" class="inline">
-						<input type="hidden" name="key" value="%s">
-						<button class="btn btn-xs btn-ghost" type="submit">Remove</button>
-					</form>
-				</td>
-			</tr>`, esc(k), esc(k), esc(name), esc(name), esc(k))
-		}
-	}
-	return fmt.Sprintf(`<section id="app-secrets" class="card mb-4"><div class="card-body">
-		<div class="row-between"><div><h2 class="card-title">Secrets</h2>
-		<p class="text-secondary text-sm">Sensitive values for this app. Stored encrypted at rest; never shown again after save.</p>
-		</div><label class="field"><span class="field-label">Search variables</span><input class="input input-sm" data-variable-search placeholder="Search by key" type="search"></label></div>
-		<div class="overflow-x-auto"><table class="table table-sm">
-			<thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
-			<tbody>%s</tbody>
-		</table></div>
-		<form method="POST" action="/apps/%s/secrets/set" hx-post="/apps/%s/secrets/set"
-			hx-target="#app-secrets" hx-swap="outerHTML" hx-push-url="false" class="flex items-end gap-2 mt-3">
-			<label class="field"><span class="field-label">Key</span><input class="input input-sm" name="key" required placeholder="DATABASE_URL"></label>
-			<label class="field"><span class="field-label">Value</span><input class="input input-sm" name="value" type="password" required autocomplete="new-password"></label>
-			<button class="btn btn-sm btn-primary" type="submit">Save secret</button>
-		</form>
-	</div></section>`, rows.String(), esc(name), esc(name))
-}
-
 func sortedKeys(m map[string]string) []string {
 	if len(m) == 0 {
 		return nil
@@ -375,8 +304,4 @@ func sortedKeys(m map[string]string) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func esc(s string) string {
-	return template.HTMLEscapeString(s)
 }

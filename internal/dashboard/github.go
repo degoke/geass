@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -154,17 +152,6 @@ func (s *Server) projectDeployedRepositories(ctx context.Context, project string
 	return repositories
 }
 
-func workspaceGitCreateURL(project, environment, repository, repoQuery string) string {
-	q := url.Values{"create": {"app-git"}}
-	if repository != "" {
-		q.Set("repository", repository)
-	}
-	if repoQuery != "" {
-		q.Set("repoq", repoQuery)
-	}
-	return workspaceURL(project, environment, q)
-}
-
 func (s *Server) githubConnectionUsable(ctx context.Context, connection *geassv1alpha1.GeassGitHubConnection) bool {
 	if githubConnectionReady(connection) {
 		return true
@@ -179,33 +166,6 @@ func (s *Server) githubConnectionUsable(ctx context.Context, connection *geassv1
 	return githubInstallationID(secret) > 0 || githubTokenFromSecret(secret) != ""
 }
 
-func (s *Server) createAppGitFormBody(r *http.Request, project, environment string) string {
-	if prerequisite := s.platformGitHubPrerequisiteHTML(r.Context()); prerequisite != "" {
-		return prerequisite
-	}
-	connection, err := s.projectGitHubConnection(r.Context(), project)
-	if err != nil {
-		return Alert("error", "Could not load the GitHub connection for this project.")
-	}
-	if connection == nil {
-		return s.githubConnectPanel(r.Context(), project, environment, "")
-	}
-	if !s.githubConnectionUsable(r.Context(), connection) {
-		return s.githubConnectPanel(r.Context(), project, environment, "GitHub is not connected yet. Install your GitHub App to continue.")
-	}
-	token, err := s.githubConnectionToken(r.Context(), connection)
-	if err != nil {
-		return s.githubConnectPanel(r.Context(), project, environment, err.Error())
-	}
-	secret, _ := s.githubConnectionSecret(r.Context(), connection)
-	account := githubAccountFromSecret(secret)
-	repos, repoErr := s.listGitHubRepositories(r.Context(), connection, token)
-	selectedRepo := strings.TrimSpace(r.URL.Query().Get("repository"))
-	repoQuery := strings.TrimSpace(r.URL.Query().Get("repoq"))
-	filtered := filterGitHubRepositories(repos, repoQuery)
-	return s.githubDeployPanel(r, project, environment, connection, secret, account, filtered, repoErr, s.projectDeployedRepositories(r.Context(), project), selectedRepo, repoQuery)
-}
-
 func filterGitHubRepositories(repos []githubRepository, query string) []githubRepository {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -218,51 +178,6 @@ func filterGitHubRepositories(repos []githubRepository, query string) []githubRe
 		}
 	}
 	return filtered
-}
-
-func (s *Server) githubConnectPanel(ctx context.Context, project, environment, notice string) string {
-	var b strings.Builder
-	if notice != "" {
-		b.WriteString(Alert("warning", template.HTMLEscapeString(notice)))
-	}
-	b.WriteString(`<div class="github-connect"><div class="github-connect-copy"><h3 class="card-title">Connect GitHub</h3><p class="text-secondary">Install your GitHub App on your account or organization to grant repository access. Geass never stores your GitHub password.</p><ul class="github-permissions"><li>Read repository contents and metadata</li><li>Receive push events for automatic deploys</li><li>Choose which repositories Geass can access</li></ul></div>`)
-	if !s.githubAppConfigured(ctx) {
-		b.WriteString(s.platformGitHubPrerequisiteHTML(ctx))
-	} else {
-		installURL := "/projects/" + url.PathEscape(project) + "/github/install?environment=" + url.QueryEscape(environment)
-		b.WriteString(`<div class="github-connect-actions">` + Button("Connect GitHub", ButtonOpts{Href: installURL, Variant: "primary"}) + `</div>`)
-	}
-	b.WriteString(`</div>`)
-	return b.String()
-}
-
-func (s *Server) githubDeployPanel(r *http.Request, project, environment string, connection *geassv1alpha1.GeassGitHubConnection, secret *corev1.Secret, account githubAccount, repos []githubRepository, repoErr error, deployed []string, selectedRepo, repoQuery string) string {
-	cfg := s.githubAppClient().Config
-	installationID := strconv.FormatInt(githubInstallationID(secret), 10)
-	var b strings.Builder
-	b.WriteString(`<div class="github-deploy github-picker">`)
-
-	b.WriteString(`<section class="github-repo-section"><form class="github-repo-search" method="GET" action="/projects/` + url.PathEscape(project) + `"><input type="hidden" name="environment" value="` + template.HTMLEscapeString(environment) + `"><input type="hidden" name="create" value="app-git">`)
-	b.WriteString(`<div class="github-repo-search-row"><a class="workspace-back" href="` + template.HTMLEscapeString(workspaceURL(project, environment, nil)) + `" aria-label="Back to workspace">←</a><input class="input" name="repoq" value="` + template.HTMLEscapeString(repoQuery) + `" placeholder="Search repositories, or paste a URL..." autofocus></div><div class="github-repo-toolbar"><a class="link" href="` + template.HTMLEscapeString(cfg.InstallationSettingsURL(installationID)) + `">⚙ Configure GitHub App</a>` + Button("Refresh", ButtonOpts{Href: workspaceGitCreateURL(project, environment, "", repoQuery), Variant: "ghost"}) + `</div></form>`)
-
-	if repoErr != nil {
-		b.WriteString(Alert("error", "Could not list repositories: "+template.HTMLEscapeString(repoErr.Error())))
-	} else if len(repos) == 0 {
-		b.WriteString(Alert("warning", "No repositories match this search. Grant repository access in GitHub App settings, then refresh."))
-	} else {
-		b.WriteString(`<div class="github-repo-list">`)
-		for _, repo := range repos {
-			branch := repo.DefaultBranch
-			if branch == "" {
-				branch = "main"
-			}
-			fmt.Fprintf(&b, `<form method="POST" action="/apps/create" class="github-repo-form"><input type="hidden" name="source" value="git"><input type="hidden" name="name" value="%s"><input type="hidden" name="project" value="%s"><input type="hidden" name="environment" value="%s"><input type="hidden" name="connectionRef" value="%s"><input type="hidden" name="repository" value="%s"><input type="hidden" name="branch" value="%s"><input type="hidden" name="dockerfile" value="Dockerfile"><input type="hidden" name="context" value="."><button class="github-repo-row" type="submit"><span class="github-repo-icon" aria-hidden="true">◉</span><span><strong>%s</strong></span><span aria-hidden="true">›</span></button></form>`, template.HTMLEscapeString(s.nextGitHubAppName(r.Context(), repo.FullName)), template.HTMLEscapeString(project), template.HTMLEscapeString(environment), template.HTMLEscapeString(connection.Name), template.HTMLEscapeString(repo.FullName), template.HTMLEscapeString(branch), template.HTMLEscapeString(repo.FullName))
-		}
-		b.WriteString(`</div>`)
-	}
-	b.WriteString(`</section>`)
-	b.WriteString(`</div>`)
-	return b.String()
 }
 
 func (s *Server) nextGitHubAppName(ctx context.Context, repository string) string {
@@ -300,10 +215,17 @@ func (s *Server) nextGitHubAppName(ctx context.Context, repository string) strin
 }
 
 func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Request, project string) {
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-	fallback := workspaceCreateURL(project, environment, "app-git")
-	if prerequisite := s.platformGitHubPrerequisiteHTML(r.Context()); prerequisite != "" {
-		redirectFormError(w, r, fallback, "GitHub App is not configured")
+	fallback := workspaceCreateURL(project, "", "app-git")
+	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
+		return
+	}
+	environment := strings.TrimSpace(r.FormValue("environment"))
+	if environment == "" {
+		environment = strings.TrimSpace(r.URL.Query().Get("environment"))
+	}
+	fallback = workspaceCreateURL(project, environment, "app-git")
+	if err := s.platformGitHubReadyError(r.Context()); err != nil {
+		redirectFormUserError(w, r, fallback, err)
 		return
 	}
 	gh, _, err := s.githubAppClientFromContext(r.Context())
@@ -313,14 +235,23 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 	}
 	state, err := gh.SignState(project, environment)
 	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormError(w, r, fallback, "could not start GitHub installation")
 		return
 	}
-	redirect(w, r, gh.Config.InstallURL(state))
+	installURL := gh.Config.InstallURL(state)
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "url": installURL})
+		return
+	}
+	redirect(w, r, installURL)
 }
 
 func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	fallback := "/settings/github"
+	if !s.sessionCanMutate(r) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
 	installationRaw := strings.TrimSpace(r.URL.Query().Get("installation_id"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if installationRaw == "" || state == "" {
@@ -339,12 +270,12 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	project, environment, err := gh.VerifyState(state)
 	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormError(w, r, fallback, "GitHub installation state is invalid")
 		return
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
 	if err := s.saveGitHubInstallation(r.Context(), project, environment, installationID); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	redirect(w, r, fallback)
@@ -446,7 +377,7 @@ func (s *Server) handleProjectGitHubDisconnect(w http.ResponseWriter, r *http.Re
 	}
 	p.Spec.GitHubConnectionRef = nil
 	if err := s.Client.Update(r.Context(), &p); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	redirect(w, r, fallback)

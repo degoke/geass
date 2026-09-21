@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,17 +18,6 @@ import (
 	"github.com/degoke/geass/pkg/githubapp"
 	"github.com/degoke/geass/pkg/platform"
 )
-
-func TestGitHubAppManifestFormPostsToGitHub(t *testing.T) {
-	html := githubAppManifestForm("https://geass.example.com", "state123")
-	require.Contains(t, html, `action="https://github.com/settings/apps/new?state=state123"`)
-	require.NotContains(t, html, `target="_blank"`)
-	require.Contains(t, html, `name="manifest"`)
-	require.Contains(t, html, "Geass-example-com")
-	require.Contains(t, html, "Create GitHub App on GitHub")
-	require.Contains(t, html, "/webhooks/github")
-	require.Contains(t, html, "/settings/github/manifest/callback")
-}
 
 func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	ctx := context.Background()
@@ -49,7 +39,7 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	config.Spec.RootDomain = "example.com"
 	config.ObjectMeta.Generation = 1
 	config.Status.Conditions = platform.SetConditionForGeneration(nil, platform.ConditionDashboardDomainReady, metav1.ConditionTrue, "Verified", "ok", 1)
-	c := newFakeClient(config)
+	c := newFakeClient(config, dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))
 	srv := &Server{
 		Client:     c,
 		HTTPClient: &http.Client{Transport: roundTripRewrite{target: api.URL}},
@@ -58,6 +48,7 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	state := "0123456789abcdef0123456789abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback?code=code-1&state="+state, nil).WithContext(ctx)
 	req.AddCookie(&http.Cookie{Name: githubManifestStateCookieName(state), Value: state})
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	rec := httptest.NewRecorder()
 	srv.handleGitHubManifestCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -77,10 +68,11 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 }
 
 func TestHandleGitHubManifestCallbackRejectsStateMismatch(t *testing.T) {
-	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.example.com"))}
+	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.example.com"), dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))}
 	state := "0123456789abcdef0123456789abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback?code=code-1&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: githubManifestStateCookieName(state), Value: "other"})
+	req = withDashboardSession(t, srv, req, "admin", dashboardRoleAdmin)
 	rec := httptest.NewRecorder()
 	srv.handleGitHubManifestCallback(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -98,4 +90,43 @@ func (t roundTripRewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	target.Header = req.Header.Clone()
 	return http.DefaultTransport.RoundTrip(target)
+}
+
+func TestGitHubCredentialErrorHidesKubernetesAndCryptoText(t *testing.T) {
+	require.Equal(t, "app ID, client ID, and slug are required", githubCredentialError(fmt.Errorf("app ID, client ID, and slug are required")))
+	require.Equal(t, "client secret, webhook secret, and private key are required", githubCredentialError(fmt.Errorf("client secret, webhook secret, and private key are required")))
+	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf(`Secret "platform-github-app" is invalid: spec.data: Required value`)))
+	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)")))
+}
+
+func TestGitHubManifestStateCookieSecureOnPublicHost(t *testing.T) {
+	srv := &Server{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/github", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	state := srv.beginGitHubManifestState(rec, req)
+	require.NotEmpty(t, state)
+	var cookie *http.Cookie
+	for _, item := range rec.Result().Cookies() {
+		if item.Name == githubManifestStateCookieName(state) {
+			cookie = item
+		}
+	}
+	require.NotNil(t, cookie)
+	require.True(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+}
+
+func TestGitHubManifestStateCookieClearKeepsSecure(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/settings/github/manifest/callback", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	cookie := newGitHubManifestStateCookie(req, "0123456789abcdef0123456789abcdef", "", -1)
+	require.True(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+	require.Equal(t, -1, cookie.MaxAge)
+	require.Equal(t, "/settings/github/", cookie.Path)
 }

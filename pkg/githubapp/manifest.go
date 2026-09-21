@@ -134,9 +134,12 @@ func ConvertManifestCode(ctx context.Context, httpClient *http.Client, code stri
 		return nil, err
 	}
 	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readHTTPBody(response.Body, manifestResponseLimit)
+	if err != nil {
+		return nil, err
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("manifest conversion failed (%d): %s", response.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("manifest conversion failed (%d)", response.StatusCode)
 	}
 	var converted ManifestConversion
 	if err := json.Unmarshal(body, &converted); err != nil {
@@ -149,4 +152,17 @@ func ConvertManifestCode(ctx context.Context, httpClient *http.Client, code stri
 		converted.Slug = strings.ToLower(strings.ReplaceAll(converted.Name, " ", "-"))
 	}
 	return &converted, nil
+}
+
+const manifestResponseLimit = 1 << 20
+
+func readHTTPBody(r io.Reader, limit int64) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("response exceeded %d bytes", limit)
+	}
+	return payload, nil
 }

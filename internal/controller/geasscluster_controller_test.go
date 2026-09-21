@@ -10,6 +10,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -18,6 +19,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,7 +38,7 @@ func markHelmChartReady(ctx context.Context, name string) {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testHelmChartNS}, chart)
 	}).WithTimeout(5 * time.Second).Should(Succeed())
 
-	jobName := "helm-install-" + name
+	jobName := fmt.Sprintf("helm-install-%s-%d", name, time.Now().UnixNano())
 	chart.Status.JobName = jobName
 	if err := k8sClient.Status().Update(ctx, chart); err != nil {
 		Expect(k8sClient.Update(ctx, chart)).To(Succeed())
@@ -56,7 +58,10 @@ func markHelmChartReady(ctx context.Context, name string) {
 			},
 		},
 	}
-	Expect(k8sClient.Create(ctx, job)).To(Succeed())
+	if err := k8sClient.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
+		Expect(err).NotTo(HaveOccurred())
+	}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: testHelmChartNS}, job)).To(Succeed())
 	job.Status.Succeeded = 1
 	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 }
@@ -279,6 +284,88 @@ var _ = Describe("GeassApp Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app-metrics", Namespace: testDevTargetNS}, &monitoringv1.ServiceMonitor{})).To(Succeed())
+	})
+
+	It("reconciles the last deployed snapshot while changes are pending", func() {
+		one := int32(1)
+		app := &geassv1alpha1.GeassApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "pending-app", Namespace: ns},
+			Spec: geassv1alpha1.GeassAppSpec{
+				Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
+				Source:   geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx:alpine"}},
+				Deploy:   geassv1alpha1.GeassAppDeploySpec{Enabled: true},
+				Replicas: &one,
+				Port:     8080,
+			},
+		}
+		Expect(k8sClient.Create(ctx, app)).To(Succeed())
+		reconciler := &GeassAppReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "pending-app", Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "pending-app", Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+
+		latest := &geassv1alpha1.GeassApp{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pending-app", Namespace: ns}, latest)).To(Succeed())
+		Expect(platform.SetLastDeployedSpec(latest)).To(Succeed())
+		five := int32(5)
+		latest.Spec.Replicas = &five
+		latest.Spec.Source.Image = &geassv1alpha1.GeassAppImageSource{Image: "nginx:pending"}
+		if latest.Annotations == nil {
+			latest.Annotations = map[string]string{}
+		}
+		latest.Annotations[platform.AppPendingUpdatesAnnotation] = "1"
+		latest.Annotations[platform.AppPendingChangesAnnotation] = "settings"
+		Expect(k8sClient.Update(ctx, latest)).To(Succeed())
+
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "pending-app", Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+
+		deploy := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pending-app", Namespace: testDevTargetNS}, deploy)).To(Succeed())
+		Expect(*deploy.Spec.Replicas).To(Equal(int32(1)))
+		Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:alpine"))
+		unchanged := &geassv1alpha1.GeassApp{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pending-app", Namespace: ns}, unchanged)).To(Succeed())
+		Expect(*unchanged.Spec.Replicas).To(Equal(int32(5)))
+		Expect(unchanged.Spec.Source.Image.Image).To(Equal("nginx:pending"))
+	})
+
+	It("does not start a Git build for draft services", func() {
+		app := &geassv1alpha1.GeassApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "git-draft", Namespace: ns},
+			Spec: geassv1alpha1.GeassAppSpec{
+				Project:     testProjectName,
+				Environment: geassv1alpha1.EnvironmentDev,
+				Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{
+					ConnectionRef: corev1.LocalObjectReference{Name: "github"},
+					Repository:    "acme/api",
+					Branch:        "main",
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, app)).To(Succeed())
+		reconciler := &GeassAppReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "git-draft", Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "git-draft", Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+
+		var builds geassv1alpha1.GeassBuildList
+		Expect(k8sClient.List(ctx, &builds, client.InNamespace(ns))).To(Succeed())
+		found := false
+		for i := range builds.Items {
+			if builds.Items[i].Spec.App == "git-draft" {
+				found = true
+				break
+			}
+		}
+		Expect(found).To(BeFalse())
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: "git-draft", Namespace: testDevTargetNS}, &appsv1.Deployment{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		latest := &geassv1alpha1.GeassApp{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "git-draft", Namespace: ns}, latest)).To(Succeed())
+		Expect(conditionMessage(latest.Status.Conditions, platform.ConditionReady)).To(ContainSubstring("waiting for deployment"))
 	})
 })
 

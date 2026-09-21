@@ -3,7 +3,9 @@ package platform
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,6 +52,33 @@ func ValidateProjectPlacement(
 		return nil
 	}
 	return fmt.Errorf("project %q has no %s environment", project, environment)
+}
+
+// ValidBucketName reports whether name is a legal S3 bucket name:
+// 3–63 characters, lowercase letters, numbers, dots, and hyphens, starting and
+// ending with a letter or number.
+func ValidBucketName(name string) error {
+	if len(name) < 3 || len(name) > 63 {
+		return fmt.Errorf("bucket name %q must be 3-63 characters", name)
+	}
+	if name[0] == '.' || name[0] == '-' || name[len(name)-1] == '.' || name[len(name)-1] == '-' {
+		return fmt.Errorf("bucket name %q must start and end with a letter or number", name)
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.':
+			if i > 0 && c == '.' && name[i-1] == '.' {
+				return fmt.Errorf("bucket name %q must not contain consecutive periods", name)
+			}
+		default:
+			return fmt.Errorf("bucket name %q may only contain lowercase letters, numbers, dots, and hyphens", name)
+		}
+	}
+	if ip := net.ParseIP(name); ip != nil && strings.Count(name, ".") == 3 {
+		return fmt.Errorf("bucket name %q must not be formatted as an IP address", name)
+	}
+	return nil
 }
 
 func conditionStatus(conditions []metav1.Condition, conditionType string) string {

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"html/template"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,22 +26,16 @@ func githubManifestStateCookieName(state string) string {
 	return githubManifestStateCookie + state
 }
 
-func githubAppManifestForm(dashboardURL, state string) string {
-	appName := githubapp.DefaultGeassAppName(dashboardURL)
-	manifest := githubapp.NewGeassAppManifest(dashboardURL, appName)
-	raw, err := githubapp.ManifestJSON(manifest)
-	if err != nil {
-		return Alert("error", "Could not build GitHub App manifest.")
+func newGitHubManifestStateCookie(r *http.Request, state, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     githubManifestStateCookieName(state),
+		Value:    value,
+		Path:     "/settings/github/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   dashboardCookieSecure(r),
+		MaxAge:   maxAge,
 	}
-	action := githubapp.ManifestRegisterURL(state)
-	return Card(
-		`<h3 class="card-title">Create with Geass</h3>` +
-			`<p class="text-secondary">You will sign in to GitHub and register <code>` + template.HTMLEscapeString(appName) + `</code> with the correct URLs, permissions, and webhook, then return here. The name includes your dashboard domain so it is unique on GitHub. Geass stores the credentials automatically.</p>` +
-			`<form method="post" action="` + template.HTMLEscapeString(action) + `">` +
-			`<input type="hidden" name="manifest" value="` + template.HTMLEscapeString(raw) + `">` +
-			`<div class="row-wrap mt-2">` + Button("Create GitHub App on GitHub", ButtonOpts{Type: "submit", Variant: "primary"}) + `</div>` +
-			`</form>`,
-	)
 }
 
 func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request) string {
@@ -49,19 +43,15 @@ func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return ""
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubManifestStateCookieName(state),
-		Value:    state,
-		Path:     "/settings/github/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
-		MaxAge:   3600,
-	})
+	http.SetCookie(w, newGitHubManifestStateCookie(r, state, state, 3600))
 	return state
 }
 
 func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.sessionCanMutate(r) {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if code == "" {
@@ -77,22 +67,16 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		redirectProbe(w, r, "/settings/github", "error", "GitHub App creation state mismatch; try again from Geass")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubManifestStateCookieName(state),
-		Value:    "",
-		Path:     "/settings/github/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, newGitHubManifestStateCookie(r, state, "", -1))
 
 	converted, err := githubapp.ConvertManifestCode(r.Context(), s.HTTPClient, code)
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not convert GitHub App manifest")
 		return
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasDashboardURL && !s.ensureDashboardDomainVerified(r.Context(), readiness) {
@@ -111,7 +95,7 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		WebhookSecret: converted.WebhookSecret,
 		PrivateKey:    converted.PEM,
 	}); err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", githubCredentialError(err))
 		return
 	}
 	redirectProbe(w, r, "/settings/github", "success", "")
@@ -217,7 +201,48 @@ func requestIsHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return forwardedProto(r) == "https"
+}
+
+func forwardedProto(r *http.Request) string {
+	forwarded := strings.TrimSpace(r.Header.Get("Forwarded"))
+	if forwarded == "" {
+		return ""
+	}
+	for _, element := range strings.Split(forwarded, ",") {
+		for _, field := range strings.Split(element, ";") {
+			key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+			if !ok || !strings.EqualFold(key, "proto") {
+				continue
+			}
+			return strings.ToLower(strings.Trim(value, `"'`))
+		}
+	}
+	return ""
+}
+
+func requestIsLoopback(r *http.Request) bool {
+	host := normalizeRequestHost(r.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func dashboardCookieSecure(r *http.Request) bool {
+	if requestIsHTTPS(r) {
+		return true
+	}
+	// Ignore client X-Forwarded-Proto=http. Only loopback HTTP may omit Secure.
+	return !requestIsLoopback(r)
 }
 
 func randomHex(n int) (string, error) {
