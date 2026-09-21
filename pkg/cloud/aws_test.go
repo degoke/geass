@@ -274,6 +274,22 @@ func TestDeleteBucketTreatsMissingBucketAsSuccess(t *testing.T) {
 	require.NoError(t, client.DeleteBucket("uploads"))
 }
 
+func TestDeleteBucketFailsWhenListingDoesNotAdvance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>a</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>stuck</NextContinuationToken></ListBucketResult>`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "listing did not advance")
+}
+
 func TestDeleteBucketDoesNotTreatGeneric400AsUnsupported(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

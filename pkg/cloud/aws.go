@@ -131,7 +131,7 @@ func (c *AWSClient) DeleteBucket(bucket string) error {
 
 func (c *AWSClient) emptyBucket(bucket string) error {
 	token := ""
-	for page := 0; page < 1000; page++ {
+	for {
 		keys, next, err := c.listBucketKeys(bucket, token)
 		if err != nil {
 			return err
@@ -144,8 +144,8 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 		if next == "" {
 			break
 		}
-		if page == 999 {
-			return fmt.Errorf("bucket %s still contains objects", bucket)
+		if next == token {
+			return fmt.Errorf("bucket %s listing did not advance", bucket)
 		}
 		token = next
 	}
@@ -207,7 +207,7 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 
 func (c *AWSClient) emptyBucketVersions(bucket string) error {
 	keyMarker, versionMarker := "", ""
-	for page := 0; page < 1000; page++ {
+	for {
 		versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
 		if err != nil {
 			if isS3NoSuchBucket(err) {
@@ -226,12 +226,11 @@ func (c *AWSClient) emptyBucketVersions(bucket string) error {
 		if !truncated || len(versions) == 0 {
 			return nil
 		}
-		if page == 999 {
-			return fmt.Errorf("bucket %s still contains object versions", bucket)
+		if nextKey == keyMarker && nextVersion == versionMarker {
+			return fmt.Errorf("bucket %s version listing did not advance", bucket)
 		}
 		keyMarker, versionMarker = nextKey, nextVersion
 	}
-	return nil
 }
 
 type objectVersion struct {
@@ -298,7 +297,7 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 
 func (c *AWSClient) abortMultipartUploads(bucket string) error {
 	keyMarker, uploadMarker := "", ""
-	for page := 0; page < 1000; page++ {
+	for {
 		uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
 		if err != nil {
 			if isS3NoSuchBucket(err) {
@@ -317,12 +316,11 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 		if !truncated || len(uploads) == 0 {
 			return nil
 		}
-		if page == 999 {
-			return fmt.Errorf("bucket %s still contains multipart uploads", bucket)
+		if nextKey == keyMarker && nextUpload == uploadMarker {
+			return fmt.Errorf("bucket %s multipart listing did not advance", bucket)
 		}
 		keyMarker, uploadMarker = nextKey, nextUpload
 	}
-	return nil
 }
 
 type multipartUpload struct {

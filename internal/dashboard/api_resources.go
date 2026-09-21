@@ -97,6 +97,11 @@ func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request)
 		"hasGitHubApp":    readiness.HasGitHubApp,
 		"dashboardURL":    readiness.DashboardURL,
 	}
+	if readiness.DashboardURL != "" {
+		base := strings.TrimRight(readiness.DashboardURL, "/")
+		payload["callbackURL"] = base + "/github/callback"
+		payload["webhookURL"] = base + "/webhooks/github"
+	}
 	if readiness.HasDashboardURL && s.sessionCanMutate(r) {
 		state := s.beginGitHubManifestState(w, r)
 		appName := githubapp.DefaultGeassAppName(readiness.DashboardURL)

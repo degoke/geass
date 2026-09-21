@@ -47,59 +47,6 @@ func tunnelIDForForm(stored string) string {
 	return stored
 }
 
-func (s *Server) handlePlatformDomainSettings(w http.ResponseWriter, r *http.Request) {
-	readiness, err := s.platformReadiness(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	rootDomain := platform.RootDomainFromConfig(readiness.Config)
-	verified := platform.DashboardDomainReady(readiness.Config)
-	exposure := platform.DashboardExposureFromConfig(readiness.Config)
-	tunnelMode := exposure == geassv1alpha1.DashboardExposureCloudflareTunnel
-
-	body := `<p class="overline">Platform</p>` + PageHeader("Domain", "")
-
-	if verified {
-		body += Alert("success", "Domain verified. Dashboard URL is "+readiness.DashboardURL+".")
-	}
-
-	body += FormOpen("/settings/domain/save", "POST", "") +
-		Card(
-			Field("Your domain", Input("domain", rootDomain, map[string]string{
-				"placeholder":  "example.com",
-				"required":     "required",
-				"autocomplete": "off",
-			}))+
-				Field("Exposure", Select("exposure", selectOptionsWithValue([]SelectOption{
-					{Value: string(geassv1alpha1.DashboardExposureIngress), Label: "Server (A record)"},
-					{Value: string(geassv1alpha1.DashboardExposureCloudflareTunnel), Label: "Local + Cloudflare Tunnel"},
-				}, string(exposure)), nil))+
-				Field("Tunnel ID", Input("tunnelCNAMETarget", tunnelIDForForm(readiness.Config.Spec.TunnelCNAMETarget), map[string]string{
-					"placeholder":  "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-					"autocomplete": "off",
-				}))+
-				`<p class="text-secondary text-sm">Paste the tunnel ID from <code>cloudflared tunnel list</code>. Geass appends <code>.cfargotunnel.com</code> for the CNAME target. Route cloudflared to <code>http://127.0.0.1:8082</code>; use <code>protocol: http2</code> if QUIC on port 7844 is blocked.</p>`+
-				`<div class="row-wrap">`+Button("Save", ButtonOpts{Type: "submit", Variant: "primary"})+`</div>`) +
-		`</form>`
-
-	if rootDomain != "" && !verified {
-		dashboardHost := platform.DashboardHostFromRoot(rootDomain)
-		if tunnelMode {
-			body += domainCloudflareDNSCard(dashboardHost, readiness.Config.Spec.TunnelCNAMETarget)
-		} else {
-			externalIP, ipErr := s.clusterExternalIP(r.Context())
-			body += domainIngressDNSCard(dashboardHost, externalIP, ipErr)
-		}
-		body += `<div id="domain-verify-status" class="mt-2" hx-post="/settings/domain/verify" hx-trigger="load, every 5s" hx-swap="outerHTML">` +
-			`<p class="text-secondary text-sm">` + template.HTMLEscapeString(domainPendingMessage(tunnelMode)) + `</p>` +
-			domainVerifyButtonHTML() +
-			`</div>`
-	}
-
-	s.renderPage(w, r, "Domain Settings", body)
-}
-
 func domainPendingMessage(tunnelMode bool) string {
 	if tunnelMode {
 		return "Add the CNAME in Cloudflare, then wait for DNS."

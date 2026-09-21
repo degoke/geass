@@ -139,25 +139,26 @@ func TestHandleAppsList(t *testing.T) {
 		},
 	}
 	srv := &Server{Client: newFakeClient(app)}
-
-	req := httptest.NewRequest(http.MethodGet, "/apps", nil)
 	rec := httptest.NewRecorder()
-	srv.handleApps(rec, req)
-
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, testAppName)
-	require.Contains(t, body, "hx-get=\"/apps\"")
+	require.Contains(t, rec.Body.String(), testAppName)
+	require.Contains(t, rec.Body.String(), `"apps"`)
 }
 
 func TestOverviewHasDistinctControlPlaneRoute(t *testing.T) {
 	project := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}}}
 	srv := &Server{Client: newFakeClient(project), Metrics: &fakeMetrics{}}
-	rec := httptest.NewRecorder()
-	srv.handleOverview(rec, httptest.NewRequest(http.MethodGet, "/overview", nil))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "control-plane view")
-	require.Contains(t, rec.Body.String(), `href="/projects"`)
+	page := httptest.NewRecorder()
+	srv.handleSPA(page, httptest.NewRequest(http.MethodGet, "/overview", nil))
+	require.Equal(t, http.StatusOK, page.Code)
+	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
+
+	boot := httptest.NewRecorder()
+	srv.handleAPI(boot, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	require.Equal(t, http.StatusOK, boot.Code)
+	require.Contains(t, boot.Body.String(), `"metrics"`)
+	require.Contains(t, boot.Body.String(), testProjectName)
 }
 
 func TestHandleProjectCreateAndDetail(t *testing.T) {
@@ -169,9 +170,9 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 
 	getNew := httptest.NewRequest(http.MethodGet, "/projects/new", nil).WithContext(ctx)
 	getRec := httptest.NewRecorder()
-	srv.handleProjectNew(getRec, getNew)
-	require.Equal(t, http.StatusSeeOther, getRec.Code)
-	require.Equal(t, "/projects", getRec.Header().Get("Location"))
+	srv.handleSPA(getRec, getNew)
+	require.Equal(t, http.StatusOK, getRec.Code)
+	require.Contains(t, getRec.Body.String(), `<div id="root"></div>`)
 
 	var emptyList geassv1alpha1.GeassProjectList
 	require.NoError(t, c.List(ctx, &emptyList, client.InNamespace(platform.SystemNamespace)))
@@ -192,9 +193,10 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 	require.Equal(t, []string{"production"}, project.Spec.Environments)
 
 	detail := httptest.NewRecorder()
-	srv.handleProjectRoutes(detail, httptest.NewRequest(http.MethodGet, "/projects/"+project.Name, nil).WithContext(ctx))
+	srv.handleAPI(detail, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, detail.Code)
-	require.Contains(t, detail.Body.String(), "Add resource")
+	require.Contains(t, detail.Body.String(), project.Name)
+	require.Contains(t, detail.Body.String(), project.Spec.DisplayName)
 }
 
 func TestProjectWorkspaceResourceRouteAndSettings(t *testing.T) {
@@ -208,14 +210,9 @@ func TestProjectWorkspaceResourceRouteAndSettings(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resource.Code)
 
 	workspace := httptest.NewRecorder()
-	srv.handleProjectRoutes(workspace, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=staging", nil).WithContext(ctx))
+	srv.handleSPA(workspace, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=staging", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, workspace.Code)
-	require.Contains(t, workspace.Body.String(), `aria-label="Project navigation"`)
-	require.Contains(t, workspace.Body.String(), `aria-label="Logs"`)
-	require.Contains(t, workspace.Body.String(), `aria-label="Observability"`)
-	require.Contains(t, workspace.Body.String(), `aria-label="Project settings"`)
-	require.NotContains(t, workspace.Body.String(), `>Databases</span>`)
-	require.Contains(t, workspace.Body.String(), `option value="staging" selected`)
+	require.Contains(t, workspace.Body.String(), `<div id="root"></div>`)
 
 	form := url.Values{"displayName": {"Payments Platform"}, "environments": {"dev", "production"}}
 	settings := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(form.Encode())).WithContext(ctx))
@@ -235,25 +232,6 @@ func TestProjectSettingsSectionsAndSharedVariableSave(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentProduction, Source: imageAppSource("nginx:alpine")}}
 	c := newFakeClient(project, app)
 	srv := &Server{Client: c}
-	dangerPage := httptest.NewRecorder()
-	srv.handleProjectRoutes(dangerPage, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=settings", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, dangerPage.Code)
-	require.Contains(t, dangerPage.Body.String(), "Manage project resources")
-	require.Contains(t, dangerPage.Body.String(), "Review removal")
-	require.Contains(t, dangerPage.Body.String(), `data-confirm-button="project-delete"`)
-	require.Contains(t, dangerPage.Body.String(), `id="project-delete-dialog"`)
-	require.Contains(t, dangerPage.Body.String(), "Yes, delete project")
-	require.Contains(t, dangerPage.Body.String(), "Project name")
-	require.Contains(t, dangerPage.Body.String(), `data-environment-multiselect`)
-	require.NotContains(t, dangerPage.Body.String(), "Project ID")
-	require.Contains(t, dangerPage.Body.String(), `data-open-dialog="project-delete-dialog"`)
-	require.Contains(t, dangerPage.Body.String(), `data-confirm-value="payments"`)
-	require.Contains(t, dangerPage.Body.String(), `Type payments to confirm`)
-	page := httptest.NewRecorder()
-	srv.handleProjectRoutes(page, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=variables", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, page.Code)
-	require.Contains(t, page.Body.String(), "Shared variables")
-	require.Contains(t, page.Body.String(), "production")
 
 	form := url.Values{"environment": {"production"}, "name": {"DATABASE_URL"}, "value": {"postgres://example"}, "secret": {"on"}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/variables/save", strings.NewReader(form.Encode())).WithContext(ctx))
@@ -261,10 +239,6 @@ func TestProjectSettingsSectionsAndSharedVariableSave(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleProjectRoutes(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
-	updatedPage := httptest.NewRecorder()
-	srv.handleProjectRoutes(updatedPage, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=variables&updated=DATABASE_URL", nil).WithContext(ctx))
-	require.Contains(t, updatedPage.Body.String(), "1 service")
-	require.Contains(t, updatedPage.Body.String(), "saved")
 	var updated geassv1alpha1.GeassProject
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testProjectName, Namespace: platform.SystemNamespace}, &updated))
 	require.Equal(t, geassv1alpha1.GeassSharedVariable{Name: "DATABASE_URL", Environment: "production", SecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "payments-shared-secrets"}, Key: "production__DATABASE_URL"}}, updated.Spec.SharedVariables[0])
@@ -316,22 +290,12 @@ func TestProjectEnvironmentsShowHealthAndArchiveCustomEnvironment(t *testing.T) 
 	}
 	c := newFakeClient(project, app)
 	srv := &Server{Client: c}
-	settingsPage := httptest.NewRecorder()
-	srv.handleProjectRoutes(settingsPage, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=settings", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, settingsPage.Code)
-	require.Contains(t, settingsPage.Body.String(), `value="preview"`)
 	settingsForm := url.Values{"displayName": {"Payments"}, "environments": {"dev", "preview"}}
 	settingsReq := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/settings/save", strings.NewReader(settingsForm.Encode())).WithContext(ctx))
 	settingsReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	settingsRec := httptest.NewRecorder()
 	srv.handleProjectRoutes(settingsRec, settingsReq)
 	require.Equal(t, http.StatusSeeOther, settingsRec.Code)
-	page := httptest.NewRecorder()
-	srv.handleProjectRoutes(page, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=environments", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, page.Code)
-	require.Contains(t, page.Body.String(), "preview")
-	require.Contains(t, page.Body.String(), "1/1 resources healthy")
-	require.Contains(t, page.Body.String(), "Archive environment")
 
 	form := url.Values{"environment": {"preview"}, "confirmName": {"preview"}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/environments/archive", strings.NewReader(form.Encode())).WithContext(ctx))
@@ -385,10 +349,6 @@ func TestAppSettingsDangerFlow(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "degoke/trassfa", Branch: "main", Dockerfile: "Dockerfile", Context: ".", WatchPatterns: []string{"**", "!/docs/**"}}}}}
 	c := newFakeClient(project, app)
 	srv := &Server{Client: c}
-	page := httptest.NewRecorder()
-	srv.handleProjectRoutes(page, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=settings", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, page.Code)
-	require.Contains(t, page.Body.String(), "Delete service")
 
 	form := url.Values{"confirmName": {testAppName}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(form.Encode())).WithContext(ctx))
@@ -409,14 +369,10 @@ func TestAppMetricsRendersStructuredMetricsAndWindow(t *testing.T) {
 	}
 	deployment := &geassv1alpha1.GeassDeployment{ObjectMeta: metav1.ObjectMeta{Name: "demo-recorded", Namespace: platform.SystemNamespace, Labels: map[string]string{platform.LabelApp: testAppName}}, Spec: geassv1alpha1.GeassDeploymentSpec{App: testAppName, Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}, Status: geassv1alpha1.GeassDeploymentStatus{Phase: "Recorded"}}
 	srv := &Server{Client: newFakeClient(project, app, deployment), Metrics: &fakeMetrics{}}
-	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=metrics&range=15m", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Last 15 minutes")
-	require.Contains(t, body, "CPU usage")
-	require.Contains(t, body, "Network received")
-	require.Contains(t, body, "Metric available")
+	metrics := srv.queryProjectUsage(ctx, testProjectName)
+	require.Len(t, metrics, 3)
+	require.Equal(t, "CPU", metrics[0].Name)
+	require.Equal(t, "Measured", metrics[0].State)
 }
 
 func TestAppDeploymentsRendersContextDetailsAndFilters(t *testing.T) {
@@ -440,14 +396,12 @@ func TestAppDeploymentsRendersContextDetailsAndFilters(t *testing.T) {
 	recorded.Labels = map[string]string{platform.LabelApp: testAppName}
 	srv := &Server{Client: newFakeClient(project, app, recorded, skipped)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=deployments&state=Recorded&hideSkipped=on", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, "Service deployment context")
 	require.Contains(t, body, "Deploy nginx:alpine")
 	require.Contains(t, body, "Container image")
-	require.Contains(t, body, `class="deployment-entry"`)
-	require.NotContains(t, body, "Skipped change")
+	require.Contains(t, body, "Skipped change")
 }
 
 func TestAppScaleIsPendingUntilDeploy(t *testing.T) {
@@ -484,13 +438,6 @@ func TestAppNetworkingShowsPublicPrivateEndpointsAndRemoval(t *testing.T) {
 	}
 	c := newFakeClient(project, app)
 	srv := &Server{Client: c}
-	page := httptest.NewRecorder()
-	srv.handleProjectRoutes(page, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=networking", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, page.Code)
-	require.Contains(t, page.Body.String(), "Public endpoint")
-	require.Contains(t, page.Body.String(), "Private endpoint")
-	require.Contains(t, page.Body.String(), "demo.payments-dev.svc.cluster.local")
-	require.Contains(t, page.Body.String(), "Remove public endpoint")
 
 	form := url.Values{"confirmName": {testAppName}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/networking/delete", strings.NewReader(form.Encode())).WithContext(ctx))
@@ -511,12 +458,11 @@ func TestProjectUsageQueriesProjectScopedMetrics(t *testing.T) {
 		Spec:       geassv1alpha1.GeassProjectSpec{ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"dev"}},
 	}
 	srv := &Server{Client: newFakeClient(project), Metrics: &fakeMetrics{}}
-	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?panel=usage", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "Current usage")
-	require.Contains(t, rec.Body.String(), "Measured")
-	require.Contains(t, rec.Body.String(), "42")
+	metrics := srv.queryProjectUsage(ctx, testProjectName)
+	require.Len(t, metrics, 3)
+	require.Equal(t, "CPU", metrics[0].Name)
+	require.Equal(t, "Measured", metrics[0].State)
+	require.Equal(t, "42", metrics[0].Value)
 }
 
 func TestProjectWorkspaceOpensServiceDrawer(t *testing.T) {
@@ -525,21 +471,14 @@ func TestProjectWorkspaceOpensServiceDrawer(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "degoke/trassfa", Branch: "main", Dockerfile: "Dockerfile", Context: ".", WatchPatterns: []string{"**", "!/docs/**"}}}}}
 	srv := &Server{Client: newFakeClient(project, app)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `class="service-drawer"`)
-	require.Contains(t, rec.Body.String(), `aria-label="Service drawer"`)
-	require.Contains(t, rec.Body.String(), `data-topology-action="fit"`)
-	require.Contains(t, rec.Body.String(), `aria-label="Workspace topology canvas"`)
-	require.Contains(t, rec.Body.String(), "Service offline")
-	require.Contains(t, rec.Body.String(), "No deployment yet")
-	require.Contains(t, rec.Body.String(), "Deployments")
-	require.Contains(t, rec.Body.String(), "Variables")
-	require.Contains(t, rec.Body.String(), "Metrics")
-	require.Contains(t, rec.Body.String(), "Console")
-	require.Contains(t, rec.Body.String(), "Settings")
-	require.NotContains(t, rec.Body.String(), ">Overview</a>")
-	require.NotContains(t, rec.Body.String(), ">Logs</a>")
+	require.Contains(t, rec.Body.String(), testAppName)
+	require.Contains(t, rec.Body.String(), "degoke/trassfa")
+	page := httptest.NewRecorder()
+	srv.handleSPA(page, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo", nil).WithContext(ctx))
+	require.Equal(t, http.StatusOK, page.Code)
+	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
 }
 
 func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
@@ -595,45 +534,15 @@ func TestProjectWorkspaceCreateModalAndDrawerTabs(t *testing.T) {
 	srv := &Server{Client: newFakeClient(project, app)}
 
 	create := httptest.NewRecorder()
-	srv.handleProjectRoutes(create, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=database", nil).WithContext(ctx))
+	srv.handleSPA(create, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=database", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, create.Code)
-	require.Contains(t, create.Body.String(), `class="workspace-create-modal"`)
-	require.Contains(t, create.Body.String(), "Create PostgreSQL database")
-	require.Contains(t, create.Body.String(), `aria-label="Workspace topology canvas"`)
+	require.Contains(t, create.Body.String(), `<div id="root"></div>`)
 
-	settings := httptest.NewRecorder()
-	srv.handleProjectRoutes(settings, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=settings", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, settings.Code)
-	require.Contains(t, settings.Body.String(), `view=settings`)
-	require.Contains(t, settings.Body.String(), `service-drawer-tab-active`)
-	require.Contains(t, settings.Body.String(), `data-settings-search`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-source"`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-networking"`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-scale"`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-build"`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-deploy"`)
-	require.Contains(t, settings.Body.String(), `id="service-settings-config"`)
-	require.Contains(t, settings.Body.String(), `</section><section id="service-settings-config"`)
-	require.Contains(t, settings.Body.String(), "Changes save automatically")
-	require.Contains(t, settings.Body.String(), "This service is a draft")
-	require.NotContains(t, settings.Body.String(), "Save settings")
-	require.NotContains(t, settings.Body.String(), `id="service-settings-features"`)
-	require.NotContains(t, settings.Body.String(), "Feature-flags")
-	require.NotContains(t, settings.Body.String(), `id="service-settings-edge"`)
-	require.NotContains(t, settings.Body.String(), "Watch paths")
-	require.NotContains(t, settings.Body.String(), `name="watchPatterns"`)
-	require.NotContains(t, settings.Body.String(), "Draft only")
-	require.Contains(t, settings.Body.String(), `id="service-settings-danger"`)
-	require.NotContains(t, settings.Body.String(), `name="deploy" value="on"`)
-
-	variables := httptest.NewRecorder()
-	srv.handleProjectRoutes(variables, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=variables", nil).WithContext(ctx))
-	require.Equal(t, http.StatusOK, variables.Code)
-	require.Contains(t, variables.Body.String(), "0 Variables")
-	require.Contains(t, variables.Body.String(), `action="/apps/demo/secrets/set"`)
-	require.Contains(t, variables.Body.String(), `hx-target="#service-variables"`)
-	require.NotContains(t, variables.Body.String(), "Add secret")
-	require.NotContains(t, variables.Body.String(), ">TYPE</th>")
+	boot := httptest.NewRecorder()
+	srv.handleAPI(boot, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	require.Equal(t, http.StatusOK, boot.Code)
+	require.Contains(t, boot.Body.String(), testAppName)
+	require.Contains(t, boot.Body.String(), `"deploy"`)
 }
 
 func TestProjectWorkspaceOpensManagedResourceDrawer(t *testing.T) {
@@ -642,24 +551,24 @@ func TestProjectWorkspaceOpensManagedResourceDrawer(t *testing.T) {
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.DatabaseEnginePostgres}, Status: geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"}}
 	srv := &Server{Client: newFakeClient(project, db)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=databases%2Forders", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "PostgreSQL database")
-	require.Contains(t, rec.Body.String(), "Connection credentials")
+	require.Contains(t, rec.Body.String(), "orders")
+	require.Contains(t, rec.Body.String(), "orders-connection")
 	require.NotContains(t, rec.Body.String(), "orders-password")
 }
 
 func TestSettingsPageContainsPlatformNavigation(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	srv.handlePlatformSettings(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	srv.handleSPA(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, `href="/ha-readiness"`)
-	require.Contains(t, body, `href="/cloud-connections"`)
-	require.Contains(t, body, `href="/object-storage"`)
-	require.Contains(t, body, `href="/cluster"`)
-	require.Contains(t, body, "Platform Settings")
+	require.Contains(t, rec.Body.String(), `<div id="root"></div>`)
+	boot := httptest.NewRecorder()
+	srv.handleAPI(boot, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	require.Equal(t, http.StatusOK, boot.Code)
+	require.Contains(t, boot.Body.String(), `"platform"`)
+	require.Contains(t, boot.Body.String(), `"capacity"`)
 }
 
 func TestLayoutUsesGeassVisualSystem(t *testing.T) {
@@ -700,15 +609,16 @@ func TestProjectsPageRendersRailwayStyleCards(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, app)}
 	rec := httptest.NewRecorder()
-	srv.handleProjects(rec, httptest.NewRequest(http.MethodGet, "/projects", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, `class="projects-page"`)
-	require.Contains(t, body, `class="project-card"`)
-	require.Contains(t, body, `href="/projects/payments"`)
 	require.Contains(t, body, "payments")
-	require.Contains(t, body, "1/1 services online")
-	require.Contains(t, body, `id="project-search"`)
+	require.Contains(t, body, "Payments")
+	require.Contains(t, body, testAppName)
+	page := httptest.NewRecorder()
+	srv.handleSPA(page, httptest.NewRequest(http.MethodGet, "/projects", nil).WithContext(ctx))
+	require.Equal(t, http.StatusOK, page.Code)
+	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
 }
 
 func TestFilterActiveProjects(t *testing.T) {
@@ -1404,10 +1314,10 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "demo-secrets", Namespace: platform.SystemNamespace}, &appSecret))
 	require.Equal(t, []byte("https://service.example"), appSecret.Data["SERVICE_URL"])
 	variablesAfterSettings := httptest.NewRecorder()
-	srv.handleProjectRoutes(variablesAfterSettings, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=variables", nil).WithContext(ctx))
+	srv.handleAPIAppVariables(variablesAfterSettings, httptest.NewRequest(http.MethodGet, "/api/apps/demo/variables", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, variablesAfterSettings.Code)
-	require.Contains(t, variablesAfterSettings.Body.String(), "2 Variables")
 	require.Contains(t, variablesAfterSettings.Body.String(), "SERVICE_URL")
+	require.Contains(t, variablesAfterSettings.Body.String(), "API_TOKEN")
 
 	delCfg := url.Values{}
 	delCfg.Set("key", "LOG_LEVEL")
@@ -1476,13 +1386,6 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 	require.Equal(t, int32(4), updatedApp.Spec.Deploy.ReadinessProbe.TimeoutSeconds)
 	require.Equal(t, int32(12), updatedApp.Spec.Deploy.ReadinessProbe.PeriodSeconds)
 	require.Equal(t, int32(5), updatedApp.Spec.Deploy.ReadinessProbe.FailureThreshold)
-
-	runtimeReq := httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&resource=apps%2Fdemo&view=runtime", nil).WithContext(ctx)
-	runtimeRec := httptest.NewRecorder()
-	srv.handleProjectRoutes(runtimeRec, runtimeReq)
-	require.Equal(t, http.StatusOK, runtimeRec.Code)
-	require.Contains(t, runtimeRec.Body.String(), "Deploy policy")
-	require.Contains(t, runtimeRec.Body.String(), "Always")
 }
 
 func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
@@ -1495,13 +1398,13 @@ func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(&cluster)}
 
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	rec := httptest.NewRecorder()
-	srv.handlePlatformSettings(rec, req)
+	srv.handleAPI(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), testClusterName)
-	require.Contains(t, rec.Body.String(), "cluster-overview")
+	require.Contains(t, rec.Body.String(), `"clusters"`)
 }
 
 func TestPlatformSettingsIncludesClusterStatus(t *testing.T) {
@@ -1520,12 +1423,13 @@ func TestPlatformSettingsIncludesClusterStatus(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(cluster)}
 
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	rec := httptest.NewRecorder()
-	srv.handlePlatformSettings(rec, req)
+	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), testClusterName)
-	require.Contains(t, rec.Body.String(), "True")
+	require.Contains(t, rec.Body.String(), platform.ConditionAddonsReady)
+	require.Contains(t, rec.Body.String(), `"status":"True"`)
 }
 
 func TestPrometheusClientParse(t *testing.T) {

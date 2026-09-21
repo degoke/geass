@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -331,6 +332,24 @@ func TestDashboardViewerCannotReadLogs(t *testing.T) {
 	reposRec := httptest.NewRecorder()
 	mux.ServeHTTP(reposRec, repos)
 	require.Equal(t, http.StatusForbidden, reposRec.Code)
+
+	runtime := httptest.NewRequest(http.MethodGet, "/api/apps/demo/runtime", nil).WithContext(ctx)
+	runtime.AddCookie(cookie)
+	runtimeRec := httptest.NewRecorder()
+	mux.ServeHTTP(runtimeRec, runtime)
+	require.Equal(t, http.StatusForbidden, runtimeRec.Code)
+
+	variables := httptest.NewRequest(http.MethodGet, "/api/apps/demo/variables", nil).WithContext(ctx)
+	variables.AddCookie(cookie)
+	variablesRec := httptest.NewRecorder()
+	mux.ServeHTTP(variablesRec, variables)
+	require.Equal(t, http.StatusForbidden, variablesRec.Code)
+
+	settings := httptest.NewRequest(http.MethodGet, "/api/settings/github", nil).WithContext(ctx)
+	settings.AddCookie(cookie)
+	settingsRec := httptest.NewRecorder()
+	mux.ServeHTTP(settingsRec, settings)
+	require.Equal(t, http.StatusForbidden, settingsRec.Code)
 }
 
 func TestDashboardSecurityHeaders(t *testing.T) {
@@ -387,6 +406,147 @@ func TestDashboardHashesEnvUsersIntoSecret(t *testing.T) {
 	require.True(t, strings.HasPrefix(string(secret.Data["session-key"]), dashboardSessionKeyPrefix))
 }
 
+func TestDashboardCompactEnvUsersRequireRole(t *testing.T) {
+	t.Setenv("GEASS_DASHBOARD_USERS", "admin:env-password")
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable")
+}
+
+func TestDashboardCompactEnvUsersWithRole(t *testing.T) {
+	t.Setenv("GEASS_DASHBOARD_USERS", "admin:env-password:admin")
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"role":"admin"`)
+}
+
+func TestDashboardLoginLockoutRetriesSecretConflict(t *testing.T) {
+	ctx := t.Context()
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	inner := newFakeClient(secret)
+	wrapper := &conflictAuthClient{Client: inner}
+	srv := &Server{Client: wrapper}
+	form := url.Values{"username": {"admin"}, "password": {"wrong"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.GreaterOrEqual(t, wrapper.updates, 2)
+	stored := &corev1.Secret{}
+	require.NoError(t, inner.Get(ctx, client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, stored))
+	require.Contains(t, string(stored.Data[dashboardLoginLockoutsSecretKey]), "admin")
+}
+
+func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
+	ctx := t.Context()
+	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassAppSpec{
+			Project:     "payments",
+			Environment: geassv1alpha1.EnvironmentDev,
+			Source:      geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "geass-dev/api", Branch: "main"}},
+			ConfigData:  map[string]string{"LOG_LEVEL": "debug"},
+			SecretRef:   &corev1.LocalObjectReference{Name: "demo-secrets"},
+			Ingress:     geassv1alpha1.GeassAppIngressSpec{Host: "demo.example"},
+		},
+	}
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassProjectSpec{
+			DisplayName:         "Payments",
+			GitHubConnectionRef: &corev1.LocalObjectReference{Name: "payments-github"},
+			SharedVariables:     []geassv1alpha1.GeassSharedVariable{{Name: "DATABASE_URL", Environment: "dev", Value: "postgres://secret", SecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "payments-shared-secrets"}, Key: "DATABASE_URL"}}},
+		},
+	}
+	database := &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassDatabaseSpec{Project: "payments", Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.DatabaseEnginePostgres},
+		Status:     geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"},
+	}
+	cache := &geassv1alpha1.GeassCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassCacheSpec{Project: "payments", Environment: geassv1alpha1.EnvironmentDev},
+		Status:     geassv1alpha1.GeassCacheStatus{Host: "sessions-redis", ConnectionSecret: "sessions-connection"},
+	}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassObjectStoreSpec{Project: "payments", ConnectionRef: &corev1.LocalObjectReference{Name: "aws"}, Buckets: []string{"uploads"}},
+		Status:     geassv1alpha1.GeassObjectStoreStatus{ConnectionSecret: "assets-connection"},
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "aws", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassCloudConnectionSpec{Provider: geassv1alpha1.CloudProviderAWS, Region: "us-east-1", SecretRef: corev1.LocalObjectReference{Name: "aws-credentials"}},
+	}
+	config := &geassv1alpha1.GeassPlatformConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassPlatformConfigSpec{GitHubAppRef: &corev1.LocalObjectReference{Name: "github-app"}, TunnelCNAMETarget: "abc.cfargotunnel.com"},
+	}
+	build := &geassv1alpha1.GeassBuild{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-1", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassBuildSpec{App: "demo", Repository: "geass-dev/api", Revision: "abc123"},
+		Status:     geassv1alpha1.GeassBuildStatus{SourceRevision: "abc123", ImageDigest: "sha256:deadbeef"},
+	}
+	srv := &Server{Client: newFakeClient(secret, app, project, database, cache, store, connection, config, build)}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var cookie *http.Cookie
+	for _, item := range rec.Result().Cookies() {
+		if item.Name == platform.DashboardSessionCookie {
+			cookie = item
+		}
+	}
+	require.NotNil(t, cookie)
+	bootstrap := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx)
+	bootstrap.AddCookie(cookie)
+	bootRec := httptest.NewRecorder()
+	mux.ServeHTTP(bootRec, bootstrap)
+	require.Equal(t, http.StatusOK, bootRec.Code)
+	body := bootRec.Body.String()
+	require.Contains(t, body, `"role":"viewer"`)
+	require.Contains(t, body, `"name":"demo"`)
+	require.NotContains(t, body, "geass-dev/api")
+	require.NotContains(t, body, "demo.example")
+	require.NotContains(t, body, "demo-secrets")
+	require.NotContains(t, body, "LOG_LEVEL")
+	require.NotContains(t, body, "postgres://secret")
+	require.NotContains(t, body, "payments-github")
+	require.Contains(t, body, `"name":"connected"`)
+	require.NotContains(t, body, "orders-rw")
+	require.NotContains(t, body, "orders-connection")
+	require.NotContains(t, body, "sessions-redis")
+	require.NotContains(t, body, "sessions-connection")
+	require.NotContains(t, body, "uploads")
+	require.NotContains(t, body, "assets-connection")
+	require.NotContains(t, body, "us-east-1")
+	require.NotContains(t, body, "aws-credentials")
+	require.NotContains(t, body, "github-app")
+	require.NotContains(t, body, "abc.cfargotunnel.com")
+	require.NotContains(t, body, "abc123")
+	require.NotContains(t, body, "sha256:deadbeef")
+}
+
 func withDashboardSession(t *testing.T, srv *Server, r *http.Request, username, role string) *http.Request {
 	t.Helper()
 	if r.Host == "" {
@@ -420,4 +580,19 @@ func (c *alreadyExistsAuthClient) Create(ctx context.Context, obj client.Object,
 		return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, secret.Name)
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+type conflictAuthClient struct {
+	client.Client
+	updates int
+}
+
+func (c *conflictAuthClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if secret, ok := obj.(*corev1.Secret); ok && secret.Name == platform.DashboardAuthSecretName {
+		c.updates++
+		if c.updates == 1 {
+			return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secret.Name, fmt.Errorf("conflict"))
+		}
+	}
+	return c.Client.Update(ctx, obj, opts...)
 }

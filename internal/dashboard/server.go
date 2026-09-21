@@ -3,7 +3,6 @@ package dashboard
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -140,92 +138,6 @@ func securityHeaders(next http.Handler) http.Handler {
 		header.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self' https://github.com")
 		next.ServeHTTP(w, r)
 	})
-}
-
-func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, r, "Clusters", PageHeader("Clusters", "")+`<p class="text-secondary mb-4">Cluster capacity and node health for the Geass control plane.</p>`+s.clusterOverviewHTML(r.Context()))
-}
-
-func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, r, "Observability", PageHeader("Observability", "")+`<p class="text-secondary mb-4">Platform-wide health signals from Kubernetes and Prometheus.</p>`+s.metricsCards(r.Context()))
-}
-
-func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
-	var projects geassv1alpha1.GeassProjectList
-	if err := s.Client.List(r.Context(), &projects, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	summaries, err := s.loadProjectSummaries(r.Context(), projects.Items)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	healthy := 0
-	for _, summary := range summaries {
-		if projectOverallStatus(summary) == "healthy" {
-			healthy++
-		}
-	}
-	body := PageHeader("Overview", Button("Open projects", ButtonOpts{Href: "/projects", Variant: "primary"}))
-	body += `<p class="text-secondary mb-4">A control-plane view of project health, cluster signals, and the next operational action.</p>`
-	body += Card(fmt.Sprintf(`<div class="row-between"><div><h2 class="card-title">Projects</h2><p class="text-secondary">%d of %d projects report healthy resources.</p></div><a class="link" href="/projects">View all projects</a></div>`, healthy, len(summaries)))
-	body += `<div class="mt-4"><p class="overline">Platform signals</p>` + s.metricsCards(r.Context()) + `</div>`
-	s.renderPage(w, r, "Overview", body)
-}
-
-func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
-	body := PageHeader("Docs", "") + Card(`<h2 class="card-title">Build with Geass</h2><p class="text-secondary">Projects contain isolated environments. Add services, databases, caches, and object storage from a project workspace.</p><div class="row-wrap mt-2">`+Button("Open projects", ButtonOpts{Href: "/projects", Variant: "primary"})+Button("Platform settings", ButtonOpts{Href: "/settings", Variant: "ghost"})+`</div>`)
-	s.renderPage(w, r, "Docs", body)
-}
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	s.handleProjects(w, r)
-}
-
-func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
-	var list geassv1alpha1.GeassProjectList
-	if err := s.Client.List(r.Context(), &list, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	summaries, err := s.loadProjectSummaries(r.Context(), filterActiveProjects(list.Items))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.renderFragment(w, r, renderProjectsPage(summaries))
-}
-
-func (s *Server) handleProjectOptions(w http.ResponseWriter, r *http.Request) {
-	var list geassv1alpha1.GeassProjectList
-	if err := s.Client.List(r.Context(), &list, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	options := make([]map[string]string, 0, len(list.Items))
-	for _, p := range filterActiveProjects(list.Items) {
-		display := platform.NormalizeProjectName(p.Spec.DisplayName)
-		if display == "" {
-			display = p.Name
-		}
-		options = append(options, map[string]string{"name": p.Name, "displayName": display})
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(options)
-}
-
-func (s *Server) handleProjectNew(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	redirect(w, r, "/projects")
 }
 
 func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
@@ -371,12 +283,7 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var p geassv1alpha1.GeassProject
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &p); err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	s.renderProjectWorkspace(w, r, p)
+	http.NotFound(w, r)
 }
 
 type projectUsageMetric struct {
@@ -1031,42 +938,6 @@ func (s *Server) redirectLogicalDatabaseWorkspace(w http.ResponseWriter, r *http
 	})
 }
 
-func (s *Server) handleHAReadiness(w http.ResponseWriter, r *http.Request) {
-	var nodes corev1.NodeList
-	var classes storagev1.StorageClassList
-	_ = s.Client.List(r.Context(), &nodes)
-	_ = s.Client.List(r.Context(), &classes)
-	var clusters geassv1alpha1.GeassClusterList
-	_ = s.Client.List(r.Context(), &clusters, client.InNamespace(systemNamespace))
-	clusterReady, addonsReady := false, false
-	for _, cluster := range clusters.Items {
-		clusterReady = clusterReady || conditionStatus(cluster.Status.Conditions, platform.ConditionReady) == string(metav1.ConditionTrue)
-		addonsReady = addonsReady || conditionStatus(cluster.Status.Conditions, platform.ConditionAddonsReady) == string(metav1.ConditionTrue)
-	}
-	healthy := 0
-	for _, node := range nodes.Items {
-		ready, schedulable := false, !node.Spec.Unschedulable
-		for _, c := range node.Status.Conditions {
-			if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
-				ready = true
-			}
-		}
-		if ready && schedulable {
-			healthy++
-		}
-	}
-	checks := CardTitled("Schedulable nodes", fmt.Sprintf(`<p class="text-sm">%d healthy</p><p>%s</p>`, healthy, ReadinessText(healthy >= 3, "Passes HA minimum", "Needs at least three healthy schedulable nodes"))) +
-		CardTitled("Persistent storage", fmt.Sprintf(`<p class="text-sm">%d StorageClass resources found</p><p>%s</p>`, len(classes.Items), ReadinessText(len(classes.Items) > 0, "A storage class is available", "No storage class is available"))) +
-		CardTitled("Cluster readiness", ReadinessText(clusterReady, "GeassCluster is ready", "GeassCluster is not ready")) +
-		CardTitled("Required add-ons", ReadinessText(addonsReady, "Required add-ons are ready", "Monitoring and cert-manager add-ons are not ready"))
-	body := `<p class="overline">Platform</p>` + PageHeader("HA readiness", "") +
-		`<p class="text-secondary mb-4">PostgreSQL provisioning is gated until these checks pass.</p>` +
-		FormOpen("/ha-readiness/check", "POST", `hx-post="/ha-readiness/check" hx-target="body" hx-push-url="false" class="mb-4"`) +
-		Button("Run readiness check", ButtonOpts{Type: "submit", Variant: "primary"}) + `</form>` +
-		`<div class="grid-2">` + checks + `</div>`
-	s.renderFragment(w, r, body)
-}
-
 func (s *Server) handleHAReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	fallback := "/ha-readiness"
 	if !requireMutation(w, r, fallback) {
@@ -1078,32 +949,6 @@ func (s *Server) handleHAReadinessCheck(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	redirect(w, r, fallback)
-}
-
-func (s *Server) handleCloudConnections(w http.ResponseWriter, r *http.Request) {
-	var list geassv1alpha1.GeassCloudConnectionList
-	_ = s.Client.List(r.Context(), &list, client.InNamespace(systemNamespace))
-	var cards strings.Builder
-	for _, connection := range list.Items {
-		cards.WriteString(CardTitled(connection.Name, fmt.Sprintf(`<p class="text-sm">Provider: %s</p><p class="text-error">Unavailable in this release</p>`, template.HTMLEscapeString(string(connection.Spec.Provider)))))
-	}
-	if cards.Len() == 0 {
-		cards.WriteString(CardTitled("AWS", `<p class="text-error">Unavailable in this release</p><p class="text-secondary">AWS credentials and adapters are not implemented yet. RDS PostgreSQL and ElastiCache remain visible as planned integrations.</p>`))
-	}
-	body := `<p class="overline">Integrations</p>` + PageHeader("Cloud connections", Button("Add AWS connection", ButtonOpts{Href: "/cloud-connections/new", Variant: "primary"})) +
-		`<div class="grid-3 mt-4">` + cards.String() + `</div>`
-	s.renderFragment(w, r, body)
-}
-
-func (s *Server) handleCloudConnectionForm(w http.ResponseWriter, r *http.Request) {
-	body := PageHeader("Add cloud connection", "") +
-		FormOpen("/cloud-connections/create", "POST", "") +
-		Card(Field("Name", Input("name", "", map[string]string{"required": ""}))+
-			Field("Provider", Select("provider", []SelectOption{{Value: "AWS", Label: "AWS", Selected: true}}, nil))+
-			Alert("warning", "AWS provisioning is unavailable until the adapter and credential flow are implemented.")+
-			Button("Save connection", ButtonOpts{Type: "submit", Variant: "primary"})) +
-		`</form>`
-	s.renderPage(w, r, "Add Cloud Connection", body)
 }
 
 func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Request) {
@@ -1164,59 +1009,6 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	redirect(w, r, fallback)
-}
-
-func (s *Server) clusterOverviewHTML(ctx context.Context) string {
-	var clusters geassv1alpha1.GeassClusterList
-	if err := s.Client.List(ctx, &clusters); err != nil {
-		return Alert("error", "Unable to list clusters")
-	}
-	var cards strings.Builder
-	if len(clusters.Items) == 0 {
-		cards.WriteString(Card(`<p class="text-secondary">No GeassCluster resources found.</p>`))
-	} else {
-		for _, cluster := range clusters.Items {
-			addons := conditionStatus(cluster.Status.Conditions, platform.ConditionAddonsReady)
-			ready := conditionStatus(cluster.Status.Conditions, platform.ConditionReady)
-			cards.WriteString(CardTitled(cluster.Name, fmt.Sprintf(`<p class="text-sm">Namespace: %s</p><p class="text-sm"><span>Add-ons:</span> %s</p><p class="text-sm"><span>Ready:</span> %s</p>`, Badge(cluster.Namespace, ""), esc(addons), esc(ready))))
-		}
-	}
-	return fmt.Sprintf(`<div id="cluster-overview" class="grid-3">%s</div>`, cards.String())
-}
-
-// --- Apps ---
-
-func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
-	s.renderFragment(w, r, s.appsTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) appsTableFiltered(ctx context.Context, project, environment string) string {
-	var list geassv1alpha1.GeassAppList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
-		return fmt.Sprintf(`<p class="text-error">%s</p>`, err.Error())
-	}
-	var rows strings.Builder
-	for _, app := range list.Items {
-		if project != "" && app.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(app.Spec.Environment) != environment {
-			continue
-		}
-		ready := conditionStatus(app.Status.Conditions, platform.ConditionReady)
-		fmt.Fprintf(&rows, `<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			workspaceResourceLink("apps", app.Name, app.Spec.Project, string(app.Spec.Environment), "overview"), app.Name, app.Spec.Environment, appImageReference(&app), ready)
-	}
-	hxURL := "/apps"
-	if project != "" || environment != "" {
-		hxURL += "?project=" + project + "&environment=" + environment
-	}
-	return fmt.Sprintf(`
-		<div class="flex justify-between items-center mb-4"><h1 class="page-title">Apps</h1></div>
-		<div id="apps-table" hx-get="%s" hx-trigger="every 15s" hx-select="#apps-table" hx-swap="outerHTML" class="overflow-x-auto">
-			<table class="table table-sm"><thead><tr><th>Name</th><th>Environment</th><th>Image</th><th>Ready</th></tr></thead><tbody>%s</tbody></table>
-		</div>
-	`, hxURL, rows.String())
 }
 
 func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
@@ -2438,50 +2230,6 @@ func (s *Server) handleAppBuildAction(w http.ResponseWriter, r *http.Request, na
 
 // --- Databases ---
 
-func (s *Server) handleDatabases(w http.ResponseWriter, r *http.Request) {
-	s.renderFragment(w, r, s.databasesTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) databasesTableFiltered(ctx context.Context, project, environment string) string {
-	var list geassv1alpha1.GeassDatabaseList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
-		return fmt.Sprintf(`<p class="text-error">%s</p>`, err.Error())
-	}
-	var rows strings.Builder
-	for _, db := range list.Items {
-		if project != "" && db.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(db.Spec.Environment) != environment {
-			continue
-		}
-		ready := conditionStatus(db.Status.Conditions, platform.ConditionReady)
-		fmt.Fprintf(&rows, `<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			workspaceResourceLink("databases", db.Name, db.Spec.Project, string(db.Spec.Environment), "overview"), db.Name, db.Spec.Environment, db.Spec.Engine, ready)
-	}
-	var logicals geassv1alpha1.GeassLogicalDatabaseList
-	if err := s.Client.List(ctx, &logicals, client.InNamespace(systemNamespace)); err != nil {
-		return fmt.Sprintf(`<p class="text-error">%s</p>`, err.Error())
-	}
-	var logicalRows strings.Builder
-	for _, db := range logicals.Items {
-		if project != "" && db.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(db.Spec.Environment) != environment {
-			continue
-		}
-		fmt.Fprintf(&logicalRows, `<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`, db.Name, db.Spec.Project, db.Spec.Environment, conditionStatus(db.Status.Conditions, platform.ConditionReady))
-	}
-	return fmt.Sprintf(`
-		<div class="flex justify-between items-center mb-4"><h1 class="page-title">Databases</h1></div>
-		<div id="databases-table" hx-get="/databases?project=%s&environment=%s" hx-trigger="every 15s" hx-select="#databases-table" hx-swap="outerHTML" class="overflow-x-auto">
-			<table class="table table-sm"><thead><tr><th>Name</th><th>Environment</th><th>Engine</th><th>Ready</th></tr></thead><tbody>%s</tbody></table>
-		</div>
-		<section class="mt-8"><div class="flex justify-between items-center mb-3"><div><h2 class="section-title">Logical databases</h2><p class="text-sm text-secondary">Databases provisioned inside managed PostgreSQL servers.</p></div></div><div class="overflow-x-auto"><table class="table table-sm"><thead><tr><th>Name</th><th>Project</th><th>Environment</th><th>Ready</th></tr></thead><tbody>%s</tbody></table></div></section>
-	`, project, environment, rows.String(), logicalRows.String())
-}
-
 func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/databases"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -2596,25 +2344,6 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleLogicalDatabases(w http.ResponseWriter, r *http.Request) {
-	var list geassv1alpha1.GeassLogicalDatabaseList
-	if err := s.Client.List(r.Context(), &list, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var rows strings.Builder
-	for _, db := range list.Items {
-		if project := r.URL.Query().Get("project"); project != "" && db.Spec.Project != project {
-			continue
-		}
-		if environment := r.URL.Query().Get("environment"); environment != "" && string(db.Spec.Environment) != environment {
-			continue
-		}
-		fmt.Fprintf(&rows, `<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`, workspaceResourceLink("logical-databases", db.Name, db.Spec.Project, string(db.Spec.Environment), "overview"), db.Name, db.Spec.Project, db.Spec.DatabaseName, conditionStatus(db.Status.Conditions, platform.ConditionReady))
-	}
-	s.renderFragment(w, r, fmt.Sprintf(`<div class="flex justify-between items-center mb-4"><div><p class="overline">DATA</p><h1 class="page-title">Logical databases</h1></div></div><div class="overflow-x-auto"><table class="table table-sm"><thead><tr><th>Name</th><th>Project</th><th>Database</th><th>Ready</th></tr></thead><tbody>%s</tbody></table></div>`, rows.String()))
-}
-
 func (s *Server) handleLogicalDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/logical-databases"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -2701,35 +2430,6 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 }
 
 // --- Caches ---
-
-func (s *Server) handleCaches(w http.ResponseWriter, r *http.Request) {
-	s.renderFragment(w, r, s.cachesTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) cachesTableFiltered(ctx context.Context, project, environment string) string {
-	var list geassv1alpha1.GeassCacheList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
-		return fmt.Sprintf(`<p class="text-error">%s</p>`, err.Error())
-	}
-	var rows strings.Builder
-	for _, c := range list.Items {
-		if project != "" && c.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(c.Spec.Environment) != environment {
-			continue
-		}
-		ready := conditionStatus(c.Status.Conditions, platform.ConditionReady)
-		fmt.Fprintf(&rows, `<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			workspaceResourceLink("caches", c.Name, c.Spec.Project, string(c.Spec.Environment), "overview"), c.Name, c.Spec.Environment, c.Spec.Engine, ready)
-	}
-	return fmt.Sprintf(`
-		<div class="flex justify-between items-center mb-4"><h1 class="page-title">Caches</h1></div>
-		<div id="caches-table" hx-get="/caches" hx-trigger="every 15s" hx-select="#caches-table" hx-swap="outerHTML" class="overflow-x-auto">
-			<table class="table table-sm"><thead><tr><th>Name</th><th>Environment</th><th>Engine</th><th>Ready</th></tr></thead><tbody>%s</tbody></table>
-		</div>
-	`, rows.String())
-}
 
 func (s *Server) handleCacheCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/caches"
@@ -2826,35 +2526,6 @@ func (s *Server) handleCacheUpdate(w http.ResponseWriter, r *http.Request, name 
 }
 
 // --- Object stores ---
-
-func (s *Server) handleObjectStores(w http.ResponseWriter, r *http.Request) {
-	s.renderFragment(w, r, s.objectStoresTableFiltered(r.Context(), r.URL.Query().Get("project"), r.URL.Query().Get("environment")))
-}
-
-func (s *Server) objectStoresTableFiltered(ctx context.Context, project, environment string) string {
-	var list geassv1alpha1.GeassObjectStoreList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
-		return fmt.Sprintf(`<p class="text-error">%s</p>`, err.Error())
-	}
-	var rows strings.Builder
-	for _, store := range list.Items {
-		if project != "" && store.Spec.Project != project {
-			continue
-		}
-		if environment != "" && string(store.Spec.Environment) != environment {
-			continue
-		}
-		ready := conditionStatus(store.Status.Conditions, platform.ConditionReady)
-		fmt.Fprintf(&rows, `<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			workspaceResourceLink("object-stores", store.Name, store.Spec.Project, string(store.Spec.Environment), "overview"), store.Name, store.Spec.Environment, store.Spec.Engine, ready)
-	}
-	return fmt.Sprintf(`
-		<div class="flex justify-between items-center mb-4"><h1 class="page-title">Object Storage</h1></div>
-		<div id="object-stores-table" hx-get="/object-stores?project=%s&environment=%s" hx-trigger="every 15s" hx-select="#object-stores-table" hx-swap="outerHTML" class="overflow-x-auto">
-			<table class="table table-sm"><thead><tr><th>Name</th><th>Environment</th><th>Engine</th><th>Ready</th></tr></thead><tbody>%s</tbody></table>
-		</div>
-	`, project, environment, rows.String())
-}
 
 func isClusterMinIO(store *geassv1alpha1.GeassObjectStore) bool {
 	if store == nil || strings.TrimSpace(store.Spec.Project) != "" {

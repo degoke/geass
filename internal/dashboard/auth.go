@@ -102,13 +102,20 @@ func dashboardWriteCallback(path string) bool {
 }
 
 func dashboardSensitiveRead(path string) bool {
-	if strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/logs") {
+	switch {
+	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/logs"):
 		return true
-	}
-	if strings.HasPrefix(path, "/api/projects/") && strings.HasSuffix(path, "/github/repos") {
+	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/runtime"):
 		return true
+	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/variables"):
+		return true
+	case strings.HasPrefix(path, "/api/projects/") && strings.HasSuffix(path, "/github/repos"):
+		return true
+	case path == "/api/settings/github":
+		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func dashboardPublicPath(r *http.Request) bool {
@@ -509,15 +516,10 @@ func parseDashboardUsersEnv(value string) []dashboardUser {
 	var users []dashboardUser
 	for _, part := range strings.Split(value, ",") {
 		fields := strings.SplitN(strings.TrimSpace(part), ":", 3)
-		if len(fields) < 2 || fields[0] == "" || fields[1] == "" {
+		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
 			continue
 		}
-		role := ""
-		defaultAdmin := len(fields) == 2
-		if len(fields) == 3 {
-			role = fields[2]
-		}
-		normalized, ok := parseDashboardRole(role, defaultAdmin)
+		normalized, ok := parseDashboardRole(fields[2], false)
 		if !ok {
 			continue
 		}
@@ -761,27 +763,37 @@ func (s *Server) loadLoginLockout(r *http.Request, username string) loginAttempt
 }
 
 func (s *Server) persistLoginLockout(r *http.Request, username string, attempt loginAttempt) error {
-	secret := &corev1.Secret{}
-	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
-	if err != nil {
-		return err
+	var lastErr error
+	for i := 0; i < 8; i++ {
+		secret := &corev1.Secret{}
+		err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		lockouts := parseDashboardLoginLockouts(secret)
+		if attempt.Count == 0 && attempt.LockedUntil.IsZero() {
+			delete(lockouts, username)
+		} else {
+			lockouts[username] = attempt
+		}
+		payload, marshalErr := json.Marshal(lockouts)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		latest := secret.DeepCopy()
+		if latest.Data == nil {
+			latest.Data = map[string][]byte{}
+		}
+		latest.Data[dashboardLoginLockoutsSecretKey] = payload
+		lastErr = s.Client.Update(r.Context(), latest)
+		if lastErr == nil || !apierrors.IsConflict(lastErr) {
+			return lastErr
+		}
 	}
-	lockouts := parseDashboardLoginLockouts(secret)
-	if attempt.Count == 0 && attempt.LockedUntil.IsZero() {
-		delete(lockouts, username)
-	} else {
-		lockouts[username] = attempt
-	}
-	payload, marshalErr := json.Marshal(lockouts)
-	if marshalErr != nil {
-		return marshalErr
-	}
-	latest := secret.DeepCopy()
-	if latest.Data == nil {
-		latest.Data = map[string][]byte{}
-	}
-	latest.Data[dashboardLoginLockoutsSecretKey] = payload
-	return s.Client.Update(r.Context(), latest)
+	return lastErr
 }
 
 func parseDashboardLoginLockouts(secret *corev1.Secret) map[string]loginAttempt {

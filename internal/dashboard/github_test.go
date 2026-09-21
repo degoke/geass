@@ -98,11 +98,10 @@ func TestGitHubDeployShowsDashboardURLPrerequisite(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Configure domain")
-	require.Contains(t, body, "/settings/domain")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":false`)
+	require.Contains(t, rec.Body.String(), testProjectName)
 }
 
 func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {
@@ -114,11 +113,10 @@ func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {
 	platformConfig := testPlatformConfig("https://geass.test")
 	srv := &Server{Client: newFakeClient(project, platformConfig)}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Configure GitHub App")
-	require.Contains(t, body, "/settings/github")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
+	require.Contains(t, rec.Body.String(), `"hasGitHubApp":false`)
 }
 
 func TestGitHubDeployShowsConnectPanelWhenPlatformReady(t *testing.T) {
@@ -130,11 +128,10 @@ func TestGitHubDeployShowsConnectPanelWhenPlatformReady(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))}
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	require.Contains(t, body, "Connect GitHub")
-	require.Contains(t, body, "/projects/payments/github/install")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
+	require.Contains(t, rec.Body.String(), `"hasGitHubApp":true`)
 }
 
 func TestGitHubDeployListsRepositoriesWhenConnected(t *testing.T) {
@@ -189,18 +186,11 @@ func TestGitHubDeployListsRepositoriesWhenConnected(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=dev&create=app-git", nil).WithContext(ctx))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/projects/payments/github/repos", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, `class="github-picker-modal"`)
 	require.Contains(t, body, "geass-dev/api")
 	require.Contains(t, body, "geass-dev/web")
-	require.Contains(t, body, "Configure GitHub App")
-	require.Contains(t, body, `placeholder="Search repositories, or paste a URL..."`)
-	require.Contains(t, body, `class="github-repo-form"`)
-	require.NotContains(t, body, "Configure service")
-	require.NotContains(t, body, "Create a draft service")
-	require.NotContains(t, body, `target="_blank"`)
 }
 
 func TestGitHubCallbackCreatesConnectionAndRedirects(t *testing.T) {
@@ -363,15 +353,15 @@ func TestGitHubInstallJSONReturnsURL(t *testing.T) {
 func TestPlatformGitHubSettingsRequiresDashboardURL(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	srv.handlePlatformGitHubSettings(rec, httptest.NewRequest(http.MethodGet, "/settings/github", nil))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/settings/github", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "Configure your dashboard domain")
+	require.Contains(t, rec.Body.String(), `"hasDashboardURL":false`)
 }
 
 func TestPlatformGitHubSettingsShowsCallbackURLs(t *testing.T) {
 	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.test"))}
 	rec := httptest.NewRecorder()
-	srv.handlePlatformGitHubSettings(rec, httptest.NewRequest(http.MethodGet, "/settings/github", nil))
+	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/settings/github", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	require.Contains(t, body, "https://geass.test/github/callback")
