@@ -1140,7 +1140,46 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		redirectFormError(w, r, fallback, "name is required")
 		return
 	}
-	connection := &geassv1alpha1.GeassCloudConnection{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassCloudConnectionSpec{Provider: geassv1alpha1.GeassCloudProvider(r.FormValue("provider"))}}
+	provider := geassv1alpha1.GeassCloudProvider(strings.TrimSpace(r.FormValue("provider")))
+	if provider == "" {
+		provider = geassv1alpha1.CloudProviderAWS
+	}
+	secretData := map[string]string{}
+	switch provider {
+	case geassv1alpha1.CloudProviderAWS:
+		secretData[platform.SecretKeyAccessKeyID] = strings.TrimSpace(r.FormValue("accessKeyId"))
+		secretData[platform.SecretKeySecretAccessKey] = r.FormValue("secretAccessKey")
+		secretData[platform.SecretKeyRegion] = strings.TrimSpace(r.FormValue("region"))
+		if secretData[platform.SecretKeyAccessKeyID] == "" || secretData[platform.SecretKeySecretAccessKey] == "" {
+			redirectFormError(w, r, fallback, "AWS access key and secret key are required")
+			return
+		}
+	case geassv1alpha1.CloudProviderPlanetScale:
+		secretData[platform.SecretKeyToken] = r.FormValue("token")
+		secretData[platform.SecretKeyOrganization] = strings.TrimSpace(r.FormValue("organization"))
+		if secretData[platform.SecretKeyToken] == "" || secretData[platform.SecretKeyOrganization] == "" {
+			redirectFormError(w, r, fallback, "PlanetScale token and organization are required")
+			return
+		}
+	default:
+		redirectFormError(w, r, fallback, "provider must be AWS or PlanetScale")
+		return
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-credentials", Namespace: systemNamespace}, StringData: secretData}
+	if err := s.Client.Create(r.Context(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:     provider,
+			SecretRef:    corev1.LocalObjectReference{Name: secret.Name},
+			Project:      strings.TrimSpace(r.FormValue("project")),
+			Region:       strings.TrimSpace(r.FormValue("region")),
+			Organization: strings.TrimSpace(r.FormValue("organization")),
+		},
+	}
 	if err := s.Client.Create(r.Context(), connection); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			redirectFormError(w, r, fallback, "connection already exists")
@@ -1216,6 +1255,15 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	environment := geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
 	source := r.FormValue("source")
 	fallback = formProjectFallback(r, "/apps")
+	if name == "" {
+		name = generatedResourceName(strings.TrimSpace(r.FormValue("repository")))
+		if name == "" {
+			name = generatedResourceName(image)
+		}
+		if name == "" {
+			name = "service"
+		}
+	}
 	if name == "" || project == "" || (source != "git" && image == "") {
 		redirectFormError(w, r, fallback, "name, project, and a source are required")
 		return
@@ -1802,6 +1850,14 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 		}
 		secretName, envName = cache.Status.ConnectionSecret, "REDIS_URL"
 	}
+	if kind == "object-store" || kind == "object-stores" {
+		var store geassv1alpha1.GeassObjectStore
+		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: resourceName, Namespace: systemNamespace}, &store); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		secretName, envName = store.Status.ConnectionSecret, "S3_ENDPOINT"
+	}
 	if secretName == "" {
 		redirectFormError(w, r, fallback, "resource is not ready")
 		return
@@ -2283,10 +2339,39 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	db := &geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassDatabaseSpec{
-			Project:     strings.TrimSpace(r.FormValue("project")),
-			Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
-			Engine:      geassv1alpha1.DatabaseEnginePostgres,
+			Project:          strings.TrimSpace(r.FormValue("project")),
+			Environment:      geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
+			Engine:           parseDatabaseEngine(r.FormValue("engine")),
+			Placement:        parseDatabasePlacement(r.FormValue("placement")),
+			Provider:         geassv1alpha1.GeassDatabaseProvider(strings.TrimSpace(r.FormValue("provider"))),
+			Mode:             parseDatabaseMode(r.FormValue("mode")),
+			HighAvailability: r.FormValue("highAvailability") == "on" || r.FormValue("highAvailability") == "true",
+			DatabaseName:     strings.TrimSpace(r.FormValue("databaseName")),
+			ExternalHost:     strings.TrimSpace(r.FormValue("host")),
+			Username:         strings.TrimSpace(r.FormValue("username")),
+			Version:          strings.TrimSpace(r.FormValue("version")),
 		},
+	}
+	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
+		db.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+	}
+	if port := strings.TrimSpace(r.FormValue("port")); port != "" {
+		var parsed int
+		if _, err := fmt.Sscanf(port, "%d", &parsed); err == nil {
+			db.Spec.ExternalPort = int32(parsed)
+		}
+	}
+	if password := r.FormValue("password"); password != "" {
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-external", Namespace: systemNamespace}, StringData: map[string]string{platform.ConnectionKeyPassword: password}}
+		if err := s.Client.Create(r.Context(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
+		db.Spec.PasswordSecretRef = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secret.Name}, Key: platform.ConnectionKeyPassword}
+	}
+	if db.Spec.HighAvailability {
+		instances := int32(3)
+		db.Spec.Instances = &instances
 	}
 	if err := s.Client.Create(r.Context(), db); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
@@ -2319,6 +2404,9 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	case routeActionUpdate:
 		s.handleDatabaseUpdate(w, r, name)
+		return
+	case "query":
+		s.handleDatabaseQuery(w, r, name)
 		return
 	default:
 		http.NotFound(w, r)
@@ -2568,9 +2656,19 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Project: strings.TrimSpace(r.FormValue("project")), Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
-			Engine: geassv1alpha1.ObjectStoreEngineMinIO,
+			Project:      strings.TrimSpace(r.FormValue("project")),
+			Environment:  geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
+			Engine:       parseObjectStoreEngine(r.FormValue("engine"), r.FormValue("placement")),
+			Placement:    parseObjectStorePlacement(r.FormValue("placement")),
+			Region:       strings.TrimSpace(r.FormValue("region")),
+			CreateBucket: r.FormValue("createBucket") == "on" || r.FormValue("createBucket") == "true",
 		},
+	}
+	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
+		store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+	}
+	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
+		store.Spec.Buckets = []string{bucket}
 	}
 	if err := s.Client.Create(r.Context(), store); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
@@ -2643,4 +2741,67 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	redirect(w, r, listPath)
+}
+
+func parseDatabaseEngine(value string) geassv1alpha1.GeassDatabaseEngine {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "mysql":
+		return geassv1alpha1.DatabaseEngineMySQL
+	case "sqlite":
+		return geassv1alpha1.DatabaseEngineSQLite
+	case "redis":
+		return geassv1alpha1.DatabaseEngineRedis
+	default:
+		return geassv1alpha1.DatabaseEnginePostgres
+	}
+}
+
+func parseDatabasePlacement(value string) geassv1alpha1.GeassDatabasePlacement {
+	if strings.EqualFold(strings.TrimSpace(value), string(geassv1alpha1.DatabasePlacementExternal)) {
+		return geassv1alpha1.DatabasePlacementExternal
+	}
+	return geassv1alpha1.DatabasePlacementInCluster
+}
+
+func parseDatabaseMode(value string) geassv1alpha1.GeassDatabaseMode {
+	if strings.EqualFold(strings.TrimSpace(value), string(geassv1alpha1.DatabaseModeCreate)) {
+		return geassv1alpha1.DatabaseModeCreate
+	}
+	if strings.EqualFold(strings.TrimSpace(value), string(geassv1alpha1.DatabaseModeConnect)) {
+		return geassv1alpha1.DatabaseModeConnect
+	}
+	return ""
+}
+
+func parseObjectStorePlacement(value string) geassv1alpha1.GeassObjectStorePlacement {
+	if strings.EqualFold(strings.TrimSpace(value), string(geassv1alpha1.ObjectStorePlacementExternal)) {
+		return geassv1alpha1.ObjectStorePlacementExternal
+	}
+	return geassv1alpha1.ObjectStorePlacementInCluster
+}
+
+func parseObjectStoreEngine(engine, placement string) geassv1alpha1.GeassObjectStoreEngine {
+	if strings.EqualFold(engine, string(geassv1alpha1.ObjectStoreEngineS3)) || parseObjectStorePlacement(placement) == geassv1alpha1.ObjectStorePlacementExternal {
+		return geassv1alpha1.ObjectStoreEngineS3
+	}
+	return geassv1alpha1.ObjectStoreEngineMinIO
+}
+
+func generatedResourceName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(value, "/"); idx >= 0 {
+		value = value[idx+1:]
+	}
+	if idx := strings.IndexAny(value, "@:"); idx >= 0 {
+		value = value[:idx]
+	}
+	value = regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if len(value) > 40 {
+		value = value[:40]
+	}
+	return value
 }

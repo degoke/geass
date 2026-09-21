@@ -9,17 +9,48 @@ License at LICENSE or https://www.elastic.co/licensing/elastic-license.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GeassDatabaseEngine identifies the database engine type.
-// +kubebuilder:validation:Enum=Postgres
+// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis
 type GeassDatabaseEngine string
 
 const (
 	DatabaseEnginePostgres GeassDatabaseEngine = "Postgres"
+	DatabaseEngineMySQL    GeassDatabaseEngine = "MySQL"
+	DatabaseEngineSQLite   GeassDatabaseEngine = "SQLite"
+	DatabaseEngineRedis    GeassDatabaseEngine = "Redis"
+)
+
+// GeassDatabasePlacement selects whether the database runs in the cluster.
+// +kubebuilder:validation:Enum=InCluster;External
+type GeassDatabasePlacement string
+
+const (
+	DatabasePlacementInCluster GeassDatabasePlacement = "InCluster"
+	DatabasePlacementExternal  GeassDatabasePlacement = "External"
+)
+
+// GeassDatabaseProvider identifies an external database provider.
+// +kubebuilder:validation:Enum=PlanetScale;AWS
+type GeassDatabaseProvider string
+
+const (
+	DatabaseProviderPlanetScale GeassDatabaseProvider = "PlanetScale"
+	DatabaseProviderAWS         GeassDatabaseProvider = "AWS"
+)
+
+// GeassDatabaseMode selects create versus connect for external databases.
+// +kubebuilder:validation:Enum=Create;Connect
+type GeassDatabaseMode string
+
+const (
+	DatabaseModeCreate  GeassDatabaseMode = "Create"
+	DatabaseModeConnect GeassDatabaseMode = "Connect"
 )
 
 // GeassDatabaseSpec defines the desired state of GeassDatabase.
@@ -35,15 +66,60 @@ type GeassDatabaseSpec struct {
 	Environment GeassEnvironment `json:"environment"`
 
 	// Engine is the database engine to provision.
-	// +kubebuilder:validation:Enum=Postgres
+	// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis
 	Engine GeassDatabaseEngine `json:"engine"`
 
-	// Version is the Postgres major version.
+	// Placement selects in-cluster provisioning or an external provider.
+	// +kubebuilder:validation:Enum=InCluster;External
+	// +kubebuilder:default=InCluster
+	// +optional
+	Placement GeassDatabasePlacement `json:"placement,omitempty"`
+
+	// Provider is required when Placement is External.
+	// +kubebuilder:validation:Enum=PlanetScale;AWS
+	// +optional
+	Provider GeassDatabaseProvider `json:"provider,omitempty"`
+
+	// Mode selects whether Geass should create a remote database or connect to an existing one.
+	// +kubebuilder:validation:Enum=Create;Connect
+	// +optional
+	Mode GeassDatabaseMode `json:"mode,omitempty"`
+
+	// HighAvailability requests a multi-instance topology. It is only valid when the
+	// cluster HA readiness check reports at least three healthy nodes.
+	// +optional
+	HighAvailability bool `json:"highAvailability,omitempty"`
+
+	// ConnectionRef identifies a GeassCloudConnection used for PlanetScale or AWS.
+	// +optional
+	ConnectionRef *corev1.LocalObjectReference `json:"connectionRef,omitempty"`
+
+	// DatabaseName overrides the default database name for external or logical-style servers.
+	// +optional
+	DatabaseName string `json:"databaseName,omitempty"`
+
+	// ExternalHost is the hostname used when connecting to an existing server.
+	// +optional
+	ExternalHost string `json:"externalHost,omitempty"`
+
+	// ExternalPort is the port used when connecting to an existing server.
+	// +optional
+	ExternalPort int32 `json:"externalPort,omitempty"`
+
+	// Username is the login used when connecting to an existing server.
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// PasswordSecretRef points at the Secret that stores the external password.
+	// +optional
+	PasswordSecretRef *corev1.SecretKeySelector `json:"passwordSecretRef,omitempty"`
+
+	// Version is the engine major version for in-cluster servers.
 	// +kubebuilder:default="16"
 	// +optional
 	Version string `json:"version,omitempty"`
 
-	// Instances is the number of Postgres instances in the CNPG cluster.
+	// Instances is the number of in-cluster instances. HighAvailability forces at least 3.
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
 	// +optional

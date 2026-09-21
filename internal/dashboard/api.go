@@ -22,7 +22,21 @@ type dashboardBootstrap struct {
 	Clusters         geassv1alpha1.GeassClusterList         `json:"clusters"`
 	CloudConnections geassv1alpha1.GeassCloudConnectionList `json:"cloudConnections"`
 	PlatformConfig   geassv1alpha1.GeassPlatformConfigList  `json:"platformConfig"`
+	Deployments      geassv1alpha1.GeassDeploymentList      `json:"deployments"`
+	Builds           geassv1alpha1.GeassBuildList           `json:"builds"`
+	HAReadiness      geassv1alpha1.GeassHAReadinessList     `json:"haReadiness"`
+	Platform         dashboardPlatform                      `json:"platform"`
 	Metrics          []dashboardMetric                      `json:"metrics"`
+}
+
+type dashboardPlatform struct {
+	HasDashboardURL      bool   `json:"hasDashboardURL"`
+	HasGitHubApp         bool   `json:"hasGitHubApp"`
+	DashboardURL         string `json:"dashboardURL"`
+	HAReady              bool   `json:"haReady"`
+	HealthyNodes         int32  `json:"healthyNodes"`
+	AWSAvailable         bool   `json:"awsAvailable"`
+	PlanetScaleAvailable bool   `json:"planetScaleAvailable"`
 }
 
 type dashboardMetric struct {
@@ -32,8 +46,8 @@ type dashboardMetric struct {
 }
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api/bootstrap" && r.Method == http.MethodGet {
-		s.handleBootstrap(w, r)
+	if r.Method == http.MethodGet {
+		s.handleAPIRead(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -138,6 +152,19 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := s.Client.List(ctx, &data.Deployments, client.InNamespace(systemNamespace)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.Client.List(ctx, &data.Builds, client.InNamespace(systemNamespace)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.Platform = s.dashboardPlatform(ctx, data)
 	for _, metric := range overviewMetrics {
 		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
 		state := "measured"

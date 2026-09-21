@@ -92,6 +92,9 @@ func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
 	require.Equal(t, "application/json", bootstrap.Header().Get("Content-Type"))
 	require.Contains(t, bootstrap.Body.String(), `"projects"`)
 	require.Contains(t, bootstrap.Body.String(), testProjectName)
+	require.Contains(t, bootstrap.Body.String(), `"awsAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"planetScaleAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"haReady"`)
 }
 
 func TestRegisterRoutesExposesSPAAndAPIOnly(t *testing.T) {
@@ -913,6 +916,126 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 	delRec := httptest.NewRecorder()
 	srv.handleDatabaseRoutes(delRec, delReq)
 	require.Equal(t, http.StatusSeeOther, delRec.Code)
+}
+
+func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+
+	form := url.Values{
+		"name":             {"orders-mysql"},
+		"project":          {testProjectName},
+		"environment":      {"dev"},
+		"engine":           {"MySQL"},
+		"placement":        {"InCluster"},
+		"highAvailability": {"on"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var db geassv1alpha1.GeassDatabase
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "orders-mysql", Namespace: platform.SystemNamespace}, &db))
+	require.Equal(t, geassv1alpha1.DatabaseEngineMySQL, db.Spec.Engine)
+	require.True(t, db.Spec.HighAvailability)
+	require.NotNil(t, db.Spec.Instances)
+	require.Equal(t, int32(3), *db.Spec.Instances)
+
+	external := url.Values{
+		"name":          {"orders-ps"},
+		"project":       {testProjectName},
+		"environment":   {"production"},
+		"engine":        {"MySQL"},
+		"placement":     {"External"},
+		"provider":      {"PlanetScale"},
+		"mode":          {"Create"},
+		"databaseName":  {"app"},
+		"connectionRef": {"ps-prod"},
+	}
+	extReq := httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(external.Encode())).WithContext(ctx)
+	extReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	extRec := httptest.NewRecorder()
+	srv.handleAPI(extRec, extReq)
+	require.Equal(t, http.StatusOK, extRec.Code)
+
+	var remote geassv1alpha1.GeassDatabase
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "orders-ps", Namespace: platform.SystemNamespace}, &remote))
+	require.Equal(t, geassv1alpha1.DatabasePlacementExternal, remote.Spec.Placement)
+	require.Equal(t, geassv1alpha1.DatabaseProviderPlanetScale, remote.Spec.Provider)
+	require.Equal(t, geassv1alpha1.DatabaseModeCreate, remote.Spec.Mode)
+	require.Equal(t, "ps-prod", remote.Spec.ConnectionRef.Name)
+}
+
+func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+
+	aws := url.Values{
+		"name":            {"prod-aws"},
+		"provider":        {"AWS"},
+		"accessKeyId":     {"AKIATEST"},
+		"secretAccessKey": {"secret"},
+		"region":          {"us-east-1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(aws.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var connection geassv1alpha1.GeassCloudConnection
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "prod-aws", Namespace: platform.SystemNamespace}, &connection))
+	require.Equal(t, geassv1alpha1.CloudProviderAWS, connection.Spec.Provider)
+	require.Equal(t, "us-east-1", connection.Spec.Region)
+
+	ps := url.Values{
+		"name":         {"proj-ps"},
+		"provider":     {"PlanetScale"},
+		"organization": {"acme"},
+		"token":        {"pscale_token"},
+		"project":      {testProjectName},
+	}
+	psReq := httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(ps.Encode())).WithContext(ctx)
+	psReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	psRec := httptest.NewRecorder()
+	srv.handleAPI(psRec, psReq)
+	require.Equal(t, http.StatusOK, psRec.Code)
+
+	var planet geassv1alpha1.GeassCloudConnection
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "proj-ps", Namespace: platform.SystemNamespace}, &planet))
+	require.Equal(t, geassv1alpha1.CloudProviderPlanetScale, planet.Spec.Provider)
+	require.Equal(t, testProjectName, planet.Spec.Project)
+	require.Equal(t, "acme", planet.Spec.Organization)
+}
+
+func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"name":          {"assets"},
+		"project":       {testProjectName},
+		"environment":   {"production"},
+		"engine":        {"S3"},
+		"placement":     {"External"},
+		"bucket":        {"geass-assets"},
+		"createBucket":  {"on"},
+		"connectionRef": {"prod-aws"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var store geassv1alpha1.GeassObjectStore
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "assets", Namespace: platform.SystemNamespace}, &store))
+	require.Equal(t, geassv1alpha1.ObjectStoreEngineS3, store.Spec.Engine)
+	require.Equal(t, geassv1alpha1.ObjectStorePlacementExternal, store.Spec.Placement)
+	require.Equal(t, []string{"geass-assets"}, store.Spec.Buckets)
+	require.True(t, store.Spec.CreateBucket)
+	require.Equal(t, "prod-aws", store.Spec.ConnectionRef.Name)
 }
 
 func TestHandleAppConfigAndSecrets(t *testing.T) {

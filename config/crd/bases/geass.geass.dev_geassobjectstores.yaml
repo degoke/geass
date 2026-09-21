@@ -54,19 +54,50 @@ spec:
                 items:
                   type: string
                 type: array
+              connectionRef:
+                description: ConnectionRef identifies a GeassCloudConnection used
+                  for AWS S3.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              createBucket:
+                description: CreateBucket requests that Geass create the named buckets
+                  when possible.
+                type: boolean
               engine:
                 description: Engine is the object store engine to provision.
                 enum:
                 - MinIO
+                - S3
                 type: string
               environment:
                 description: Environment is the project environment.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              placement:
+                default: InCluster
+                description: Placement selects in-cluster MinIO or an external S3
+                  provider.
+                enum:
+                - InCluster
+                - External
+                type: string
               project:
                 description: Project is the owning project.
                 minLength: 1
+                type: string
+              region:
+                description: Region is the AWS region for external buckets.
                 type: string
             required:
             - engine

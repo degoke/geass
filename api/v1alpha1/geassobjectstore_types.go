@@ -9,16 +9,27 @@ License at LICENSE or https://www.elastic.co/licensing/elastic-license.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GeassObjectStoreEngine identifies the object store engine type.
-// +kubebuilder:validation:Enum=MinIO
+// +kubebuilder:validation:Enum=MinIO;S3
 type GeassObjectStoreEngine string
 
 const (
 	ObjectStoreEngineMinIO GeassObjectStoreEngine = "MinIO"
+	ObjectStoreEngineS3    GeassObjectStoreEngine = "S3"
+)
+
+// GeassObjectStorePlacement selects in-cluster or external object storage.
+// +kubebuilder:validation:Enum=InCluster;External
+type GeassObjectStorePlacement string
+
+const (
+	ObjectStorePlacementInCluster GeassObjectStorePlacement = "InCluster"
+	ObjectStorePlacementExternal  GeassObjectStorePlacement = "External"
 )
 
 // GeassObjectStoreSpec defines the desired state of GeassObjectStore.
@@ -34,8 +45,26 @@ type GeassObjectStoreSpec struct {
 	Environment GeassEnvironment `json:"environment"`
 
 	// Engine is the object store engine to provision.
-	// +kubebuilder:validation:Enum=MinIO
+	// +kubebuilder:validation:Enum=MinIO;S3
 	Engine GeassObjectStoreEngine `json:"engine"`
+
+	// Placement selects in-cluster MinIO or an external S3 provider.
+	// +kubebuilder:validation:Enum=InCluster;External
+	// +kubebuilder:default=InCluster
+	// +optional
+	Placement GeassObjectStorePlacement `json:"placement,omitempty"`
+
+	// ConnectionRef identifies a GeassCloudConnection used for AWS S3.
+	// +optional
+	ConnectionRef *corev1.LocalObjectReference `json:"connectionRef,omitempty"`
+
+	// Region is the AWS region for external buckets.
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// CreateBucket requests that Geass create the named buckets when possible.
+	// +optional
+	CreateBucket bool `json:"createBucket,omitempty"`
 
 	// Buckets is an optional list of buckets to create on provision.
 	// +optional

@@ -22,6 +22,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/cloud"
 	"github.com/degoke/geass/pkg/helmchart"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/platform"
@@ -39,7 +40,7 @@ type GeassObjectStoreReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores/finalizers,verbs=update
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch
 
 func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -52,10 +53,6 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return r.setNotReady(ctx, &store, err.Error())
 	}
 
-	if store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
-		return r.setNotReady(ctx, &store, fmt.Sprintf("unsupported engine %q", store.Spec.Engine))
-	}
-
 	wsNS, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment))
 	if err != nil {
 		return r.setNotReady(ctx, &store, err.Error())
@@ -66,13 +63,20 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, r.Update(ctx, &store)
 	}
 
-	chartName := objectStoreChartName(store.Name)
 	if !store.DeletionTimestamp.IsZero() {
-		r.deleteTargetResources(ctx, chartName, &store, wsNS)
+		r.deleteTargetResources(ctx, objectStoreChartName(store.Name), &store, wsNS)
 		controllerutil.RemoveFinalizer(&store, objectStoreFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &store)
 	}
 
+	if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
+		return r.reconcileExternal(ctx, &store, wsNS)
+	}
+	if store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
+		return r.setNotReady(ctx, &store, fmt.Sprintf("unsupported engine %q", store.Spec.Engine))
+	}
+
+	chartName := objectStoreChartName(store.Name)
 	if prevNS, moved := previousTargetNamespace(store.Status.TargetNamespace, wsNS); moved {
 		if err := r.cleanupPreviousTarget(ctx, chartName, &store, prevNS); err != nil {
 			return r.setNotReady(ctx, &store, err.Error())
@@ -143,6 +147,61 @@ func objectStoreChartName(name string) string {
 	return "geass-minio-" + name
 }
 
+func objectStorePlacement(store *geassv1alpha1.GeassObjectStore) geassv1alpha1.GeassObjectStorePlacement {
+	if store.Spec.Placement == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
+		return geassv1alpha1.ObjectStorePlacementExternal
+	}
+	return geassv1alpha1.ObjectStorePlacementInCluster
+}
+
+func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS string) (ctrl.Result, error) {
+	if store.Spec.ConnectionRef == nil || store.Spec.ConnectionRef.Name == "" {
+		return r.setNotReady(ctx, store, "an AWS connection is required for external buckets")
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
+		return r.setNotReady(ctx, store, "AWS connection is unavailable")
+	}
+	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS {
+		return r.setNotReady(ctx, store, "external buckets require an AWS connection")
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, secret); err != nil {
+		return r.setNotReady(ctx, store, "AWS credentials are unavailable")
+	}
+	accessKey := secretValue(secret, platform.SecretKeyAccessKeyID)
+	secretKey := secretValue(secret, platform.SecretKeySecretAccessKey)
+	region := firstNonEmpty(store.Spec.Region, connection.Spec.Region, secretValue(secret, platform.SecretKeyRegion), "us-east-1")
+	if accessKey == "" || secretKey == "" {
+		return r.setNotReady(ctx, store, "AWS access key and secret key are required")
+	}
+	buckets := store.Spec.Buckets
+	if len(buckets) == 0 {
+		buckets = []string{store.Name}
+	}
+	if store.Spec.CreateBucket {
+		client := &cloud.AWSClient{AccessKey: accessKey, SecretKey: secretKey, Region: region}
+		for _, bucket := range buckets {
+			if err := client.EnsureBucket(bucket); err != nil {
+				return r.setNotReady(ctx, store, err.Error())
+			}
+		}
+	}
+	endpoint := fmt.Sprintf("https://s3.%s.amazonaws.com", region)
+	if err := r.reconcileConnectionSecret(ctx, store, wsNS, endpoint, accessKey, secretKey); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	latest := store.DeepCopy()
+	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
+		return ctrl.Result{}, err
+	}
+	latest.Status.TargetNamespace = wsNS
+	latest.Status.ConnectionSecret = store.Name + "-connection"
+	latest.Status.Endpoint = endpoint
+	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ObjectStoreReady", "AWS S3 bucket is ready")
+	return ctrl.Result{}, r.Status().Update(ctx, latest)
+}
+
 func (r *GeassObjectStoreReconciler) cleanupPreviousTarget(ctx context.Context, chartName string, store *geassv1alpha1.GeassObjectStore, previousNS string) error {
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: previousNS}}))
 	return helmchart.Delete(ctx, r.Client, chartName)
@@ -160,10 +219,16 @@ func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Conte
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
 		secret.StringData = map[string]string{
-			"endpoint":  endpoint,
-			"accessKey": accessKey,
-			"secretKey": secretKey,
-			"bucket":    store.Name,
+			"endpoint":                      endpoint,
+			"accessKey":                     accessKey,
+			"secretKey":                     secretKey,
+			platform.ConnectionKeyEndpoint:  endpoint,
+			platform.ConnectionKeyAccessKey: accessKey,
+			platform.ConnectionKeySecretKey: secretKey,
+			"bucket":                        store.Name,
+		}
+		if len(store.Spec.Buckets) > 0 {
+			secret.StringData["bucket"] = store.Spec.Buckets[0]
 		}
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})

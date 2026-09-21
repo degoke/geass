@@ -25,7 +25,13 @@ const (
 	RedisChartVersion = "20.7.1"
 	RedisReleaseChart = "redis"
 
+	MySQLChartRepo    = "https://charts.bitnami.com/bitnami"
+	MySQLChartVersion = "12.3.3"
+	MySQLReleaseChart = "mysql"
+
 	MinIOChartRepo    = "https://charts.min.io/"
 	MinIOChartVersion = "5.4.0"
 	MinIOReleaseChart = "minio"
+
+	SQLiteImage = "rqlite/rqlite:8.36.16"
 )
