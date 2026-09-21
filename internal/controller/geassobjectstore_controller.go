@@ -89,6 +89,9 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 				return ctrl.Result{}, err
 			}
 		} else {
+			if err := r.deleteInClusterBuckets(ctx, &store); err != nil {
+				return ctrl.Result{}, err
+			}
 			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}}))
 			_ = r.ensureClusterMinIOHelm(ctx)
 		}
@@ -224,7 +227,7 @@ existingSecret: "%s"
 	}
 	b.WriteString("users:\n")
 	for _, user := range users {
-		fmt.Fprintf(&b, "  - accessKey: \"%s\"\n    existingSecret: \"%s\"\n    existingSecretKey: secretKey\n    policy: \"%s\"\n", user.accessKey, user.existingSecret, user.policy)
+		fmt.Fprintf(&b, "  - accessKey: '{{ index (lookup \"v1\" \"Secret\" \"%s\" \"%s\").data \"%s\" | b64dec }}'\n    existingSecret: \"%s\"\n    existingSecretKey: secretKey\n    policy: \"%s\"\n", platform.SystemNamespace, user.existingSecret, platform.ConnectionKeyAccessKey, user.existingSecret, user.policy)
 	}
 	b.WriteString("policies:\n")
 	for _, policy := range policies {
@@ -253,7 +256,6 @@ existingSecret: "%s"
 }
 
 type minioBucketUser struct {
-	accessKey      string
 	existingSecret string
 	policy         string
 }
@@ -294,7 +296,7 @@ func (r *GeassObjectStoreReconciler) minioBucketIdentities(ctx context.Context) 
 			return nil, nil, err
 		}
 		policyName := minioPolicyName(store.Name)
-		users = append(users, minioBucketUser{accessKey: store.Name, existingSecret: minioUserSecretName(store.Name), policy: policyName})
+		users = append(users, minioBucketUser{existingSecret: minioUserSecretName(store.Name), policy: policyName})
 		policies = append(policies, minioBucketPolicy{name: policyName, buckets: buckets})
 	}
 	return users, policies, nil
@@ -495,16 +497,16 @@ func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, st
 		return client.IgnoreNotFound(err)
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS || connection.Spec.SecretRef.Name == "" {
-		return nil
+		return fmt.Errorf("AWS connection is unavailable")
 	}
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, secret); err != nil {
-		return client.IgnoreNotFound(err)
+		return fmt.Errorf("AWS credentials are unavailable: %w", err)
 	}
 	accessKey := secretValue(secret, platform.SecretKeyAccessKeyID)
 	secretKey := secretValue(secret, platform.SecretKeySecretAccessKey)
 	if accessKey == "" || secretKey == "" {
-		return nil
+		return fmt.Errorf("AWS credentials are unavailable")
 	}
 	aws := &cloud.AWSClient{
 		HTTP:      r.HTTP,
@@ -512,16 +514,52 @@ func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, st
 		SecretKey: secretKey,
 		Region:    firstNonEmpty(store.Spec.Region, connection.Spec.Region, secretValue(secret, platform.SecretKeyRegion), "us-east-1"),
 	}
+	return r.deleteExternalAWS(store, aws)
+}
+
+func (r *GeassObjectStoreReconciler) deleteExternalAWS(store *geassv1alpha1.GeassObjectStore, aws *cloud.AWSClient) error {
+	if store.Spec.CreateBucket {
+		buckets, err := objectStoreBuckets(store)
+		if err != nil {
+			buckets = []string{store.Name}
+		}
+		for _, bucket := range buckets {
+			if err := aws.DeleteBucket(bucket); err != nil {
+				return err
+			}
+		}
+	}
+	return aws.DeleteBucketUser(store.Name)
+}
+
+func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
+	server, err := r.clusterMinIO(ctx)
+	if err != nil {
+		return err
+	}
+	if server.Status.Endpoint == "" {
+		return fmt.Errorf("cluster MinIO endpoint is unavailable")
+	}
+	rootSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
+		return fmt.Errorf("cluster MinIO credentials are unavailable: %w", err)
+	}
+	accessKey := firstNonEmpty(secretValue(rootSecret, "rootUser"), secretValue(rootSecret, platform.ConnectionKeyAccessKey))
+	secretKey := firstNonEmpty(secretValue(rootSecret, "rootPassword"), secretValue(rootSecret, platform.ConnectionKeySecretKey))
+	if accessKey == "" || secretKey == "" {
+		return fmt.Errorf("cluster MinIO credentials are unavailable")
+	}
 	buckets, err := objectStoreBuckets(store)
 	if err != nil {
 		buckets = []string{store.Name}
 	}
+	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
 	for _, bucket := range buckets {
-		if err := aws.DeleteBucket(bucket); err != nil {
+		if err := s3.DeleteBucket(bucket); err != nil {
 			return err
 		}
 	}
-	return aws.DeleteBucketUser(store.Name)
+	return nil
 }
 
 func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {

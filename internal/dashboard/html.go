@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -559,20 +560,81 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 }
 
 // sameOriginMutation prevents cross-site form posts from mutating cluster state.
-// Origin or Referer is required and must match this dashboard host.
+// Origin or Referer is required and must match this dashboard host, including the
+// public host from X-Forwarded-Host or Forwarded when the process sees an internal Host.
 func sameOriginMutation(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		origin = strings.TrimSpace(r.Header.Get("Referer"))
 	}
-	if origin == "" || r.Host == "" {
+	if origin == "" {
 		return false
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" {
 		return false
 	}
-	return strings.EqualFold(parsed.Host, r.Host)
+	allowed := requestHosts(r)
+	if len(allowed) == 0 {
+		return false
+	}
+	got := normalizeRequestHost(parsed.Host)
+	for _, host := range allowed {
+		if strings.EqualFold(got, host) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestHosts(r *http.Request) []string {
+	var hosts []string
+	add := func(value string) {
+		for _, part := range strings.Split(value, ",") {
+			host := normalizeRequestHost(part)
+			if host == "" {
+				continue
+			}
+			exists := false
+			for _, existing := range hosts {
+				if strings.EqualFold(existing, host) {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				hosts = append(hosts, host)
+			}
+		}
+	}
+	add(r.Host)
+	add(r.Header.Get("X-Forwarded-Host"))
+	if forwarded := strings.TrimSpace(r.Header.Get("Forwarded")); forwarded != "" {
+		for _, element := range strings.Split(forwarded, ",") {
+			for _, field := range strings.Split(element, ";") {
+				key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
+				if !ok || !strings.EqualFold(key, "host") {
+					continue
+				}
+				add(strings.Trim(value, `"'`))
+			}
+		}
+	}
+	return hosts
+}
+
+func normalizeRequestHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" {
+		return ""
+	}
+	if h, port, err := net.SplitHostPort(host); err == nil {
+		if port == "80" || port == "443" {
+			return h
+		}
+		return net.JoinHostPort(h, port)
+	}
+	return host
 }
 
 func requirePost(w http.ResponseWriter, r *http.Request) bool {

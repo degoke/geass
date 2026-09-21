@@ -168,8 +168,58 @@ func TestDeleteBucketRemovesObjectsThenBucket(t *testing.T) {
 
 	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
 	require.NoError(t, client.DeleteBucket("uploads"))
-	require.Equal(t, []string{http.MethodGet, http.MethodDelete, http.MethodDelete}, methods)
-	require.Equal(t, "/uploads/logo.png", paths[1])
+	require.Contains(t, methods, http.MethodGet)
+	require.Contains(t, paths, "/uploads/logo.png")
+	require.Equal(t, http.MethodDelete, methods[len(methods)-1])
+}
+
+func TestDeleteBucketRemovesVersionedObjects(t *testing.T) {
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			_, _ = w.Write([]byte(`<ListVersionsResult><Version><Key>logo.png</Key><VersionId>v1</VersionId></Version><DeleteMarker><Key>logo.png</Key><VersionId>v0</VersionId></DeleteMarker><IsTruncated>false</IsTruncated></ListVersionsResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
+			_, _ = w.Write([]byte(`<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`))
+		case r.Method == http.MethodDelete && r.URL.Query().Get("versionId") != "":
+			deleted = append(deleted, r.URL.Query().Get("versionId"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeleteBucket("uploads"))
+	require.ElementsMatch(t, []string{"v1", "v0"}, deleted)
+}
+
+func TestDeleteBucketFollowsContinuationToken(t *testing.T) {
+	var tokens []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			tokens = append(tokens, r.URL.Query().Get("continuation-token"))
+			if r.URL.Query().Get("continuation-token") == "" {
+				_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>a</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page-2</NextContinuationToken></ListBucketResult>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>b</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
+			return
+		}
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`<ListVersionsResult><IsTruncated>false</IsTruncated></ListVersionsResult>`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeleteBucket("uploads"))
+	require.Equal(t, []string{"", "page-2"}, tokens)
 }
 
 func TestDeleteBucketTreatsMissingBucketAsSuccess(t *testing.T) {

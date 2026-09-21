@@ -1673,9 +1673,9 @@ func (s *Server) handleAppConsoleCreate(w http.ResponseWriter, r *http.Request, 
 		redirectFormError(w, r, fallback, "container is not part of the app pod")
 		return
 	}
-	actor := strings.TrimSpace(r.Header.Get("X-Geass-Actor"))
-	if actor == "" {
-		actor = "dashboard"
+	actor := "dashboard"
+	if session := s.currentSession(r); session != nil && session.Username != "" {
+		actor = session.Username
 	}
 	session := &geassv1alpha1.GeassConsoleSession{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-console-%d", name, time.Now().UnixNano()), Namespace: systemNamespace, Labels: map[string]string{platform.LabelApp: name, platform.LabelProject: app.Spec.Project, platform.LabelEnvironment: string(app.Spec.Environment)}}, Spec: geassv1alpha1.GeassConsoleSessionSpec{App: name, Project: app.Spec.Project, Environment: app.Spec.Environment, Pod: target[0], Container: target[1], Actor: actor, Command: command, TimeoutSeconds: 300}}
 	if err := s.Client.Create(r.Context(), session); err != nil {
@@ -1686,6 +1686,9 @@ func (s *Server) handleAppConsoleCreate(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) handleAppConsoleStream(w http.ResponseWriter, r *http.Request, name string) {
+	if !requireMutation(w, r, "/apps/"+name) {
+		return
+	}
 	if s.Kube == nil || s.Config == nil {
 		http.Error(w, "Kubernetes exec is not configured", http.StatusServiceUnavailable)
 		return

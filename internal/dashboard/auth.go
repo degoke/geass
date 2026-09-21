@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,9 +23,26 @@ import (
 
 const dashboardSessionTTL = 12 * time.Hour
 
+const (
+	dashboardRoleAdmin  = "admin"
+	dashboardRoleViewer = "viewer"
+)
+
+type dashboardUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
 type dashboardAuth struct {
-	password   string
+	users      []dashboardUser
 	sessionKey []byte
+}
+
+type dashboardSessionInfo struct {
+	Username  string `json:"username"`
+	Role      string `json:"role"`
+	CanMutate bool   `json:"canMutate"`
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
@@ -33,15 +51,20 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.sessionValid(r) {
-			next.ServeHTTP(w, r)
+		session := s.currentSession(r)
+		if session == nil {
+			if isJSONRequest(r) || strings.HasPrefix(r.URL.Path, "/api/") {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
+			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
-		if isJSONRequest(r) || strings.HasPrefix(r.URL.Path, "/api/") {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !session.CanMutate {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "viewer role cannot change cluster state"})
 			return
 		}
-		http.Error(w, "authentication required", http.StatusUnauthorized)
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -70,18 +93,19 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		redirectFormError(w, r, "/", "dashboard authentication is unavailable")
 		return
 	}
-	if !passwordEqual(r.FormValue("password"), auth.password) {
-		redirectFormError(w, r, "/", "invalid password")
+	user := auth.lookup(r.FormValue("username"))
+	if user == nil || !passwordEqual(r.FormValue("password"), user.Password) {
+		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
-	token, err := issueDashboardSession(auth.sessionKey)
+	token, err := issueDashboardSession(auth.sessionKey, user.Username, normalizeDashboardRole(user.Role))
 	if err != nil {
 		redirectFormError(w, r, "/", "could not create a session")
 		return
 	}
 	http.SetCookie(w, dashboardSessionCookie(r, token, int(dashboardSessionTTL.Seconds())))
 	if isJSONRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "authenticated": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "authenticated": true, "username": user.Username, "role": normalizeDashboardRole(user.Role), "canMutate": normalizeDashboardRole(user.Role) == dashboardRoleAdmin})
 		return
 	}
 	redirect(w, r, "/")
@@ -100,73 +124,188 @@ func (s *Server) handleDashboardLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDashboardSession(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": s.sessionValid(r)})
+	session := s.currentSession(r)
+	if session == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": session.Username, "role": session.Role, "canMutate": session.CanMutate})
 }
 
 func (s *Server) sessionValid(r *http.Request) bool {
+	return s.currentSession(r) != nil
+}
+
+func (s *Server) currentSession(r *http.Request) *dashboardSessionInfo {
 	cookie, err := r.Cookie(platform.DashboardSessionCookie)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return false
+		return nil
 	}
 	auth, err := s.dashboardAuth(r)
 	if err != nil {
-		return false
+		return nil
 	}
-	return dashboardSessionValid(auth.sessionKey, cookie.Value)
+	username, role, ok := dashboardSessionClaims(auth.sessionKey, cookie.Value)
+	if !ok {
+		return nil
+	}
+	user := auth.lookup(username)
+	if user == nil {
+		return nil
+	}
+	liveRole := normalizeDashboardRole(user.Role)
+	if liveRole != role && role != "" {
+		liveRole = normalizeDashboardRole(user.Role)
+	}
+	return &dashboardSessionInfo{Username: user.Username, Role: liveRole, CanMutate: liveRole == dashboardRoleAdmin}
 }
 
 func (s *Server) dashboardAuth(r *http.Request) (*dashboardAuth, error) {
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
-	if s.auth != nil && s.auth.password != "" && len(s.auth.sessionKey) > 0 {
-		return s.auth, nil
+
+	users, sessionKey, err := s.loadDashboardAuth(r)
+	if err != nil {
+		return nil, err
 	}
-	password := strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_PASSWORD"))
+	auth := &dashboardAuth{users: users, sessionKey: sessionKey}
+	s.auth = auth
+	return auth, nil
+}
+
+func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, error) {
 	sessionKey := []byte(strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_SESSION_KEY")))
+	users := parseDashboardUsersEnv(os.Getenv("GEASS_DASHBOARD_USERS"))
+	if len(users) == 0 {
+		if password := strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_PASSWORD")); password != "" {
+			username := strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_USERNAME"))
+			if username == "" {
+				username = dashboardRoleAdmin
+			}
+			users = []dashboardUser{{Username: username, Password: password, Role: dashboardRoleAdmin}}
+		}
+	}
 	secret := &corev1.Secret{}
 	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	if err == nil {
-		if password == "" {
-			password = string(secret.Data["password"])
+		if len(users) == 0 {
+			users = parseDashboardUsersSecret(secret)
 		}
 		if len(sessionKey) == 0 {
 			sessionKey = secret.Data["session-key"]
 		}
 	} else if !apierrors.IsNotFound(err) {
-		return nil, err
+		return nil, nil, err
 	}
-	if password == "" || len(sessionKey) == 0 {
-		if password == "" {
+	if len(users) == 0 || len(sessionKey) == 0 {
+		if len(users) == 0 {
 			generated, genErr := randomDashboardSecret(24)
 			if genErr != nil {
-				return nil, genErr
+				return nil, nil, genErr
 			}
-			password = generated
+			users = []dashboardUser{{Username: dashboardRoleAdmin, Password: generated, Role: dashboardRoleAdmin}}
 		}
 		if len(sessionKey) == 0 {
 			generated, genErr := randomDashboardBytes(32)
 			if genErr != nil {
-				return nil, genErr
+				return nil, nil, genErr
 			}
 			sessionKey = generated
+		}
+		payload, marshalErr := json.Marshal(users)
+		if marshalErr != nil {
+			return nil, nil, marshalErr
 		}
 		created := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace},
 			Type:       corev1.SecretTypeOpaque,
 			StringData: map[string]string{
-				"password":    password,
+				"users":       string(payload),
 				"session-key": hex.EncodeToString(sessionKey),
 			},
 		}
-		if err := s.Client.Create(r.Context(), created); err != nil && !apierrors.IsAlreadyExists(err) {
-			return nil, err
+		if createErr := s.Client.Create(r.Context(), created); createErr != nil {
+			if !apierrors.IsAlreadyExists(createErr) {
+				return nil, nil, createErr
+			}
+			existing := &corev1.Secret{}
+			if getErr := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, existing); getErr != nil {
+				return nil, nil, getErr
+			}
+			if len(parseDashboardUsersSecret(existing)) > 0 {
+				users = parseDashboardUsersSecret(existing)
+			}
+			if len(existing.Data["session-key"]) > 0 {
+				sessionKey = existing.Data["session-key"]
+			}
 		}
 	}
 	if decoded, err := hex.DecodeString(string(sessionKey)); err == nil && len(decoded) >= 16 {
 		sessionKey = decoded
 	}
-	s.auth = &dashboardAuth{password: password, sessionKey: sessionKey}
-	return s.auth, nil
+	return users, sessionKey, nil
+}
+
+func (a *dashboardAuth) lookup(username string) *dashboardUser {
+	username = strings.TrimSpace(username)
+	if username == "" || a == nil {
+		return nil
+	}
+	for i := range a.users {
+		if a.users[i].Username == username && a.users[i].Password != "" {
+			return &a.users[i]
+		}
+	}
+	return nil
+}
+
+func parseDashboardUsersSecret(secret *corev1.Secret) []dashboardUser {
+	if secret == nil {
+		return nil
+	}
+	raw := secret.Data["users"]
+	if len(raw) == 0 {
+		return nil
+	}
+	var users []dashboardUser
+	if err := json.Unmarshal(raw, &users); err != nil {
+		return nil
+	}
+	return users
+}
+
+func parseDashboardUsersEnv(value string) []dashboardUser {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") {
+		var users []dashboardUser
+		if err := json.Unmarshal([]byte(value), &users); err != nil {
+			return nil
+		}
+		return users
+	}
+	var users []dashboardUser
+	for _, part := range strings.Split(value, ",") {
+		fields := strings.SplitN(strings.TrimSpace(part), ":", 3)
+		if len(fields) < 2 || fields[0] == "" || fields[1] == "" {
+			continue
+		}
+		role := dashboardRoleAdmin
+		if len(fields) == 3 {
+			role = fields[2]
+		}
+		users = append(users, dashboardUser{Username: fields[0], Password: fields[1], Role: normalizeDashboardRole(role)})
+	}
+	return users
+}
+
+func normalizeDashboardRole(role string) string {
+	if strings.EqualFold(strings.TrimSpace(role), dashboardRoleViewer) {
+		return dashboardRoleViewer
+	}
+	return dashboardRoleAdmin
 }
 
 func dashboardSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
@@ -182,39 +321,47 @@ func dashboardSessionCookie(r *http.Request, value string, maxAge int) *http.Coo
 	}
 }
 
-func issueDashboardSession(sessionKey []byte) (string, error) {
+func issueDashboardSession(sessionKey []byte, username, role string) (string, error) {
 	nonce, err := randomDashboardBytes(16)
 	if err != nil {
 		return "", err
 	}
 	expiry := strconv.FormatInt(time.Now().Add(dashboardSessionTTL).Unix(), 10)
-	payload := expiry + ":" + hex.EncodeToString(nonce)
+	payload := expiry + ":" + hex.EncodeToString(nonce) + ":" + username + ":" + role
 	mac := hmacSHA256Bytes(sessionKey, payload)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + hex.EncodeToString(mac), nil
 }
 
-func dashboardSessionValid(sessionKey []byte, token string) bool {
+func dashboardSessionClaims(sessionKey []byte, token string) (username, role string, ok bool) {
 	encoded, macHex, ok := strings.Cut(token, ".")
 	if !ok {
-		return false
+		return "", "", false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return false
+		return "", "", false
 	}
 	expected := hmacSHA256Bytes(sessionKey, string(payload))
 	if !hmac.Equal([]byte(hex.EncodeToString(expected)), []byte(macHex)) {
-		return false
+		return "", "", false
 	}
-	expiryText, _, ok := strings.Cut(string(payload), ":")
-	if !ok {
-		return false
+	parts := strings.Split(string(payload), ":")
+	if len(parts) != 4 {
+		return "", "", false
 	}
-	expiry, err := strconv.ParseInt(expiryText, 10, 64)
-	if err != nil {
-		return false
+	expiry, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || time.Now().Unix() >= expiry {
+		return "", "", false
 	}
-	return time.Now().Unix() < expiry
+	if parts[2] == "" {
+		return "", "", false
+	}
+	return parts[2], normalizeDashboardRole(parts[3]), true
+}
+
+func dashboardSessionValid(sessionKey []byte, token string) bool {
+	_, _, ok := dashboardSessionClaims(sessionKey, token)
+	return ok
 }
 
 func passwordEqual(got, want string) bool {

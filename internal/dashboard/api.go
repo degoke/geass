@@ -30,15 +30,16 @@ type dashboardBootstrap struct {
 }
 
 type dashboardPlatform struct {
-	HasDashboardURL      bool            `json:"hasDashboardURL"`
-	HasGitHubApp         bool            `json:"hasGitHubApp"`
-	DashboardURL         string          `json:"dashboardURL"`
-	HAReady              bool            `json:"haReady"`
-	HealthyNodes         int32           `json:"healthyNodes"`
-	AWSAvailable         bool            `json:"awsAvailable"`
-	PlanetScaleAvailable bool            `json:"planetScaleAvailable"`
-	MinIOAvailable       bool            `json:"minioAvailable"`
-	Capacity             clusterCapacity `json:"capacity"`
+	HasDashboardURL      bool                 `json:"hasDashboardURL"`
+	HasGitHubApp         bool                 `json:"hasGitHubApp"`
+	DashboardURL         string               `json:"dashboardURL"`
+	HAReady              bool                 `json:"haReady"`
+	HealthyNodes         int32                `json:"healthyNodes"`
+	AWSAvailable         bool                 `json:"awsAvailable"`
+	PlanetScaleAvailable bool                 `json:"planetScaleAvailable"`
+	MinIOAvailable       bool                 `json:"minioAvailable"`
+	Capacity             clusterCapacity      `json:"capacity"`
+	Session              dashboardSessionInfo `json:"session"`
 }
 
 type dashboardMetric struct {
@@ -171,6 +172,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.Platform = s.dashboardPlatform(ctx, data)
+	data.Platform.Session = s.dashboardSession(r)
 	for _, metric := range overviewMetrics {
 		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
 		state := "measured"

@@ -80,7 +80,7 @@ function resourceStatus(item) {
   if (isDraftService(item)) return "Draft";
   return condition(item);
 }
-function PendingChangesBanner({ item, name, reload }) {
+function PendingChangesBanner({ item, name, reload, data }) {
   const copy = pendingChangeCopy(item);
   if (!copy) return null;
   return (
@@ -89,7 +89,7 @@ function PendingChangesBanner({ item, name, reload }) {
         <strong>{copy.title}</strong>
         <p>{copy.detail}</p>
       </div>
-      <Button onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Deploy requested"); }).catch((error) => alert(error.message))}>{copy.action}</Button>
+      {canMutate(data) && <Button onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Deploy requested"); }).catch((error) => alert(error.message))}>{copy.action}</Button>}
     </div>
   );
 }
@@ -128,8 +128,16 @@ function useBootstrap() {
     refetchInterval: (query) => (query.state.error?.status === 401 ? false : 8000),
   });
 }
+function dashboardSession(data) {
+  return data?.platform?.session || { username: "", role: "viewer", canMutate: false };
+}
+function canMutate(data) {
+  return Boolean(dashboardSession(data).canMutate);
+}
 
 function Sidebar({ project, path }) {
+  const { data } = useBootstrap();
+  const session = dashboardSession(data);
   const [open, setOpen] = useState(false);
   const [dark, setDark] = useState(localStorage.getItem("geass.theme") !== "light");
   useEffect(() => { document.documentElement.dataset.theme = dark ? "dark" : "light"; localStorage.setItem("geass.theme", dark ? "dark" : "light"); }, [dark]);
@@ -150,6 +158,7 @@ function Sidebar({ project, path }) {
         <div className="sidebar-spacer" />
         <nav>{settings.map(item)}</nav>
         <ShadcnSeparator className="ui-separator" />
+        {session.username && <div className="muted" style={{ padding: "0 12px 8px", fontSize: 12 }}>{session.username} · {session.role}</div>}
         <Button variant="ghost" className="theme-button" onClick={() => setDark(!dark)}>{dark ? <Sun size={17} /> : <Moon size={17} />}<span>{dark ? "Light mode" : "Dark mode"}</span></Button>
         <Button variant="ghost" className="theme-button" onClick={() => action("/logout").then(() => window.location.reload()).catch((error) => alert(error.message))}><Lock size={17} /><span>Sign out</span></Button>
       </aside>
@@ -209,7 +218,7 @@ function Projects({ data }) {
   });
   return (
     <>
-      <PageHeader title="Projects" actions={<Button onClick={() => create.mutate()} disabled={create.isPending}><Plus size={16} /> New project</Button>} />
+      <PageHeader title="Projects" actions={canMutate(data) ? <Button onClick={() => create.mutate()} disabled={create.isPending}><Plus size={16} /> New project</Button> : null} />
       <div className="projects-toolbar"><div className="search-wrap"><Search size={16} /><Input placeholder="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} /></div></div>
       {projects.length ? (
         <div className="project-card-grid">
@@ -236,7 +245,7 @@ function Projects({ data }) {
             );
           })}
         </div>
-      ) : <Empty icon={FolderKanban} title="Create your first project" description="Projects keep environments, services, databases, and buckets isolated." action={<Button onClick={() => create.mutate()} disabled={create.isPending}><Plus size={15} /> Create project</Button>} />}
+      ) : <Empty icon={FolderKanban} title="Create your first project" description="Projects keep environments, services, databases, and buckets isolated." action={canMutate(data) ? <Button onClick={() => create.mutate()} disabled={create.isPending}><Plus size={15} /> Create project</Button> : null} />}
     </>
   );
 }
@@ -262,7 +271,7 @@ function Workspace({ project, data, environment }) {
         eyebrow="Project"
         title={project.spec?.displayName || name}
         description={`${environment} environment. Add a service, database, or bucket, then monitor and change it from its page.`}
-        actions={<><AppLink href={`/projects/${name}/settings`}><Button variant="outline"><Settings size={16} /> Project settings</Button></AppLink><Button onClick={openResourceDialog}><Plus size={16} /> Add resource</Button></>}
+        actions={<><AppLink href={`/projects/${name}/settings`}><Button variant="outline"><Settings size={16} /> Project settings</Button></AppLink>{canMutate(data) && <Button onClick={openResourceDialog}><Plus size={16} /> Add resource</Button>}</>}
       />
       {total ? (
         <div className="stack-lg">
@@ -283,7 +292,7 @@ function Workspace({ project, data, environment }) {
           </section>
         </div>
       ) : (
-        <Empty icon={Box} title="Add the first resource" description="Create a service from GitHub or a Docker image, then add a database or bucket." action={<Button onClick={openResourceDialog}>Add the first resource</Button>} />
+        <Empty icon={Box} title="Add the first resource" description="Create a service from GitHub or a Docker image, then add a database or bucket." action={canMutate(data) ? <Button onClick={openResourceDialog}>Add the first resource</Button> : null} />
       )}
       <ResourceDialog project={name} environment={environment} data={data} />
     </>
@@ -567,6 +576,9 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
   const [version, setVersion] = useState(item.spec?.version || "");
   const [confirmDelete, setConfirmDelete] = useState("");
   const inCluster = kind === "apps" || (kind === "databases" && item.spec?.placement !== "External");
+  if (!canMutate(data)) {
+    return <Card><p className="muted">Your viewer role can inspect this resource but cannot change it.</p></Card>;
+  }
   const save = (event) => {
     event.preventDefault();
     const values = { project: item.spec?.project, environment: item.spec?.environment };
@@ -645,10 +657,10 @@ function ResourceDetail({ project, data, kind, name, reload }) {
         description={`${item.spec?.engine || sourceImage || item.spec?.source?.git?.repository || "Managed resource"} in ${item.spec?.environment}.`}
         actions={<>
           <Status value={resourceStatus(item)} />
-          {isApp && !pendingChangeCopy(item) && item.spec?.deploy?.enabled && <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Redeploy requested"); }).catch((error) => alert(error.message))}>Redeploy</Button>}
+          {isApp && !pendingChangeCopy(item) && item.spec?.deploy?.enabled && canMutate(data) && <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Redeploy requested"); }).catch((error) => alert(error.message))}>Redeploy</Button>}
         </>}
       />
-      {isApp && <PendingChangesBanner item={item} name={name} reload={reload} />}
+      {isApp && <PendingChangesBanner item={item} name={name} reload={reload} data={data} />}
       <div className="tabs">{tabs.map((tab) => <AppLink key={tab} className={view === tab ? "tab-active" : ""} href={href(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</AppLink>)}</div>
       {view === "overview" && (
         <div className="detail-grid">
@@ -674,6 +686,8 @@ function ResourceDetail({ project, data, kind, name, reload }) {
       {view === "deployments" && <Card>{deployments.length ? <Table headers={["Change", "Source", "Image", "Phase"]}>{deployments.map((entry) => <tr key={resourceName(entry)}><td>{entry.spec?.changeTitle}</td><td>{entry.spec?.source}</td><td>{entry.spec?.image}</td><td>{entry.status?.phase}</td></tr>)}</Table> : <p className="muted">No deployments recorded yet.</p>}</Card>}
       {view === "variables" && (
         <div className="stack-lg">
+          {canMutate(data) ? (
+            <>
           <Card>
             <form className="panel-form" onSubmit={saveVariable}>
               <Field label="Name"><Input required value={variable.key} onChange={(event) => setVariable({ ...variable, key: event.target.value })} placeholder="DATABASE_URL" /></Field>
@@ -689,11 +703,13 @@ function ResourceDetail({ project, data, kind, name, reload }) {
               {shared.length > 0 && <Button type="submit">Reference selected variables</Button>}
             </form>
           </Card>
+            </>
+          ) : <Card><p className="muted">Your viewer role cannot change variables.</p></Card>}
         </div>
       )}
       {view === "console" && (
         <Card>
-          {isApp ? (
+          {!canMutate(data) ? <p className="muted">Your viewer role cannot open consoles or run queries.</p> : isApp ? (
             <form className="panel-form" onSubmit={(event) => { event.preventDefault(); const target = event.target.target.value; const command = event.target.command.value || "sh"; action(`/apps/${name}/console/create`, { target, command }).then(() => alert("Console session created")).catch((error) => alert(error.message)); }}>
               <Field label="Pod"><Select name="target">{(runtime.data?.pods || []).map((pod) => <option key={pod.name} value={`${pod.name}|${pod.container}`}>{pod.name}</option>)}</Select></Field>
               <Field label="Command"><Input name="command" defaultValue="sh" /></Field>
@@ -726,7 +742,7 @@ function ProjectSettings({ project, data, reload }) {
         <Card>
           <form className="panel-form" onSubmit={(event) => { event.preventDefault(); action(`/projects/${name}/settings/save`, { displayName, environments: project.spec?.environments || [] }).then(() => { reload(); alert("Project settings saved"); }).catch((error) => alert(error.message)); }}>
             <Field label="Project name"><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></Field>
-            <Button type="submit">Save project settings</Button>
+            <Button type="submit" disabled={!canMutate(data)}>Save project settings</Button>
           </form>
         </Card>
         <Card>
@@ -734,7 +750,7 @@ function ProjectSettings({ project, data, reload }) {
           {(project.spec?.environments || []).map((env) => <div className="panel-list-row" key={env}><strong>{env}</strong></div>)}
           <form className="panel-form" onSubmit={(event) => { event.preventDefault(); action(`/projects/${name}/environments/create`, { environment }).then(() => { reload(); setEnvironment(""); alert("Environment created"); }).catch((error) => alert(error.message)); }}>
             <Field label="New environment"><Input value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder="staging" /></Field>
-            <Button type="submit">Add environment</Button>
+            <Button type="submit" disabled={!canMutate(data)}>Add environment</Button>
           </form>
         </Card>
         <Card>
@@ -745,13 +761,13 @@ function ProjectSettings({ project, data, reload }) {
             <Field label="Name"><Input required value={variable.name} onChange={(event) => setVariable({ ...variable, name: event.target.value })} placeholder="DATABASE_URL" /></Field>
             <Field label="Value"><Input required type={variable.secret ? "password" : "text"} value={variable.value} onChange={(event) => setVariable({ ...variable, value: event.target.value })} /></Field>
             <label className="check-row"><input type="checkbox" checked={variable.secret} onChange={(event) => setVariable({ ...variable, secret: event.target.checked })} /> Secret</label>
-            <Button type="submit">Add variable</Button>
+            <Button type="submit" disabled={!canMutate(data)}>Add variable</Button>
           </form>
         </Card>
         <Card>
           <div className="card-heading"><div><div className="eyebrow">GitHub</div><h2>Repository access</h2></div></div>
           <p className="muted">{project.spec?.githubConnectionRef?.name ? `Connected as ${project.spec.githubConnectionRef.name}` : "Install the platform GitHub App on this project to deploy from repositories."}</p>
-          <form method="POST" action={`/api/projects/${name}/github/install`}><Button type="submit">Connect GitHub</Button></form>
+          <form method="POST" action={`/api/projects/${name}/github/install`}><Button type="submit" disabled={!canMutate(data)}>Connect GitHub</Button></form>
         </Card>
       </div>
     </>
@@ -818,6 +834,7 @@ function PlatformSettings({ data, page, reload }) {
 }
 
 function DomainSettings({ config, reload }) {
+  const { data } = useBootstrap();
   const [domain, setDomain] = useState(config?.spec?.rootDomain || "");
   const [exposure, setExposure] = useState(config?.spec?.dashboardExposure || "ingress");
   return (
@@ -827,7 +844,7 @@ function DomainSettings({ config, reload }) {
         <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/settings/domain/save", { domain, exposure, tunnelCNAMETarget: config?.spec?.tunnelCNAMETarget || "" }).then(() => { reload(); alert("Domain settings saved"); }); }}>
           <Field label="Your domain"><Input required value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" /></Field>
           <Field label="Exposure"><Select value={exposure} onChange={(event) => setExposure(event.target.value)}><option value="ingress">Server (A record)</option><option value="cloudflare-tunnel">Local + Cloudflare Tunnel</option></Select></Field>
-          <div className="form-actions"><Button type="submit">Save domain</Button></div>
+          <div className="form-actions"><Button type="submit" disabled={!canMutate(data)}>Save domain</Button></div>
         </form>
       </Card>
     </>
@@ -835,6 +852,7 @@ function DomainSettings({ config, reload }) {
 }
 
 function GitHubManualForm({ reload }) {
+  const { data } = useBootstrap();
   const [values, setValues] = useState({ appID: "", clientID: "", slug: "", clientSecret: "", webhookSecret: "", privateKey: "" });
   return (
     <Card>
@@ -845,7 +863,7 @@ function GitHubManualForm({ reload }) {
         <Field label="Client secret"><Input type="password" value={values.clientSecret} onChange={(event) => setValues({ ...values, clientSecret: event.target.value })} /></Field>
         <Field label="Webhook secret"><Input type="password" value={values.webhookSecret} onChange={(event) => setValues({ ...values, webhookSecret: event.target.value })} /></Field>
         <Field label="Private key (PEM)"><ShadcnTextarea rows={6} value={values.privateKey} onChange={(event) => setValues({ ...values, privateKey: event.target.value })} /></Field>
-        <Button type="submit">Save GitHub App</Button>
+        <Button type="submit" disabled={!canMutate(data)}>Save GitHub App</Button>
       </form>
     </Card>
   );
@@ -913,7 +931,7 @@ function HAReadiness({ data }) {
           <div className="detail-row"><span>Healthy nodes</span><strong>{report?.status?.healthyNodes ?? data?.platform?.healthyNodes ?? 0}</strong></div>
           <div className="detail-row"><span>Ready</span><strong>{data?.platform?.haReady ? "Yes" : "No"}</strong></div>
         </div>
-        <Button onClick={() => action("/ha-readiness/check").then(() => queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }))}><RefreshCw size={15} /> Run readiness check</Button>
+        <Button disabled={!canMutate(data)} onClick={() => action("/ha-readiness/check").then(() => queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }))}><RefreshCw size={15} /> Run readiness check</Button>
       </Card>
     </>
   );
@@ -943,7 +961,7 @@ function ObjectStorageSettings({ data, reload }) {
             <p className="muted">In-cluster buckets stay disabled until this server exists. Choose how much CPU and memory to assign to MinIO.</p>
             <SizeFields cpu={cpu} memory={memory} onChange={(key, value) => { if (key === "cpu") setCpu(value); else setMemory(value); }} data={data} />
             {!fits && capacity.known && <p className="form-help text-danger">The cluster does not have enough capacity. <AppLink href="/cluster">Scale up from cluster capacity</AppLink> before creating MinIO.</p>}
-            <Button disabled={!fits && capacity.known} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
+            <Button disabled={!canMutate(data) || (!fits && capacity.known)} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alert("MinIO server created"); }).catch((error) => alert(error.message))}>Set up MinIO server</Button>
           </>
         )}
       </Card>
@@ -979,7 +997,7 @@ function CloudConnections({ data, reload }) {
             <Field label="Organization"><Input required value={form.organization} onChange={(event) => setForm({ ...form, organization: event.target.value })} /></Field>
             <Field label="Service token"><Input required type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} /></Field>
           </>}
-          <Button type="submit">Save connection</Button>
+          <Button type="submit" disabled={!canMutate(data)}>Save connection</Button>
         </form>
       </Card>
     </>
@@ -987,20 +1005,22 @@ function CloudConnections({ data, reload }) {
 }
 
 function LoginScreen({ onSuccess }) {
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const submit = (event) => {
     event.preventDefault();
     setPending(true);
-    action("/login", { password }).then(() => onSuccess()).catch((error) => alert(error.message)).finally(() => setPending(false));
+    action("/login", { username, password }).then(() => onSuccess()).catch((error) => alert(error.message)).finally(() => setPending(false));
   };
   return (
     <div className="error-screen">
       <div className="brand-mark" aria-hidden="true">G</div>
       <h1>Sign in to Geass</h1>
-      <p>Enter the dashboard password to continue.</p>
+      <p>Enter your username and password. Admins can change the cluster; viewers can only inspect it.</p>
       <form className="form-grid" style={{ width: "min(320px, 100%)" }} onSubmit={submit}>
-        <Field label="Password"><Input type="password" required autoFocus value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+        <Field label="Username"><Input required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></Field>
+        <Field label="Password"><Input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></Field>
         <Button type="submit" disabled={pending}>{pending ? "Signing in…" : "Continue"}</Button>
       </form>
     </div>

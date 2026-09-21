@@ -59,8 +59,10 @@ spec:
                 maxItems: 32
                 type: array
                 x-kubernetes-validations:
-                - message: bucket names must not be formatted as an IP address
-                  rule: self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$'))
+                - message: bucket names must not be formatted as an IP address or
+                    contain consecutive periods
+                  rule: self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+                    && !b.contains('..'))
               connectionRef:
                 description: ConnectionRef identifies a GeassCloudConnection used
                   for AWS S3.

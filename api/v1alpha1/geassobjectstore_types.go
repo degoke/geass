@@ -71,7 +71,7 @@ type GeassObjectStoreSpec struct {
 	// +kubebuilder:validation:items:MinLength=3
 	// +kubebuilder:validation:items:MaxLength=63
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
-	// +kubebuilder:validation:XValidation:rule="self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$'))",message="bucket names must not be formatted as an IP address"
+	// +kubebuilder:validation:XValidation:rule="self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))",message="bucket names must not be formatted as an IP address or contain consecutive periods"
 	Buckets []string `json:"buckets,omitempty"`
 }
 

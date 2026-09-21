@@ -27,6 +27,13 @@ func TestEstimateFromResourcesMultipliesCopies(t *testing.T) {
 	require.False(t, est.Approximate)
 }
 
+func TestDefaultAutoscalingMaxDoesNotDoubleAssignedCopies(t *testing.T) {
+	require.Equal(t, int32(3), DefaultAutoscalingMax(1))
+	require.Equal(t, int32(3), DefaultAutoscalingMax(2))
+	require.Equal(t, int32(3), DefaultAutoscalingMax(3))
+	require.Equal(t, int32(5), DefaultAutoscalingMax(5))
+}
+
 func TestResourcesFromSizeRejectsUnknownAmounts(t *testing.T) {
 	_, err := ResourcesFromSize("3", "128Mi")
 	require.Error(t, err)

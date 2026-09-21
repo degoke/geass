@@ -79,6 +79,13 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 	return info
 }
 
+func (s *Server) dashboardSession(r *http.Request) dashboardSessionInfo {
+	if session := s.currentSession(r); session != nil {
+		return *session
+	}
+	return dashboardSessionInfo{Role: dashboardRoleViewer}
+}
+
 func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request) {
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {

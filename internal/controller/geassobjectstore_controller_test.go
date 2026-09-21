@@ -206,7 +206,8 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("policy: \"geass-assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecret: \"assets-minio-user\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecretKey: secretKey"))
-		Expect(chart.Spec.ValuesContent).To(ContainSubstring("accessKey: \"assets\""))
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("lookup"))
+		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("accessKey: \"assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("secretKey: \""))
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})
@@ -218,6 +219,14 @@ var _ = Describe("GeassObjectStore Controller", func() {
 	})
 
 	It("deletes the cluster HelmChart only when the cluster MinIO server is removed", func() {
+		s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<ListBucketResult></ListBucketResult>`))
+			}
+		}))
+		DeferCleanup(s3.Close)
+
 		server := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: ns},
 			Spec: geassv1alpha1.GeassObjectStoreSpec{
@@ -225,12 +234,19 @@ var _ = Describe("GeassObjectStore Controller", func() {
 			},
 		}
 		Expect(k8sClient.Create(ctx, server)).To(Succeed())
-		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), HTTP: s3.Client()}
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
+		Expect(err).NotTo(HaveOccurred())
+
+		latestServer := &geassv1alpha1.GeassObjectStore{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}, latestServer)).To(Succeed())
+		latestServer.Status.Endpoint = s3.URL
+		Expect(k8sClient.Status().Update(ctx, latestServer)).To(Succeed())
 
 		store := &geassv1alpha1.GeassObjectStore{
 			ObjectMeta: metav1.ObjectMeta{Name: testTempStoreName, Namespace: ns},

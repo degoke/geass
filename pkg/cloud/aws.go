@@ -130,50 +130,64 @@ func (c *AWSClient) DeleteBucket(bucket string) error {
 }
 
 func (c *AWSClient) emptyBucket(bucket string) error {
-	for {
-		keys, truncated, err := c.listBucketKeys(bucket)
+	token := ""
+	for page := 0; page < 1000; page++ {
+		keys, next, err := c.listBucketKeys(bucket, token)
 		if err != nil {
 			return err
 		}
 		for _, key := range keys {
-			if err := c.deleteObject(bucket, key); err != nil && !isS3NoSuchBucket(err) {
+			if err := c.deleteObject(bucket, key, ""); err != nil && !isS3NoSuchBucket(err) {
 				return err
 			}
 		}
-		if !truncated || len(keys) == 0 {
-			return nil
+		if next == "" {
+			break
 		}
+		token = next
 	}
+	if err := c.emptyBucketVersions(bucket); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	if err := c.abortMultipartUploads(bucket); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	return nil
 }
 
-func (c *AWSClient) listBucketKeys(bucket string) ([]string, bool, error) {
-	req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?list-type=2", http.NoBody)
+func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, string, error) {
+	query := url.Values{"list-type": {"2"}}
+	if continuation != "" {
+		query.Set("continuation-token", continuation)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?"+query.Encode(), http.NoBody)
 	if err != nil {
-		return nil, false, err
+		return nil, "", err
 	}
 	if err := c.sign(req, nil, "s3"); err != nil {
-		return nil, false, err
+		return nil, "", err
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, false, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
-		return nil, false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+		return nil, "", fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
 	}
 	if resp.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+		return nil, "", fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 	}
 	var parsed struct {
 		Contents []struct {
 			Key string `xml:"Key"`
 		} `xml:"Contents"`
-		IsTruncated bool `xml:"IsTruncated"`
+		IsTruncated           bool   `xml:"IsTruncated"`
+		NextContinuationToken string `xml:"NextContinuationToken"`
 	}
 	if err := xml.Unmarshal(payload, &parsed); err != nil {
-		return nil, false, fmt.Errorf("S3 ListObjects: %w", err)
+		return nil, "", fmt.Errorf("S3 ListObjects: %w", err)
 	}
 	keys := make([]string, 0, len(parsed.Contents))
 	for _, item := range parsed.Contents {
@@ -181,11 +195,200 @@ func (c *AWSClient) listBucketKeys(bucket string) ([]string, bool, error) {
 			keys = append(keys, item.Key)
 		}
 	}
-	return keys, parsed.IsTruncated, nil
+	token := ""
+	if parsed.IsTruncated {
+		token = parsed.NextContinuationToken
+	}
+	return keys, token, nil
 }
 
-func (c *AWSClient) deleteObject(bucket, key string) error {
-	req, err := http.NewRequest(http.MethodDelete, c.objectURL(bucket, key), http.NoBody)
+func (c *AWSClient) emptyBucketVersions(bucket string) error {
+	keyMarker, versionMarker := "", ""
+	for page := 0; page < 1000; page++ {
+		versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
+		if err != nil {
+			if isS3NoSuchBucket(err) {
+				return err
+			}
+			return nil
+		}
+		for _, version := range versions {
+			if err := c.deleteObject(bucket, version.key, version.versionID); err != nil && !isS3NoSuchBucket(err) {
+				return err
+			}
+		}
+		if !truncated || len(versions) == 0 {
+			return nil
+		}
+		keyMarker, versionMarker = nextKey, nextVersion
+	}
+	return nil
+}
+
+type objectVersion struct {
+	key       string
+	versionID string
+}
+
+func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) ([]objectVersion, string, string, bool, error) {
+	query := url.Values{"versions": {""}}
+	if keyMarker != "" {
+		query.Set("key-marker", keyMarker)
+	}
+	if versionMarker != "" {
+		query.Set("version-id-marker", versionMarker)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?"+query.Encode(), http.NoBody)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return nil, "", "", false, err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
+		return nil, "", "", false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+	}
+	if resp.StatusCode >= 300 {
+		return nil, "", "", false, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	var parsed struct {
+		Versions []struct {
+			Key       string `xml:"Key"`
+			VersionID string `xml:"VersionId"`
+		} `xml:"Version"`
+		DeleteMarkers []struct {
+			Key       string `xml:"Key"`
+			VersionID string `xml:"VersionId"`
+		} `xml:"DeleteMarker"`
+		IsTruncated         bool   `xml:"IsTruncated"`
+		NextKeyMarker       string `xml:"NextKeyMarker"`
+		NextVersionIdMarker string `xml:"NextVersionIdMarker"`
+	}
+	if err := xml.Unmarshal(payload, &parsed); err != nil {
+		return nil, "", "", false, fmt.Errorf("S3 ListObjectVersions: %w", err)
+	}
+	versions := make([]objectVersion, 0, len(parsed.Versions)+len(parsed.DeleteMarkers))
+	for _, item := range parsed.Versions {
+		if item.Key != "" {
+			versions = append(versions, objectVersion{key: item.Key, versionID: item.VersionID})
+		}
+	}
+	for _, item := range parsed.DeleteMarkers {
+		if item.Key != "" {
+			versions = append(versions, objectVersion{key: item.Key, versionID: item.VersionID})
+		}
+	}
+	return versions, parsed.NextKeyMarker, parsed.NextVersionIdMarker, parsed.IsTruncated, nil
+}
+
+func (c *AWSClient) abortMultipartUploads(bucket string) error {
+	keyMarker, uploadMarker := "", ""
+	for page := 0; page < 1000; page++ {
+		uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
+		if err != nil {
+			if isS3NoSuchBucket(err) {
+				return err
+			}
+			return nil
+		}
+		for _, upload := range uploads {
+			if err := c.abortMultipartUpload(bucket, upload.key, upload.uploadID); err != nil && !isS3NoSuchBucket(err) {
+				return err
+			}
+		}
+		if !truncated || len(uploads) == 0 {
+			return nil
+		}
+		keyMarker, uploadMarker = nextKey, nextUpload
+	}
+	return nil
+}
+
+type multipartUpload struct {
+	key      string
+	uploadID string
+}
+
+func (c *AWSClient) listMultipartUploads(bucket, keyMarker, uploadMarker string) ([]multipartUpload, string, string, bool, error) {
+	query := url.Values{"uploads": {""}}
+	if keyMarker != "" {
+		query.Set("key-marker", keyMarker)
+	}
+	if uploadMarker != "" {
+		query.Set("upload-id-marker", uploadMarker)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?"+query.Encode(), http.NoBody)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return nil, "", "", false, err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, "", "", false, err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
+		return nil, "", "", false, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+	}
+	if resp.StatusCode >= 300 {
+		return nil, "", "", false, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	var parsed struct {
+		Uploads []struct {
+			Key      string `xml:"Key"`
+			UploadID string `xml:"UploadId"`
+		} `xml:"Upload"`
+		IsTruncated        bool   `xml:"IsTruncated"`
+		NextKeyMarker      string `xml:"NextKeyMarker"`
+		NextUploadIdMarker string `xml:"NextUploadIdMarker"`
+	}
+	if err := xml.Unmarshal(payload, &parsed); err != nil {
+		return nil, "", "", false, fmt.Errorf("S3 ListMultipartUploads: %w", err)
+	}
+	uploads := make([]multipartUpload, 0, len(parsed.Uploads))
+	for _, item := range parsed.Uploads {
+		if item.Key != "" && item.UploadID != "" {
+			uploads = append(uploads, multipartUpload{key: item.Key, uploadID: item.UploadID})
+		}
+	}
+	return uploads, parsed.NextKeyMarker, parsed.NextUploadIdMarker, parsed.IsTruncated, nil
+}
+
+func (c *AWSClient) abortMultipartUpload(bucket, key, uploadID string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.objectURL(bucket, key)+"?uploadId="+url.QueryEscape(uploadID), http.NoBody)
+	if err != nil {
+		return err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 300 || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+}
+
+func (c *AWSClient) deleteObject(bucket, key, versionID string) error {
+	target := c.objectURL(bucket, key)
+	if versionID != "" {
+		target += "?versionId=" + url.QueryEscape(versionID)
+	}
+	req, err := http.NewRequest(http.MethodDelete, target, http.NoBody)
 	if err != nil {
 		return err
 	}

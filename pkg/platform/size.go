@@ -112,15 +112,16 @@ func EstimateFromResources(label string, res corev1.ResourceRequirements, replic
 	}
 }
 
-// DefaultAutoscalingMax is the upper copy count when autoscaling is enabled.
+// DefaultAutoscalingMax is the upper copy count when autoscaling is enabled
+// without an explicit maximum. It never doubles the assigned replica count.
 func DefaultAutoscalingMax(replicas int32) int32 {
 	if replicas < 1 {
 		replicas = 1
 	}
-	if replicas >= 3 {
-		return replicas * 2
+	if replicas < 3 {
+		return 3
 	}
-	return 3
+	return replicas
 }
 
 func allowedSize(value string, options []SizeOption) bool {

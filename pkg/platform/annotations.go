@@ -11,7 +11,7 @@ const (
 	// when the current HelmChart values generation was written. Ready requires
 	// a later Job with a different UID.
 	HelmStaleJobUIDAnnotation = "geass.dev/stale-helm-job-uid"
-	// DashboardAuthSecretName holds the dashboard password and session key.
+	// DashboardAuthSecretName holds dashboard users and the session key.
 	DashboardAuthSecretName = "geass-dashboard-auth"
 	// DashboardSessionCookie is the HttpOnly session cookie name.
 	DashboardSessionCookie = "geass_session"

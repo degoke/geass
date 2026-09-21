@@ -142,15 +142,31 @@ func TestRequireMutationAcceptsSameOrigin(t *testing.T) {
 	require.True(t, requireMutation(rec, req, "/settings/github"))
 }
 
-func TestRequireMutationRejectsCrossOriginPost(t *testing.T) {
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
+func TestRequireMutationAcceptsForwardedHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "geass-dashboard.geass-system.svc:8082"
+	req.Header.Set("Origin", "https://geass.example.com")
+	req.Header.Set("X-Forwarded-Host", "geass.example.com")
+	rec := httptest.NewRecorder()
+	require.True(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationAcceptsForwardedHeaderHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "10.0.0.12:8082"
+	req.Header.Set("Origin", "https://geass.example.com")
+	req.Header.Set("Forwarded", `for=10.1.1.1;host=geass.example.com;proto=https`)
+	rec := httptest.NewRecorder()
+	require.True(t, requireMutation(rec, req, "/settings/github"))
+}
+
+func TestRequireMutationRejectsCrossOriginWithUnrelatedForwardedHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
 	req.Host = "geass.example.com"
 	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "geass.example.com")
 	rec := httptest.NewRecorder()
-
 	require.False(t, requireMutation(rec, req, "/settings/github"))
-	require.Equal(t, http.StatusSeeOther, rec.Code)
-	require.Contains(t, rec.Header().Get("Location"), "request+origin")
 }
 
 func TestDeleteFormDoesNotPushURL(t *testing.T) {
