@@ -1409,6 +1409,10 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 	}
 	app.Spec.Deploy.Enabled = true
 	clearAppPendingChanges(app)
+	if err := platform.SetLastDeployedSpec(app); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -1647,6 +1651,10 @@ func (s *Server) handleAppConsoleCreate(w http.ResponseWriter, r *http.Request, 
 	pod, err := s.Kube.CoreV1().Pods(ns).Get(r.Context(), target[0], metav1.GetOptions{})
 	if err != nil || pod.Status.Phase != corev1.PodRunning {
 		redirectFormError(w, r, fallback, "pod is not running")
+		return
+	}
+	if pod.Labels["app.kubernetes.io/name"] != app.Name {
+		redirectFormError(w, r, fallback, "pod is not part of the app")
 		return
 	}
 	allowed := false
@@ -2151,27 +2159,51 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	}
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "settings")
 	deployNow := r.FormValue("deploy") == "on"
-	if strings.TrimSpace(r.FormValue("environment")) == "" {
-		r.Form.Set("environment", string(app.Spec.Environment))
+	if formHasValue(r, "project") || formHasValue(r, "environment") {
+		project := strings.TrimSpace(r.FormValue("project"))
+		if project == "" {
+			project = app.Spec.Project
+		}
+		environment := strings.TrimSpace(r.FormValue("environment"))
+		if environment == "" {
+			environment = string(app.Spec.Environment)
+		}
+		if _, err := platform.ProjectNamespace(project, environment); err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
+		if formHasValue(r, "environment") && environment != "" {
+			app.Spec.Environment = geassv1alpha1.GeassEnvironment(environment)
+		}
+		if formHasValue(r, "project") {
+			app.Spec.Project = strings.TrimSpace(r.FormValue("project"))
+		}
 	}
-	if err := validatePlacementForm(r); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
+	if app.Spec.Source.Git == nil && formHasValue(r, "image") {
+		image := strings.TrimSpace(r.FormValue("image"))
+		if !validImageReference(image) {
+			redirectFormError(w, r, fallback, "image must be a registry-qualified reference without whitespace")
+			return
+		}
+		app.Spec.Source.Image = &geassv1alpha1.GeassAppImageSource{Image: image}
 	}
-	if environment := strings.TrimSpace(r.FormValue("environment")); environment != "" {
-		app.Spec.Environment = geassv1alpha1.GeassEnvironment(environment)
-	}
-	app.Spec.Project = strings.TrimSpace(r.FormValue("project"))
-	if app.Spec.Source.Git == nil {
-		app.Spec.Source.Image = &geassv1alpha1.GeassAppImageSource{Image: strings.TrimSpace(r.FormValue("image"))}
-	}
-	if app.Spec.Source.Git != nil {
-		app.Spec.Source.Git.Repository = strings.TrimSpace(r.FormValue("repository"))
-		app.Spec.Source.Git.Branch = strings.TrimSpace(r.FormValue("branch"))
-		app.Spec.Source.Git.Dockerfile = strings.TrimSpace(r.FormValue("dockerfile"))
-		app.Spec.Source.Git.Context = strings.TrimSpace(r.FormValue("context"))
-		app.Spec.Source.Git.WaitForCI = r.FormValue("waitForCI") == "on"
-		if _, present := r.Form["watchPatterns"]; present {
+	if app.Spec.Source.Git != nil && formHasValue(r, "repository", "branch", "dockerfile", "context", "waitForCI", "watchPatterns") {
+		if formHasValue(r, "repository") {
+			app.Spec.Source.Git.Repository = strings.TrimSpace(r.FormValue("repository"))
+		}
+		if formHasValue(r, "branch") {
+			app.Spec.Source.Git.Branch = strings.TrimSpace(r.FormValue("branch"))
+		}
+		if formHasValue(r, "dockerfile") {
+			app.Spec.Source.Git.Dockerfile = strings.TrimSpace(r.FormValue("dockerfile"))
+		}
+		if formHasValue(r, "context") {
+			app.Spec.Source.Git.Context = strings.TrimSpace(r.FormValue("context"))
+		}
+		if formHasValue(r, "waitForCI") {
+			app.Spec.Source.Git.WaitForCI = r.FormValue("waitForCI") == "on"
+		}
+		if formHasValue(r, "watchPatterns") {
 			watchPatterns := strings.TrimSpace(r.FormValue("watchPatterns"))
 			if watchPatterns == "" {
 				app.Spec.Source.Git.WatchPatterns = nil
@@ -2186,10 +2218,6 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			redirectFormError(w, r, fallback, "repository and branch are required")
 			return
 		}
-	}
-	if app.Spec.Source.Git == nil && (app.Spec.Source.Image == nil || !validImageReference(app.Spec.Source.Image.Image)) {
-		redirectFormError(w, r, fallback, "image must be a registry-qualified reference without whitespace")
-		return
 	}
 	if p := strings.TrimSpace(r.FormValue("port")); p != "" {
 		var parsed int
@@ -2212,27 +2240,53 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 		}
 		app.Spec.Resources = res
 	}
-	if err := applyAutoscalingFromForm(r, &app); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
+	if formHasValue(r, "autoscaling", "maxReplicas", "minReplicas", "targetCPU") {
+		if err := applyAutoscalingFromForm(r, &app); err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
 	}
-	app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
-	app.Spec.Ingress.TLSEnabled = r.FormValue("tls") == "on"
-	app.Spec.Ingress.DNSVerification = r.FormValue("dnsVerification") == "on"
-	app.Spec.Metrics.Enabled = r.FormValue("metrics") == "on"
-	app.Spec.Build.Command = strings.Fields(r.FormValue("command"))
-	app.Spec.Build.Args = strings.Fields(r.FormValue("args"))
-	app.Spec.Build.WorkingDir = strings.TrimSpace(r.FormValue("workingDir"))
-	app.Spec.Build.Cache = r.FormValue("buildCache") == "on"
+	if formHasValue(r, "host") {
+		app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
+	}
+	if formHasValue(r, "tls") {
+		app.Spec.Ingress.TLSEnabled = r.FormValue("tls") == "on"
+	}
+	if formHasValue(r, "dnsVerification") {
+		app.Spec.Ingress.DNSVerification = r.FormValue("dnsVerification") == "on"
+	}
+	if formHasValue(r, "metrics") {
+		app.Spec.Metrics.Enabled = r.FormValue("metrics") == "on"
+	}
+	if formHasValue(r, "command") {
+		app.Spec.Build.Command = strings.Fields(r.FormValue("command"))
+	}
+	if formHasValue(r, "args") {
+		app.Spec.Build.Args = strings.Fields(r.FormValue("args"))
+	}
+	if formHasValue(r, "workingDir") {
+		app.Spec.Build.WorkingDir = strings.TrimSpace(r.FormValue("workingDir"))
+	}
+	if formHasValue(r, "buildCache") {
+		app.Spec.Build.Cache = r.FormValue("buildCache") == "on"
+	}
 	app.Spec.Deploy.RestartPolicy = corev1.RestartPolicyAlways
-	app.Spec.Deploy.ReadinessProbe = httpProbeFromForm("readiness", r, app.Spec.Port)
-	app.Spec.Deploy.LivenessProbe = httpProbeFromForm("liveness", r, app.Spec.Port)
+	if formHasValue(r, "readinessPath", "readinessPort", "readinessPeriod", "readinessTimeout", "readinessFailureThreshold") {
+		app.Spec.Deploy.ReadinessProbe = httpProbeFromForm("readiness", r, app.Spec.Port)
+	}
+	if formHasValue(r, "livenessPath", "livenessPort", "livenessPeriod", "livenessTimeout", "livenessFailureThreshold") {
+		app.Spec.Deploy.LivenessProbe = httpProbeFromForm("liveness", r, app.Spec.Port)
+	}
 	if deployNow {
 		if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(&app)) {
 			return
 		}
 		app.Spec.Deploy.Enabled = true
 		clearAppPendingChanges(&app)
+		if err := platform.SetLastDeployedSpec(&app); err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
 	} else {
 		markAppPendingChange(&app, pendingChangeSettings)
 	}
@@ -2327,6 +2381,15 @@ func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name 
 		app.Spec.Source.Image = &geassv1alpha1.GeassAppImageSource{Image: revision.Spec.Image}
 	}
 	app.Spec.Replicas = revision.Spec.Replicas
+	if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(&app)) {
+		return
+	}
+	app.Spec.Deploy.Enabled = true
+	clearAppPendingChanges(&app)
+	if err := platform.SetLastDeployedSpec(&app); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
 	if err := s.Client.Update(r.Context(), &app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -2521,6 +2584,8 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 		if s.redirectDatabaseWorkspace(w, r, name, "overview") {
 			return
 		}
+		http.NotFound(w, r)
+		return
 	}
 	switch parts[1] {
 	case routeActionEdit:
@@ -2532,6 +2597,9 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	case "query":
 		s.handleDatabaseQuery(w, r, name)
+		return
+	case "delete":
+		s.deleteResource(w, r, name, &geassv1alpha1.GeassDatabase{}, "/databases")
 		return
 	default:
 		http.NotFound(w, r)
@@ -2585,18 +2653,29 @@ func (s *Server) handleLogicalDatabaseCreate(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleLogicalDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
-	name := strings.Trim(strings.TrimPrefix(r.URL.Path, "/logical-databases/"), "/")
-	if name == "" || strings.Contains(name, "/") {
+	path := strings.TrimPrefix(r.URL.Path, "/logical-databases/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
 	}
-	if isDelete(r) {
+	name := parts[0]
+	if len(parts) == 1 {
+		if isDelete(r) {
+			s.deleteResource(w, r, name, &geassv1alpha1.GeassLogicalDatabase{}, "/logical-databases")
+			return
+		}
+		if s.redirectLogicalDatabaseWorkspace(w, r, name, "overview") {
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if parts[1] == "delete" {
 		s.deleteResource(w, r, name, &geassv1alpha1.GeassLogicalDatabase{}, "/logical-databases")
 		return
 	}
-	if s.redirectLogicalDatabaseWorkspace(w, r, name, "overview") {
-		return
-	}
+	http.NotFound(w, r)
 }
 
 func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, name string) {
@@ -2714,6 +2793,8 @@ func (s *Server) handleCacheRoutes(w http.ResponseWriter, r *http.Request) {
 		if s.redirectCacheWorkspace(w, r, name, "overview") {
 			return
 		}
+		http.NotFound(w, r)
+		return
 	}
 	switch parts[1] {
 	case routeActionEdit:
@@ -2722,6 +2803,9 @@ func (s *Server) handleCacheRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	case routeActionUpdate:
 		s.handleCacheUpdate(w, r, name)
+		return
+	case "delete":
+		s.deleteResource(w, r, name, &geassv1alpha1.GeassCache{}, "/caches")
 		return
 	default:
 		http.NotFound(w, r)
@@ -2918,6 +3002,8 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 		if s.redirectObjectStoreWorkspace(w, r, name, "overview") {
 			return
 		}
+		http.NotFound(w, r)
+		return
 	}
 	switch parts[1] {
 	case routeActionEdit:
@@ -2926,6 +3012,9 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 		}
 	case routeActionUpdate:
 		s.handleObjectStoreUpdate(w, r, name)
+		return
+	case "delete":
+		s.deleteResource(w, r, name, &geassv1alpha1.GeassObjectStore{}, "/object-stores")
 		return
 	default:
 		http.NotFound(w, r)

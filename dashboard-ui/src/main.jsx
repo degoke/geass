@@ -342,8 +342,9 @@ function liveEstimate(data, type, kind, form) {
 }
 
 function capacityFits(capacity, estimate) {
-  if (!capacity?.known || !estimate) return true;
+  if (!estimate) return true;
   if (!estimate.cpuMillis && !estimate.memoryBytes) return true;
+  if (!capacity?.known) return false;
   if (estimate.perCpuMillis > capacity.largestNodeCpuMillis || estimate.perMemoryBytes > capacity.largestNodeMemoryBytes) return false;
   return estimate.cpuMillis <= capacity.cpuAvailableMillis && estimate.memoryBytes <= capacity.memoryAvailableBytes;
 }
@@ -576,7 +577,7 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
         )}
         <div className="form-actions">
           <Button type="submit">Save changes</Button>
-          <Button type="button" variant="danger" onClick={() => { if (confirm(`Delete ${title}?`)) action(`/${kind}/${name}/delete`).then(() => navigate({ to: `/projects/${resourceName(project)}` })); }}><Trash2 size={15} /> Delete</Button>
+          <Button type="button" variant="danger" onClick={() => { if (confirm(`Delete ${title}?`)) action(`/${kind}/${name}/delete`, { confirmName: name }).then(() => navigate({ to: `/projects/${resourceName(project)}` })); }}><Trash2 size={15} /> Delete</Button>
         </div>
       </form>
     </Card>

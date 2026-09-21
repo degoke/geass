@@ -5,4 +5,6 @@ const (
 	AppPendingUpdatesAnnotation = "geass.dev/pending-updates"
 	// AppPendingChangesAnnotation lists the kinds of saved app changes waiting to deploy.
 	AppPendingChangesAnnotation = "geass.dev/pending-changes"
+	// AppLastDeployedAnnotation stores the last deployed GeassApp spec as JSON.
+	AppLastDeployedAnnotation = "geass.dev/last-deployed"
 )

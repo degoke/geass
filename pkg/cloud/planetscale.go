@@ -43,6 +43,17 @@ func (c *PlanetScaleClient) baseURL() string {
 	return "https://api.planetscale.com/v1"
 }
 
+func planetScaleAuthorization(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return token
+	}
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return token
+	}
+	return "Bearer " + token
+}
+
 func (c *PlanetScaleClient) do(method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -56,7 +67,7 @@ func (c *PlanetScaleClient) do(method, path string, body any, out any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", c.Token)
+	req.Header.Set("Authorization", planetScaleAuthorization(c.Token))
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

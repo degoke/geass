@@ -196,8 +196,11 @@ func containerRequestedMemory(containers []corev1.Container) int64 {
 }
 
 func (c clusterCapacity) Fits(est platform.WorkloadEstimate) (bool, string) {
-	if !c.Known || (est.CPUMillis == 0 && est.MemoryBytes == 0) {
+	if est.CPUMillis == 0 && est.MemoryBytes == 0 {
 		return true, ""
+	}
+	if !c.Known {
+		return false, platform.UnknownCapacityMessage(est)
 	}
 	if est.PerCPUMillis > c.LargestNodeCPUMillis || est.PerMemBytes > c.LargestNodeMemoryBytes {
 		return false, platform.NodeTooSmallMessage(est)

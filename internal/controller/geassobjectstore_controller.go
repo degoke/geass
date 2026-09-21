@@ -10,11 +10,14 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,6 +46,7 @@ type GeassObjectStoreReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores/finalizers,verbs=update
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -73,6 +77,9 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if !store.DeletionTimestamp.IsZero() {
 		if clusterServer {
 			_ = helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName)
+			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}))
+		} else {
+			_ = r.ensureClusterMinIOHelm(ctx)
 		}
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}))
 		controllerutil.RemoveFinalizer(&store, objectStoreFinalizer)
@@ -102,24 +109,16 @@ func objectStorePlacement(store *geassv1alpha1.GeassObjectStore) geassv1alpha1.G
 	return geassv1alpha1.ObjectStorePlacementInCluster
 }
 
+func minioRootSecretName(storeName string) string {
+	return storeName + "-root"
+}
+
 func (r *GeassObjectStoreReconciler) reconcileClusterMinIO(ctx context.Context, store *geassv1alpha1.GeassObjectStore, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
-	accessKey := store.Name + "-access"
-	secretKey := store.Name + "-secret"
-	values := fmt.Sprintf(`mode: standalone
-commonLabels:
-  %s: %s
-rootUser: "%s"
-rootPassword: "%s"
-`, platform.LabelManagedBy, platform.ManagedByValue, accessKey, secretKey)
-	spec := helmv1.HelmChartSpec{
-		Chart:           platform.MinIOReleaseChart,
-		Repo:            platform.MinIOChartRepo,
-		Version:         platform.MinIOChartVersion,
-		TargetNamespace: platform.SystemNamespace,
-		CreateNamespace: false,
-		ValuesContent:   values,
+	accessKey, secretKey, err := r.ensureMinIORootSecret(ctx, store)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
 	}
-	if err := helmchart.Ensure(ctx, r.Client, platform.ClusterMinIOChartName, spec); err != nil {
+	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
@@ -141,37 +140,227 @@ rootPassword: "%s"
 	return r.setReady(ctx, store, platform.SystemNamespace, endpoint, "Cluster MinIO server is ready")
 }
 
+func (r *GeassObjectStoreReconciler) ensureMinIORootSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore) (string, string, error) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}
+	accessKey, secretKey := "", ""
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		applyGeassLabels(secret, store, "GeassObjectStore")
+		accessKey = firstNonEmpty(secretValue(secret, "rootUser"), secretValue(secret, platform.ConnectionKeyAccessKey))
+		secretKey = firstNonEmpty(secretValue(secret, "rootPassword"), secretValue(secret, platform.ConnectionKeySecretKey))
+		if accessKey == "" || secretKey == "" {
+			generatedAccess, err := randomCredential()
+			if err != nil {
+				return err
+			}
+			generatedSecret, err := randomCredential()
+			if err != nil {
+				return err
+			}
+			accessKey, secretKey = generatedAccess, generatedSecret
+		}
+		secret.StringData = map[string]string{
+			"rootUser":                      accessKey,
+			"rootPassword":                  secretKey,
+			platform.ConnectionKeyAccessKey: accessKey,
+			platform.ConnectionKeySecretKey: secretKey,
+		}
+		return setSameNamespaceOwner(store, secret, r.Scheme)
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return accessKey, secretKey, nil
+}
+
+func (r *GeassObjectStoreReconciler) ensureClusterMinIOHelm(ctx context.Context) error {
+	server, err := r.clusterMinIO(ctx)
+	if err != nil {
+		return err
+	}
+	values, err := r.clusterMinIOValues(ctx, server)
+	if err != nil {
+		return err
+	}
+	spec := helmv1.HelmChartSpec{
+		Chart:           platform.MinIOReleaseChart,
+		Repo:            platform.MinIOChartRepo,
+		Version:         platform.MinIOChartVersion,
+		TargetNamespace: platform.SystemNamespace,
+		CreateNamespace: false,
+		ValuesContent:   values,
+	}
+	return helmchart.Ensure(ctx, r.Client, platform.ClusterMinIOChartName, spec)
+}
+
+func (r *GeassObjectStoreReconciler) clusterMinIOValues(ctx context.Context, server *geassv1alpha1.GeassObjectStore) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, `mode: standalone
+commonLabels:
+  %s: %s
+existingSecret: "%s"
+`, platform.LabelManagedBy, platform.ManagedByValue, minioRootSecretName(server.Name))
+	users, policies, err := r.minioBucketIdentities(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(users) == 0 {
+		b.WriteString("users: []\npolicies: []\n")
+		return b.String(), nil
+	}
+	b.WriteString("users:\n")
+	for _, user := range users {
+		fmt.Fprintf(&b, "  - accessKey: \"%s\"\n    secretKey: \"%s\"\n    policy: \"%s\"\n", user.accessKey, user.secretKey, user.policy)
+	}
+	b.WriteString("policies:\n")
+	for _, policy := range policies {
+		fmt.Fprintf(&b, "  - name: \"%s\"\n    statements:\n", policy.name)
+		for _, bucket := range policy.buckets {
+			fmt.Fprintf(&b, `      - effect: Allow
+        resources:
+          - "arn:aws:s3:::%s"
+        actions:
+          - "s3:GetBucketLocation"
+          - "s3:ListBucket"
+          - "s3:ListBucketMultipartUploads"
+      - effect: Allow
+        resources:
+          - "arn:aws:s3:::%s/*"
+        actions:
+          - "s3:GetObject"
+          - "s3:PutObject"
+          - "s3:DeleteObject"
+          - "s3:AbortMultipartUpload"
+          - "s3:ListMultipartUploadParts"
+`, bucket, bucket)
+		}
+	}
+	return b.String(), nil
+}
+
+type minioBucketUser struct {
+	accessKey string
+	secretKey string
+	policy    string
+}
+
+type minioBucketPolicy struct {
+	name    string
+	buckets []string
+}
+
+func (r *GeassObjectStoreReconciler) minioBucketIdentities(ctx context.Context) ([]minioBucketUser, []minioBucketPolicy, error) {
+	var list geassv1alpha1.GeassObjectStoreList
+	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil, nil, err
+	}
+	var users []minioBucketUser
+	var policies []minioBucketPolicy
+	for i := range list.Items {
+		store := &list.Items[i]
+		if isClusterObjectStore(store) || !store.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if objectStorePlacement(store) == geassv1alpha1.ObjectStorePlacementExternal {
+			continue
+		}
+		if store.Spec.Engine != "" && store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
+			continue
+		}
+		wsNS, err := resourceNamespace(store.Spec.Project, string(store.Spec.Environment))
+		if err != nil {
+			continue
+		}
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{Name: store.Name + "-connection", Namespace: wsNS}, secret); err != nil {
+			continue
+		}
+		accessKey := secretValue(secret, platform.ConnectionKeyAccessKey)
+		secretKey := secretValue(secret, platform.ConnectionKeySecretKey)
+		if accessKey == "" || secretKey == "" {
+			continue
+		}
+		policyName := minioPolicyName(store.Name)
+		users = append(users, minioBucketUser{accessKey: accessKey, secretKey: secretKey, policy: policyName})
+		policies = append(policies, minioBucketPolicy{name: policyName, buckets: objectStoreBuckets(store)})
+	}
+	return users, policies, nil
+}
+
+func minioPolicyName(storeName string) string {
+	return "geass-" + storeName
+}
+
+func objectStoreBuckets(store *geassv1alpha1.GeassObjectStore) []string {
+	if len(store.Spec.Buckets) > 0 {
+		return store.Spec.Buckets
+	}
+	return []string{store.Name}
+}
+
 func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS string) (ctrl.Result, error) {
 	server, err := r.clusterMinIO(ctx)
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
-	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) || server.Status.Endpoint == "" || server.Status.ConnectionSecret == "" {
+	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) || server.Status.Endpoint == "" {
 		return r.setNotReady(ctx, store, "Set up the MinIO server in cluster settings first")
 	}
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: server.Status.ConnectionSecret, Namespace: server.Status.TargetNamespace}, secret); err != nil {
+	rootSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
 		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
 	}
-	accessKey := firstNonEmpty(secretValue(secret, platform.ConnectionKeyAccessKey), server.Name+"-access")
-	secretKey := firstNonEmpty(secretValue(secret, platform.ConnectionKeySecretKey), server.Name+"-secret")
+	accessKey := firstNonEmpty(secretValue(rootSecret, "rootUser"), secretValue(rootSecret, platform.ConnectionKeyAccessKey))
+	secretKey := firstNonEmpty(secretValue(rootSecret, "rootPassword"), secretValue(rootSecret, platform.ConnectionKeySecretKey))
 	if accessKey == "" || secretKey == "" {
 		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
 	}
-	buckets := store.Spec.Buckets
-	if len(buckets) == 0 {
-		buckets = []string{store.Name}
-	}
+	buckets := objectStoreBuckets(store)
 	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
 	for _, bucket := range buckets {
 		if err := s3.EnsureBucket(bucket); err != nil {
 			return r.setNotReady(ctx, store, err.Error())
 		}
 	}
-	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, accessKey, secretKey); err != nil {
+	userAccess, userSecret, err := r.ensureProjectBucketKeys(ctx, store, wsNS, server.Status.Endpoint)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	return r.setReady(ctx, store, wsNS, server.Status.Endpoint, "Bucket is ready on the cluster MinIO server")
+}
+
+func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint string) (string, string, error) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}
+	accessKey, secretKey := "", ""
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		applyGeassLabels(secret, store, "GeassObjectStore")
+		accessKey = secretValue(secret, platform.ConnectionKeyAccessKey)
+		secretKey = secretValue(secret, platform.ConnectionKeySecretKey)
+		if accessKey == "" || secretKey == "" {
+			generatedAccess, err := randomCredential()
+			if err != nil {
+				return err
+			}
+			generatedSecret, err := randomCredential()
+			if err != nil {
+				return err
+			}
+			accessKey, secretKey = generatedAccess, generatedSecret
+		}
+		secret.StringData = map[string]string{
+			platform.ConnectionKeyEndpoint:  endpoint,
+			platform.ConnectionKeyAccessKey: accessKey,
+			platform.ConnectionKeySecretKey: secretKey,
+			platform.ConnectionKeyBucket:    objectStoreBuckets(store)[0],
+		}
+		return setSameNamespaceOwner(store, secret, r.Scheme)
+	})
+	return accessKey, secretKey, err
 }
 
 func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
@@ -216,20 +405,29 @@ func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, stor
 	if accessKey == "" || secretKey == "" {
 		return r.setNotReady(ctx, store, "AWS access key and secret key are required")
 	}
-	buckets := store.Spec.Buckets
-	if len(buckets) == 0 {
-		buckets = []string{store.Name}
-	}
+	buckets := objectStoreBuckets(store)
+	aws := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Region: region}
 	if store.Spec.CreateBucket {
-		client := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Region: region}
 		for _, bucket := range buckets {
-			if err := client.EnsureBucket(bucket); err != nil {
+			if err := aws.EnsureBucket(bucket); err != nil {
 				return r.setNotReady(ctx, store, err.Error())
 			}
 		}
 	}
+	existing := &corev1.Secret{}
+	existingAccess, existingSecret := "", ""
+	if err := r.Get(ctx, client.ObjectKey{Name: store.Name + "-connection", Namespace: wsNS}, existing); err == nil {
+		existingAccess = secretValue(existing, platform.ConnectionKeyAccessKey)
+		existingSecret = secretValue(existing, platform.ConnectionKeySecretKey)
+	} else if !apierrors.IsNotFound(err) {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	userAccess, userSecret, err := aws.EnsureBucketUser(buckets, store.Name, existingAccess, existingSecret)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
 	endpoint := fmt.Sprintf("https://s3.%s.amazonaws.com", region)
-	if err := r.reconcileConnectionSecret(ctx, store, wsNS, endpoint, accessKey, secretKey); err != nil {
+	if err := r.reconcileConnectionSecret(ctx, store, wsNS, endpoint, userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	return r.setReady(ctx, store, wsNS, endpoint, "AWS S3 bucket is ready")
@@ -277,6 +475,14 @@ func (r *GeassObjectStoreReconciler) setNotReady(ctx context.Context, store *gea
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+}
+
+func randomCredential() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

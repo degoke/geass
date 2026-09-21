@@ -80,6 +80,19 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		latest := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}, latest)).To(Succeed())
 		Expect(conditionIsTrue(latest.Status.Conditions, platform.ConditionReady)).To(BeTrue())
+
+		root := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName + "-root", Namespace: ns}, root)).To(Succeed())
+		rootUser := string(root.Data["rootUser"])
+		if rootUser == "" {
+			rootUser = root.StringData["rootUser"]
+		}
+		Expect(rootUser).NotTo(BeEmpty())
+		Expect(rootUser).NotTo(Equal(platform.ClusterMinIOName + "-access"))
+		chart := &helmv1.HelmChart{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("existingSecret:"))
+		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("rootUser:"))
 	})
 
 	It("does not provision a project bucket until cluster MinIO exists", func() {
@@ -157,8 +170,23 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(createdPath).To(Equal("/uploads"))
 		secret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "assets-connection", Namespace: testDevTargetNS}, secret)).To(Succeed())
+		projectAccess := string(secret.Data[platform.ConnectionKeyAccessKey])
+		if projectAccess == "" {
+			projectAccess = secret.StringData[platform.ConnectionKeyAccessKey]
+		}
+		root := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName + "-root", Namespace: ns}, root)).To(Succeed())
+		rootUser := string(root.Data["rootUser"])
+		if rootUser == "" {
+			rootUser = root.StringData["rootUser"]
+		}
+		Expect(projectAccess).NotTo(BeEmpty())
+		Expect(projectAccess).NotTo(Equal(rootUser))
 		chart := &helmv1.HelmChart{}
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, chart)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("policy: \"geass-assets\""))
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		latest := &geassv1alpha1.GeassObjectStore{}

@@ -57,6 +57,19 @@ func newFakeClient(objects ...client.Object) client.Client {
 		Build()
 }
 
+func roomyTestNode() *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("8"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+}
+
 func imageAppSource(image string) geassv1alpha1.GeassAppSource {
 	return geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: image}}
 }
@@ -543,7 +556,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 			Deploy: geassv1alpha1.GeassAppDeploySpec{Enabled: true},
 		},
 	}
-	srv := &Server{Client: newFakeClient(project, app)}
+	srv := &Server{Client: newFakeClient(project, app, roomyTestNode())}
 
 	form := url.Values{"project": {testProjectName}, "image": {"nginx:alpine"}, "port": {"8081"}, "replicas": {"1"}, "maxReplicas": {"1"}}
 	req := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx)
@@ -572,6 +585,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &saved))
 	require.Equal(t, "0", saved.Annotations[platform.AppPendingUpdatesAnnotation])
 	require.Empty(t, saved.Annotations[platform.AppPendingChangesAnnotation])
+	require.NotEmpty(t, saved.Annotations[platform.AppLastDeployedAnnotation])
 }
 
 func TestProjectWorkspaceCreateModalAndDrawerTabs(t *testing.T) {
@@ -999,7 +1013,7 @@ func TestHandleAppDeployEnablesDraftAndRecordsDeployment(t *testing.T) {
 			Source: imageAppSource("ghcr.io/acme/worker:1"), Deploy: geassv1alpha1.GeassAppDeploySpec{Enabled: false},
 		},
 	}
-	c := newFakeClient(app)
+	c := newFakeClient(app, roomyTestNode())
 	srv := &Server{Client: c}
 	req := httptest.NewRequest(http.MethodPost, "/apps/worker/deploy", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -1024,7 +1038,7 @@ func TestHandleAppUpdateDraftDeploysSavedConfiguration(t *testing.T) {
 			Deploy: geassv1alpha1.GeassAppDeploySpec{Enabled: false},
 		},
 	}
-	c := newFakeClient(app)
+	c := newFakeClient(app, roomyTestNode())
 	srv := &Server{Client: c}
 	form := url.Values{
 		"project": {testProjectName}, "environment": {"dev"}, "image": {"ghcr.io/acme/worker:2"},
@@ -1068,7 +1082,7 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 
 func TestHandleDatabaseCRUD(t *testing.T) {
 	ctx := context.Background()
-	c := newFakeClient()
+	c := newFakeClient(roomyTestNode())
 	srv := &Server{Client: c}
 
 	form := url.Values{}
@@ -1102,7 +1116,7 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 
 func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 	ctx := context.Background()
-	srv := &Server{Client: newFakeClient()}
+	srv := &Server{Client: newFakeClient(roomyTestNode())}
 
 	form := url.Values{
 		"name":             {"orders-mysql"},
@@ -1221,7 +1235,7 @@ func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
 
 func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
 	ctx := context.Background()
-	srv := &Server{Client: newFakeClient()}
+	srv := &Server{Client: newFakeClient(roomyTestNode())}
 	form := url.Values{
 		"cluster":   {"on"},
 		"engine":    {"MinIO"},
@@ -1520,4 +1534,90 @@ func TestPrometheusClientParse(t *testing.T) {
 	val, err := pc.QueryInstant(context.Background(), "up")
 	require.NoError(t, err)
 	require.Equal(t, "12.50", val)
+}
+
+func TestAppSettingsPartialPatchKeepsImageAndMarksPending(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassAppSpec{
+			Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev,
+			Source: imageAppSource("nginx:alpine"), Port: 8080,
+			Ingress: geassv1alpha1.GeassAppIngressSpec{Host: "demo.example", TLSEnabled: true},
+			Metrics: geassv1alpha1.GeassAppMetricsSpec{Enabled: true},
+			Deploy:  geassv1alpha1.GeassAppDeploySpec{Enabled: true},
+		},
+	}
+	srv := &Server{Client: newFakeClient(app)}
+	form := url.Values{"project": {testProjectName}, "environment": {"dev"}, "cpu": {"250m"}, "memory": {"512Mi"}, "replicas": {"2"}}
+	req := httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppUpdate(rec, req, testAppName)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var saved geassv1alpha1.GeassApp
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &saved))
+	require.Equal(t, "nginx:alpine", saved.Spec.Source.Image.Image)
+	require.Equal(t, "demo.example", saved.Spec.Ingress.Host)
+	require.True(t, saved.Spec.Ingress.TLSEnabled)
+	require.True(t, saved.Spec.Metrics.Enabled)
+	cpu := saved.Spec.Resources.Requests[corev1.ResourceCPU]
+	require.Equal(t, "250m", cpu.String())
+	require.Equal(t, int32(2), *saved.Spec.Replicas)
+	require.Equal(t, pendingChangeSettings, saved.Annotations[platform.AppPendingChangesAnnotation])
+}
+
+func TestResourceDeletePathsRemoveDatabasesCachesAndStores(t *testing.T) {
+	ctx := context.Background()
+	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	cache := &geassv1alpha1.GeassCache{ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassCacheSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	logical := &geassv1alpha1.GeassLogicalDatabase{ObjectMeta: metav1.ObjectMeta{Name: "appdb", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassLogicalDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	c := newFakeClient(db, cache, store, logical)
+	srv := &Server{Client: c}
+
+	for _, item := range []struct {
+		path string
+		fn   func(http.ResponseWriter, *http.Request)
+		obj  client.Object
+		name string
+	}{
+		{"/databases/orders/delete", srv.handleDatabaseRoutes, &geassv1alpha1.GeassDatabase{}, "orders"},
+		{"/caches/sessions/delete", srv.handleCacheRoutes, &geassv1alpha1.GeassCache{}, "sessions"},
+		{"/object-stores/assets/delete", srv.handleObjectStoreRoutes, &geassv1alpha1.GeassObjectStore{}, "assets"},
+		{"/logical-databases/appdb/delete", srv.handleLogicalDatabaseRoutes, &geassv1alpha1.GeassLogicalDatabase{}, "appdb"},
+	} {
+		req := httptest.NewRequest(http.MethodPost, item.path, nil).WithContext(ctx)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		item.fn(rec, req)
+		require.Equal(t, http.StatusSeeOther, rec.Code, item.path)
+		require.Error(t, c.Get(ctx, client.ObjectKey{Name: item.name, Namespace: platform.SystemNamespace}, item.obj), item.path)
+	}
+}
+
+func TestAppDeleteRequiresConfirmName(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Source: imageAppSource("nginx:alpine")}}
+	c := newFakeClient(app)
+	srv := &Server{Client: c}
+	req := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppRoutes(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
+
+	ok := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{"confirmName": {testAppName}}.Encode())).WithContext(ctx)
+	ok.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	okRec := httptest.NewRecorder()
+	srv.handleAppRoutes(okRec, ok)
+	require.Equal(t, http.StatusSeeOther, okRec.Code)
+	require.Error(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
+}
+
+func TestDatabaseQueryCommandSplitsRedisArguments(t *testing.T) {
+	require.Equal(t, []string{"redis-cli", "GET", "session"}, databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET session"))
+	require.Equal(t, []string{"psql", "-c", "SELECT 1"}, databaseQueryCommand(geassv1alpha1.DatabaseEnginePostgres, "SELECT 1"))
 }

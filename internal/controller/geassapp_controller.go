@@ -75,6 +75,29 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
+		controllerutil.AddFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if !app.DeletionTimestamp.IsZero() {
+		if wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment)); err == nil {
+			r.deleteTargetResources(ctx, &app, wsNS)
+		}
+		controllerutil.RemoveFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
+		snapshot, ok := platform.LastDeployedSpec(&app)
+		if !ok {
+			return r.setNotReady(ctx, &app, "Service has pending changes and no last deployed snapshot")
+		}
+		app.Spec = snapshot
+		app.Spec.Deploy.Enabled = true
+	}
+
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, app.Spec.Project, app.Spec.Environment); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
@@ -87,22 +110,6 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
-	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
-		controllerutil.AddFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
-	}
-
-	if !app.DeletionTimestamp.IsZero() {
-		r.deleteTargetResources(ctx, &app, wsNS)
-		controllerutil.RemoveFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
-	}
-	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
-		// Keep the last deployed workload running while dashboard changes are
-		// saved as desired state. The dashboard clears this marker explicitly
-		// when the user deploys the pending configuration.
-		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
 	if !app.Spec.Deploy.Enabled {
 		if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
 			r.deleteTargetResources(ctx, &app, prevNS)

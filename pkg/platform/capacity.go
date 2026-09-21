@@ -151,6 +151,10 @@ func InsufficientCapacityMessage(est WorkloadEstimate, availableCPU, availableMe
 	return fmt.Sprintf("This %s needs about %s CPU and %s memory. The cluster currently has %s CPU and %s memory available. Scale up the cluster before creating it", est.Label, est.CPU, est.Memory, availableCPU, availableMemory)
 }
 
+func UnknownCapacityMessage(est WorkloadEstimate) string {
+	return fmt.Sprintf("Cluster capacity is unknown, so this %s cannot be scheduled yet. Scale up until schedulable nodes report CPU and memory", est.Label)
+}
+
 func NodeTooSmallMessage(est WorkloadEstimate) string {
 	return fmt.Sprintf("This %s needs about %s CPU and %s memory per instance, but no schedulable node has enough allocatable capacity. Scale up with larger nodes", est.Label, est.PerCPU, est.PerMemory)
 }

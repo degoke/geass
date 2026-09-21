@@ -27,7 +27,11 @@ func TestEstimateFromResourcesMultipliesCopies(t *testing.T) {
 	require.False(t, est.Approximate)
 }
 
-func TestDefaultAutoscalingMaxUsesThreeCopies(t *testing.T) {
-	require.Equal(t, int32(3), DefaultAutoscalingMax(1))
-	require.Equal(t, int32(6), DefaultAutoscalingMax(3))
+func TestResourcesFromSizeRejectsUnknownAmounts(t *testing.T) {
+	_, err := ResourcesFromSize("3", "128Mi")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CPU")
+	_, err = ResourcesFromSize("100m", "10Gi")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory")
 }

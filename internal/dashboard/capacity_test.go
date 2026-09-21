@@ -51,7 +51,10 @@ func TestClusterCapacityUnknownWithoutNodes(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	snapshot := srv.clusterCapacity(t.Context())
 	require.False(t, snapshot.Known)
-	ok, _ := snapshot.Fits(platform.EstimateWorkload(platform.WorkloadPostgres, true, 0))
+	ok, message := snapshot.Fits(platform.EstimateWorkload(platform.WorkloadPostgres, true, 0))
+	require.False(t, ok)
+	require.Contains(t, message, "unknown")
+	ok, _ = snapshot.Fits(platform.EstimateWorkload(platform.WorkloadBucket, false, 1))
 	require.True(t, ok)
 }
 

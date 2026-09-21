@@ -252,13 +252,13 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 		writeJSON(w, http.StatusOK, map[string]any{"output": "The database console is available after the server reports Ready."})
 		return
 	}
-	pods, err := s.Kube.CoreV1().Pods(db.Status.TargetNamespace).List(r.Context(), metav1.ListOptions{})
-	if err != nil || len(pods.Items) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"output": "No database pods are running yet."})
+	pod, err := s.databaseQueryPod(r.Context(), db)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"output": err.Error()})
 		return
 	}
 	command := databaseQueryCommand(db.Spec.Engine, query)
-	request := s.Kube.CoreV1().RESTClient().Post().Resource("pods").Name(pods.Items[0].Name).Namespace(db.Status.TargetNamespace).SubResource("exec")
+	request := s.Kube.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(db.Status.TargetNamespace).SubResource("exec")
 	for _, part := range command {
 		request.Param("command", part)
 	}
@@ -276,12 +276,34 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 	writeJSON(w, http.StatusOK, map[string]any{"output": strings.TrimSpace(stdout.String() + "\n" + stderr.String())})
 }
 
+func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDatabase) (*corev1.Pod, error) {
+	selectors := []string{
+		"app.kubernetes.io/name=" + db.Name,
+		"cnpg.io/cluster=" + db.Name,
+		"app.kubernetes.io/instance=" + db.Name,
+		"app.kubernetes.io/instance=geass-mysql-" + db.Name,
+		"app.kubernetes.io/instance=geass-redis-db-" + db.Name,
+	}
+	for _, selector := range selectors {
+		pods, err := s.Kube.CoreV1().Pods(db.Status.TargetNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return nil, fmt.Errorf("No database pods are running yet.")
+		}
+		for i := range pods.Items {
+			if pods.Items[i].Status.Phase == corev1.PodRunning {
+				return &pods.Items[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("No database pods are running yet.")
+}
+
 func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) []string {
 	switch engine {
 	case geassv1alpha1.DatabaseEngineMySQL:
 		return []string{"mysql", "-e", query}
 	case geassv1alpha1.DatabaseEngineRedis:
-		return []string{"redis-cli", query}
+		return append([]string{"redis-cli"}, strings.Fields(query)...)
 	case geassv1alpha1.DatabaseEngineSQLite:
 		return []string{"rqlite", "-e", query}
 	default:

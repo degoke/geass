@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -67,6 +68,12 @@ func ResourcesFromSize(cpu, memory string) (corev1.ResourceRequirements, error) 
 	if memory == "" {
 		memory = "128Mi"
 	}
+	if !allowedSize(cpu, CPUSizes()) {
+		return corev1.ResourceRequirements{}, fmt.Errorf("CPU must be one of the available sizes")
+	}
+	if !allowedSize(memory, MemorySizes()) {
+		return corev1.ResourceRequirements{}, fmt.Errorf("memory must be one of the available sizes")
+	}
 	cpuQty, err := resource.ParseQuantity(cpu)
 	if err != nil {
 		return corev1.ResourceRequirements{}, err
@@ -119,4 +126,13 @@ func doubledQuantity(q resource.Quantity) resource.Quantity {
 	copy := q.DeepCopy()
 	copy.Add(q)
 	return copy
+}
+
+func allowedSize(value string, options []SizeOption) bool {
+	for _, option := range options {
+		if option.Value == value {
+			return true
+		}
+	}
+	return false
 }
