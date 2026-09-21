@@ -451,6 +451,34 @@ func TestDashboardLoginLockoutRetriesSecretConflict(t *testing.T) {
 	require.Contains(t, string(stored.Data[dashboardLoginLockoutsSecretKey]), "admin")
 }
 
+func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
+	ctx := t.Context()
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	failing := &persistFailAuthClient{Client: newFakeClient(secret)}
+	srv := &Server{Client: failing}
+	form := url.Values{"username": {"admin"}, "password": {"wrong"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable")
+	require.True(t, srv.loginLocked(req, "admin"))
+
+	clearing := &Server{Client: &persistFailAuthClient{Client: newFakeClient(secret)}}
+	success := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	okReq := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(success.Encode())).WithContext(ctx))
+	okReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	okReq.Header.Set("Accept", "application/json")
+	okRec := httptest.NewRecorder()
+	clearing.handleAPI(okRec, okReq)
+	require.Equal(t, http.StatusBadRequest, okRec.Code)
+	require.Contains(t, okRec.Body.String(), "unavailable")
+	require.NotContains(t, okRec.Body.String(), `"authenticated":true`)
+	require.Empty(t, okRec.Result().Cookies())
+}
+
 func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	ctx := t.Context()
 	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
@@ -525,14 +553,18 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.Equal(t, http.StatusOK, bootRec.Code)
 	body := bootRec.Body.String()
 	require.Contains(t, body, `"role":"viewer"`)
-	require.Contains(t, body, `"name":"demo"`)
+	require.NotContains(t, body, `"name":"demo"`)
+	require.NotContains(t, body, "payments")
+	require.NotContains(t, body, "orders")
+	require.NotContains(t, body, "sessions")
+	require.NotContains(t, body, "assets")
+	require.NotContains(t, body, "Postgres")
 	require.NotContains(t, body, "geass-dev/api")
 	require.NotContains(t, body, "demo.example")
 	require.NotContains(t, body, "demo-secrets")
 	require.NotContains(t, body, "LOG_LEVEL")
 	require.NotContains(t, body, "postgres://secret")
 	require.NotContains(t, body, "payments-github")
-	require.Contains(t, body, `"name":"connected"`)
 	require.NotContains(t, body, "orders-rw")
 	require.NotContains(t, body, "orders-connection")
 	require.NotContains(t, body, "sessions-redis")
@@ -545,6 +577,8 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.NotContains(t, body, "abc.cfargotunnel.com")
 	require.NotContains(t, body, "abc123")
 	require.NotContains(t, body, "sha256:deadbeef")
+	require.NotContains(t, body, "demo")
+	require.NotContains(t, body, `"items":[{"metadata"`)
 }
 
 func withDashboardSession(t *testing.T, srv *Server, r *http.Request, username, role string) *http.Request {
@@ -594,6 +628,19 @@ func (c *conflictAuthClient) Update(ctx context.Context, obj client.Object, opts
 			if c.updates == 1 {
 				return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secret.Name, fmt.Errorf("conflict"))
 			}
+		}
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+type persistFailAuthClient struct {
+	client.Client
+}
+
+func (c *persistFailAuthClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if secret, ok := obj.(*corev1.Secret); ok && secret.Name == platform.DashboardAuthSecretName {
+		if _, ok := secret.Data[dashboardLoginLockoutsSecretKey]; ok {
+			return fmt.Errorf("persist failed")
 		}
 	}
 	return c.Client.Update(ctx, obj, opts...)

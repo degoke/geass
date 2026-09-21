@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -174,9 +173,6 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	data.Platform = s.dashboardPlatform(ctx, data)
 	data.Platform.Session = s.dashboardSession(r)
-	if !s.sessionCanMutate(r) {
-		sanitizeDashboardForViewer(&data)
-	}
 	for _, metric := range overviewMetrics {
 		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
 		state := "measured"
@@ -184,6 +180,9 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 			value, state = "unavailable", "unavailable"
 		}
 		data.Metrics = append(data.Metrics, dashboardMetric{Title: metric.Title, Value: value, State: state})
+	}
+	if !s.sessionCanMutate(r) {
+		sanitizeDashboardForViewer(&data)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -202,70 +201,15 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 	if data == nil {
 		return
 	}
-	for i := range data.Apps.Items {
-		sanitizeViewerApp(&data.Apps.Items[i])
-	}
-	for i := range data.Projects.Items {
-		sanitizeViewerProject(&data.Projects.Items[i])
-	}
-	for i := range data.Databases.Items {
-		data.Databases.Items[i].Status.ConnectionSecret = ""
-		data.Databases.Items[i].Status.Host = ""
-	}
-	for i := range data.Caches.Items {
-		data.Caches.Items[i].Status.ConnectionSecret = ""
-		data.Caches.Items[i].Status.Host = ""
-	}
-	for i := range data.ObjectStores.Items {
-		data.ObjectStores.Items[i].Spec.ConnectionRef = nil
-		data.ObjectStores.Items[i].Spec.Buckets = nil
-		data.ObjectStores.Items[i].Status.ConnectionSecret = ""
-	}
-	for i := range data.CloudConnections.Items {
-		data.CloudConnections.Items[i].Spec = geassv1alpha1.GeassCloudConnectionSpec{Provider: data.CloudConnections.Items[i].Spec.Provider}
-	}
-	for i := range data.PlatformConfig.Items {
-		data.PlatformConfig.Items[i].Spec.GitHubAppRef = nil
-		data.PlatformConfig.Items[i].Spec.TunnelCNAMETarget = ""
-	}
-	for i := range data.Builds.Items {
-		data.Builds.Items[i].Spec = geassv1alpha1.GeassBuildSpec{App: data.Builds.Items[i].Spec.App}
-		data.Builds.Items[i].Status.SourceRevision = ""
-		data.Builds.Items[i].Status.ImageDigest = ""
-	}
-}
-
-func sanitizeViewerApp(app *geassv1alpha1.GeassApp) {
-	source := geassv1alpha1.GeassAppSource{}
-	if app.Spec.Source.Git != nil {
-		source.Git = &geassv1alpha1.GeassAppGitSource{}
-	} else if app.Spec.Source.Image != nil {
-		source.Image = &geassv1alpha1.GeassAppImageSource{}
-	}
-	app.Spec = geassv1alpha1.GeassAppSpec{
-		Project:     app.Spec.Project,
-		Environment: app.Spec.Environment,
-		Source:      source,
-		Replicas:    app.Spec.Replicas,
-		Deploy:      geassv1alpha1.GeassAppDeploySpec{Enabled: app.Spec.Deploy.Enabled},
-		Autoscaling: app.Spec.Autoscaling,
-		Resources:   app.Spec.Resources,
-	}
-}
-
-func sanitizeViewerProject(project *geassv1alpha1.GeassProject) {
-	vars := make([]geassv1alpha1.GeassSharedVariable, 0, len(project.Spec.SharedVariables))
-	for _, variable := range project.Spec.SharedVariables {
-		vars = append(vars, geassv1alpha1.GeassSharedVariable{Name: variable.Name, Environment: variable.Environment, SecretRef: nil})
-	}
-	connected := project.Spec.GitHubConnectionRef != nil
-	project.Spec = geassv1alpha1.GeassProjectSpec{
-		DisplayName:     project.Spec.DisplayName,
-		ClusterRef:      project.Spec.ClusterRef,
-		Environments:    project.Spec.Environments,
-		SharedVariables: vars,
-	}
-	if connected {
-		project.Spec.GitHubConnectionRef = &corev1.LocalObjectReference{Name: "connected"}
-	}
+	session := data.Platform.Session
+	*data = dashboardBootstrap{Platform: dashboardPlatform{
+		HasDashboardURL:      data.Platform.HasDashboardURL,
+		HasGitHubApp:         data.Platform.HasGitHubApp,
+		DashboardURL:         data.Platform.DashboardURL,
+		HAReady:              data.Platform.HAReady,
+		AWSAvailable:         data.Platform.AWSAvailable,
+		PlanetScaleAvailable: data.Platform.PlanetScaleAvailable,
+		MinIOAvailable:       data.Platform.MinIOAvailable,
+		Session:              session,
+	}}
 }

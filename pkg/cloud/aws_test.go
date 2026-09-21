@@ -290,6 +290,62 @@ func TestDeleteBucketFailsWhenListingDoesNotAdvance(t *testing.T) {
 	require.Contains(t, err.Error(), "listing did not advance")
 }
 
+func TestDeleteBucketFailsWhenTruncatedListingHasEmptyToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>a</Key></Contents><IsTruncated>true</IsTruncated></ListBucketResult>`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "listing did not advance")
+}
+
+func TestDeleteBucketFailsWhenTruncatedVersionsPageIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			_, _ = w.Write([]byte(`<ListVersionsResult><IsTruncated>true</IsTruncated></ListVersionsResult>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "version listing did not advance")
+}
+
+func TestDeleteBucketFailsWhenTruncatedMultipartPageIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			_, _ = w.Write([]byte(`<ListVersionsResult><IsTruncated>false</IsTruncated></ListVersionsResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
+			_, _ = w.Write([]byte(`<ListMultipartUploadsResult><IsTruncated>true</IsTruncated></ListMultipartUploadsResult>`))
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "multipart listing did not advance")
+}
+
 func TestDeleteBucketDoesNotTreatGeneric400AsUnsupported(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

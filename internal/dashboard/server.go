@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -293,28 +291,6 @@ type projectUsageMetric struct {
 	State string
 }
 
-func (s *Server) projectUsageSummary(ctx context.Context, project string) string {
-	metrics := s.queryProjectUsage(ctx, project)
-	var rows strings.Builder
-	for _, metric := range metrics {
-		fmt.Fprintf(&rows, `<div><span>%s</span><strong>%s</strong><small>%s · %s</small></div>`, template.HTMLEscapeString(metric.Name), template.HTMLEscapeString(metric.State), template.HTMLEscapeString(metric.Value), template.HTMLEscapeString(metric.Unit))
-	}
-	return `<div class="usage-controls"><span class="text-secondary">Last 5 minutes · all environments</span><a class="btn btn-ghost btn-sm" href="` + template.HTMLEscapeString(workspacePanelURL(project, "", "usage-details", "")) + `">View details</a><button class="btn btn-ghost btn-sm" type="button" disabled aria-disabled="true">Export CSV unavailable</button></div>` +
-		Card(`<h2 class="card-title">Current usage</h2><div class="usage-rows">`+rows.String()+`</div>`) +
-		Card(`<div class="row-between"><div><h2 class="card-title">Estimated usage</h2><p class="text-secondary">Billing estimates are unavailable until a pricing and metering source is configured.</p></div><a class="link" href="/cloud-connections">Configure metering</a></div><div class="usage-total">Unavailable <span>estimated total</span></div>`) +
-		Card(`<h2 class="card-title">Details</h2><p class="text-secondary">Values are queried from Prometheus for namespaces owned by this project. Cost rates are not configured.</p>`)
-}
-
-func (s *Server) projectUsageDetails(ctx context.Context, project string) string {
-	metrics := s.queryProjectUsage(ctx, project)
-	var rows strings.Builder
-	for _, metric := range metrics {
-		rows.WriteString(usageDetailRow(metric.Name, metric.Value+" "+metric.Unit, metric.State))
-	}
-	rows.WriteString(usageDetailRow("Volume", "N/A", "Volume metering unavailable"))
-	return `<div class="usage-detail-list">` + rows.String() + `</div>` + Card(`<div class="row-between"><h2 class="card-title">Project cost</h2><a class="link" href="`+template.HTMLEscapeString(workspacePanelURL(project, "", "usage", ""))+`">Back to usage</a></div>`+Table([]string{"Metric", "Quantity", "Unit rate", "Total"}, [][]string{{"Memory", metrics[1].Value + " " + metrics[1].Unit, "Not configured", "Unavailable"}, {"CPU", metrics[0].Value + " " + metrics[0].Unit, "Not configured", "Unavailable"}, {"Egress", metrics[2].Value + " " + metrics[2].Unit, "Not configured", "Unavailable"}}))
-}
-
 func (s *Server) queryProjectUsage(ctx context.Context, project string) []projectUsageMetric {
 	selector := `namespace=~"` + regexp.QuoteMeta(project) + `-[^\"]+"`
 	queries := []struct {
@@ -338,79 +314,6 @@ func (s *Server) queryProjectUsage(ctx context.Context, project string) []projec
 		metrics = append(metrics, projectUsageMetric{Name: query.name, Unit: query.unit, Value: value, State: state})
 	}
 	return metrics
-}
-
-func usageDetailRow(label, quantity, state string) string {
-	return fmt.Sprintf(`<div class="usage-detail-row"><div><strong>%s</strong><small>%s</small></div><span>%s</span></div>`, template.HTMLEscapeString(label), template.HTMLEscapeString(state), template.HTMLEscapeString(quantity))
-}
-
-func (s *Server) projectEnvironments(ctx context.Context, project string, environments []string) string {
-	type environmentHealth struct{ total, healthy int }
-	health := make(map[string]*environmentHealth, len(environments))
-	for _, environment := range environments {
-		health[environment] = &environmentHealth{}
-	}
-	add := func(environment, ready string) {
-		state, ok := health[environment]
-		if !ok {
-			return
-		}
-		state.total++
-		if ready == string(metav1.ConditionTrue) {
-			state.healthy++
-		}
-	}
-	if apps, err := s.listApps(ctx); err == nil {
-		for _, app := range apps {
-			if app.Spec.Project == project {
-				add(string(app.Spec.Environment), conditionStatus(app.Status.Conditions, platform.ConditionReady))
-			}
-		}
-	}
-	if databases, err := s.listDatabases(ctx); err == nil {
-		for _, database := range databases {
-			if database.Spec.Project == project {
-				add(string(database.Spec.Environment), conditionStatus(database.Status.Conditions, platform.ConditionReady))
-			}
-		}
-	}
-	if caches, err := s.listCaches(ctx); err == nil {
-		for _, cache := range caches {
-			if cache.Spec.Project == project {
-				add(string(cache.Spec.Environment), conditionStatus(cache.Status.Conditions, platform.ConditionReady))
-			}
-		}
-	}
-	if stores, err := s.listObjectStores(ctx); err == nil {
-		for _, store := range stores {
-			if store.Spec.Project == project {
-				add(string(store.Spec.Environment), conditionStatus(store.Status.Conditions, platform.ConditionReady))
-			}
-		}
-	}
-	var rows strings.Builder
-	for _, environment := range environments {
-		state := health[environment]
-		status, dot := "Empty", "status-dot-pending"
-		if state.total > 0 && state.healthy == state.total {
-			status, dot = "Healthy", "status-dot-healthy"
-		} else if state.total > 0 && state.healthy == 0 {
-			status, dot = "Failed", "status-dot-failed"
-		} else if state.total > 0 {
-			status, dot = "Degraded", "status-dot-degraded"
-		}
-		workspace := "/projects/" + url.PathEscape(project) + "?environment=" + url.QueryEscape(environment)
-		fmt.Fprintf(&rows, `<div class="environment-row"><div class="environment-identity"><span class="status-dot %s"></span><div><strong>%s</strong><small>Isolated namespace · %s · owner %s</small></div></div><div class="environment-health"><strong>%s</strong><small>%d/%d resources healthy</small></div><div class="environment-actions"><a class="link" href="%s">Open</a><details><summary aria-label="More actions for %s">More</summary><div class="environment-action-menu"><p>Archive removes the namespace and its services, databases, caches, and storage. Recovery is not available.</p><form method="POST" action="/projects/%s/environments/archive"><input type="hidden" name="environment" value="%s"><label class="field"><span class="field-label">Type %s to confirm</span><input class="input input-sm" name="confirmName" required autocomplete="off"></label><button class="btn btn-danger btn-sm" type="submit">Archive environment</button></form></div></details></div></div>`, dot, template.HTMLEscapeString(environment), template.HTMLEscapeString(environmentNamespaceLabel(project, environment)), template.HTMLEscapeString(project), status, state.healthy, state.total, template.HTMLEscapeString(workspace), template.HTMLEscapeString(environment), url.PathEscape(project), template.HTMLEscapeString(environment), template.HTMLEscapeString(environment))
-	}
-	return Card(`<div class="row-between"><div><h2 class="card-title">Environments</h2><p class="text-secondary">Stable environments are isolated Kubernetes namespaces with resource-level health.</p></div></div>`+
-		FormOpen("/projects/"+url.PathEscape(project)+"/environments/create", "POST", "")+
-		`<div class="stack-sm mb-4">`+Field("New environment", Input("environment", "", map[string]string{"placeholder": "preview", "pattern": "[a-z0-9-]+", "required": ""}))+
-		Button("Create environment", ButtonOpts{Type: "submit", Variant: "primary", Size: "sm"})+`</div></form>`+
-		`<div class="environment-list">`+rows.String()+`</div>`) + Card(`<h2 class="card-title">Pull-request environments</h2><p class="text-secondary">Temporary environments are not enabled for this project. Connect a source integration before enabling automatic creation and cleanup.</p><a class="link" href="/cloud-connections">Review integrations</a>`)
-}
-
-func projectSettingsSectionHeader(project, title, description string) string {
-	return fmt.Sprintf(`<div class="section-context"><div><p class="overline">Project settings</p><h2 class="card-title">%s</h2><p class="text-secondary">%s</p></div></div>`, template.HTMLEscapeString(title), template.HTMLEscapeString(description))
 }
 
 func (s *Server) handleProjectEnvironmentCreate(w http.ResponseWriter, r *http.Request, name string) {
@@ -514,59 +417,6 @@ func environmentNamespaceLabel(project, environment string) string {
 		return "namespace unavailable"
 	}
 	return name
-}
-
-func (s *Server) projectSharedVariables(ctx context.Context, project string, environments []string, variables []geassv1alpha1.GeassSharedVariable) string {
-	dependentCounts := make(map[string]int)
-	if apps, err := s.listApps(ctx); err == nil {
-		for _, app := range apps {
-			if app.Spec.Project != project {
-				continue
-			}
-			for _, variable := range variables {
-				if variable.Environment != string(app.Spec.Environment) {
-					continue
-				}
-				selected := len(app.Spec.SharedVariableRefs) == 0
-				if slices.Contains(app.Spec.SharedVariableRefs, variable.Name) {
-					selected = true
-				}
-				if selected {
-					dependentCounts[variable.Environment+"\x00"+variable.Name]++
-				}
-			}
-		}
-	}
-	var sections strings.Builder
-	for _, environment := range environments {
-		count := 0
-		var rows strings.Builder
-		for _, variable := range variables {
-			if variable.Environment != environment {
-				continue
-			}
-			count++
-			value := variable.Value
-			if variable.SecretRef != nil {
-				value = "••••••••"
-			}
-			kind := "Literal"
-			if variable.SecretRef != nil {
-				kind = "Secret"
-			}
-			dependents := dependentCounts[environment+"\x00"+variable.Name]
-			impact := fmt.Sprintf("%s · %d service", kind, dependents)
-			if dependents != 1 {
-				impact += "s"
-			}
-			fmt.Fprintf(&rows, `<div class="shared-variable-row"><code>%s</code><span>%s</span><small>%s</small><form method="POST" action="/projects/%s/variables/delete"><input type="hidden" name="environment" value="%s"><input type="hidden" name="name" value="%s"><button class="btn btn-ghost btn-xs" type="submit">Delete</button></form></div>`, template.HTMLEscapeString(variable.Name), template.HTMLEscapeString(value), template.HTMLEscapeString(impact), url.PathEscape(project), template.HTMLEscapeString(environment), template.HTMLEscapeString(variable.Name))
-		}
-		if count == 0 {
-			rows.WriteString(`<div class="shared-variable-empty"><code>{}</code><p>No shared variables in this environment yet.</p></div>`)
-		}
-		fmt.Fprintf(&sections, `<details class="shared-variable-group" open><summary><span><strong>%s</strong><small>Project environment</small></span><span class="text-secondary">%d variables</span></summary><div class="shared-variable-body">%s<form class="shared-variable-form" method="POST" action="/projects/%s/variables/save"><input type="hidden" name="environment" value="%s"><input class="input input-sm" name="name" placeholder="VARIABLE_NAME" pattern="[A-Z_][A-Z0-9_]*" required><input class="input input-sm" name="value" type="password" autocomplete="new-password" placeholder="Value (kept masked)" aria-label="Variable value; secret values remain masked" required><label class="checkbox-row"><input type="checkbox" name="secret"><span>Store as secret</span></label><button class="btn btn-primary btn-sm" type="submit">Add variable</button></form></div></details>`, template.HTMLEscapeString(environment), count, rows.String(), url.PathEscape(project), template.HTMLEscapeString(environment))
-	}
-	return Card(`<div class="row-between"><div><h2 class="card-title">Shared variables</h2><p class="text-secondary">Reference shared values from a service with <code>${VARIABLE_NAME}</code>.</p></div></div><div class="shared-variable-list">` + sections.String() + `</div>`)
 }
 
 func (s *Server) handleProjectVariableSave(w http.ResponseWriter, r *http.Request, name string) {
@@ -724,68 +574,12 @@ func (s *Server) handleProjectVariableDelete(w http.ResponseWriter, r *http.Requ
 	redirect(w, r, fallback+"&deleted="+url.QueryEscape(variableName))
 }
 
-func resourceOption(label, description, href, icon string) string {
-	return fmt.Sprintf(`<a class="resource-option" href="%s"><span class="resource-option-icon" aria-hidden="true">%s</span><span><strong>%s</strong><small>%s</small></span><span class="resource-option-arrow" aria-hidden="true">›</span></a>`, template.HTMLEscapeString(href), template.HTMLEscapeString(icon), template.HTMLEscapeString(label), template.HTMLEscapeString(description))
-}
-
 func (s *Server) projectDefaultEnvironment(ctx context.Context, name string) string {
 	var project geassv1alpha1.GeassProject
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: systemNamespace}, &project); err != nil || len(project.Spec.Environments) == 0 {
 		return ""
 	}
 	return project.Spec.Environments[0]
-}
-
-func workspaceResourceLink(resource, name, project, environment, view string) string {
-	if project == "" {
-		return "/" + resource + "/" + url.PathEscape(name)
-	}
-	return workspaceResourceURL(project, environment, resource, name, view)
-}
-
-func (s *Server) projectDangerResources(ctx context.Context, project string) string {
-	var rows strings.Builder
-	count := 0
-	if apps, err := s.listApps(ctx); err == nil {
-		for _, app := range apps {
-			if app.Spec.Project != project {
-				continue
-			}
-			count++
-			fmt.Fprintf(&rows, `<div class="danger-resource-row"><div><strong>%s</strong><small>Service · %s environment · deployment and app-owned configuration</small></div><a class="link" href="%s">Review removal</a></div>`, template.HTMLEscapeString(app.Name), template.HTMLEscapeString(string(app.Spec.Environment)), template.HTMLEscapeString(workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", app.Name, "settings")))
-		}
-	}
-	if databases, err := s.listDatabases(ctx); err == nil {
-		for _, database := range databases {
-			if database.Spec.Project != project {
-				continue
-			}
-			count++
-			fmt.Fprintf(&rows, `<div class="danger-resource-row"><div><strong>%s</strong><small>PostgreSQL database · %s environment · persistent data and connection Secret</small></div><a class="link" href="%s">Review resource</a></div>`, template.HTMLEscapeString(database.Name), template.HTMLEscapeString(string(database.Spec.Environment)), template.HTMLEscapeString(workspaceResourceURL(database.Spec.Project, string(database.Spec.Environment), "databases", database.Name, "settings")))
-		}
-	}
-	if caches, err := s.listCaches(ctx); err == nil {
-		for _, cache := range caches {
-			if cache.Spec.Project != project {
-				continue
-			}
-			count++
-			fmt.Fprintf(&rows, `<div class="danger-resource-row"><div><strong>%s</strong><small>Cache · %s environment · managed service data</small></div><a class="link" href="%s">Review resource</a></div>`, template.HTMLEscapeString(cache.Name), template.HTMLEscapeString(string(cache.Spec.Environment)), template.HTMLEscapeString(workspaceResourceURL(cache.Spec.Project, string(cache.Spec.Environment), "caches", cache.Name, "settings")))
-		}
-	}
-	if stores, err := s.listObjectStores(ctx); err == nil {
-		for _, store := range stores {
-			if store.Spec.Project != project {
-				continue
-			}
-			count++
-			fmt.Fprintf(&rows, `<div class="danger-resource-row"><div><strong>%s</strong><small>Object storage · %s environment · bucket and credentials</small></div><a class="link" href="%s">Review resource</a></div>`, template.HTMLEscapeString(store.Name), template.HTMLEscapeString(string(store.Spec.Environment)), template.HTMLEscapeString(workspaceResourceURL(store.Spec.Project, string(store.Spec.Environment), "object-stores", store.Name, "settings")))
-		}
-	}
-	if count == 0 {
-		rows.WriteString(`<p class="text-secondary">No managed resources are currently attached to this project.</p>`)
-	}
-	return `<section class="card"><div class="card-body"><h2 class="card-title">Manage project resources</h2><p class="text-secondary">Review each service and managed resource before deleting the project. Deletion scope includes the environments, deployments, data, and credentials listed here.</p><div class="danger-resource-list">` + rows.String() + `</div></div></section>`
 }
 
 func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request, name string) {
@@ -859,17 +653,6 @@ func (s *Server) handleProjectSettingsSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	redirect(w, r, fallback)
-}
-
-func (s *Server) projectEnvironmentSelect(ctx context.Context, project, selected string) string {
-	if project == "" {
-		return environmentSelect(selected)
-	}
-	var p geassv1alpha1.GeassProject
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &p); err != nil || len(p.Spec.Environments) == 0 {
-		return environmentSelect(selected)
-	}
-	return environmentSelectOptions(selected, p.Spec.Environments)
 }
 
 func (s *Server) redirectAppWorkspace(w http.ResponseWriter, r *http.Request, name, view string) bool {
@@ -1189,8 +972,8 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
-	if isHXRequest(r) {
-		s.render(w, s.appPendingBanner(r.Context(), app))
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeAppPendingJSON(w, app)
 		return
 	}
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
@@ -1334,18 +1117,6 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (s *Server) appSharedVariablesPanel(ctx context.Context, app *geassv1alpha1.GeassApp) string {
-	secretKeys := s.appSecretKeys(ctx, app)
-	var rows strings.Builder
-	for _, key := range sortedKeys(secretKeys) {
-		fmt.Fprintf(&rows, `<tr><td><code>%s</code></td><td>••••••••</td><td><form method="POST" action="/apps/%s/secrets/delete" hx-post="/apps/%s/secrets/delete" hx-target="#service-variables" hx-swap="outerHTML" hx-push-url="false" class="inline"><input type="hidden" name="key" value="%s"><button class="btn btn-xs btn-ghost" type="submit">Remove</button></form></td></tr>`, template.HTMLEscapeString(key), url.PathEscape(app.Name), url.PathEscape(app.Name), template.HTMLEscapeString(key))
-	}
-	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="3"><em class="text-muted">No variables configured yet.</em></td></tr>`)
-	}
-	return `<section id="service-variables" class="service-variables"><div class="variables-toolbar"><div><h2>` + fmt.Sprintf("%d Variables", len(secretKeys)) + `</h2></div><a class="btn btn-primary btn-sm" href="#variable-add">＋ New variable</a></div><div class="variables-table-wrap"><table class="table table-sm"><thead><tr><th>Variable</th><th>Value</th><th></th></tr></thead><tbody>` + rows.String() + `</tbody></table></div><div id="variable-add" class="variable-editors"><form method="POST" action="/apps/` + url.PathEscape(app.Name) + `/secrets/set" hx-post="/apps/` + url.PathEscape(app.Name) + `/secrets/set" hx-target="#service-variables" hx-swap="outerHTML" hx-push-url="false" class="variable-editor"><strong>Add variable</strong><input class="input input-sm" name="key" required placeholder="DATABASE_URL"><input class="input input-sm" name="value" type="password" required autocomplete="new-password" placeholder="Value"><button class="btn btn-sm btn-primary" type="submit">Save variable</button></form></div></section>`
-}
-
 func (s *Server) handleAppSharedVariablesSave(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -1444,7 +1215,11 @@ func (s *Server) handleAppConsoleCreate(w http.ResponseWriter, r *http.Request, 
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
-	s.renderPage(w, r, "Console session", PageHeader("Console session", Button("Back to console", ButtonOpts{Href: fallback, Variant: "ghost"}))+Card(fmt.Sprintf(`<p class="text-secondary">Session <code>%s</code> created for <code>%s</code>. It expires in five minutes.</p>`, template.HTMLEscapeString(session.Name), template.HTMLEscapeString(actor))))
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session.Name})
+		return
+	}
+	redirect(w, r, fallback)
 }
 
 func (s *Server) handleAppConsoleStream(w http.ResponseWriter, r *http.Request, name string) {
@@ -1658,76 +1433,6 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "overview")
-}
-
-func (s *Server) deploymentHistory(ctx context.Context, appName string, r *http.Request, formAction string) string {
-	var list geassv1alpha1.GeassDeploymentList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: appName}); err != nil {
-		return `<p class="text-error">Unable to load deployment history</p>`
-	}
-	if len(list.Items) == 0 {
-		return serviceUnavailableState("No deployment yet", "Deploy this service to bring it online and start a deployment history.")
-	}
-	sort.SliceStable(list.Items, func(i, j int) bool {
-		return list.Items[i].CreationTimestamp.After(list.Items[j].CreationTimestamp.Time)
-	})
-	state := strings.TrimSpace(r.URL.Query().Get("state"))
-	hideSkipped := r.URL.Query().Get("hideSkipped") == "on"
-	filtered := make([]geassv1alpha1.GeassDeployment, 0, len(list.Items))
-	for _, deployment := range list.Items {
-		phase := deployment.Status.Phase
-		if phase == "" {
-			phase = "Pending"
-		}
-		if state != "" && !strings.EqualFold(state, phase) {
-			continue
-		}
-		if hideSkipped && (strings.EqualFold(phase, "Skipped") || strings.EqualFold(phase, "Removed")) {
-			continue
-		}
-		filtered = append(filtered, deployment)
-	}
-	var app geassv1alpha1.GeassApp
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: appName, Namespace: systemNamespace}, &app); err != nil {
-		return `<p class="text-error">Unable to load service deployment context</p>`
-	}
-	active := ""
-	if len(filtered) > 0 {
-		active = filtered[0].Name
-	}
-	var entries strings.Builder
-	for index, deployment := range filtered {
-		phase := deployment.Status.Phase
-		if phase == "" {
-			phase = "Pending"
-		}
-		stateClass := strings.ToLower(phase)
-		activeLabel := ""
-		if deployment.Name == active && !strings.EqualFold(phase, "Removed") {
-			activeLabel = `<span class="deployment-active-label">ACTIVE</span>`
-		}
-		var conditions strings.Builder
-		for _, condition := range deployment.Status.Conditions {
-			fmt.Fprintf(&conditions, `<li>%s: %s</li>`, template.HTMLEscapeString(condition.Type), template.HTMLEscapeString(condition.Message))
-		}
-		if conditions.Len() == 0 {
-			conditions.WriteString(`<li>No rollout events recorded.</li>`)
-		}
-		timestamp := deployment.CreationTimestamp.String()
-		open := ""
-		if deployment.Name == active {
-			open = " open"
-		}
-		menu := `<button class="deployment-menu" type="button" aria-label="Deployment actions">⋮</button>`
-		if index == 0 {
-			menu = `<a class="btn btn-ghost btn-sm" href="/apps/` + url.PathEscape(appName) + `/logs">View logs</a>` + menu
-		}
-		fmt.Fprintf(&entries, `<details class="deployment-entry" data-deployment-state="%s"%s><summary><span class="deployment-state">%s</span><span class="deployment-entry-main"><strong>%s</strong><small>%s · %s</small></span><span class="deployment-entry-actions">%s</span></summary><div class="deployment-entry-detail"><div class="deployment-facts"><div><span class="meta-label">Image</span><code>%s</code></div><div><span class="meta-label">Environment</span>%s</div><div><span class="meta-label">Replicas</span>%d</div><div><span class="meta-label">Revision</span><code>%s</code></div></div><ul class="deployment-events">%s</ul><div class="row-wrap"><form method="POST" action="/apps/%s/rollback"><input type="hidden" name="revision" value="%s"><button class="btn btn-ghost btn-sm" type="submit">Rollback</button></form></div></div></details>`, stateClass, open, template.HTMLEscapeString(phase), template.HTMLEscapeString(deployment.Spec.ChangeTitle), template.HTMLEscapeString(timestamp), template.HTMLEscapeString(deployment.Spec.Source), activeLabel+menu, template.HTMLEscapeString(deployment.Spec.Image), template.HTMLEscapeString(string(deployment.Spec.Environment)), appReplicasFromDeployment(deployment), template.HTMLEscapeString(deployment.Name), conditions.String(), url.PathEscape(appName), template.HTMLEscapeString(deployment.Name))
-	}
-	if entries.Len() == 0 {
-		entries.WriteString(`<p class="text-secondary">No deployment records match the current filters.</p>`)
-	}
-	return fmt.Sprintf(`<section class="deployment-history"><div class="deployment-context"><div><p class="overline">Service deployment context</p><h2 class="card-title">%s</h2></div><div class="deployment-context-meta"><span>⌾ %s</span><span>◇ %d Replica</span></div></div><div class="deployment-history-toolbar"><strong>⌄ HISTORY</strong><label class="checkbox-row"><input type="checkbox" name="hideSkipped" value="on"%s form="deployment-filter"><span>Hide Skipped</span></label></div><form id="deployment-filter" class="deployment-filters" method="GET" action="%s"><input type="hidden" name="resource" value="apps/%s"><input type="hidden" name="view" value="deployments"><label class="sr-only" for="deployment-state">State</label><select id="deployment-state" class="select select-sm" name="state"><option value="">All states</option><option value="Recorded"%s>Recorded</option><option value="Failed"%s>Failed</option><option value="Skipped"%s>Skipped</option><option value="Removed"%s>Removed</option></select><button class="btn btn-ghost btn-sm" type="submit">Filter history</button></form><div class="deployment-entries">%s</div></section>`, template.HTMLEscapeString(app.Name), template.HTMLEscapeString(app.Status.URL), appReplicas(app), map[bool]string{true: ` checked`, false: ``}[hideSkipped], template.HTMLEscapeString(formAction), template.HTMLEscapeString(appName), selectedOption(state, "Recorded"), selectedOption(state, "Failed"), selectedOption(state, "Skipped"), selectedOption(state, "Removed"), entries.String())
 }
 
 func (s *Server) appHasDeployment(ctx context.Context, appName string) bool {
@@ -2082,8 +1787,8 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			return
 		}
 	}
-	if isHXRequest(r) {
-		s.render(w, s.appPendingBanner(r.Context(), &app))
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeAppPendingJSON(w, &app)
 		return
 	}
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "settings")

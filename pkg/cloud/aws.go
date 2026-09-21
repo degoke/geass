@@ -198,11 +198,13 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 			keys = append(keys, item.Key)
 		}
 	}
-	token := ""
 	if parsed.IsTruncated {
-		token = parsed.NextContinuationToken
+		if parsed.NextContinuationToken == "" {
+			return nil, "", fmt.Errorf("bucket %s listing did not advance", bucket)
+		}
+		return keys, parsed.NextContinuationToken, nil
 	}
-	return keys, token, nil
+	return keys, "", nil
 }
 
 func (c *AWSClient) emptyBucketVersions(bucket string) error {
@@ -223,10 +225,10 @@ func (c *AWSClient) emptyBucketVersions(bucket string) error {
 				return err
 			}
 		}
-		if !truncated || len(versions) == 0 {
+		if !truncated {
 			return nil
 		}
-		if nextKey == keyMarker && nextVersion == versionMarker {
+		if len(versions) == 0 || (nextKey == "" && nextVersion == "") || (nextKey == keyMarker && nextVersion == versionMarker) {
 			return fmt.Errorf("bucket %s version listing did not advance", bucket)
 		}
 		keyMarker, versionMarker = nextKey, nextVersion
@@ -313,10 +315,10 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 				return err
 			}
 		}
-		if !truncated || len(uploads) == 0 {
+		if !truncated {
 			return nil
 		}
-		if nextKey == keyMarker && nextUpload == uploadMarker {
+		if len(uploads) == 0 || (nextKey == "" && nextUpload == "") || (nextKey == keyMarker && nextUpload == uploadMarker) {
 			return fmt.Errorf("bucket %s multipart listing did not advance", bucket)
 		}
 		keyMarker, uploadMarker = nextKey, nextUpload

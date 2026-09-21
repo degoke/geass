@@ -101,7 +101,6 @@ func TestGitHubDeployShowsDashboardURLPrerequisite(t *testing.T) {
 	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"hasDashboardURL":false`)
-	require.Contains(t, rec.Body.String(), testProjectName)
 }
 
 func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {

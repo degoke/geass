@@ -1,10 +1,6 @@
 package dashboard
 
 import (
-	"context"
-	"fmt"
-	"html/template"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -160,28 +156,4 @@ func appPendingBannerCopy(app *geassv1alpha1.GeassApp) (title, detail, button st
 		return "This service is a draft", "Change settings or add variables, then deploy when you are ready.", button
 	}
 	return "You made these changes", joinEnglish(pendingKindLabels(kinds)) + ". Do you want to deploy?", button
-}
-
-func (s *Server) appPendingBanner(_ context.Context, app *geassv1alpha1.GeassApp) string {
-	return s.appPendingBannerWithOptions(app, false)
-}
-
-func (s *Server) appPendingBannerOOB(_ context.Context, app *geassv1alpha1.GeassApp) string {
-	return s.appPendingBannerWithOptions(app, true)
-}
-
-func (s *Server) appPendingBannerWithOptions(app *geassv1alpha1.GeassApp, oob bool) string {
-	title, detail, button := appPendingBannerCopy(app)
-	if title == "" {
-		if oob {
-			return `<div id="service-pending-banner" hx-swap-oob="outerHTML" hidden></div>`
-		}
-		return `<div id="service-pending-banner" hidden></div>`
-	}
-	name := url.PathEscape(app.Name)
-	oobAttribute := ""
-	if oob {
-		oobAttribute = ` hx-swap-oob="outerHTML"`
-	}
-	return fmt.Sprintf(`<div id="service-pending-banner" class="service-pending-banner" role="status"%s><div class="service-pending-copy"><strong>%s</strong><span>%s</span></div><form method="POST" action="/apps/%s/deploy" hx-post="/apps/%s/deploy" hx-target="#service-pending-banner" hx-swap="outerHTML" hx-push-url="false"><button class="btn btn-primary btn-sm" type="submit">%s</button></form></div>`, oobAttribute, template.HTMLEscapeString(title), template.HTMLEscapeString(detail), template.HTMLEscapeString(name), template.HTMLEscapeString(name), template.HTMLEscapeString(button))
 }

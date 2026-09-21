@@ -150,11 +150,17 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user := auth.lookup(username)
 	if user == nil || !passwordMatches(r.FormValue("password"), user.Password) {
-		s.recordLoginFailure(r, username)
+		if err := s.recordLoginFailure(r, username); err != nil {
+			redirectFormError(w, r, "/", "dashboard authentication is unavailable")
+			return
+		}
 		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
-	s.clearLoginFailures(r, username)
+	if err := s.clearLoginFailures(r, username); err != nil {
+		redirectFormError(w, r, "/", "dashboard authentication is unavailable")
+		return
+	}
 	role := normalizeDashboardRole(user.Role)
 	if role == "" {
 		role = dashboardRoleViewer
@@ -720,7 +726,7 @@ func (s *Server) loginLocked(r *http.Request, username string) bool {
 	return loginAttemptLocked(stored)
 }
 
-func (s *Server) recordLoginFailure(r *http.Request, username string) {
+func (s *Server) recordLoginFailure(r *http.Request, username string) error {
 	username = strings.ToLower(strings.TrimSpace(username))
 	s.loginMu.Lock()
 	if s.loginFailures == nil {
@@ -737,15 +743,22 @@ func (s *Server) recordLoginFailure(r *http.Request, username string) {
 	}
 	s.loginFailures[username] = attempt
 	s.loginMu.Unlock()
-	_ = s.persistLoginLockout(r, username, attempt)
+	if err := s.persistLoginLockout(r, username, attempt); err != nil {
+		s.loginMu.Lock()
+		attempt.LockedUntil = now.Add(loginLockout)
+		s.loginFailures[username] = attempt
+		s.loginMu.Unlock()
+		return err
+	}
+	return nil
 }
 
-func (s *Server) clearLoginFailures(r *http.Request, username string) {
+func (s *Server) clearLoginFailures(r *http.Request, username string) error {
 	username = strings.ToLower(strings.TrimSpace(username))
 	s.loginMu.Lock()
 	delete(s.loginFailures, username)
 	s.loginMu.Unlock()
-	_ = s.persistLoginLockout(r, username, loginAttempt{})
+	return s.persistLoginLockout(r, username, loginAttempt{})
 }
 
 func loginAttemptLocked(attempt loginAttempt) bool {
@@ -768,7 +781,7 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 		secret := &corev1.Secret{}
 		err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 		if apierrors.IsNotFound(err) {
-			return nil
+			return err
 		}
 		if err != nil {
 			return err

@@ -185,7 +185,7 @@ func TestAppConfigFormErrorReturnsPanelAlertForHX(t *testing.T) {
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/config/set", nil))
 	req.Header.Set("HX-Request", "true")
 	srv.appConfigFormError(rec, req, "demo", "key is required")
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "key is required")
-	require.Contains(t, rec.Body.String(), `role="alert"`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"error":"key is required"}`, rec.Body.String())
 }

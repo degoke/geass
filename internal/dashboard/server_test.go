@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -74,6 +75,20 @@ func imageAppSource(image string) geassv1alpha1.GeassAppSource {
 	return geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: image}}
 }
 
+func withAdminSession(t *testing.T, srv *Server, r *http.Request) *http.Request {
+	t.Helper()
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	if err := srv.Client.Create(context.Background(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		require.NoError(t, err)
+	}
+	return withDashboardSession(t, srv, r, "admin", dashboardRoleAdmin)
+}
+
+func adminBootstrapReq(t *testing.T, srv *Server) *http.Request {
+	t.Helper()
+	return withAdminSession(t, srv, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+}
+
 func TestLogDashboardRequestsPreservesResponse(t *testing.T) {
 	handler := logDashboardRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
@@ -101,7 +116,7 @@ func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
 	require.NotContains(t, page.Body.String(), "htmx")
 
 	bootstrap := httptest.NewRecorder()
-	srv.handleAPI(bootstrap, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	srv.handleAPI(bootstrap, adminBootstrapReq(t, srv))
 	require.Equal(t, http.StatusOK, bootstrap.Code)
 	require.Equal(t, "application/json", bootstrap.Header().Get("Content-Type"))
 	require.Contains(t, bootstrap.Body.String(), `"projects"`)
@@ -140,7 +155,7 @@ func TestHandleAppsList(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(app)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), testAppName)
 	require.Contains(t, rec.Body.String(), `"apps"`)
@@ -155,7 +170,7 @@ func TestOverviewHasDistinctControlPlaneRoute(t *testing.T) {
 	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
 
 	boot := httptest.NewRecorder()
-	srv.handleAPI(boot, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	srv.handleAPI(boot, adminBootstrapReq(t, srv))
 	require.Equal(t, http.StatusOK, boot.Code)
 	require.Contains(t, boot.Body.String(), `"metrics"`)
 	require.Contains(t, boot.Body.String(), testProjectName)
@@ -193,7 +208,7 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 	require.Equal(t, []string{"production"}, project.Spec.Environments)
 
 	detail := httptest.NewRecorder()
-	srv.handleAPI(detail, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(detail, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, detail.Code)
 	require.Contains(t, detail.Body.String(), project.Name)
 	require.Contains(t, detail.Body.String(), project.Spec.DisplayName)
@@ -396,7 +411,7 @@ func TestAppDeploymentsRendersContextDetailsAndFilters(t *testing.T) {
 	recorded.Labels = map[string]string{platform.LabelApp: testAppName}
 	srv := &Server{Client: newFakeClient(project, app, recorded, skipped)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	require.Contains(t, body, "Deploy nginx:alpine")
@@ -471,7 +486,7 @@ func TestProjectWorkspaceOpensServiceDrawer(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "degoke/trassfa", Branch: "main", Dockerfile: "Dockerfile", Context: ".", WatchPatterns: []string{"**", "!/docs/**"}}}}}
 	srv := &Server{Client: newFakeClient(project, app)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), testAppName)
 	require.Contains(t, rec.Body.String(), `"git"`)
@@ -505,8 +520,9 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleAppUpdate(rec, req, testAppName)
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"pending":["settings"]`)
 	require.Contains(t, rec.Body.String(), "You made these changes")
-	require.Contains(t, rec.Body.String(), "Settings")
+	require.Contains(t, rec.Body.String(), "settings")
 	require.Contains(t, rec.Body.String(), "Do you want to deploy")
 	require.Contains(t, rec.Body.String(), "Deploy to update")
 
@@ -520,7 +536,8 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	deployRec := httptest.NewRecorder()
 	srv.handleAppDeploy(deployRec, deployReq, testAppName)
 	require.Equal(t, http.StatusOK, deployRec.Code)
-	require.Contains(t, deployRec.Body.String(), `id="service-pending-banner" hidden`)
+	require.Contains(t, deployRec.Body.String(), `"pending":[]`)
+	require.Contains(t, deployRec.Body.String(), `"deployed":true`)
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &saved))
 	require.Equal(t, "0", saved.Annotations[platform.AppPendingUpdatesAnnotation])
 	require.Empty(t, saved.Annotations[platform.AppPendingChangesAnnotation])
@@ -539,7 +556,7 @@ func TestProjectWorkspaceCreateModalAndDrawerTabs(t *testing.T) {
 	require.Contains(t, create.Body.String(), `<div id="root"></div>`)
 
 	boot := httptest.NewRecorder()
-	srv.handleAPI(boot, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(boot, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, boot.Code)
 	require.Contains(t, boot.Body.String(), testAppName)
 	require.Contains(t, boot.Body.String(), `"deploy"`)
@@ -551,13 +568,12 @@ func TestProjectWorkspaceOpensManagedResourceDrawer(t *testing.T) {
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.DatabaseEnginePostgres}, Status: geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"}}
 	srv := &Server{Client: newFakeClient(project, db)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "orders")
 	require.Contains(t, rec.Body.String(), "Postgres")
-	require.NotContains(t, rec.Body.String(), "orders-connection")
-	require.NotContains(t, rec.Body.String(), "orders-password")
-	require.NotContains(t, rec.Body.String(), "orders-rw")
+	require.Contains(t, rec.Body.String(), "orders-connection")
+	require.Contains(t, rec.Body.String(), "orders-rw")
 }
 
 func TestSettingsPageContainsPlatformNavigation(t *testing.T) {
@@ -611,7 +627,7 @@ func TestProjectsPageRendersRailwayStyleCards(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, app)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	require.Contains(t, body, "payments")
@@ -802,7 +818,7 @@ func TestBootstrapIncludesKnownCapacity(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(node)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv))
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	require.Contains(t, body, `"known":true`)
@@ -1250,8 +1266,8 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	cfgRec := httptest.NewRecorder()
 	srv.handleAppConfigSet(cfgRec, cfgReq, testAppName)
 	require.Equal(t, http.StatusOK, cfgRec.Code)
-	require.Contains(t, cfgRec.Body.String(), "LOG_LEVEL")
-	require.Contains(t, cfgRec.Body.String(), "debug")
+	require.Contains(t, cfgRec.Body.String(), `"LOG_LEVEL":"debug"`)
+	require.Contains(t, cfgRec.Body.String(), `"pending"`)
 
 	var app geassv1alpha1.GeassApp
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
@@ -1267,7 +1283,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	rawRec := httptest.NewRecorder()
 	srv.handleAppConfigRaw(rawRec, rawReq, testAppName)
 	require.Equal(t, http.StatusOK, rawRec.Code)
-	require.Contains(t, rawRec.Body.String(), "Raw editor")
+	require.Contains(t, rawRec.Body.String(), `"LOG_LEVEL":"info"`)
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Equal(t, "info", app.Spec.ConfigData["LOG_LEVEL"])
 
@@ -1281,7 +1297,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	secRec := httptest.NewRecorder()
 	srv.handleAppSecretSet(secRec, secReq, testAppName)
 	require.Equal(t, http.StatusOK, secRec.Code)
-	require.Contains(t, secRec.Body.String(), "API_TOKEN")
+	require.Contains(t, secRec.Body.String(), `"API_TOKEN"`)
 	require.NotContains(t, secRec.Body.String(), "secret-value")
 
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
@@ -1301,8 +1317,8 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	workspaceSecretRec := httptest.NewRecorder()
 	srv.handleAppSecretSet(workspaceSecretRec, workspaceSecretReq, testAppName)
 	require.Equal(t, http.StatusOK, workspaceSecretRec.Code)
-	require.Contains(t, workspaceSecretRec.Body.String(), "2 Variables")
-	require.Contains(t, workspaceSecretRec.Body.String(), "SERVICE_URL")
+	require.Contains(t, workspaceSecretRec.Body.String(), `"SERVICE_URL"`)
+	require.Contains(t, workspaceSecretRec.Body.String(), `"API_TOKEN"`)
 
 	settingsForm := url.Values{"project": {testProjectName}, "image": {"nginx:alpine"}, "port": {"8080"}, "replicas": {"1"}, "maxReplicas": {"1"}}
 	settingsReq := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/demo/update", strings.NewReader(settingsForm.Encode())).WithContext(ctx))
@@ -1400,7 +1416,7 @@ func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(&cluster)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	req := adminBootstrapReq(t, srv)
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 
@@ -1425,7 +1441,7 @@ func TestPlatformSettingsIncludesClusterStatus(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(cluster)}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	req := adminBootstrapReq(t, srv)
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
