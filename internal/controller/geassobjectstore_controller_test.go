@@ -38,7 +38,24 @@ var _ = Describe("GeassObjectStore Controller", func() {
 	})
 
 	AfterEach(func() {
-		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<ListBucketResult></ListBucketResult>`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer s3.Close()
+		var servers geassv1alpha1.GeassObjectStoreList
+		_ = k8sClient.List(ctx, &servers, client.InNamespace(ns))
+		for i := range servers.Items {
+			if !isClusterObjectStore(&servers.Items[i]) {
+				continue
+			}
+			servers.Items[i].Status.Endpoint = s3.URL
+			_ = k8sClient.Status().Update(ctx, &servers.Items[i])
+		}
+		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), HTTP: s3.Client()}
 		var list geassv1alpha1.GeassObjectStoreList
 		_ = k8sClient.List(ctx, &list, client.InNamespace(ns))
 		for i := range list.Items {

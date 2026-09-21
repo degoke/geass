@@ -535,10 +535,10 @@ func (r *GeassObjectStoreReconciler) deleteExternalAWS(store *geassv1alpha1.Geas
 func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
 	server, err := r.clusterMinIO(ctx)
 	if err != nil {
-		return err
+		return nil
 	}
 	if server.Status.Endpoint == "" {
-		return fmt.Errorf("cluster MinIO endpoint is unavailable")
+		return nil
 	}
 	rootSecret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
