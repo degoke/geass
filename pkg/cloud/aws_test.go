@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,6 +49,7 @@ func TestEnsureBucketUserCreatesScopedIAMUser(t *testing.T) {
 		case "PutUserPolicy":
 			require.Contains(t, r.FormValue("PolicyDocument"), "arn:aws:s3:::uploads")
 			require.Contains(t, r.FormValue("PolicyDocument"), "arn:aws:s3:::uploads/*")
+			require.True(t, json.Valid([]byte(r.FormValue("PolicyDocument"))))
 			w.WriteHeader(http.StatusOK)
 		case "CreateAccessKey":
 			w.WriteHeader(http.StatusOK)
@@ -81,4 +83,28 @@ func TestEnsureBucketUserReusesExistingKeys(t *testing.T) {
 	require.Equal(t, "EXISTING", access)
 	require.Equal(t, "existing-secret", secret)
 	require.Equal(t, []string{"CreateUser", "PutUserPolicy"}, actions)
+}
+
+func TestEnsureBucketUserJSONEscapesBucketNames(t *testing.T) {
+	var policy string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		if r.FormValue("Action") == "PutUserPolicy" {
+			policy = r.FormValue("PolicyDocument")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", IAMEndpoint: srv.URL}
+	_, _, err := client.EnsureBucketUser([]string{`uploads"evil`}, "assets", "EXISTING", "existing-secret")
+	require.NoError(t, err)
+	require.True(t, json.Valid([]byte(policy)))
+	var parsed struct {
+		Statement []struct {
+			Resource []string `json:"Resource"`
+		} `json:"Statement"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(policy), &parsed))
+	require.Equal(t, "arn:aws:s3:::uploads\"evil", parsed.Statement[0].Resource[0])
 }

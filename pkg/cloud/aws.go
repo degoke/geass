@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -103,19 +104,39 @@ func (c *AWSClient) iamCreateUser(userName string) error {
 }
 
 func (c *AWSClient) iamPutUserPolicy(userName string, buckets []string) error {
-	var statements strings.Builder
-	for i, bucket := range buckets {
-		if i > 0 {
-			statements.WriteByte(',')
-		}
-		fmt.Fprintf(&statements, `{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::%s/*"]}`, bucket, bucket)
+	type statement struct {
+		Effect   string   `json:"Effect"`
+		Action   []string `json:"Action"`
+		Resource []string `json:"Resource"`
 	}
-	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[%s]}`, statements.String())
-	_, err := c.iamCall(url.Values{
+	type document struct {
+		Version   string      `json:"Version"`
+		Statement []statement `json:"Statement"`
+	}
+	policy := document{Version: "2012-10-17"}
+	for _, bucket := range buckets {
+		policy.Statement = append(policy.Statement,
+			statement{
+				Effect:   "Allow",
+				Action:   []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads"},
+				Resource: []string{"arn:aws:s3:::" + bucket},
+			},
+			statement{
+				Effect:   "Allow",
+				Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
+				Resource: []string{"arn:aws:s3:::" + bucket + "/*"},
+			},
+		)
+	}
+	payload, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	_, err = c.iamCall(url.Values{
 		"Action":         {"PutUserPolicy"},
 		"UserName":       {userName},
 		"PolicyName":     {"geass-bucket"},
-		"PolicyDocument": {policy},
+		"PolicyDocument": {string(payload)},
 		"Version":        {"2010-05-08"},
 	})
 	return err

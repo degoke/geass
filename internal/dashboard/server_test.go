@@ -952,6 +952,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 
 	delForm := url.Values{}
 	delForm.Set("_method", "DELETE")
+	delForm.Set("confirmName", testAppName)
 	delReq := httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(delForm.Encode()))
 	delReq = delReq.WithContext(ctx)
 	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1106,6 +1107,7 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 
 	delForm := url.Values{}
 	delForm.Set("_method", "DELETE")
+	delForm.Set("confirmName", "orders")
 	delReq := httptest.NewRequest(http.MethodPost, "/databases/orders", strings.NewReader(delForm.Encode()))
 	delReq = delReq.WithContext(ctx)
 	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1588,13 +1590,26 @@ func TestResourceDeletePathsRemoveDatabasesCachesAndStores(t *testing.T) {
 		{"/object-stores/assets/delete", srv.handleObjectStoreRoutes, &geassv1alpha1.GeassObjectStore{}, "assets"},
 		{"/logical-databases/appdb/delete", srv.handleLogicalDatabaseRoutes, &geassv1alpha1.GeassLogicalDatabase{}, "appdb"},
 	} {
-		req := httptest.NewRequest(http.MethodPost, item.path, nil).WithContext(ctx)
+		req := httptest.NewRequest(http.MethodPost, item.path, strings.NewReader(url.Values{"confirmName": {item.name}}.Encode())).WithContext(ctx)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		item.fn(rec, req)
 		require.Equal(t, http.StatusSeeOther, rec.Code, item.path)
 		require.Error(t, c.Get(ctx, client.ObjectKey{Name: item.name, Namespace: platform.SystemNamespace}, item.obj), item.path)
 	}
+}
+
+func TestResourceDeleteRequiresConfirmName(t *testing.T) {
+	ctx := context.Background()
+	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	c := newFakeClient(db)
+	srv := &Server{Client: c}
+	req := httptest.NewRequest(http.MethodPost, "/databases/orders/delete", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleDatabaseRoutes(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "orders", Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassDatabase{}))
 }
 
 func TestAppDeleteRequiresConfirmName(t *testing.T) {
@@ -1609,6 +1624,13 @@ func TestAppDeleteRequiresConfirmName(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
 
+	bypass := httptest.NewRequest(http.MethodPost, "/apps/demo", strings.NewReader(url.Values{"_method": {"DELETE"}}.Encode())).WithContext(ctx)
+	bypass.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	bypassRec := httptest.NewRecorder()
+	srv.handleAppRoutes(bypassRec, bypass)
+	require.Equal(t, http.StatusSeeOther, bypassRec.Code)
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
+
 	ok := httptest.NewRequest(http.MethodPost, "/apps/demo/delete", strings.NewReader(url.Values{"confirmName": {testAppName}}.Encode())).WithContext(ctx)
 	ok.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	okRec := httptest.NewRecorder()
@@ -1617,7 +1639,78 @@ func TestAppDeleteRequiresConfirmName(t *testing.T) {
 	require.Error(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassApp{}))
 }
 
+func TestDatabaseUpdateKeepsEnvironmentWithoutFormField(t *testing.T) {
+	ctx := context.Background()
+	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Version: "16"}}
+	c := newFakeClient(db)
+	srv := &Server{Client: c}
+	req := httptest.NewRequest(http.MethodPost, "/databases/orders/update", strings.NewReader(url.Values{"version": {"17"}}.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleDatabaseUpdate(rec, req, "orders")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	var updated geassv1alpha1.GeassDatabase
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "orders", Namespace: platform.SystemNamespace}, &updated))
+	require.Equal(t, geassv1alpha1.EnvironmentDev, updated.Spec.Environment)
+	require.Equal(t, "17", updated.Spec.Version)
+}
+
+func TestCacheAndObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
+	ctx := context.Background()
+	cache := &geassv1alpha1.GeassCache{ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassCacheSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
+	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.ObjectStoreEngineMinIO}}
+	c := newFakeClient(cache, store)
+	srv := &Server{Client: c}
+
+	cacheReq := httptest.NewRequest(http.MethodPost, "/caches/sessions/update", strings.NewReader(url.Values{}.Encode())).WithContext(ctx)
+	cacheReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	cacheRec := httptest.NewRecorder()
+	srv.handleCacheUpdate(cacheRec, cacheReq, "sessions")
+	require.Equal(t, http.StatusSeeOther, cacheRec.Code)
+	var updatedCache geassv1alpha1.GeassCache
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "sessions", Namespace: platform.SystemNamespace}, &updatedCache))
+	require.Equal(t, testProjectName, updatedCache.Spec.Project)
+	require.Equal(t, geassv1alpha1.EnvironmentDev, updatedCache.Spec.Environment)
+
+	storeReq := httptest.NewRequest(http.MethodPost, "/object-stores/assets/update", strings.NewReader(url.Values{"project": {""}, "environment": {""}}.Encode())).WithContext(ctx)
+	storeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	storeRec := httptest.NewRecorder()
+	srv.handleObjectStoreUpdate(storeRec, storeReq, "assets")
+	require.Equal(t, http.StatusSeeOther, storeRec.Code)
+	var updatedStore geassv1alpha1.GeassObjectStore
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "assets", Namespace: platform.SystemNamespace}, &updatedStore))
+	require.Equal(t, testProjectName, updatedStore.Spec.Project)
+	require.Equal(t, geassv1alpha1.EnvironmentDev, updatedStore.Spec.Environment)
+}
+
+func TestAPIObjectStoreCreateRejectsInvalidBucket(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"name":        {"assets"},
+		"project":     {testProjectName},
+		"environment": {"production"},
+		"engine":      {"S3"},
+		"placement":   {"External"},
+		"bucket":      {"Bad_Bucket"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "bucket name")
+}
+
 func TestDatabaseQueryCommandSplitsRedisArguments(t *testing.T) {
-	require.Equal(t, []string{"redis-cli", "GET", "session"}, databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET session"))
-	require.Equal(t, []string{"psql", "-c", "SELECT 1"}, databaseQueryCommand(geassv1alpha1.DatabaseEnginePostgres, "SELECT 1"))
+	cmd, err := databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET session")
+	require.NoError(t, err)
+	require.Equal(t, []string{"redis-cli", "--", "GET", "session"}, cmd)
+	cmd, err = databaseQueryCommand(geassv1alpha1.DatabaseEnginePostgres, "SELECT 1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"psql", "-c", "SELECT 1"}, cmd)
+	_, err = databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "-h localhost GET session")
+	require.Error(t, err)
+	_, err = databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET --eval")
+	require.Error(t, err)
 }

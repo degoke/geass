@@ -257,7 +257,11 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 		writeJSON(w, http.StatusOK, map[string]any{"output": err.Error()})
 		return
 	}
-	command := databaseQueryCommand(db.Spec.Engine, query)
+	command, err := databaseQueryCommand(db.Spec.Engine, query)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	request := s.Kube.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(db.Status.TargetNamespace).SubResource("exec")
 	for _, part := range command {
 		request.Param("command", part)
@@ -298,15 +302,21 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 	return nil, fmt.Errorf("No database pods are running yet.")
 }
 
-func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) []string {
+func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) ([]string, error) {
 	switch engine {
 	case geassv1alpha1.DatabaseEngineMySQL:
-		return []string{"mysql", "-e", query}
+		return []string{"mysql", "-e", query}, nil
 	case geassv1alpha1.DatabaseEngineRedis:
-		return append([]string{"redis-cli"}, strings.Fields(query)...)
+		args := strings.Fields(query)
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-") {
+				return nil, fmt.Errorf("redis command flags are not allowed")
+			}
+		}
+		return append([]string{"redis-cli", "--"}, args...), nil
 	case geassv1alpha1.DatabaseEngineSQLite:
-		return []string{"rqlite", "-e", query}
+		return []string{"rqlite", "-e", query}, nil
 	default:
-		return []string{"psql", "-c", query}
+		return []string{"psql", "-c", query}, nil
 	}
 }

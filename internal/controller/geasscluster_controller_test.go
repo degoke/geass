@@ -31,6 +31,16 @@ import (
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
+func markHelmChartNotReady(ctx context.Context, name string) {
+	jobName := "helm-install-" + name
+	job := &batchv1.Job{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: testHelmChartNS}, job)).To(Succeed())
+	job.Status.Succeeded = 0
+	job.Status.Failed = 0
+	job.Status.Active = 1
+	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+}
+
 func markHelmChartReady(ctx context.Context, name string) {
 	chart := &helmv1.HelmChart{}
 	Eventually(func() error {

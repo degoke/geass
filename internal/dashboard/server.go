@@ -2024,6 +2024,17 @@ func formHasValue(r *http.Request, keys ...string) bool {
 	return false
 }
 
+func formNonEmpty(r *http.Request, key string) (string, bool) {
+	if !formHasValue(r, key) {
+		return "", false
+	}
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
 func formCPU(r *http.Request) string {
 	return firstFormValue(r, "cpu", "cpuRequest")
 }
@@ -2689,7 +2700,9 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 	fallback = workspaceResourceURL(db.Spec.Project, string(db.Spec.Environment), "databases", name, "settings")
-	db.Spec.Environment = geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
+	if env, ok := formNonEmpty(r, "environment"); ok {
+		db.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+	}
 	if v := strings.TrimSpace(r.FormValue("version")); v != "" {
 		db.Spec.Version = v
 	}
@@ -2823,7 +2836,9 @@ func (s *Server) handleCacheUpdate(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 	fallback = workspaceResourceURL(cache.Spec.Project, string(cache.Spec.Environment), "caches", name, "settings")
-	cache.Spec.Environment = geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
+	if env, ok := formNonEmpty(r, "environment"); ok {
+		cache.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+	}
 	if err := s.Client.Update(r.Context(), &cache); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -2936,7 +2951,14 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
+		if err := platform.ValidBucketName(bucket); err != nil {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
 		store.Spec.Buckets = []string{bucket}
+	} else if err := platform.ValidBucketName(name); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
+		return
 	}
 	if err := s.Client.Create(r.Context(), store); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
@@ -3036,8 +3058,12 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	fallback = workspaceResourceURL(store.Spec.Project, string(store.Spec.Environment), "object-stores", name, "settings")
-	store.Spec.Project = strings.TrimSpace(r.FormValue("project"))
-	store.Spec.Environment = geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
+	if project, ok := formNonEmpty(r, "project"); ok {
+		store.Spec.Project = project
+	}
+	if env, ok := formNonEmpty(r, "environment"); ok {
+		store.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+	}
 	if err := s.Client.Update(r.Context(), &store); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -3047,6 +3073,10 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name string, obj client.Object, listPath string) {
 	if !requireMutation(w, r, listPath) || !parseFormOrRedirect(w, r, listPath) {
+		return
+	}
+	if r.FormValue("confirmName") != name {
+		redirectFormError(w, r, listPath, "confirmation did not match the resource name")
 		return
 	}
 	key := client.ObjectKey{Name: name, Namespace: systemNamespace}

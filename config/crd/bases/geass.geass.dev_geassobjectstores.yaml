@@ -52,6 +52,9 @@ spec:
               buckets:
                 description: Buckets is an optional list of buckets to create on provision.
                 items:
+                  maxLength: 63
+                  minLength: 3
+                  pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
                   type: string
                 type: array
               connectionRef:
