@@ -67,8 +67,9 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainVerify(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"state":"error"`)
 	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.Contains(t, rec.Body.String(), `"ok":false`)
+	require.NotContains(t, rec.Body.String(), `"state":"success"`)
 
 	var updated geassv1alpha1.GeassPlatformConfig
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &updated))
