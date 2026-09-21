@@ -257,8 +257,9 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 
 // sameOriginMutation prevents cross-site form posts from mutating cluster state.
 // Origin or Referer is required and must match this dashboard host. Forwarded hosts
-// are trusted only when Host is a Kubernetes service DNS name, not loopback,
-// private IPs, or a public hostname that happens to contain ".svc".
+// are trusted only when Host is Kubernetes service DNS (service.namespace.svc or
+// service.namespace.svc.cluster.local), not loopback, private IPs, two-label *.svc,
+// or a public hostname that happens to contain ".svc".
 func sameOriginMutation(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -331,7 +332,13 @@ func requestHostIsClusterService(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return strings.HasSuffix(host, ".svc.cluster.local") || strings.HasSuffix(host, ".svc")
+	if strings.HasSuffix(host, ".svc.cluster.local") {
+		return strings.Count(host, ".") >= 4
+	}
+	if strings.HasSuffix(host, ".svc") {
+		return strings.Count(host, ".") >= 2
+	}
+	return false
 }
 
 func normalizeRequestHost(host string) string {

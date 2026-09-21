@@ -37,7 +37,7 @@ func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request
 		Path:     "/settings/github/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
+		Secure:   dashboardCookieSecure(r),
 		MaxAge:   3600,
 	})
 	return state

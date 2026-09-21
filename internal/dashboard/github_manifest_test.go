@@ -98,3 +98,23 @@ func TestGitHubCredentialErrorHidesKubernetesAndCryptoText(t *testing.T) {
 	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf(`Secret "platform-github-app" is invalid: spec.data: Required value`)))
 	require.Equal(t, "could not save GitHub App credentials", githubCredentialError(fmt.Errorf("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)")))
 }
+
+func TestGitHubManifestStateCookieSecureOnPublicHost(t *testing.T) {
+	srv := &Server{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/github", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	state := srv.beginGitHubManifestState(rec, req)
+	require.NotEmpty(t, state)
+	var cookie *http.Cookie
+	for _, item := range rec.Result().Cookies() {
+		if item.Name == githubManifestStateCookieName(state) {
+			cookie = item
+		}
+	}
+	require.NotNil(t, cookie)
+	require.True(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+}

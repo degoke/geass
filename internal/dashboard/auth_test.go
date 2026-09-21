@@ -556,6 +556,28 @@ func TestDashboardAuthFailsClosedOnCorruptSessionEpochs(t *testing.T) {
 	require.Nil(t, srv.currentSession(sessionReq))
 }
 
+func TestDashboardAuthFailsClosedOnCorruptUsersJSON(t *testing.T) {
+	ctx := t.Context()
+	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", "env-password")
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret.Data["users"] = []byte("{not-json")
+	srv := &Server{Client: newFakeClient(secret)}
+	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable")
+	require.NotContains(t, rec.Body.String(), `"authenticated":true`)
+
+	stored := &corev1.Secret{}
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, stored))
+	require.Equal(t, "{not-json", string(stored.Data["users"]))
+}
+
 func TestDashboardLoginIsCaseInsensitive(t *testing.T) {
 	secret := dashboardUsersSecret(dashboardUser{Username: "Admin", Password: "test-password", Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}

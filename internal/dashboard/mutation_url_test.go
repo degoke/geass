@@ -205,6 +205,15 @@ func TestRequireMutationIgnoresForwardedHostWhenSvcIsInPublicName(t *testing.T) 
 	require.False(t, requireMutation(rec, req, "/settings/github"))
 }
 
+func TestRequireMutationIgnoresForwardedHostOnTwoLabelSvc(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "foo.svc"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
+}
+
 func TestAppConfigFormErrorReturnsPanelAlertForHX(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()

@@ -289,7 +289,11 @@ func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, ma
 	epochs := map[string]int64{}
 	secretUsers := []dashboardUser{}
 	if err == nil {
-		secretUsers = parseDashboardUsersSecret(secret)
+		parsedUsers, parseUsersErr := parseDashboardUsersSecret(secret)
+		if parseUsersErr != nil {
+			return nil, nil, nil, nil, err, parseUsersErr
+		}
+		secretUsers = parsedUsers
 		if len(sessionKey) == 0 {
 			sessionKey = secret.Data["session-key"]
 		}
@@ -526,19 +530,19 @@ func (a *dashboardAuth) epoch(username string) int64 {
 	return 0
 }
 
-func parseDashboardUsersSecret(secret *corev1.Secret) []dashboardUser {
+func parseDashboardUsersSecret(secret *corev1.Secret) ([]dashboardUser, error) {
 	if secret == nil {
-		return nil
+		return nil, nil
 	}
 	raw := secret.Data["users"]
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	var users []dashboardUser
 	if err := json.Unmarshal(raw, &users); err != nil {
-		return nil
+		return nil, err
 	}
-	return filterDashboardUsers(users, false)
+	return filterDashboardUsers(users, false), nil
 }
 
 func parseDashboardUsersEnv(value string) []dashboardUser {
