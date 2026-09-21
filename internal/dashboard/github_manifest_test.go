@@ -18,17 +18,6 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-func TestGitHubAppManifestFormPostsToGitHub(t *testing.T) {
-	html := githubAppManifestForm("https://geass.example.com", "state123")
-	require.Contains(t, html, `action="https://github.com/settings/apps/new?state=state123"`)
-	require.NotContains(t, html, `target="_blank"`)
-	require.Contains(t, html, `name="manifest"`)
-	require.Contains(t, html, "Geass-example-com")
-	require.Contains(t, html, "Create GitHub App on GitHub")
-	require.Contains(t, html, "/webhooks/github")
-	require.Contains(t, html, "/settings/github/manifest/callback")
-}
-
 func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 	ctx := context.Background()
 	appConfig := testGitHubAppConfig(t)

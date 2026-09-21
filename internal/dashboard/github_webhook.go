@@ -74,7 +74,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	triggered, err := s.triggerWebhookBuilds(r.Context(), payload)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "could not process webhook", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

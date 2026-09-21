@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 )
 
 func (s *Server) handlePlatformGitHubSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -10,7 +11,7 @@ func (s *Server) handlePlatformGitHubSettingsSave(w http.ResponseWriter, r *http
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasDashboardURL {
@@ -27,8 +28,19 @@ func (s *Server) handlePlatformGitHubSettingsSave(w http.ResponseWriter, r *http
 		PrivateKey:    r.FormValue("privateKey"),
 		KeepExisting:  true,
 	}); err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", githubCredentialError(err))
 		return
 	}
 	redirect(w, r, "/settings/github")
+}
+
+func githubCredentialError(err error) string {
+	if err == nil {
+		return "could not save GitHub App credentials"
+	}
+	message := err.Error()
+	if strings.Contains(message, "required") || strings.Contains(message, "invalid") {
+		return message
+	}
+	return "could not save GitHub App credentials"
 }

@@ -589,19 +589,6 @@ func TestSettingsPageContainsPlatformNavigation(t *testing.T) {
 	require.Contains(t, boot.Body.String(), `"capacity"`)
 }
 
-func TestLayoutUsesGeassVisualSystem(t *testing.T) {
-	body := layout("Dashboard", "<p>Content</p>")
-
-	require.Contains(t, body, `<html data-theme="dark">`)
-	require.Contains(t, body, `--bg-canvas: #0a0a0b`)
-	require.Contains(t, body, `--accent: #8b8cf8`)
-	require.Contains(t, body, `class="sidebar-brand-mark"`)
-	require.Contains(t, body, `class="sidebar"`)
-	require.Contains(t, body, `id="theme-toggle"`)
-	require.Contains(t, body, `.btn-primary`)
-	require.NotContains(t, body, `daisyui`)
-}
-
 func TestProjectsPageRendersRailwayStyleCards(t *testing.T) {
 	ctx := context.Background()
 	project := &geassv1alpha1.GeassProject{

@@ -139,18 +139,26 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
-	if s.loginLocked(r, username) {
+	locked, err := s.loginLocked(r, username)
+	if err != nil {
+		redirectFormError(w, r, "/", dashboardAuthUnavailable)
+		return
+	}
+	if locked {
 		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
 	auth, err := s.dashboardAuth(r)
 	if err != nil {
-		redirectFormError(w, r, "/", "dashboard authentication is unavailable")
+		redirectFormError(w, r, "/", dashboardAuthUnavailable)
 		return
 	}
 	user := auth.lookup(username)
 	if user == nil || !passwordMatches(r.FormValue("password"), user.Password) {
-		_ = s.recordLoginFailure(r, username)
+		if err := s.recordLoginFailure(r, username); err != nil {
+			redirectFormError(w, r, "/", dashboardAuthUnavailable)
+			return
+		}
 		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
@@ -294,6 +302,9 @@ func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, ma
 		users = envUsers
 	}
 	if len(users) == 0 {
+		return nil, nil, nil, nil, err, errDashboardAuthUnconfigured
+	}
+	if dashboardUsersHaveDuplicates(users) {
 		return nil, nil, nil, nil, err, errDashboardAuthUnconfigured
 	}
 	if len(sessionKey) == 0 {
@@ -565,6 +576,21 @@ func filterDashboardUsers(users []dashboardUser, defaultAdmin bool) []dashboardU
 	return filtered
 }
 
+func dashboardUsersHaveDuplicates(users []dashboardUser) bool {
+	seen := map[string]struct{}{}
+	for _, user := range users {
+		key := normalizeDashboardUsername(user.Username)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			return true
+		}
+		seen[key] = struct{}{}
+	}
+	return false
+}
+
 func parseDashboardRole(role string, defaultAdmin bool) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "":
@@ -726,7 +752,7 @@ func randomDashboardBytes(size int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (s *Server) loginLocked(r *http.Request, username string) bool {
+func (s *Server) loginLocked(r *http.Request, username string) (bool, error) {
 	username = normalizeDashboardUsername(username)
 	s.loginMu.Lock()
 	if s.loginFailures == nil {
@@ -735,13 +761,13 @@ func (s *Server) loginLocked(r *http.Request, username string) bool {
 	attempt := s.loginFailures[username]
 	s.loginMu.Unlock()
 	if loginAttemptLocked(attempt) {
-		return true
+		return true, nil
 	}
 	stored, err := s.loadLoginLockout(r, username)
 	if err != nil {
-		return true
+		return false, err
 	}
-	return loginAttemptLocked(stored)
+	return loginAttemptLocked(stored), nil
 }
 
 func (s *Server) recordLoginFailure(r *http.Request, username string) error {
@@ -759,9 +785,17 @@ func (s *Server) recordLoginFailure(r *http.Request, username string) error {
 	if attempt.Count >= loginFailureLimit {
 		attempt.LockedUntil = now.Add(loginLockout)
 	}
+	s.loginMu.Unlock()
+	if err := s.persistLoginLockout(r, username, attempt); err != nil {
+		return err
+	}
+	s.loginMu.Lock()
+	if s.loginFailures == nil {
+		s.loginFailures = map[string]loginAttempt{}
+	}
 	s.loginFailures[username] = attempt
 	s.loginMu.Unlock()
-	return s.persistLoginLockout(r, username, attempt)
+	return nil
 }
 
 func (s *Server) clearLoginFailures(r *http.Request, username string) error {
@@ -785,7 +819,10 @@ func (s *Server) loadLoginLockout(r *http.Request, username string) (loginAttemp
 	if err != nil {
 		return loginAttempt{}, err
 	}
-	lockouts := parseDashboardLoginLockouts(secret)
+	lockouts, err := parseDashboardLoginLockouts(secret)
+	if err != nil {
+		return loginAttempt{}, err
+	}
 	return lockouts[username], nil
 }
 
@@ -795,12 +832,34 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 		secret := &corev1.Secret{}
 		err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 		if apierrors.IsNotFound(err) {
-			return err
+			if attempt.Count == 0 && attempt.LockedUntil.IsZero() {
+				return nil
+			}
+			lockouts := map[string]loginAttempt{username: attempt}
+			payload, marshalErr := json.Marshal(lockouts)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			createErr := s.Client.Create(r.Context(), &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace},
+				Type:       corev1.SecretTypeOpaque,
+				StringData: map[string]string{dashboardLoginLockoutsSecretKey: string(payload)},
+			})
+			if createErr == nil {
+				return nil
+			}
+			if !apierrors.IsAlreadyExists(createErr) {
+				return createErr
+			}
+			continue
 		}
 		if err != nil {
 			return err
 		}
-		lockouts := parseDashboardLoginLockouts(secret)
+		lockouts, parseErr := parseDashboardLoginLockouts(secret)
+		if parseErr != nil {
+			return parseErr
+		}
 		if attempt.Count == 0 && attempt.LockedUntil.IsZero() {
 			delete(lockouts, username)
 		} else {
@@ -823,13 +882,16 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 	return lastErr
 }
 
-func parseDashboardLoginLockouts(secret *corev1.Secret) map[string]loginAttempt {
+func parseDashboardLoginLockouts(secret *corev1.Secret) (map[string]loginAttempt, error) {
 	lockouts := map[string]loginAttempt{}
 	if secret == nil || len(secret.Data[dashboardLoginLockoutsSecretKey]) == 0 {
-		return lockouts
+		return lockouts, nil
 	}
 	if err := json.Unmarshal(secret.Data[dashboardLoginLockoutsSecretKey], &lockouts); err != nil {
-		return map[string]loginAttempt{}
+		return nil, err
 	}
-	return lockouts
+	if lockouts == nil {
+		lockouts = map[string]loginAttempt{}
+	}
+	return lockouts, nil
 }

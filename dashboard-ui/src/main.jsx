@@ -799,7 +799,8 @@ function PlatformSettings({ data, page, reload }) {
                 </form>
               )}
             </Card>
-            <GitHubManualForm config={config} reload={reload} />
+            <GitHubManualForm reload={reload} />
+            <GitHubAppActions reload={reload} configured={Boolean(info.hasGitHubApp)} />
           </div>
         )}
       </>
@@ -822,7 +823,7 @@ function PlatformSettings({ data, page, reload }) {
       </Card>
       <Card>
         <div className="setting-list">
-          <AppLink className="setting-row" href="/settings/domain"><div className="setting-icon"><Server size={17} /></div><div><strong>Domain</strong><small>Configure exposure and DNS verification.</small></div><ArrowRight size={16} /></AppLink>
+          <AppLink className="setting-row" href="/settings/domain"><div className="setting-icon"><Server size={17} /></div><div><strong>Domain</strong><small>Set the public dashboard host and exposure.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/settings/github"><div className="setting-icon"><GitBranch size={17} /></div><div><strong>GitHub</strong><small>Connect repositories for source-based deploys.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/cluster"><div className="setting-icon"><Cpu size={17} /></div><div><strong>Cluster capacity</strong><small>Inspect CPU, memory, and node pressure before creating resources.</small></div><ArrowRight size={16} /></AppLink>
           <AppLink className="setting-row" href="/ha-readiness"><div className="setting-icon"><ShieldCheck size={17} /></div><div><strong>HA readiness</strong><small>Check storage, nodes, and add-ons.</small></div><ArrowRight size={16} /></AppLink>
@@ -840,9 +841,9 @@ function DomainSettings({ config, reload }) {
   const [exposure, setExposure] = useState(config?.spec?.dashboardExposure || "ingress");
   return (
     <>
-      <PageHeader eyebrow="Platform / Settings" title="Domain" description="Choose how Geass is exposed and verify the public dashboard endpoint." />
+      <PageHeader eyebrow="Platform / Settings" title="Domain" description="Set the public dashboard host. Geass checks DNS and HTTPS in the background." />
       <Card>
-        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/settings/domain/save", { domain, exposure, tunnelCNAMETarget: config?.spec?.tunnelCNAMETarget || "" }).then(() => { reload(); alert("Domain settings saved"); }); }}>
+        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/settings/domain/save", { domain, exposure, tunnelCNAMETarget: config?.spec?.tunnelCNAMETarget || "" }).then(() => { reload(); alert("Domain settings saved"); }).catch((error) => alert(error.message)); }}>
           <Field label="Your domain"><Input required value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com" /></Field>
           <Field label="Exposure"><Select value={exposure} onChange={(event) => setExposure(event.target.value)}><option value="ingress">Server (A record)</option><option value="cloudflare-tunnel">Local + Cloudflare Tunnel</option></Select></Field>
           <div className="form-actions"><Button type="submit" disabled={!canMutate(data)}>Save domain</Button></div>
@@ -854,10 +855,11 @@ function DomainSettings({ config, reload }) {
 
 function GitHubManualForm({ reload }) {
   const { data } = useBootstrap();
+  const queryClient = useQueryClient();
   const [values, setValues] = useState({ appID: "", clientID: "", slug: "", clientSecret: "", webhookSecret: "", privateKey: "" });
   return (
     <Card>
-      <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/settings/github/save", values).then(() => { reload(); alert("GitHub App credentials saved"); }).catch((error) => alert(error.message)); }}>
+      <form className="form-grid" onSubmit={(event) => { event.preventDefault(); action("/settings/github/save", values).then(() => { reload(); queryClient.invalidateQueries({ queryKey: ["github-settings"] }); alert("GitHub App credentials saved"); }).catch((error) => alert(error.message)); }}>
         <Field label="App ID"><Input required value={values.appID} onChange={(event) => setValues({ ...values, appID: event.target.value })} /></Field>
         <Field label="Client ID"><Input required value={values.clientID} onChange={(event) => setValues({ ...values, clientID: event.target.value })} /></Field>
         <Field label="App slug"><Input required value={values.slug} onChange={(event) => setValues({ ...values, slug: event.target.value })} /></Field>
@@ -866,6 +868,28 @@ function GitHubManualForm({ reload }) {
         <Field label="Private key (PEM)"><ShadcnTextarea rows={6} value={values.privateKey} onChange={(event) => setValues({ ...values, privateKey: event.target.value })} /></Field>
         <Button type="submit" disabled={!canMutate(data)}>Save GitHub App</Button>
       </form>
+    </Card>
+  );
+}
+
+function GitHubAppActions({ reload, configured }) {
+  const { data } = useBootstrap();
+  const queryClient = useQueryClient();
+  const [confirm, setConfirm] = useState("");
+  if (!canMutate(data)) return null;
+  return (
+    <Card>
+      <div className="form-grid">
+        <div className="form-actions">
+          <Button type="button" variant="outline" disabled={!configured} onClick={() => action("/settings/github/test").then(() => alert("GitHub App webhook matches this dashboard")).catch((error) => alert(error.message))}>Test GitHub App</Button>
+        </div>
+        {configured && (
+          <div className="panel-form">
+            <Field label="Type remove-github to disconnect"><Input value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="off" placeholder="remove-github" /></Field>
+            <Button type="button" variant="danger" disabled={confirm !== "remove-github"} onClick={() => action("/settings/github/clear", { confirm }).then(() => { reload(); queryClient.invalidateQueries({ queryKey: ["github-settings"] }); alert("GitHub App removed"); }).catch((error) => alert(error.message))}>Remove GitHub App</Button>
+          </div>
+        )}
+      </div>
     </Card>
   );
 }

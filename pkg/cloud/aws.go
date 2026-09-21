@@ -68,7 +68,10 @@ func (c *AWSClient) EnsureBucket(bucket string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 300 || resp.StatusCode == http.StatusConflict {
 		return nil
 	}
@@ -131,7 +134,7 @@ func (c *AWSClient) DeleteBucket(bucket string) error {
 
 func (c *AWSClient) emptyBucket(bucket string) error {
 	token := ""
-	for {
+	for page := 0; page < s3EmptyMaxPages; page++ {
 		keys, next, err := c.listBucketKeys(bucket, token)
 		if err != nil {
 			return err
@@ -148,6 +151,9 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 			return fmt.Errorf("bucket %s listing did not advance", bucket)
 		}
 		token = next
+		if page == s3EmptyMaxPages-1 {
+			return fmt.Errorf("bucket %s listing exceeded %d pages", bucket, s3EmptyMaxPages)
+		}
 	}
 	if err := c.emptyBucketVersions(bucket); err != nil && !isS3NoSuchBucket(err) {
 		return err
@@ -160,15 +166,21 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 
 const s3ListResponseLimit = 1 << 20
 
-func readS3ListBody(r io.Reader) ([]byte, error) {
-	payload, err := io.ReadAll(io.LimitReader(r, s3ListResponseLimit+1))
+var s3EmptyMaxPages = 10000
+
+func readHTTPBody(r io.Reader, limit int64) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(payload) > s3ListResponseLimit {
-		return nil, fmt.Errorf("S3 listing response exceeded %d bytes", s3ListResponseLimit)
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("response exceeded %d bytes", limit)
 	}
 	return payload, nil
+}
+
+func readS3ListBody(r io.Reader) ([]byte, error) {
+	return readHTTPBody(r, s3ListResponseLimit)
 }
 
 func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, string, error) {
@@ -225,7 +237,7 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 
 func (c *AWSClient) emptyBucketVersions(bucket string) error {
 	keyMarker, versionMarker := "", ""
-	for {
+	for page := 0; page < s3EmptyMaxPages; page++ {
 		versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
 		if err != nil {
 			if isS3NoSuchBucket(err) {
@@ -248,7 +260,11 @@ func (c *AWSClient) emptyBucketVersions(bucket string) error {
 			return fmt.Errorf("bucket %s version listing did not advance", bucket)
 		}
 		keyMarker, versionMarker = nextKey, nextVersion
+		if page == s3EmptyMaxPages-1 {
+			return fmt.Errorf("bucket %s version listing exceeded %d pages", bucket, s3EmptyMaxPages)
+		}
 	}
+	return fmt.Errorf("bucket %s version listing exceeded %d pages", bucket, s3EmptyMaxPages)
 }
 
 type objectVersion struct {
@@ -318,7 +334,7 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 
 func (c *AWSClient) abortMultipartUploads(bucket string) error {
 	keyMarker, uploadMarker := "", ""
-	for {
+	for page := 0; page < s3EmptyMaxPages; page++ {
 		uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
 		if err != nil {
 			if isS3NoSuchBucket(err) {
@@ -341,7 +357,11 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 			return fmt.Errorf("bucket %s multipart listing did not advance", bucket)
 		}
 		keyMarker, uploadMarker = nextKey, nextUpload
+		if page == s3EmptyMaxPages-1 {
+			return fmt.Errorf("bucket %s multipart listing exceeded %d pages", bucket, s3EmptyMaxPages)
+		}
 	}
+	return fmt.Errorf("bucket %s multipart listing exceeded %d pages", bucket, s3EmptyMaxPages)
 }
 
 type multipartUpload struct {
@@ -413,7 +433,10 @@ func (c *AWSClient) abortMultipartUpload(bucket, key, uploadID string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 300 || resp.StatusCode == http.StatusNotFound {
 		return nil
 	}
@@ -437,7 +460,10 @@ func (c *AWSClient) deleteObject(bucket, key, versionID string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 300 || resp.StatusCode == http.StatusNotFound {
 		return nil
 	}
@@ -457,7 +483,10 @@ func (c *AWSClient) deleteBucketRequest(bucket string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 300 {
 		return nil
 	}
@@ -634,7 +663,10 @@ func (c *AWSClient) iamCall(values url.Values) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode < 300 {
 		return payload, nil
 	}
@@ -698,7 +730,10 @@ func (c *AWSClient) ensurePathStyleBucket(bucket string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode < 300 || resp.StatusCode == http.StatusConflict {
 		return nil
 	}

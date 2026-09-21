@@ -23,31 +23,6 @@ func (s *Server) handleGeassProbe(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true,"service":"geass-dashboard"}`))
 }
 
-func (s *Server) handleTestDashboardURL(w http.ResponseWriter, r *http.Request) {
-	if !requireMutation(w, r, "/settings/domain") || !parseFormOrRedirect(w, r, "/settings/domain") {
-		return
-	}
-	dashboardURL := normalizeDashboardURL(r.FormValue("dashboardURL"))
-	if dashboardURL == "" {
-		readiness, err := s.platformReadiness(r.Context())
-		if err != nil || !readiness.HasDashboardURL {
-			redirectProbe(w, r, "/settings/domain", "error", "dashboard URL is not configured")
-			return
-		}
-		dashboardURL = readiness.DashboardURL
-	}
-	message, ok := s.verifyDashboardURL(r.Context(), dashboardURL)
-	if ok == "success" {
-		redirectProbe(w, r, "/settings/domain", "success", "")
-		return
-	}
-	if ok == "warning" {
-		redirectProbe(w, r, "/settings/domain", "warning", message)
-		return
-	}
-	redirectProbe(w, r, "/settings/domain", "error", message)
-}
-
 func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (string, string) {
 	parsed, err := url.Parse(dashboardURL)
 	if err != nil || parsed.Host == "" {
@@ -91,7 +66,7 @@ func (s *Server) probeURL(ctx context.Context, probeURL string) (string, bool) {
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
 	if err != nil {
-		return err.Error(), false
+		return "dashboard URL is invalid", false
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
@@ -111,7 +86,7 @@ func (s *Server) handlePlatformGitHubTest(w http.ResponseWriter, r *http.Request
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasGitHubApp {
@@ -121,7 +96,7 @@ func (s *Server) handlePlatformGitHubTest(w http.ResponseWriter, r *http.Request
 	gh := &githubapp.Client{Config: readiness.GitHubApp, HTTP: s.HTTPClient}
 	hook, err := gh.GetAppHookConfig()
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not reach GitHub App")
 		return
 	}
 	expected := readiness.DashboardURL + "/webhooks/github"
@@ -144,37 +119,16 @@ func (s *Server) handlePlatformGitHubClear(w http.ResponseWriter, r *http.Reques
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, config); err == nil {
 		config.Spec.GitHubAppRef = nil
 		if err := s.Client.Update(r.Context(), config); err != nil {
-			redirectProbe(w, r, "/settings/github", "error", err.Error())
+			redirectProbe(w, r, "/settings/github", "error", "could not remove GitHub App")
 			return
 		}
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: platformGitHubAppSecretName, Namespace: systemNamespace}, secret); err == nil {
 		if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
-			redirectProbe(w, r, "/settings/github", "error", err.Error())
+			redirectProbe(w, r, "/settings/github", "error", "could not remove GitHub App")
 			return
 		}
 	}
 	redirect(w, r, "/settings/github")
-}
-
-func settingsProbeAlert(r *http.Request) string {
-	switch r.URL.Query().Get("probe") {
-	case "success":
-		return Alert("success", "Verification succeeded.")
-	case "warning":
-		message := strings.TrimSpace(r.URL.Query().Get("message"))
-		if message == "" {
-			message = "Verification succeeded with warnings."
-		}
-		return Alert("warning", message)
-	case "error":
-		message := strings.TrimSpace(r.URL.Query().Get("message"))
-		if message == "" {
-			message = "Verification failed."
-		}
-		return Alert("error", message)
-	default:
-		return ""
-	}
 }

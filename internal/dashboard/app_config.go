@@ -80,7 +80,7 @@ func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name
 	app.Spec.ConfigData[key] = value
 	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -107,7 +107,7 @@ func (s *Server) handleAppConfigDelete(w http.ResponseWriter, r *http.Request, n
 	}
 	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -140,7 +140,7 @@ func (s *Server) handleAppConfigRaw(w http.ResponseWriter, r *http.Request, name
 	}
 	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, err.Error())
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -201,7 +201,7 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 	app.Spec.SecretData = nil
 	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appSecretsFormError(w, r, name, err.Error())
+		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppSecretsPanel(w, r, app)
@@ -229,16 +229,16 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 			delete(secret.Data, key)
 			if len(secret.Data) == 0 {
 				if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
-					s.appSecretsFormError(w, r, name, err.Error())
+					s.appSecretsFormError(w, r, name, dashboardActionFailed)
 					return
 				}
 				app.Spec.SecretRef = nil
 			} else if err := s.Client.Update(r.Context(), secret); err != nil {
-				s.appSecretsFormError(w, r, name, err.Error())
+				s.appSecretsFormError(w, r, name, dashboardActionFailed)
 				return
 			}
 		} else if !apierrors.IsNotFound(err) {
-			s.appSecretsFormError(w, r, name, err.Error())
+			s.appSecretsFormError(w, r, name, dashboardActionFailed)
 			return
 		}
 	} else {
@@ -249,7 +249,7 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 	}
 	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appSecretsFormError(w, r, name, err.Error())
+		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}
 	s.renderAppSecretsPanel(w, r, app)

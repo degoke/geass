@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"strconv"
@@ -25,24 +24,6 @@ const githubManifestStateCookie = "geass_github_manifest_state_"
 
 func githubManifestStateCookieName(state string) string {
 	return githubManifestStateCookie + state
-}
-
-func githubAppManifestForm(dashboardURL, state string) string {
-	appName := githubapp.DefaultGeassAppName(dashboardURL)
-	manifest := githubapp.NewGeassAppManifest(dashboardURL, appName)
-	raw, err := githubapp.ManifestJSON(manifest)
-	if err != nil {
-		return Alert("error", "Could not build GitHub App manifest.")
-	}
-	action := githubapp.ManifestRegisterURL(state)
-	return Card(
-		`<h3 class="card-title">Create with Geass</h3>` +
-			`<p class="text-secondary">You will sign in to GitHub and register <code>` + template.HTMLEscapeString(appName) + `</code> with the correct URLs, permissions, and webhook, then return here. The name includes your dashboard domain so it is unique on GitHub. Geass stores the credentials automatically.</p>` +
-			`<form method="post" action="` + template.HTMLEscapeString(action) + `">` +
-			`<input type="hidden" name="manifest" value="` + template.HTMLEscapeString(raw) + `">` +
-			`<div class="row-wrap mt-2">` + Button("Create GitHub App on GitHub", ButtonOpts{Type: "submit", Variant: "primary"}) + `</div>` +
-			`</form>`,
-	)
 }
 
 func (s *Server) beginGitHubManifestState(w http.ResponseWriter, r *http.Request) string {
@@ -92,12 +73,12 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 
 	converted, err := githubapp.ConvertManifestCode(r.Context(), s.HTTPClient, code)
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not convert GitHub App manifest")
 		return
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasDashboardURL && !s.ensureDashboardDomainVerified(r.Context(), readiness) {
@@ -116,7 +97,7 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		WebhookSecret: converted.WebhookSecret,
 		PrivateKey:    converted.PEM,
 	}); err != nil {
-		redirectProbe(w, r, "/settings/github", "error", err.Error())
+		redirectProbe(w, r, "/settings/github", "error", githubCredentialError(err))
 		return
 	}
 	redirectProbe(w, r, "/settings/github", "success", "")

@@ -192,11 +192,6 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeViewerBootstrap(w http.ResponseWriter, r *http.Request) {
 	data := dashboardBootstrap{Platform: dashboardPlatform{Session: s.dashboardSession(r)}}
-	if readiness, err := s.platformReadiness(r.Context()); err == nil {
-		data.Platform.HasDashboardURL = readiness.HasDashboardURL
-		data.Platform.HasGitHubApp = readiness.HasGitHubApp
-		data.Platform.DashboardURL = readiness.DashboardURL
-	}
 	sanitizeDashboardForViewer(&data)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -220,14 +215,5 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 		return
 	}
 	session := data.Platform.Session
-	*data = dashboardBootstrap{Platform: dashboardPlatform{
-		HasDashboardURL:      data.Platform.HasDashboardURL,
-		HasGitHubApp:         data.Platform.HasGitHubApp,
-		DashboardURL:         data.Platform.DashboardURL,
-		HAReady:              data.Platform.HAReady,
-		AWSAvailable:         data.Platform.AWSAvailable,
-		PlanetScaleAvailable: data.Platform.PlanetScaleAvailable,
-		MinIOAvailable:       data.Platform.MinIOAvailable,
-		Session:              session,
-	}}
+	*data = dashboardBootstrap{Platform: dashboardPlatform{Session: session}}
 }

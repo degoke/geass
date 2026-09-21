@@ -89,7 +89,7 @@ func (s *Server) dashboardSession(r *http.Request) dashboardSessionInfo {
 func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request) {
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load GitHub settings"})
 		return
 	}
 	payload := map[string]any{
@@ -125,12 +125,12 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load GitHub repositories"})
 		return
 	}
 	repos, err := s.listGitHubRepositories(r.Context(), connection, token)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load GitHub repositories"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": repos})
@@ -149,12 +149,12 @@ func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	ns, err := resourceNamespaceForApp(*app)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load logs"})
 		return
 	}
 	pods, err := s.Kube.CoreV1().Pods(ns).List(r.Context(), metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app.Name})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load logs"})
 		return
 	}
 	var out strings.Builder
@@ -163,7 +163,7 @@ func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		data, readErr := result.Raw()
 		fmt.Fprintf(&out, "# %s\n", pod.Name)
 		if readErr != nil {
-			fmt.Fprintf(&out, "%s\n", readErr.Error())
+			out.WriteString("could not load logs for this pod\n")
 			continue
 		}
 		out.Write(data)
@@ -191,12 +191,12 @@ func (s *Server) handleAPIAppRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	ns, err := resourceNamespaceForApp(*app)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load runtime"})
 		return
 	}
 	pods, err := s.Kube.CoreV1().Pods(ns).List(r.Context(), metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app.Name})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load runtime"})
 		return
 	}
 	items := make([]map[string]string, 0, len(pods.Items))
@@ -283,12 +283,16 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 	request.Param("stdout", "true").Param("stderr", "true").Param("stdin", "false").Param("tty", "false")
 	executor, err := remotecommand.NewSPDYExecutor(s.Config, http.MethodPost, request.URL())
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"output": "Console exec is unavailable: " + err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"output": "Console exec is unavailable"})
 		return
 	}
 	var stdout, stderr bytes.Buffer
 	if err := executor.StreamWithContext(r.Context(), remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"output": strings.TrimSpace(stderr.String() + "\n" + err.Error())})
+		output := strings.TrimSpace(stderr.String())
+		if output == "" {
+			output = "could not run query"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"output": output})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"output": strings.TrimSpace(stdout.String() + "\n" + stderr.String())})

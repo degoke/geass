@@ -224,8 +224,8 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 		environment = strings.TrimSpace(r.URL.Query().Get("environment"))
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
-	if prerequisite := s.platformGitHubPrerequisiteHTML(r.Context()); prerequisite != "" {
-		redirectFormError(w, r, fallback, "GitHub App is not configured")
+	if err := s.platformGitHubReadyError(r.Context()); err != nil {
+		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
 	gh, _, err := s.githubAppClientFromContext(r.Context())
@@ -235,7 +235,7 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 	}
 	state, err := gh.SignState(project, environment)
 	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormError(w, r, fallback, "could not start GitHub installation")
 		return
 	}
 	installURL := gh.Config.InstallURL(state)
@@ -270,12 +270,12 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	project, environment, err := gh.VerifyState(state)
 	if err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormError(w, r, fallback, "GitHub installation state is invalid")
 		return
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
 	if err := s.saveGitHubInstallation(r.Context(), project, environment, installationID); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	redirect(w, r, fallback)
@@ -377,7 +377,7 @@ func (s *Server) handleProjectGitHubDisconnect(w http.ResponseWriter, r *http.Re
 	}
 	p.Spec.GitHubConnectionRef = nil
 	if err := s.Client.Update(r.Context(), &p); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
+		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	redirect(w, r, fallback)

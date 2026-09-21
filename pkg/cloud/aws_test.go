@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -382,4 +383,52 @@ func TestDeleteBucketDoesNotTreatGeneric400AsUnsupported(t *testing.T) {
 	err := client.DeleteBucket("uploads")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "400")
+}
+
+func TestDeleteBucketFailsWhenListingExceedsPageCap(t *testing.T) {
+	previous := s3EmptyMaxPages
+	s3EmptyMaxPages = 2
+	t.Cleanup(func() { s3EmptyMaxPages = previous })
+
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			page++
+			_, _ = w.Write([]byte(fmt.Sprintf(`<ListBucketResult><Contents><Key>a-%d</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page-%d</NextContinuationToken></ListBucketResult>`, page, page+1)))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.DeleteBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded")
+}
+
+func TestEnsureBucketFailsWhenResponseExceedsLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("a", s3ListResponseLimit+1)))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	err := client.EnsureBucket("uploads")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded")
+}
+
+func TestIAMCallFailsWhenResponseExceedsLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.Repeat("a", s3ListResponseLimit+1)))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", IAMEndpoint: srv.URL}
+	_, _, err := client.EnsureBucketUser([]string{"uploads"}, "assets", "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded")
 }

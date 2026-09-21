@@ -42,6 +42,15 @@ func TestRedirectProbeHXUsesHeader(t *testing.T) {
 	require.Contains(t, rec.Header().Get("HX-Redirect"), "probe=error")
 }
 
+func TestRedirectProbeJSONReportsError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
+	req.Header.Set("Accept", "application/json")
+	redirectProbe(rec, req, "/settings/github", "error", "dashboard URL must be configured first")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.JSONEq(t, `{"error":"dashboard URL must be configured first"}`, rec.Body.String())
+}
+
 func TestRedirectFormErrorUsesCurrentPage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
@@ -90,15 +99,6 @@ func TestRedirectFormErrorHXSetsRedirectHeader(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("HX-Redirect"), "error=image+is+required")
 	require.Contains(t, rec.Header().Get("HX-Redirect"), "/projects/demo")
-}
-
-func TestFlashAlertRendersErrorAndProbe(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/apps?error=boom", nil)
-	require.Contains(t, flashAlert(req), "boom")
-	require.Contains(t, flashAlert(req), `role="alert"`)
-
-	probe := httptest.NewRequest(http.MethodGet, "/settings/domain?probe=success", nil)
-	require.Contains(t, flashAlert(probe), "Verification succeeded")
 }
 
 func TestFormReturnPathIgnoresMutationReferer(t *testing.T) {
@@ -169,14 +169,13 @@ func TestRequireMutationRejectsCrossOriginWithUnrelatedForwardedHost(t *testing.
 	require.False(t, requireMutation(rec, req, "/settings/github"))
 }
 
-func TestDeleteFormDoesNotPushURL(t *testing.T) {
-	html := deleteForm("/apps/x/delete", "x")
-	require.Contains(t, html, `hx-push-url="false"`)
-	require.Contains(t, html, `hx-swap="none"`)
-	require.Contains(t, html, `name="confirmName"`)
-	require.Contains(t, html, "Type x to confirm")
-	require.NotContains(t, html, `name="confirmName" value="x"`)
-	require.NotContains(t, html, `hx-push-url="true"`)
+func TestRequireMutationIgnoresForwardedHostWhenRequestHostIsPublic(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
+	req.Host = "geass.example.com"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	rec := httptest.NewRecorder()
+	require.False(t, requireMutation(rec, req, "/settings/github"))
 }
 
 func TestAppConfigFormErrorReturnsPanelAlertForHX(t *testing.T) {

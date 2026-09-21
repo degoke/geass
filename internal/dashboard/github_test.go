@@ -112,7 +112,7 @@ func TestGitHubDeployShowsGitHubAppPrerequisite(t *testing.T) {
 	platformConfig := testPlatformConfig("https://geass.test")
 	srv := &Server{Client: newFakeClient(project, platformConfig)}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
 	require.Contains(t, rec.Body.String(), `"hasGitHubApp":false`)
@@ -127,7 +127,7 @@ func TestGitHubDeployShowsConnectPanelWhenPlatformReady(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))}
 	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	srv.handleAPI(rec, adminBootstrapReq(t, srv).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"hasDashboardURL":true`)
 	require.Contains(t, rec.Body.String(), `"hasGitHubApp":true`)
@@ -394,6 +394,19 @@ func TestPlatformGitHubSettingsSaveStoresSecret(t *testing.T) {
 	var config geassv1alpha1.GeassPlatformConfig
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &config))
 	require.Equal(t, platformGitHubAppSecretName, config.Spec.GitHubAppRef.Name)
+}
+
+func TestPlatformGitHubSettingsSaveJSONReportsError(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient(testPlatformConfig("https://geass.test"))}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/settings/github/save", strings.NewReader("appID=&clientID=&slug=")).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "required")
+	require.NotContains(t, rec.Body.String(), `"ok":true`)
 }
 
 func TestPlatformDomainSaveStoresDomain(t *testing.T) {
