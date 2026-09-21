@@ -1,3 +1,11 @@
+FROM node:24 AS dashboard
+
+WORKDIR /workspace/dashboard-ui
+COPY dashboard-ui/package.json dashboard-ui/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+COPY dashboard-ui/ ./
+RUN pnpm build
+
 # Build the manager binary
 FROM golang:1.26 AS builder
 ARG TARGETOS
@@ -13,6 +21,7 @@ RUN go mod download
 
 # Copy the Go source (relies on .dockerignore to filter)
 COPY . .
+COPY --from=dashboard /workspace/internal/dashboard/frontend/dist internal/dashboard/frontend/dist
 
 # Build
 # the GOARCH has no default value to allow the binary to be built according to the host where the command

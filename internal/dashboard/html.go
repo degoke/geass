@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -350,7 +351,21 @@ func isDelete(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.FormValue("_method") == "DELETE"
 }
 
+func isJSONRequest(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "application/json")
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
 func redirect(w http.ResponseWriter, r *http.Request, path string) {
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
 	if isHXRequest(r) {
 		w.Header().Set("HX-Redirect", path)
 		w.WriteHeader(http.StatusOK)
@@ -499,6 +514,10 @@ func withFlashNotice(path, message string) string {
 // redirectFormError sends the browser back to the prior page with ?error= so HTMX
 // mutation forms (hx-swap=none) still show validation failures.
 func redirectFormError(w http.ResponseWriter, r *http.Request, fallback, message string) {
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
+		return
+	}
 	redirect(w, r, withFlashError(formReturnPath(r, fallback), message))
 }
 
@@ -512,6 +531,10 @@ func formProjectFallback(r *http.Request, listPath string) string {
 }
 
 func redirectFormNotice(w http.ResponseWriter, r *http.Request, fallback, message string) {
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]string{"notice": message})
+		return
+	}
 	redirect(w, r, withFlashNotice(formReturnPath(r, fallback), message))
 }
 

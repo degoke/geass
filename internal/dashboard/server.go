@@ -32,7 +32,7 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-// Server serves the Geass HTMX dashboard.
+// Server serves the Geass dashboard API and embedded React application.
 type Server struct {
 	Client     client.Client
 	Addr       string
@@ -114,54 +114,13 @@ func logDashboardRequests(next http.Handler) http.Handler {
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/overview", s.handleOverview)
-	mux.HandleFunc("/projects", s.handleProjects)
-	mux.HandleFunc("/projects/options", s.handleProjectOptions)
-	mux.HandleFunc("/projects/new", s.handleProjectNew)
-	mux.HandleFunc("/projects/create", s.handleProjectCreate)
-	mux.HandleFunc("/projects/", s.handleProjectRoutes)
-	mux.HandleFunc("/cluster", s.handleCluster)
-	mux.HandleFunc("/observability", s.handleObservability)
-	mux.HandleFunc("/docs", s.handleDocs)
-	mux.HandleFunc("/ha-readiness", s.handleHAReadiness)
-	mux.HandleFunc("/ha-readiness/check", s.handleHAReadinessCheck)
-	mux.HandleFunc("/cloud-connections", s.handleCloudConnections)
-	mux.HandleFunc("/cloud-connections/new", s.handleCloudConnectionForm)
-	mux.HandleFunc("/cloud-connections/create", s.handleCloudConnectionCreate)
+	mux.HandleFunc("/api/", s.handleAPI)
+	mux.HandleFunc("/assets/", serveFrontendAsset)
 	mux.HandleFunc("/geass-probe", s.handleGeassProbe)
-	mux.HandleFunc("/settings", s.handlePlatformSettings)
-	mux.HandleFunc("/settings/domain", s.handlePlatformDomainSettings)
-	mux.HandleFunc("/settings/domain/save", s.handlePlatformDomainSave)
-	mux.HandleFunc("/settings/domain/verify", s.handlePlatformDomainVerify)
-	mux.HandleFunc("/settings/test-dashboard-url", s.handleTestDashboardURL)
-	mux.HandleFunc("/settings/github", s.handlePlatformGitHubSettings)
-	mux.HandleFunc("/settings/github/save", s.handlePlatformGitHubSettingsSave)
-	mux.HandleFunc("/settings/github/test", s.handlePlatformGitHubTest)
-	mux.HandleFunc("/settings/github/clear", s.handlePlatformGitHubClear)
 	mux.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
 	mux.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
 	mux.HandleFunc("/github/callback", s.handleGitHubCallback)
-	mux.HandleFunc("/network-logs", s.handleNetworkLogs)
-
-	mux.HandleFunc("/apps", s.handleApps)
-	mux.HandleFunc("/apps/create", s.handleAppCreate)
-	mux.HandleFunc("/apps/", s.handleAppRoutes)
-
-	mux.HandleFunc("/databases", s.handleDatabases)
-	mux.HandleFunc("/databases/create", s.handleDatabaseCreate)
-	mux.HandleFunc("/databases/", s.handleDatabaseRoutes)
-	mux.HandleFunc("/logical-databases", s.handleLogicalDatabases)
-	mux.HandleFunc("/logical-databases/create", s.handleLogicalDatabaseCreate)
-	mux.HandleFunc("/logical-databases/", s.handleLogicalDatabaseRoutes)
-
-	mux.HandleFunc("/caches", s.handleCaches)
-	mux.HandleFunc("/caches/create", s.handleCacheCreate)
-	mux.HandleFunc("/caches/", s.handleCacheRoutes)
-
-	mux.HandleFunc("/object-stores", s.handleObjectStores)
-	mux.HandleFunc("/object-stores/create", s.handleObjectStoreCreate)
-	mux.HandleFunc("/object-stores/", s.handleObjectStoreRoutes)
+	mux.HandleFunc("/", s.handleSPA)
 }
 
 func (s *Server) handleNetworkLogs(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +260,10 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	name, _, err := s.createDefaultProject(r.Context())
 	if err != nil {
 		redirectFormError(w, r, fallback, err.Error())
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusCreated, map[string]string{"project": name})
 		return
 	}
 	redirect(w, r, "/projects/"+name)

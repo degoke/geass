@@ -148,19 +148,29 @@ ci-e2e: test-e2e ## Run the CI e2e job (requires Docker and Kind).
 
 ##@ Build
 
+.PHONY: dashboard-build
+dashboard-build: ## Build the Vite/React dashboard bundle.
+	cd dashboard-ui && pnpm install --frozen-lockfile && pnpm build
+
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: dashboard-build manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
-.PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+.PHONY: run dashboard-backend dashboard-dev
+run: manifests generate fmt vet ## Run the controller and React dashboard from your host.
+	$(MAKE) -j2 dashboard-backend dashboard-dev
+
+dashboard-backend: ## Run the Geass backend for the dashboard.
+	go run ./cmd/main.go --dashboard-bind-address=:8082
+
+dashboard-dev: ## Run the Vite/React dashboard in development mode.
+	cd dashboard-ui && pnpm dev --host 127.0.0.1
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: build-linux
-build-linux: ## Build manager binary for Linux containers.
+build-linux: dashboard-build ## Build manager binary for Linux containers.
 	@mkdir -p .build
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell go env GOARCH) go build -o .build/manager cmd/main.go
 

@@ -10,6 +10,14 @@ pkg/installer/assets/geass-operator.tar
 pkg/installer/assets/operator.yaml
 Dockerfile.cross
 
+# React dashboard dependencies
+dashboard-ui/node_modules/
+
+# Local machine and deployment tool state
+.DS_Store
+.outpost/
+.pnpm-store/
+
 # Test binary, built with `go test -c`
 *.test
 

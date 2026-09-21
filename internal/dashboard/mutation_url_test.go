@@ -57,6 +57,29 @@ func TestRedirectFormErrorUsesCurrentPage(t *testing.T) {
 	require.Equal(t, "name is required", u.Query().Get("error"))
 }
 
+func TestJSONMutationResponsesDoNotRedirect(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)
+	req.Header.Set("Accept", "application/json")
+	redirect(rec, req, "/projects/demo")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"ok":true}`, rec.Body.String())
+}
+
+func TestAPIMutationValidationReturnsJSON(t *testing.T) {
+	srv := &Server{Client: newFakeClient()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/apps/create", nil)
+
+	srv.handleAPI(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"error":"name, project, and a source are required"}`, rec.Body.String())
+}
+
 func TestRedirectFormErrorHXSetsRedirectHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/apps/create", nil)

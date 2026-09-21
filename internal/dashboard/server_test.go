@@ -73,6 +73,44 @@ func TestLogDashboardRequestsPreservesResponse(t *testing.T) {
 	require.Equal(t, "ok", rec.Body.String())
 }
 
+func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{DisplayName: "Payments", Environments: []string{"production"}},
+	}
+	srv := &Server{Client: newFakeClient(project), Metrics: &fakeMetrics{}}
+
+	page := httptest.NewRecorder()
+	srv.handleSPA(page, httptest.NewRequest(http.MethodGet, "/projects", nil))
+	require.Equal(t, http.StatusOK, page.Code)
+	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
+	require.NotContains(t, page.Body.String(), "htmx")
+
+	bootstrap := httptest.NewRecorder()
+	srv.handleAPI(bootstrap, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	require.Equal(t, http.StatusOK, bootstrap.Code)
+	require.Equal(t, "application/json", bootstrap.Header().Get("Content-Type"))
+	require.Contains(t, bootstrap.Body.String(), `"projects"`)
+	require.Contains(t, bootstrap.Body.String(), testProjectName)
+}
+
+func TestRegisterRoutesExposesSPAAndAPIOnly(t *testing.T) {
+	srv := &Server{Client: newFakeClient()}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	for _, path := range []string{"/projects/create", "/apps/create", "/settings/domain/save", "/network-logs"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		require.Equal(t, http.StatusNotFound, rec.Code, path)
+	}
+
+	page := httptest.NewRecorder()
+	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/projects/demo", nil))
+	require.Equal(t, http.StatusOK, page.Code)
+	require.Contains(t, page.Body.String(), `<div id="root"></div>`)
+}
+
 func TestHandleAppsList(t *testing.T) {
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
