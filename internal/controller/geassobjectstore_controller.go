@@ -276,8 +276,8 @@ func (r *GeassObjectStoreReconciler) minioBucketIdentities(ctx context.Context) 
 		if err := r.Get(ctx, client.ObjectKey{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}, secret); err != nil {
 			continue
 		}
-		accessKey := firstNonEmpty(secretValue(secret, platform.ConnectionKeyAccessKey), secretValue(secret, "accessKey"))
-		secretKey := firstNonEmpty(secretValue(secret, "secretKey"), secretValue(secret, platform.ConnectionKeySecretKey))
+		accessKey := secretValue(secret, platform.ConnectionKeyAccessKey)
+		secretKey := secretValue(secret, platform.ConnectionKeySecretKey)
 		if accessKey == "" || secretKey == "" {
 			continue
 		}
@@ -401,8 +401,6 @@ func (r *GeassObjectStoreReconciler) ensureMinIOUserSecret(ctx context.Context, 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
 		secret.StringData = map[string]string{
-			"accessKey":                     accessKey,
-			"secretKey":                     secretKey,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
 		}
