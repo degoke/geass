@@ -362,6 +362,7 @@ func TestAppSharedVariableReferences(t *testing.T) {
 	var updated geassv1alpha1.GeassApp
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &updated))
 	require.Equal(t, []string{"LOG_LEVEL"}, updated.Spec.SharedVariableRefs)
+	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 	require.Contains(t, rec.Header().Get("Location"), "view=variables")
 }
 
@@ -436,11 +437,11 @@ func TestAppDeploymentsRendersContextDetailsAndFilters(t *testing.T) {
 	require.NotContains(t, body, "Skipped change")
 }
 
-func TestAppScaleRecordsDeploymentHistory(t *testing.T) {
+func TestAppScaleIsPendingUntilDeploy(t *testing.T) {
 	ctx := context.Background()
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
-		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Source: imageAppSource("nginx:alpine")},
+		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Source: imageAppSource("nginx:alpine"), Deploy: geassv1alpha1.GeassAppDeploySpec{Enabled: true}},
 	}
 	c := newFakeClient(app)
 	srv := &Server{Client: c}
@@ -455,10 +456,10 @@ func TestAppScaleRecordsDeploymentHistory(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &updated))
 	require.NotNil(t, updated.Spec.Replicas)
 	require.Equal(t, int32(3), *updated.Spec.Replicas)
+	require.Equal(t, pendingChangeSettings, updated.Annotations[platform.AppPendingChangesAnnotation])
 	var deployments geassv1alpha1.GeassDeploymentList
 	require.NoError(t, c.List(ctx, &deployments, client.InNamespace(platform.SystemNamespace)))
-	require.Len(t, deployments.Items, 1)
-	require.Equal(t, int32(3), *deployments.Items[0].Spec.Replicas)
+	require.Empty(t, deployments.Items)
 }
 
 func TestAppNetworkingShowsPublicPrivateEndpointsAndRemoval(t *testing.T) {
@@ -552,12 +553,15 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleAppUpdate(rec, req, testAppName)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "1 update pending")
+	require.Contains(t, rec.Body.String(), "You made these changes")
+	require.Contains(t, rec.Body.String(), "settings")
+	require.Contains(t, rec.Body.String(), "Do you want to deploy")
 	require.Contains(t, rec.Body.String(), "Deploy to update")
 
 	var saved geassv1alpha1.GeassApp
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &saved))
 	require.Equal(t, "1", saved.Annotations[platform.AppPendingUpdatesAnnotation])
+	require.Equal(t, pendingChangeSettings, saved.Annotations[platform.AppPendingChangesAnnotation])
 
 	deployReq := httptest.NewRequest(http.MethodPost, "/apps/demo/deploy", nil).WithContext(ctx)
 	deployReq.Header.Set(hxRequestHeader, hxRequestTrue)
@@ -567,6 +571,7 @@ func TestAppSettingsArePendingUntilDeployment(t *testing.T) {
 	require.Contains(t, deployRec.Body.String(), `id="service-pending-banner" hidden`)
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &saved))
 	require.Equal(t, "0", saved.Annotations[platform.AppPendingUpdatesAnnotation])
+	require.Empty(t, saved.Annotations[platform.AppPendingChangesAnnotation])
 }
 
 func TestProjectWorkspaceCreateModalAndDrawerTabs(t *testing.T) {
@@ -596,7 +601,7 @@ func TestProjectWorkspaceCreateModalAndDrawerTabs(t *testing.T) {
 	require.Contains(t, settings.Body.String(), `id="service-settings-config"`)
 	require.Contains(t, settings.Body.String(), `</section><section id="service-settings-config"`)
 	require.Contains(t, settings.Body.String(), "Changes save automatically")
-	require.Contains(t, settings.Body.String(), "Deploy to update")
+	require.Contains(t, settings.Body.String(), "This service is a draft")
 	require.NotContains(t, settings.Body.String(), "Save settings")
 	require.NotContains(t, settings.Body.String(), `id="service-settings-features"`)
 	require.NotContains(t, settings.Body.String(), "Feature-flags")
@@ -715,7 +720,7 @@ func TestProjectResourceUsesProjectReference(t *testing.T) {
 	require.Equal(t, "128Mi", memory.String())
 }
 
-func TestAPIAppCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
+func TestAPIAppCreateDraftSkipsCapacityUntilDeploy(t *testing.T) {
 	ctx := context.Background()
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "tiny"},
@@ -738,8 +743,20 @@ func TestAPIAppCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, rec.Body.String(), "Scale up")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var app geassv1alpha1.GeassApp
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &app))
+	require.False(t, app.Spec.Deploy.Enabled)
+	require.Equal(t, pendingChangeCreated, app.Annotations[platform.AppPendingChangesAnnotation])
+
+	deployReq := httptest.NewRequest(http.MethodPost, "/api/apps/api/deploy", nil).WithContext(ctx)
+	deployRec := httptest.NewRecorder()
+	srv.handleAPI(deployRec, deployReq)
+	require.Equal(t, http.StatusBadRequest, deployRec.Code)
+	require.Contains(t, deployRec.Body.String(), "Scale up")
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &app))
+	require.False(t, app.Spec.Deploy.Enabled)
 }
 
 func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
@@ -776,6 +793,12 @@ func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
 	require.Equal(t, int32(2), *app.Spec.Autoscaling.MinReplicas)
 	require.NotNil(t, app.Spec.Autoscaling.TargetCPUUtilization)
 	require.Equal(t, platform.DefaultAutoscalingTargetCPU, *app.Spec.Autoscaling.TargetCPUUtilization)
+	require.False(t, app.Spec.Deploy.Enabled)
+	require.Equal(t, "1", app.Annotations[platform.AppPendingUpdatesAnnotation])
+	require.Equal(t, pendingChangeCreated, app.Annotations[platform.AppPendingChangesAnnotation])
+	var deployments geassv1alpha1.GeassDeploymentList
+	require.NoError(t, srv.Client.List(ctx, &deployments, client.MatchingLabels{platform.LabelApp: "api"}))
+	require.Empty(t, deployments.Items)
 }
 
 func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
@@ -926,7 +949,7 @@ func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestHandleAppCreateRecordsDeployment(t *testing.T) {
+func TestHandleAppCreateStoresDraftWithoutDeployment(t *testing.T) {
 	ctx := context.Background()
 	c := newFakeClient()
 	srv := &Server{Client: c}
@@ -937,10 +960,13 @@ func TestHandleAppCreateRecordsDeployment(t *testing.T) {
 	srv.handleAppCreate(rec, req)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 
+	var app geassv1alpha1.GeassApp
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testWorkerAppName, Namespace: platform.SystemNamespace}, &app))
+	require.False(t, app.Spec.Deploy.Enabled)
+	require.Equal(t, pendingChangeCreated, app.Annotations[platform.AppPendingChangesAnnotation])
 	var deployments geassv1alpha1.GeassDeploymentList
 	require.NoError(t, c.List(ctx, &deployments, client.MatchingLabels{platform.LabelApp: testWorkerAppName}))
-	require.Len(t, deployments.Items, 1)
-	require.Equal(t, "ghcr.io/acme/worker:1", deployments.Items[0].Spec.Image)
+	require.Empty(t, deployments.Items)
 }
 
 func TestRecordDeploymentUsesGitHubSourceDetails(t *testing.T) {
@@ -1037,6 +1063,7 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	require.Len(t, updated.Spec.Env, 1)
 	require.Equal(t, "DATABASE_URL", updated.Spec.Env[0].Name)
 	require.Equal(t, "postgres-connection", updated.Spec.Env[0].ValueFrom.SecretKeyRef.Name)
+	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 }
 
 func TestHandleDatabaseCRUD(t *testing.T) {
@@ -1299,6 +1326,7 @@ func TestHandleAppConfigAndSecrets(t *testing.T) {
 	var app geassv1alpha1.GeassApp
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &app))
 	require.Equal(t, "debug", app.Spec.ConfigData["LOG_LEVEL"])
+	require.Equal(t, "created,variables", app.Annotations[platform.AppPendingChangesAnnotation])
 
 	rawForm := url.Values{}
 	rawForm.Set("configJSON", `{"LOG_LEVEL":"info"}`)

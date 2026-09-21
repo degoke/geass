@@ -1281,9 +1281,6 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	replicas := replicasFromForm(r, 1)
-	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("service", res, capacityCopiesFromForm(r, replicas))) {
-		return
-	}
 	if _, err := platform.ProjectNamespace(project, string(environment)); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -1319,10 +1316,8 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		app.Spec.Source.Image = nil
 		app.Spec.Source.Git = &geassv1alpha1.GeassAppGitSource{ConnectionRef: corev1.LocalObjectReference{Name: connectionRef}, Repository: repository, Branch: branch, Dockerfile: strings.TrimSpace(r.FormValue("dockerfile")), Context: strings.TrimSpace(r.FormValue("context")), WaitForCI: r.FormValue("waitForCI") == "on"}
-		app.Spec.Deploy.Enabled = r.FormValue("deploy") == "on"
-	} else {
-		app.Spec.Deploy.Enabled = true
 	}
+	app.Spec.Deploy.Enabled = false
 	initializeAppPendingChanges(app)
 	if err := s.Client.Create(r.Context(), app); err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -1330,16 +1325,6 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		redirectFormError(w, r, fallback, err.Error())
-		return
-	}
-	if app.Spec.Deploy.Enabled {
-		if err := s.recordDeployment(r.Context(), app); err != nil {
-			redirectFormError(w, r, fallback, err.Error())
-			return
-		}
-	}
-	if source == "git" {
-		redirectAfterResourceUpdate(w, r, project, string(environment), "apps", name, "settings")
 		return
 	}
 	redirectAfterResourceCreate(w, r, project, string(environment), "apps", name)
@@ -1417,6 +1402,9 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 	app := &geassv1alpha1.GeassApp{}
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, app); err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(app)) {
 		return
 	}
 	app.Spec.Deploy.Enabled = true
@@ -1618,6 +1606,7 @@ func (s *Server) handleAppSharedVariablesSave(w http.ResponseWriter, r *http.Req
 	}
 	slices.Sort(refs)
 	app.Spec.SharedVariableRefs = refs
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
@@ -1884,11 +1873,8 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 		}
 	}
 	app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: "uri"}}})
+	markAppPendingChange(&app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), &app); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
-	}
-	if err := s.recordDeployment(r.Context(), &app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}
@@ -1985,6 +1971,18 @@ func appReplicas(app geassv1alpha1.GeassApp) int32 {
 		return 1
 	}
 	return *app.Spec.Replicas
+}
+
+func appDeployEstimate(app *geassv1alpha1.GeassApp) platform.WorkloadEstimate {
+	res := app.Spec.Resources
+	if len(res.Requests) == 0 {
+		res = platform.DefaultAppResources()
+	}
+	copies := appReplicas(*app)
+	if app.Spec.Autoscaling != nil && app.Spec.Autoscaling.MaxReplicas > copies {
+		copies = app.Spec.Autoscaling.MaxReplicas
+	}
+	return platform.EstimateFromResources("service", res, copies)
 }
 
 func resourceField(values corev1.ResourceList, name corev1.ResourceName) string {
@@ -2241,10 +2239,13 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	app.Spec.Deploy.ReadinessProbe = httpProbeFromForm("readiness", r, app.Spec.Port)
 	app.Spec.Deploy.LivenessProbe = httpProbeFromForm("liveness", r, app.Spec.Port)
 	if deployNow {
+		if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(&app)) {
+			return
+		}
 		app.Spec.Deploy.Enabled = true
 		clearAppPendingChanges(&app)
 	} else {
-		markAppPendingChange(&app)
+		markAppPendingChange(&app, pendingChangeSettings)
 	}
 	if err := s.Client.Update(r.Context(), &app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
@@ -2305,11 +2306,8 @@ func (s *Server) handleAppScale(w http.ResponseWriter, r *http.Request, name str
 	}
 	value := int32(replicas)
 	app.Spec.Replicas = &value
+	markAppPendingChange(&app, pendingChangeSettings)
 	if err := s.Client.Update(r.Context(), &app); err != nil {
-		redirectFormError(w, r, fallback, err.Error())
-		return
-	}
-	if err := s.recordDeployment(r.Context(), &app); err != nil {
 		redirectFormError(w, r, fallback, err.Error())
 		return
 	}

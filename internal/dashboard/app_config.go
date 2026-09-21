@@ -64,7 +64,7 @@ func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name
 		app.Spec.ConfigData = map[string]string{}
 	}
 	app.Spec.ConfigData[key] = value
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		s.appConfigFormError(w, r, name, err.Error())
 		return
@@ -91,7 +91,7 @@ func (s *Server) handleAppConfigDelete(w http.ResponseWriter, r *http.Request, n
 	if len(app.Spec.ConfigData) == 0 {
 		app.Spec.ConfigData = nil
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		s.appConfigFormError(w, r, name, err.Error())
 		return
@@ -124,7 +124,7 @@ func (s *Server) handleAppConfigRaw(w http.ResponseWriter, r *http.Request, name
 	if len(values) == 0 {
 		app.Spec.ConfigData = nil
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		s.appConfigFormError(w, r, name, err.Error())
 		return
@@ -185,7 +185,7 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 	}
 	app.Spec.SecretRef = &corev1.LocalObjectReference{Name: secretName}
 	app.Spec.SecretData = nil
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		s.appSecretsFormError(w, r, name, err.Error())
 		return
@@ -233,7 +233,7 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 			app.Spec.SecretData = nil
 		}
 	}
-	markAppPendingChange(app)
+	markAppPendingChange(app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), app); err != nil {
 		s.appSecretsFormError(w, r, name, err.Error())
 		return

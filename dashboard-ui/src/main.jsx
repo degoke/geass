@@ -47,6 +47,52 @@ function Status({ value }) {
   const ready = value === "True" || value === "Ready" || value === "healthy" || value === true;
   return <Badge tone={ready ? "success" : value === "False" || value === "Failed" ? "danger" : "warning"}>{ready ? <Check size={13} /> : <Activity size={13} />}{String(value || "Pending")}</Badge>;
 }
+const PENDING_CHANGES_ANNOTATION = "geass.dev/pending-changes";
+const PENDING_UPDATES_ANNOTATION = "geass.dev/pending-updates";
+function isService(item) {
+  return Boolean(item?.spec?.source);
+}
+function isDraftService(item) {
+  return isService(item) && !item?.spec?.deploy?.enabled;
+}
+function pendingChangeKinds(item) {
+  const raw = item?.metadata?.annotations?.[PENDING_CHANGES_ANNOTATION] || "";
+  const kinds = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  const count = Number(item?.metadata?.annotations?.[PENDING_UPDATES_ANNOTATION] || 0);
+  if (isDraftService(item) && !kinds.includes("created")) kinds.unshift("created");
+  if (kinds.length) return kinds.filter((kind, index) => kinds.indexOf(kind) === index);
+  if (count > 0) return ["settings"];
+  return [];
+}
+function pendingChangeCopy(item) {
+  const kinds = pendingChangeKinds(item);
+  if (!kinds.length) return null;
+  const action = item.spec?.deploy?.enabled ? "Deploy to update" : "Deploy";
+  if (kinds.length === 1 && kinds[0] === "created") {
+    return { title: "This service is a draft", detail: "Change settings or add variables, then deploy when you are ready.", action };
+  }
+  const labels = { created: "created as a draft", settings: "settings", variables: "variables" };
+  const named = kinds.map((kind) => labels[kind] || kind);
+  const list = named.length === 1 ? named[0][0].toUpperCase() + named[0].slice(1) : named.length === 2 ? `${named[0][0].toUpperCase() + named[0].slice(1)} and ${named[1]}` : `${named[0][0].toUpperCase() + named[0].slice(1)}, ${named.slice(1, -1).join(", ")}, and ${named[named.length - 1]}`;
+  return { title: "You made these changes", detail: `${list}. Do you want to deploy?`, action };
+}
+function resourceStatus(item) {
+  if (isDraftService(item)) return "Draft";
+  return condition(item);
+}
+function PendingChangesBanner({ item, name, reload }) {
+  const copy = pendingChangeCopy(item);
+  if (!copy) return null;
+  return (
+    <div className="pending-banner" role="status">
+      <div>
+        <strong>{copy.title}</strong>
+        <p>{copy.detail}</p>
+      </div>
+      <Button onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Deploy requested"); }).catch((error) => alert(error.message))}>{copy.action}</Button>
+    </div>
+  );
+}
 function PageHeader({ eyebrow, title, description, actions }) {
   return <div className="page-header"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div><div className="page-actions">{actions}</div></div>;
 }
@@ -191,7 +237,7 @@ function ResourceRow({ href, icon: Icon, item, kind }) {
     <AppLink className="resource-row" href={href}>
       <span className="resource-row-icon"><Icon size={16} /></span>
       <div><strong>{resourceName(item)}</strong><small>{kind} · {item.spec?.environment}</small></div>
-      <Status value={condition(item)} />
+      <Status value={resourceStatus(item)} />
       <ArrowRight size={15} />
     </AppLink>
   );
@@ -315,6 +361,7 @@ function SizeFields({ cpu, memory, onChange, data }) {
 
 function ResourceDialog({ project, environment, data }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const platform = data?.platform || {};
   const currentProject = list(data, "projects").find((item) => resourceName(item) === project);
   const githubReady = Boolean(currentProject?.spec?.githubConnectionRef?.name) && platform.hasGitHubApp;
@@ -342,7 +389,7 @@ function ResourceDialog({ project, environment, data }) {
   const options = {
     service: [
       { value: "app", label: "Docker image", description: "Pull and run a container image", enabled: true },
-      { value: "github", label: "GitHub repository", description: githubReady ? "Build and deploy from GitHub" : "Connect GitHub in project settings first", enabled: githubReady },
+      { value: "github", label: "GitHub repository", description: githubReady ? "Build from GitHub, then deploy when you are ready" : "Connect GitHub in project settings first", enabled: githubReady },
     ],
     database: [
       { value: "postgres", label: "PostgreSQL", description: "In-cluster Postgres", enabled: true, engine: "Postgres", placement: "InCluster" },
@@ -367,7 +414,7 @@ function ResourceDialog({ project, environment, data }) {
       Object.assign(values, { image: form.image, port: "80", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
     } else if (type === "service" && kind === "github") {
       endpoint = "/apps/create";
-      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, deploy: "on", cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
+      Object.assign(values, { source: "git", repository: form.repository, branch: form.branch || "main", name: form.name, cpu: form.cpu, memory: form.memory, replicas: String(form.replicas || 1), autoscaling: form.autoscaling ? "on" : "", maxReplicas: String(form.maxReplicas || 3) });
     } else if (kind === "logical") {
       endpoint = "/logical-databases/create";
       Object.assign(values, { server: form.server || (servers[0] && resourceName(servers[0])), database: form.databaseName || form.name });
@@ -401,6 +448,11 @@ function ResourceDialog({ project, environment, data }) {
     action(endpoint, values).then(() => {
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
       setOpen(false);
+      if (type === "service" && values.name) {
+        navigate({ to: `/projects/${project}/apps/${values.name}?environment=${environment}` });
+        alert("Service created as a draft. Change settings or variables, then deploy.");
+        return;
+      }
       alert("Resource created");
     }).catch((error) => alert(error.message));
   };
@@ -413,8 +465,8 @@ function ResourceDialog({ project, environment, data }) {
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (next) setStep(1); }}>
       <DialogContent className="ui-dialog resource-dialog">
         <DialogHeader>
-          <DialogTitle>{step === 1 ? "Add a resource" : step === 2 ? "Choose a source" : "Configure resource"}</DialogTitle>
-          <DialogDescription>Resources are created in {environment} and reconciled by the Geass controllers.</DialogDescription>
+          <DialogTitle>{step === 1 ? "Add a resource" : step === 2 ? "Choose a source" : type === "service" ? "Create a draft service" : "Configure resource"}</DialogTitle>
+          <DialogDescription>{type === "service" && step === 3 ? "Creating saves a skeleton. You can change settings and variables before you deploy." : `Resources are created in ${environment} and reconciled by the Geass controllers.`}</DialogDescription>
         </DialogHeader>
         <form className="stack" onSubmit={step < 3 ? (event) => { event.preventDefault(); setStep(step + 1); } : submit}>
           {step === 1 && types.map((option) => <button type="button" key={option.value} className={cn("choice", type === option.value && "choice-selected")} onClick={() => { setType(option.value); const nextKind = options[option.value].find((item) => item.enabled)?.value || options[option.value][0].value; setKind(nextKind); setForm((current) => ({ ...current, ...defaultSizeForKind(option.value, nextKind) })); }}><strong>{option.label}</strong><small>{option.description}</small></button>)}
@@ -474,14 +526,16 @@ function ResourceDialog({ project, environment, data }) {
                   {estimate.cpuMillis || estimate.memoryBytes
                     ? `Each copy gets ${sizeLabel(data?.platform?.capacity?.cpuSizes || [], form.cpu, form.cpu)} and ${sizeLabel(data?.platform?.capacity?.memorySizes || [], form.memory, form.memory)}${estimate.replicas > 1 ? ` · ${estimate.replicas} copies` : ""}. Cluster has ${capacity.known ? `${capacity.cpuAvailable} CPU and ${capacity.memoryAvailable} memory` : "unknown capacity"} available.`
                     : "This resource does not consume in-cluster CPU or memory."}
-                  {!fits && <> Scale up the cluster before creating it. <AppLink href="/cluster">View cluster capacity</AppLink></>}
+                  {type === "service"
+                    ? !fits && <> Scale up the cluster before deploying. <AppLink href="/cluster">View cluster capacity</AppLink></>
+                    : !fits && <> Scale up the cluster before creating it. <AppLink href="/cluster">View cluster capacity</AppLink></>}
                 </p>
               )}
             </div>
           )}
           <DialogFooter>
             {step > 1 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)}><ArrowLeft size={15} /> Back</Button>}
-            <Button type="submit" disabled={(step === 2 && selectedKind && !selectedKind.enabled) || (step === 3 && !fits)}>{step < 3 ? <>Continue <ArrowRight size={15} /></> : "Create resource"}</Button>
+            <Button type="submit" disabled={(step === 2 && selectedKind && !selectedKind.enabled) || (step === 3 && type !== "service" && !fits)}>{step < 3 ? <>Continue <ArrowRight size={15} /></> : type === "service" ? "Create service" : "Create resource"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -504,7 +558,7 @@ function ResourceSettings({ item, kind, name, title, data, project, reload, navi
     if (kind === "databases") values.version = version;
     if (kind === "apps") Object.assign(values, { cpu, memory, replicas: String(replicas), autoscaling: autoscaling ? "on" : "", maxReplicas: String(maxReplicas) });
     if (kind === "databases" && inCluster) Object.assign(values, { cpu, memory });
-    action(`/${kind}/${name}/update`, values).then(() => { reload(); alert("Settings saved"); }).catch((error) => alert(error.message));
+    action(`/${kind}/${name}/update`, values).then(() => { reload(); alert(kind === "apps" ? "Settings saved. Deploy to apply them." : "Settings saved"); }).catch((error) => alert(error.message));
   };
   return (
     <Card>
@@ -552,12 +606,12 @@ function ResourceDetail({ project, data, kind, name, reload }) {
   const saveVariable = (event) => {
     event.preventDefault();
     const path = variable.secret ? `/apps/${name}/secrets/set` : `/apps/${name}/config/set`;
-    action(path, variable).then(() => { reload(); alert("Variable saved"); setVariable({ key: "", value: "", secret: false }); }).catch((error) => alert(error.message));
+    action(path, variable).then(() => { reload(); alert("Variable saved. Deploy to apply it."); setVariable({ key: "", value: "", secret: false }); }).catch((error) => alert(error.message));
   };
   const attachShared = (event) => {
     event.preventDefault();
     const selected = Array.from(event.target.querySelectorAll("input[name=sharedVariable]:checked")).map((input) => input.value);
-    action(`/apps/${name}/shared-variables/save`, { sharedVariable: selected }).then(() => { reload(); alert("Shared variables updated"); }).catch((error) => alert(error.message));
+    action(`/apps/${name}/shared-variables/save`, { sharedVariable: selected }).then(() => { reload(); alert("Shared variables saved. Deploy to apply them."); }).catch((error) => alert(error.message));
   };
   return (
     <>
@@ -567,16 +621,16 @@ function ResourceDetail({ project, data, kind, name, reload }) {
         title={title}
         description={`${item.spec?.engine || sourceImage || item.spec?.source?.git?.repository || "Managed resource"} in ${item.spec?.environment}.`}
         actions={<>
-          <Status value={condition(item)} />
-          {isApp && <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Deploy requested"); })}>Deploy</Button>}
-          {isApp && <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Redeploy requested"); })}>Redeploy</Button>}
+          <Status value={resourceStatus(item)} />
+          {isApp && !pendingChangeCopy(item) && item.spec?.deploy?.enabled && <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alert("Redeploy requested"); }).catch((error) => alert(error.message))}>Redeploy</Button>}
         </>}
       />
+      {isApp && <PendingChangesBanner item={item} name={name} reload={reload} />}
       <div className="tabs">{tabs.map((tab) => <AppLink key={tab} className={view === tab ? "tab-active" : ""} href={href(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</AppLink>)}</div>
       {view === "overview" && (
         <div className="detail-grid">
           <Card>
-            <div className="card-heading"><div><div className="eyebrow">Status</div><h2>Runtime overview</h2></div><Status value={condition(item)} /></div>
+            <div className="card-heading"><div><div className="eyebrow">Status</div><h2>Runtime overview</h2></div><Status value={resourceStatus(item)} /></div>
             <div className="detail-list">
               <div className="detail-row"><span>Project</span><strong>{item.spec?.project}</strong></div>
               <div className="detail-row"><span>Environment</span><strong>{item.spec?.environment}</strong></div>
