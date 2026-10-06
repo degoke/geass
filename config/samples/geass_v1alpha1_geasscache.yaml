@@ -1,9 +1,0 @@
-apiVersion: geass.geass.dev/v1alpha1
-kind: GeassCache
-metadata:
-  name: geasscache-sample
-  namespace: geass-system
-spec:
-  project: payments
-  environment: dev
-  engine: Redis

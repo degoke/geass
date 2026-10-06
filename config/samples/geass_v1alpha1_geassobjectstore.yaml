@@ -1,6 +1,15 @@
 apiVersion: geass.geass.dev/v1alpha1
 kind: GeassObjectStore
 metadata:
+  name: cluster-minio
+  namespace: geass-system
+spec:
+  engine: MinIO
+  placement: InCluster
+---
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassObjectStore
+metadata:
   name: geassobjectstore-sample
   namespace: geass-system
 spec:

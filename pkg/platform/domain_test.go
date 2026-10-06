@@ -23,6 +23,9 @@ func TestNormalizeRootDomainInput(t *testing.T) {
 func TestDashboardHostFromRoot(t *testing.T) {
 	require.Equal(t, "geass.example.com", DashboardHostFromRoot("example.com"))
 	require.Equal(t, "https://geass.example.com", DashboardURLFromRoot("example.com"))
+	require.Equal(t, "app.example.com", DashboardHostFromParts("app", "example.com"))
+	require.Equal(t, "geass", NormalizeDashboardSubdomain(""))
+	require.Equal(t, "", NormalizeDashboardSubdomain("not valid"))
 }
 
 func TestVerifyHostResolvesToIP(t *testing.T) {

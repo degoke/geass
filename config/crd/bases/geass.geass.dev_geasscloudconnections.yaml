@@ -37,10 +37,40 @@ spec:
             type: object
           spec:
             properties:
-              provider:
+              organization:
+                description: Organization is the PlanetScale organization slug.
                 type: string
+              project:
+                description: Project optionally scopes this connection to a single
+                  Geass project.
+                type: string
+              provider:
+                description: Provider is the external cloud or database vendor.
+                enum:
+                - AWS
+                - PlanetScale
+                type: string
+              region:
+                description: Region is the default AWS region for this connection.
+                type: string
+              secretRef:
+                description: SecretRef stores provider credentials. Secret values
+                  are never copied into status.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
             required:
             - provider
+            - secretRef
             type: object
           status:
             properties:

@@ -9,6 +9,7 @@ rules:
   resources:
   - configmaps
   - namespaces
+  - persistentvolumeclaims
   - secrets
   - services
   verbs:
@@ -81,7 +82,6 @@ rules:
   resources:
   - geassapps
   - geassbuilds
-  - geasscaches
   - geasscloudconnections
   - geassclusters
   - geassconsolesessions
@@ -105,7 +105,6 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps/finalizers
-  - geasscaches/finalizers
   - geassclusters/finalizers
   - geassdatabases/finalizers
   - geassnodes/finalizers
@@ -118,7 +117,6 @@ rules:
   resources:
   - geassapps/status
   - geassbuilds/status
-  - geasscaches/status
   - geasscloudconnections/status
   - geassclusters/status
   - geassconsolesessions/status

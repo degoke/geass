@@ -62,15 +62,19 @@ spec:
         - /manager
         args:
           - --leader-elect
-          - --health-probe-bind-address=:8081
-          - --dashboard-bind-address=:8082
+          - --health-probe-bind-address=:8086
+          - --dashboard-bind-address=:8085
+        # Dashboard login is required. Create Secret geass-dashboard-auth
+        # (see config/samples/geass_dashboard_auth.yaml) or set
+        # GEASS_DASHBOARD_PASSWORD / GEASS_DASHBOARD_USERS. Geass does not
+        # generate a password.
         image: geass-operator:v0.0.1
         name: manager
         ports:
-        - containerPort: 8081
+        - containerPort: 8086
           name: health
           protocol: TCP
-        - containerPort: 8082
+        - containerPort: 8085
           name: dashboard
           protocol: TCP
         securityContext:
@@ -82,13 +86,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: 8086
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: 8086
           initialDelaySeconds: 5
           periodSeconds: 10
         # TODO(user): Configure the resources accordingly based on the project requirements.

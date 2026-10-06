@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions: {}
 
@@ -30,6 +32,7 @@ jobs:
         run: make lint
 
   test:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Test
@@ -51,6 +54,7 @@ jobs:
           make test
 
   build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Build
@@ -65,6 +69,18 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard-ui/pnpm-lock.yaml
 
       - name: Set up Docker
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0

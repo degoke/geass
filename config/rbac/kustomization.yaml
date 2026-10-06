@@ -25,9 +25,6 @@ resources:
 - geassobjectstore_admin_role.yaml
 - geassobjectstore_editor_role.yaml
 - geassobjectstore_viewer_role.yaml
-- geasscache_admin_role.yaml
-- geasscache_editor_role.yaml
-- geasscache_viewer_role.yaml
 - geassdatabase_admin_role.yaml
 - geassdatabase_editor_role.yaml
 - geassdatabase_viewer_role.yaml

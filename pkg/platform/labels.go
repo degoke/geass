@@ -8,6 +8,9 @@ const (
 	LabelCluster         = "geass.dev/cluster"
 	LabelLogicalDatabase = "geass.dev/logical-database"
 	K8sLabelManagedBy    = "app.kubernetes.io/managed-by"
+	K8sLabelAppName      = "app.kubernetes.io/name"
 	ManagedByValue       = "geass"
+	ProjectSharedSecrets = "geass-shared-secrets"
+	ProjectSharedVars    = "geass-shared-variables"
 	HAReadinessName      = "platform"
 )

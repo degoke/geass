@@ -75,10 +75,36 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
+		controllerutil.AddFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if !app.DeletionTimestamp.IsZero() {
+		for _, wsNS := range appDeletionNamespaces(&app) {
+			r.deleteTargetResources(ctx, &app, wsNS)
+		}
+		controllerutil.RemoveFinalizer(&app, appFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &app)
+	}
+
+	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
+		snapshot, ok := platform.LastDeployedSpec(&app)
+		if !ok {
+			return r.setNotReady(ctx, &app, "Service has pending changes and no last deployed snapshot")
+		}
+		app.Spec = snapshot
+		app.Spec.Deploy.Enabled = true
+	}
+
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, app.Spec.Project, app.Spec.Environment); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := validateAppSource(&app); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if err := r.ensureCloudflarePublicHost(ctx, &app); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
@@ -87,22 +113,27 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
-	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
-		controllerutil.AddFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
+	if app.Spec.Source.Git != nil {
+		if !app.Spec.Deploy.Enabled {
+			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+				r.deleteTargetResources(ctx, &app, prevNS)
+			}
+			r.deleteTargetResources(ctx, &app, wsNS)
+			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
+		}
+		build, ready, err := r.ensureGitBuild(ctx, &app)
+		if err != nil {
+			return r.setNotReady(ctx, &app, err.Error())
+		}
+		if ready {
+			app.Status.ResolvedImage = build.Status.ImageDigest
+			app.Status.ActiveBuild = build.Name
+		}
+		if !ready {
+			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
+		}
 	}
 
-	if !app.DeletionTimestamp.IsZero() {
-		r.deleteTargetResources(ctx, &app, wsNS)
-		controllerutil.RemoveFinalizer(&app, appFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &app)
-	}
-	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
-		// Keep the last deployed workload running while dashboard changes are
-		// saved as desired state. The dashboard clears this marker explicitly
-		// when the user deploys the pending configuration.
-		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
 	if !app.Spec.Deploy.Enabled {
 		if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
 			r.deleteTargetResources(ctx, &app, prevNS)
@@ -116,17 +147,6 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	if app.Status.RolloutPaused {
 		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-	}
-	if app.Spec.Source.Git != nil {
-		build, ready, err := r.ensureGitBuild(ctx, &app)
-		if err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
-		if !ready {
-			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
-		}
-		app.Status.ResolvedImage = build.Status.ImageDigest
-		app.Status.ActiveBuild = build.Name
 	}
 
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
@@ -256,7 +276,7 @@ func appPendingUpdates(app *geassv1alpha1.GeassApp) int {
 
 func (r *GeassAppReconciler) appLabels(app *geassv1alpha1.GeassApp) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":   app.Name,
+		platform.K8sLabelAppName:   app.Name,
 		platform.K8sLabelManagedBy: platform.ManagedByValue,
 		platform.LabelProject:      app.Spec.Project,
 		platform.LabelEnvironment:  string(app.Spec.Environment),
@@ -286,6 +306,13 @@ func deploymentReplicas(app *geassv1alpha1.GeassApp) int32 {
 		return 1
 	}
 	return *app.Spec.Replicas
+}
+
+func appContainerResources(app *geassv1alpha1.GeassApp) corev1.ResourceRequirements {
+	if app == nil || len(app.Spec.Resources.Requests) == 0 {
+		return platform.DefaultAppResources()
+	}
+	return app.Spec.Resources
 }
 
 func appSourceCommit(app *geassv1alpha1.GeassApp) string {
@@ -378,20 +405,20 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 						continue
 					}
 					if variable.SecretRef != nil {
-						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-secrets"}, Key: variable.Name}}})
+						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedSecrets}, Key: variable.Name}}})
 					} else {
-						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-variables"}, Key: variable.Name}}})
+						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedVars}, Key: variable.Name}}})
 					}
 					continue
 				}
 				if variable.SecretRef != nil {
-					envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-secrets"}}})
+					envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedSecrets}}})
 					break
 				}
 			}
 			for _, variable := range project.Spec.SharedVariables {
 				if variable.Environment == string(app.Spec.Environment) && variable.SecretRef == nil {
-					envFrom = append(envFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-variables"}}})
+					envFrom = append(envFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedVars}}})
 					break
 				}
 			}
@@ -464,7 +491,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 					ReadinessProbe: app.Spec.Deploy.ReadinessProbe,
 					LivenessProbe:  app.Spec.Deploy.LivenessProbe,
 					StartupProbe:   app.Spec.Deploy.StartupProbe,
-					Resources:      app.Spec.Resources,
+					Resources:      appContainerResources(app),
 					VolumeMounts:   volumeMounts,
 				}},
 				Volumes: volumes,
@@ -518,7 +545,7 @@ func appImagePullSecret(app *geassv1alpha1.GeassApp) *corev1.LocalObjectReferenc
 func (r *GeassAppReconciler) ensureGitBuild(ctx context.Context, app *geassv1alpha1.GeassApp) (*geassv1alpha1.GeassBuild, bool, error) {
 	git := app.Spec.Source.Git
 	if git == nil {
-		return nil, false, fmt.Errorf("Git source is required")
+		return nil, false, fmt.Errorf("git source is required")
 	}
 	registry := app.Spec.Build.Registry.Repository
 	credentialRef := app.Spec.Build.Registry.CredentialRef
@@ -731,6 +758,30 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	return err
 }
 
+// appDeletionNamespaces returns every project-environment namespace that may still
+// hold workloads for this app. Spec placement can be invalid while status still
+// records a previous target namespace after moves or edits.
+func appDeletionNamespaces(app *geassv1alpha1.GeassApp) []string {
+	seen := make(map[string]struct{})
+	var namespaces []string
+	add := func(ns string) {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			return
+		}
+		if _, ok := seen[ns]; ok {
+			return
+		}
+		seen[ns] = struct{}{}
+		namespaces = append(namespaces, ns)
+	}
+	if wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment)); err == nil {
+		add(wsNS)
+	}
+	add(app.Status.TargetNamespace)
+	return namespaces
+}
+
 func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
 	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics"}
 	for _, name := range names {
@@ -756,10 +807,36 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	if app.Status.ResolvedImage != "" {
+		latest.Status.ResolvedImage = app.Status.ResolvedImage
+		latest.Status.ActiveBuild = app.Status.ActiveBuild
+	}
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+}
+
+func (r *GeassAppReconciler) ensureCloudflarePublicHost(ctx context.Context, app *geassv1alpha1.GeassApp) error {
+	if strings.TrimSpace(app.Spec.Ingress.Host) != "" {
+		return nil
+	}
+	config := &geassv1alpha1.GeassPlatformConfig{}
+	if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !platform.IsConditionTrue(config.Status.Conditions, platform.ConditionCloudflareReady) {
+		return nil
+	}
+	rootDomain := platform.RootDomainFromConfig(*config)
+	host := platform.AppPublicHostname(app.Name, app.Spec.Project, string(app.Spec.Environment), rootDomain)
+	if host == "" {
+		return nil
+	}
+	patch := app.DeepCopy()
+	patch.Spec.Ingress.Host = host
+	patch.Spec.Ingress.TLSEnabled = false
+	return r.Update(ctx, patch)
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -74,7 +74,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	triggered, err := s.triggerWebhookBuilds(r.Context(), payload)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "could not process webhook", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -108,8 +108,8 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 		if err := s.Client.List(ctx, &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil || len(builds.Items) == 0 {
 			continue
 		}
-		sort.SliceStable(builds.Items, func(i, j int) bool {
-			return builds.Items[i].CreationTimestamp.After(builds.Items[j].CreationTimestamp.Time)
+		slices.SortStableFunc(builds.Items, func(a, b geassv1alpha1.GeassBuild) int {
+			return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 		})
 		if err := s.retriggerBuild(ctx, &builds.Items[0]); err != nil {
 			return triggered, err
@@ -177,7 +177,7 @@ func (s *Server) validateGitConnectionForProject(ctx context.Context, project, c
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("GitHub connection was not found")
 		}
-		return err
+		return fmt.Errorf("GitHub connection is unavailable")
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
@@ -187,6 +187,23 @@ func (s *Server) validateGitConnectionForProject(ctx context.Context, project, c
 		return fmt.Errorf("GitHub connection is not ready")
 	}
 	return nil
+}
+
+func (s *Server) validateCloudConnectionForProject(ctx context.Context, project, connectionRef string) error {
+	if connectionRef == "" {
+		return nil
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: connectionRef, Namespace: systemNamespace}, connection); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("cloud connection was not found")
+		}
+		return fmt.Errorf("cloud connection is unavailable")
+	}
+	if strings.TrimSpace(connection.Spec.Project) == "" {
+		return fmt.Errorf("use a project-scoped cloud connection")
+	}
+	return platform.ValidateCloudConnectionForProject(*connection, project)
 }
 
 func hmacSHA256(secret string, body []byte) string {

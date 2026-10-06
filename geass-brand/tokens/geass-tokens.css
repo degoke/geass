@@ -1,0 +1,68 @@
+/**
+ * Geass design tokens — single source for dashboard and marketing surfaces.
+ * Palette: geass-colors.json
+ */
+
+:root {
+  --geass-signal: #888cf8;
+  --geass-surface: #121214;
+  --geass-light: #f2f2f3;
+  --geass-cloud: #eaeaff;
+  --geass-layer: #d8d6ff;
+  --geass-healthy: #59c77a;
+  --geass-critical: #e66a6a;
+  --geass-canvas-base: #0a0a0b;
+  --geass-ink: #171719;
+
+  --geass-radius-sm: 6px;
+  --geass-radius-md: 8px;
+  --geass-radius-lg: 10px;
+  --geass-radius-xl: 12px;
+
+  --geass-font-sans: "Inter Variable", Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  --geass-font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --geass-shadow-card: 0 1px 2px rgb(18 18 20 / 4%), 0 8px 24px rgb(136 140 248 / 8%);
+  --geass-shadow-elevated: 0 16px 40px rgb(0 0 0 / 24%);
+  --geass-focus-ring: 0 0 0 2px color-mix(in srgb, var(--geass-signal) 42%, transparent);
+  --geass-grid-dot: color-mix(in srgb, var(--geass-signal) 14%, transparent);
+}
+
+[data-mantine-color-scheme="dark"] {
+  --geass-canvas: #0e0e10;
+  --geass-subtle: #0e0e10;
+  --geass-surface: #17171a;
+  --geass-elevated: #1c1c21;
+  --geass-hover: #24242b;
+  --geass-border-subtle: #2c2c34;
+  --geass-border: #3a3a44;
+  --geass-btn-primary-bg: #f4f4f5;
+  --geass-btn-primary-fg: #111113;
+  --geass-text: var(--geass-light);
+  --geass-text-secondary: #a3a3ab;
+  --geass-text-muted: #696972;
+  --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 14%, var(--geass-surface));
+  --geass-cloud-wash: color-mix(in srgb, var(--geass-cloud) 8%, var(--geass-canvas));
+  --geass-shadow-card: none;
+  --geass-terminal-bg: #0e0e10;
+  --geass-terminal-chrome: #18181b;
+}
+
+[data-mantine-color-scheme="light"] {
+  --geass-canvas: #e6e6ea;
+  --geass-subtle: #f5f5f7;
+  --geass-surface: #ffffff;
+  --geass-btn-primary-bg: #171719;
+  --geass-btn-primary-fg: #f4f4f5;
+  --geass-elevated: #ffffff;
+  --geass-hover: color-mix(in srgb, var(--geass-ink) 5%, var(--geass-surface));
+  --geass-border-subtle: #d4d4da;
+  --geass-border: #b8b8c0;
+  --geass-text: var(--geass-ink);
+  --geass-text-secondary: #575761;
+  --geass-text-muted: #7d7d87;
+  --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 12%, #ffffff);
+  --geass-cloud-wash: var(--geass-cloud);
+  --geass-terminal-bg: var(--geass-surface);
+  --geass-terminal-chrome: var(--geass-cloud);
+}

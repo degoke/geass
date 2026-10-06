@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -58,6 +59,23 @@ func TestConvertManifestCode(t *testing.T) {
 	require.Equal(t, "geass", converted.Slug)
 	require.Equal(t, "Iv1.test", converted.ClientID)
 	require.Contains(t, converted.PEM, "BEGIN RSA PRIVATE KEY")
+}
+
+func TestConvertManifestCodeRejectsOversizedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("a"), manifestResponseLimit+1))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(req)
+	})}
+
+	_, err := ConvertManifestCode(context.Background(), client, "abc123")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

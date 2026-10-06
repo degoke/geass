@@ -29,13 +29,16 @@ The Geass identity is built around a geometric **open cluster boundary** that al
 
 ## Colour
 
+Canonical tokens live in `tokens/geass-colors.json` and `tokens/geass-tokens.css` (imported by the dashboard).
+
 | Role | Hex |
 | --- | --- |
-| Canvas | `#0A0A0B` |
+| Signal | `#888CF8` |
 | Surface | `#121214` |
-| Primary text | `#F2F2F3` |
-| Secondary text | `#A3A3AB` |
-| Accent | `#8B8CF8` |
+| Light | `#F2F2F3` |
+| Cloud | `#EAEAFF` |
+| Layer | `#D8D6FF` |
+| Canvas | `#0A0A0B` |
 | Healthy | `#59C77A` |
 | Critical | `#E66A6A` |
 

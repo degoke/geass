@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,33 +17,17 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-func TestDomainVerifyResultHTMLPollsWhilePending(t *testing.T) {
-	html := domainVerifyResultHTML(domainVerifyResult{State: "pending", Message: "DNS not detected yet"})
-	require.Contains(t, html, `hx-trigger="every 5s"`)
-	require.Contains(t, html, "Verify")
-}
-
-func TestDomainVerifyIdleHTMLIncludesVerifyButton(t *testing.T) {
-	html := domainVerifyIdleHTML(false)
-	require.Contains(t, html, "Verify")
-	require.Contains(t, html, `method="post" action="/settings/domain/verify"`)
-	require.Contains(t, html, `data-native-submit`)
-	require.Contains(t, domainVerifyIdleHTML(true), "Verify")
-	require.Contains(t, domainPendingMessage(true), "CNAME")
-}
-
-func TestDomainCloudflareDNSCardShowsCNAME(t *testing.T) {
-	html := domainCloudflareDNSCard("geass.example.com", "abc123.cfargotunnel.com")
-	require.Contains(t, html, "CNAME")
-	require.Contains(t, html, "abc123.cfargotunnel.com")
-	require.Contains(t, html, ">geass<")
-}
-
-func TestDomainIngressDNSCardShowsGeassSubdomainARecord(t *testing.T) {
-	html := domainIngressDNSCard("geass.example.com", "203.0.113.50", nil)
-	require.Contains(t, html, "geass.example.com")
-	require.Contains(t, html, ">geass<")
-	require.Contains(t, html, "203.0.113.50")
+func TestHandlePlatformDomainSaveJSONRejectsInvalidDomain(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/settings/domain/save", strings.NewReader("domain=not+a+domain")).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "example.com")
+	require.NotContains(t, rec.Body.String(), `"ok":true`)
 }
 
 func TestPlatformDomainSaveRedirectsGETToSettings(t *testing.T) {
@@ -58,15 +43,18 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 	ctx := context.Background()
 	config := testPlatformConfig("http://127.0.0.1:1")
 	config.Spec.RootDomain = "example.com"
-	config.ObjectMeta.ResourceVersion = "1"
+	config.ResourceVersion = "1"
 	c := newFakeClient(config)
 	srv := &Server{Client: c}
 
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx))
 	req.Header.Set("HX-Request", "true")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainVerify(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.Contains(t, rec.Body.String(), `"ok":false`)
+	require.NotContains(t, rec.Body.String(), `"state":"success"`)
 
 	var updated geassv1alpha1.GeassPlatformConfig
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &updated))
@@ -77,7 +65,7 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 func TestHandlePlatformDomainVerifyProbesAndUpdatesStatus(t *testing.T) {
 	ctx := context.Background()
 	probe := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/geass-probe" {
+		if r.URL.Path == platform.GeassDashboardProbePath {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}
@@ -89,7 +77,7 @@ func TestHandlePlatformDomainVerifyProbesAndUpdatesStatus(t *testing.T) {
 	c := newFakeClient(config)
 	srv := &Server{Client: c, HTTPClient: probe.Client()}
 
-	req := httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/verify", nil).WithContext(ctx))
 	req.Header.Set("HX-Request", "true")
 	rec := httptest.NewRecorder()
 	srv.handlePlatformDomainVerify(rec, req)
@@ -118,13 +106,13 @@ func TestEnsureDashboardDomainVerifiedSkipsProbeForCurrentGeneration(t *testing.
 		"Dashboard HTTPS endpoint is reachable",
 		config.Generation,
 	)
-	client := &countingFailTransport{}
-	srv := &Server{Client: newFakeClient(config), HTTPClient: &http.Client{Transport: client}}
+	failTransport := &countingFailTransport{}
+	srv := &Server{Client: newFakeClient(config), HTTPClient: &http.Client{Transport: failTransport}}
 
 	readiness, err := srv.platformReadiness(context.Background())
 	require.NoError(t, err)
 	require.True(t, srv.ensureDashboardDomainVerified(context.Background(), readiness))
-	require.Zero(t, client.calls)
+	require.Zero(t, failTransport.calls)
 }
 
 type countingFailTransport struct {

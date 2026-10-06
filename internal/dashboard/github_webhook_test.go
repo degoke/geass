@@ -28,7 +28,7 @@ func signedGitHubWebhook(t *testing.T, secret string, payload any) *http.Request
 	digest := hmac.New(sha256.New, []byte(secret))
 	_, _ = digest.Write(body)
 	signature := "sha256=" + hex.EncodeToString(digest.Sum(nil))
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", signature)
 	return req
@@ -138,7 +138,7 @@ func TestGitHubWebhookAcceptsPing(t *testing.T) {
 	body := []byte(`{"zen":"Keep it logically awesome."}`)
 	digest := hmac.New(sha256.New, []byte(cfg.WebhookSecret))
 	_, _ = digest.Write(body)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body)).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body)).WithContext(ctx))
 	req.Header.Set("X-GitHub-Event", "ping")
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(digest.Sum(nil)))
 
@@ -173,7 +173,7 @@ func TestHandleAppCreateRejectsUnconnectedGitConnection(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(project, testPlatformConfig("https://geass.test"), testPlatformGitHubSecret(t, cfg))}
 	form := "source=git&name=api&project=payments&environment=dev&repository=org/repo&branch=main&connectionRef=payments-github"
-	req := httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form)).WithContext(ctx)
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", strings.NewReader(form)).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAppCreate(rec, req)

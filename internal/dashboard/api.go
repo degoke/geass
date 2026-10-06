@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // dashboardBootstrap is the read model used by the React dashboard. It deliberately
@@ -17,12 +16,32 @@ type dashboardBootstrap struct {
 	Apps             geassv1alpha1.GeassAppList             `json:"apps"`
 	Databases        geassv1alpha1.GeassDatabaseList        `json:"databases"`
 	LogicalDatabases geassv1alpha1.GeassLogicalDatabaseList `json:"logicalDatabases"`
-	Caches           geassv1alpha1.GeassCacheList           `json:"caches"`
 	ObjectStores     geassv1alpha1.GeassObjectStoreList     `json:"objectStores"`
 	Clusters         geassv1alpha1.GeassClusterList         `json:"clusters"`
 	CloudConnections geassv1alpha1.GeassCloudConnectionList `json:"cloudConnections"`
 	PlatformConfig   geassv1alpha1.GeassPlatformConfigList  `json:"platformConfig"`
+	Deployments      geassv1alpha1.GeassDeploymentList      `json:"deployments"`
+	Builds           geassv1alpha1.GeassBuildList           `json:"builds"`
+	HAReadiness      geassv1alpha1.GeassHAReadinessList     `json:"haReadiness"`
+	Platform         dashboardPlatform                      `json:"platform"`
 	Metrics          []dashboardMetric                      `json:"metrics"`
+}
+
+type dashboardPlatform struct {
+	HasDashboardURL      bool                 `json:"hasDashboardURL"`
+	HasGitHubApp         bool                 `json:"hasGitHubApp"`
+	HasCloudflare        bool                 `json:"hasCloudflare"`
+	CloudflareReady      bool                 `json:"cloudflareReady"`
+	CloudflareZoneID     string               `json:"cloudflareZoneId,omitempty"`
+	CloudflareZoneName   string               `json:"cloudflareZoneName,omitempty"`
+	DashboardURL         string               `json:"dashboardURL"`
+	HAReady              bool                 `json:"haReady"`
+	HealthyNodes         int32                `json:"healthyNodes"`
+	AWSAvailable         bool                 `json:"awsAvailable"`
+	PlanetScaleAvailable bool                 `json:"planetScaleAvailable"`
+	MinIOAvailable       bool                 `json:"minioAvailable"`
+	Capacity             clusterCapacity      `json:"capacity"`
+	Session              dashboardSessionInfo `json:"session"`
 }
 
 type dashboardMetric struct {
@@ -32,8 +51,8 @@ type dashboardMetric struct {
 }
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api/bootstrap" && r.Method == http.MethodGet {
-		s.handleBootstrap(w, r)
+	if r.Method == http.MethodGet {
+		s.handleAPIRead(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -45,17 +64,21 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{dashboardLiteralError: "method not allowed"})
 		return
 	}
 	mutation := r.Clone(r.Context())
 	mutation.Header.Set("Accept", "application/json")
 	mutationURL := *r.URL
 	mutation.URL = &mutationURL
-	mutation.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+	mutation.URL.Path = apiMutationPath(r.URL.Path)
 	mutation.URL.RawPath = ""
 
 	switch {
+	case mutation.URL.Path == "/login":
+		s.handleDashboardLogin(w, mutation)
+	case mutation.URL.Path == "/logout":
+		s.handleDashboardLogout(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):
@@ -72,10 +95,6 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleLogicalDatabaseCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/logical-databases/"):
 		s.handleLogicalDatabaseRoutes(w, mutation)
-	case mutation.URL.Path == "/caches/create":
-		s.handleCacheCreate(w, mutation)
-	case strings.HasPrefix(mutation.URL.Path, "/caches/"):
-		s.handleCacheRoutes(w, mutation)
 	case mutation.URL.Path == "/object-stores/create":
 		s.handleObjectStoreCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/object-stores/"):
@@ -90,56 +109,40 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformGitHubTest(w, mutation)
 	case mutation.URL.Path == "/settings/github/clear":
 		s.handlePlatformGitHubClear(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/save":
+		s.handlePlatformCloudflareSettingsSave(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/clear":
+		s.handlePlatformCloudflareClear(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/discover":
+		s.handleAPICloudflareDiscover(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/refresh":
+		s.handlePlatformCloudflareRefresh(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create":
 		s.handleCloudConnectionCreate(w, mutation)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	data := dashboardBootstrap{}
-	if err := s.Client.List(ctx, &data.Projects, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	viewer := !s.sessionCanMutate(r)
+	data, err := s.loadDashboardBootstrap(ctx, viewer)
+	if err != nil {
+		writeDashboardUnavailable(w)
 		return
 	}
-	if err := s.Client.List(ctx, &data.Apps, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if viewer {
+		sanitizeDashboardForViewer(&data)
+		data.Platform = s.dashboardPlatformForViewer(ctx, data)
+	} else {
+		data.Platform = s.dashboardPlatform(ctx, data)
 	}
-	if err := s.Client.List(ctx, &data.Databases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.LogicalDatabases, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Caches, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.ObjectStores, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.CloudConnections, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Clusters); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	data.Platform.Session = s.dashboardSession(r)
 	for _, metric := range overviewMetrics {
-		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
+		value, err := s.metricsClient(ctx, !viewer).QueryInstant(ctx, metric.Query)
 		state := "measured"
 		if err != nil {
 			value, state = "unavailable", "unavailable"
@@ -151,87 +154,26 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func writeDashboardUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load dashboard"})
+}
+
+func apiMutationPath(path string) string {
+	path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+	path = strings.TrimPrefix(path, "/api")
+	if path == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
+}
+
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
 		return
 	}
 	serveFrontend(w)
-}
-
-func isDashboardMutation(path string) bool {
-	for _, suffix := range []string{"/create", "/save", "/delete", "/update", "/verify", "/test", "/clear", "/install", "/disconnect", "/archive", "/deploy", "/scale", "/rollback", "/build", "/check", "/set", "/raw"} {
-		if len(path) >= len(suffix) && path[len(path)-len(suffix):] == suffix {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) handleFrontendProjects(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	switch r.URL.Path {
-	case "/projects/create":
-		s.handleProjectCreate(w, r)
-	default:
-		s.handleProjectRoutes(w, r)
-	}
-}
-
-func (s *Server) handleFrontendProjectRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) {
-		serveFrontend(w)
-		return
-	}
-	s.handleProjectRoutes(w, r)
-}
-
-func (s *Server) handleFrontendApps(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && r.URL.Path != "/apps" {
-		serveFrontend(w)
-		return
-	}
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppCreate(w, r)
-}
-
-func (s *Server) handleFrontendAppRoutes(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && !isDashboardMutation(r.URL.Path) && !containsPathPart(r.URL.Path, "stream") {
-		serveFrontend(w)
-		return
-	}
-	s.handleAppRoutes(w, r)
-}
-
-func (s *Server) handleFrontendResourceList(w http.ResponseWriter, r *http.Request, handler func(http.ResponseWriter, *http.Request)) {
-	if r.Method == http.MethodGet {
-		serveFrontend(w)
-		return
-	}
-	handler(w, r)
-}
-
-func containsPathPart(path, part string) bool {
-	for _, segment := range splitPath(path) {
-		if segment == part {
-			return true
-		}
-	}
-	return false
-}
-
-func splitPath(path string) []string {
-	var parts []string
-	for _, part := range strings.Split(path, "/") {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return parts
 }

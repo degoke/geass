@@ -49,27 +49,168 @@ spec:
           spec:
             description: GeassDatabaseSpec defines the desired state of GeassDatabase.
             properties:
+              connectionRef:
+                description: ConnectionRef identifies a GeassCloudConnection used
+                  for PlanetScale or AWS.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              databaseName:
+                description: DatabaseName overrides the default database name for
+                  external or logical-style servers.
+                type: string
               engine:
                 description: Engine is the database engine to provision.
                 enum:
                 - Postgres
+                - MySQL
+                - SQLite
+                - Redis
                 type: string
               environment:
                 description: Environment is the project environment.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              externalHost:
+                description: ExternalHost is the hostname used when connecting to
+                  an existing server.
+                type: string
+              externalPort:
+                description: ExternalPort is the port used when connecting to an existing
+                  server.
+                format: int32
+                type: integer
+              highAvailability:
+                description: |-
+                  HighAvailability requests a multi-instance topology. It is only valid when the
+                  cluster HA readiness check reports at least three healthy nodes.
+                type: boolean
               instances:
                 default: 1
-                description: Instances is the number of Postgres instances in the
-                  CNPG cluster.
+                description: Instances is the number of in-cluster instances. HighAvailability
+                  forces at least 3.
                 format: int32
                 minimum: 1
                 type: integer
+              mode:
+                description: Mode selects whether Geass should create a remote database
+                  or connect to an existing one.
+                enum:
+                - Create
+                - Connect
+                type: string
+              passwordSecretRef:
+                description: PasswordSecretRef points at the Secret that stores the
+                  external password.
+                properties:
+                  key:
+                    description: The key of the secret to select from.  Must be a
+                      valid secret key.
+                    type: string
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  optional:
+                    description: Specify whether the Secret or its key must be defined
+                    type: boolean
+                required:
+                - key
+                type: object
+                x-kubernetes-map-type: atomic
+              placement:
+                default: InCluster
+                description: Placement selects in-cluster provisioning or an external
+                  provider.
+                enum:
+                - InCluster
+                - External
+                type: string
               project:
                 description: Project is the owning project.
                 minLength: 1
                 type: string
+              provider:
+                description: Provider is required when Placement is External.
+                enum:
+                - PlanetScale
+                - AWS
+                type: string
+              resources:
+                description: Resources is the CPU and memory assigned to each in-cluster
+                  instance.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
               storageSize:
                 anyOf:
                 - type: integer
@@ -78,9 +219,13 @@ spec:
                 description: StorageSize is the requested PVC size per instance.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
+              username:
+                description: Username is the login used when connecting to an existing
+                  server.
+                type: string
               version:
                 default: "16"
-                description: Version is the Postgres major version.
+                description: Version is the engine major version for in-cluster servers.
                 type: string
             required:
             - engine

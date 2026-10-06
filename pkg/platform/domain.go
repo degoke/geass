@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,13 +19,16 @@ import (
 )
 
 const (
+	dnsNotDetectedYet             = "DNS not detected yet"
 	ConditionDashboardDomainReady = "DashboardDomainReady"
 	DashboardSubdomainLabel       = "geass"
 	DashboardIngressName          = "geass-dashboard"
+	GeassDashboardProbePath       = "/geass-probe"
 	RequeueAfterDomainVerify      = 5 * time.Second
 )
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+var dashboardSubdomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 type DashboardDomainReconcileResult struct {
 	Status  metav1.ConditionStatus
@@ -65,15 +69,66 @@ func NormalizeDashboardURL(raw string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func DashboardHostFromRoot(rootDomain string) string {
+func NormalizeDashboardSubdomain(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return DashboardSubdomainLabel
+	}
+	if len(raw) > 63 || !dashboardSubdomainPattern.MatchString(raw) {
+		return ""
+	}
+	return raw
+}
+
+func DashboardHostFromParts(subdomain, rootDomain string) string {
+	rootDomain = NormalizeRootDomainInput(rootDomain)
 	if rootDomain == "" {
 		return ""
 	}
-	return DashboardSubdomainLabel + "." + rootDomain
+	subdomain = NormalizeDashboardSubdomain(subdomain)
+	if subdomain == "" {
+		return ""
+	}
+	return subdomain + "." + rootDomain
+}
+
+func DashboardURLFromParts(subdomain, rootDomain string) string {
+	return NormalizeDashboardURL(DashboardHostFromParts(subdomain, rootDomain))
+}
+
+func DashboardHostFromRoot(rootDomain string) string {
+	return DashboardHostFromParts(DashboardSubdomainLabel, rootDomain)
 }
 
 func DashboardURLFromRoot(rootDomain string) string {
-	return NormalizeDashboardURL(DashboardHostFromRoot(rootDomain))
+	return DashboardURLFromParts(DashboardSubdomainLabel, rootDomain)
+}
+
+func DashboardSubdomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	root := strings.TrimSpace(config.Spec.RootDomain)
+	host := DashboardHostFromURL(config.Spec.DashboardURL)
+	if root != "" && host != "" && strings.HasSuffix(host, "."+root) {
+		label := strings.TrimSuffix(host, "."+root)
+		if label != "" {
+			return label
+		}
+	}
+	return DashboardSubdomainLabel
+}
+
+func DashboardURLFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	if normalized := NormalizeDashboardURL(config.Spec.DashboardURL); normalized != "" {
+		return normalized
+	}
+	root := RootDomainFromConfig(config)
+	if root == "" {
+		return ""
+	}
+	return DashboardURLFromParts(DashboardSubdomainFromConfig(config), root)
+}
+
+func DashboardHostFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	return DashboardHostFromURL(DashboardURLFromConfig(config))
 }
 
 func RootDomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
@@ -81,8 +136,8 @@ func RootDomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
 		return strings.ToLower(root)
 	}
 	host := DashboardHostFromURL(config.Spec.DashboardURL)
-	if strings.HasPrefix(host, DashboardSubdomainLabel+".") {
-		return strings.TrimPrefix(host, DashboardSubdomainLabel+".")
+	if after, ok := strings.CutPrefix(host, DashboardSubdomainLabel+"."); ok {
+		return after
 	}
 	return ""
 }
@@ -161,12 +216,10 @@ func VerifyHostResolvesToIP(ctx context.Context, host, expectedIP string) (bool,
 	}
 	ips, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err != nil || len(ips) == 0 {
-		return false, "DNS not detected yet"
+		return false, dnsNotDetectedYet
 	}
-	for _, ip := range ips {
-		if ip == expectedIP {
-			return true, ""
-		}
+	if slices.Contains(ips, expectedIP) {
+		return true, ""
 	}
 	return false, "DNS not detected yet"
 }
@@ -179,7 +232,7 @@ func VerifyHostCNAMETarget(ctx context.Context, host, expectedTarget string) (bo
 	expectedTarget = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(expectedTarget)), ".")
 	cname, err := net.DefaultResolver.LookupCNAME(ctx, host)
 	if err != nil {
-		return false, "DNS not detected yet"
+		return false, dnsNotDetectedYet
 	}
 	cname = strings.TrimSuffix(strings.ToLower(cname), ".")
 	if cname == expectedTarget || strings.HasSuffix(cname, "."+expectedTarget) {
@@ -192,7 +245,7 @@ func ProbeDashboardURL(ctx context.Context, httpClient *http.Client, dashboardUR
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(dashboardURL, "/")+"/geass-probe", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(dashboardURL, "/")+GeassDashboardProbePath, nil)
 	if err != nil {
 		return false
 	}
@@ -200,7 +253,7 @@ func ProbeDashboardURL(ctx context.Context, httpClient *http.Client, dashboardUR
 	if err != nil {
 		return false
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 	return response.StatusCode == http.StatusOK && strings.Contains(string(body), `"ok":true`)
 }

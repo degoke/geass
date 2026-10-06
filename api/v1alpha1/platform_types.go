@@ -408,9 +408,15 @@ type GeassPlatformConfigSpec struct {
 	DefaultClusterRef corev1.LocalObjectReference `json:"defaultClusterRef,omitempty"`
 	// GitHubAppRef references a Secret containing the platform GitHub App credentials.
 	// +optional
-	GitHubAppRef      *corev1.LocalObjectReference `json:"githubAppRef,omitempty"`
-	Registry          GeassPlatformRegistrySpec    `json:"registry,omitempty"`
-	TraefikAccessLogs GeassTraefikAccessLogsSpec   `json:"traefikAccessLogs,omitempty"`
+	GitHubAppRef *corev1.LocalObjectReference `json:"githubAppRef,omitempty"`
+	// CloudflareConnectionRef references a Secret with Cloudflare API credentials (apiToken, accountId).
+	// +optional
+	CloudflareConnectionRef *corev1.LocalObjectReference `json:"cloudflareConnectionRef,omitempty"`
+	// CloudflareZoneID is the DNS zone used for automatic records when Cloudflare is connected.
+	// +optional
+	CloudflareZoneID  string                     `json:"cloudflareZoneID,omitempty"`
+	Registry          GeassPlatformRegistrySpec  `json:"registry,omitempty"`
+	TraefikAccessLogs GeassTraefikAccessLogsSpec `json:"traefikAccessLogs,omitempty"`
 }
 
 type GeassTraefikAccessLogsSpec struct {
@@ -425,7 +431,10 @@ type GeassPlatformRegistrySpec struct {
 }
 
 type GeassPlatformConfigStatus struct {
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// CloudflareTunnelID is the managed Cloudflare tunnel UUID when the connector is enabled.
+	// +optional
+	CloudflareTunnelID string             `json:"cloudflareTunnelID,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -447,10 +456,26 @@ type GeassPlatformConfigList struct {
 
 type GeassCloudProvider string
 
-const CloudProviderAWS GeassCloudProvider = "AWS"
+const (
+	CloudProviderAWS         GeassCloudProvider = "AWS"
+	CloudProviderPlanetScale GeassCloudProvider = "PlanetScale"
+)
 
 type GeassCloudConnectionSpec struct {
+	// Provider is the external cloud or database vendor.
+	// +kubebuilder:validation:Enum=AWS;PlanetScale
 	Provider GeassCloudProvider `json:"provider"`
+	// SecretRef stores provider credentials. Secret values are never copied into status.
+	SecretRef corev1.LocalObjectReference `json:"secretRef"`
+	// Project optionally scopes this connection to a single Geass project.
+	// +optional
+	Project string `json:"project,omitempty"`
+	// Region is the default AWS region for this connection.
+	// +optional
+	Region string `json:"region,omitempty"`
+	// Organization is the PlanetScale organization slug.
+	// +optional
+	Organization string `json:"organization,omitempty"`
 }
 type GeassCloudConnectionStatus struct {
 	Available  bool               `json:"available"`

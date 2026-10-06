@@ -37,6 +37,25 @@ spec:
             type: object
           spec:
             properties:
+              cloudflareConnectionRef:
+                description: CloudflareConnectionRef references a Secret with Cloudflare
+                  API credentials (apiToken, accountId).
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              cloudflareZoneID:
+                description: CloudflareZoneID is the DNS zone used for automatic records
+                  when Cloudflare is connected.
+                type: string
               dashboardExposure:
                 default: ingress
                 description: DashboardExposure selects how the dashboard is published
@@ -129,6 +148,10 @@ spec:
             type: object
           status:
             properties:
+              cloudflareTunnelID:
+                description: CloudflareTunnelID is the managed Cloudflare tunnel UUID
+                  when the connector is enabled.
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
