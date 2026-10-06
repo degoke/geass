@@ -35,10 +35,6 @@ func (s *Server) platformConfig(ctx context.Context) (geassv1alpha1.GeassPlatfor
 	return config, err
 }
 
-func normalizeDashboardURL(raw string) string {
-	return platform.NormalizeDashboardURL(raw)
-}
-
 func (s *Server) platformReadiness(ctx context.Context) (platformReadiness, error) {
 	config, err := s.platformConfig(ctx)
 	if err != nil {
@@ -96,15 +92,15 @@ func (s *Server) githubAppClientFromContext(ctx context.Context) (*githubapp.Cli
 }
 
 func (s *Server) githubAppClient() *githubapp.Client {
-	client, _, err := s.githubAppClientFromContext(context.Background())
-	if err != nil || client == nil {
+	ghClient, _, err := s.githubAppClientFromContext(context.Background())
+	if err != nil || ghClient == nil {
 		cfg := s.GitHubApp
 		if !cfg.Configured() {
 			cfg = githubapp.LoadConfigFromEnv()
 		}
 		return &githubapp.Client{Config: cfg, HTTP: s.HTTPClient}
 	}
-	return client
+	return ghClient
 }
 
 func (s *Server) githubAppConfigured(ctx context.Context) bool {

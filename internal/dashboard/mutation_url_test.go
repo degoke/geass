@@ -22,7 +22,7 @@ func TestRequireMutationGETRedirectsAwayFromSave(t *testing.T) {
 func TestRedirectProbeEncodesMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
-	redirectProbe(rec, req, "/settings/github", "error", "type remove-github to confirm")
+	redirectProbe(rec, req, "/settings/github", dashboardLiteralError, "type remove-github to confirm")
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	loc := rec.Header().Get("Location")
 	require.True(t, strings.HasPrefix(loc, "/settings/github?"))
@@ -36,7 +36,7 @@ func TestRedirectProbeHXUsesHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/domain/save", nil))
 	req.Header.Set("HX-Request", "true")
-	redirectProbe(rec, req, "/settings/domain", "error", "enter your main domain")
+	redirectProbe(rec, req, "/settings/domain", dashboardLiteralError, "enter your main domain")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("HX-Redirect"), "/settings/domain?")
 	require.Contains(t, rec.Header().Get("HX-Redirect"), "probe=error")
@@ -46,7 +46,7 @@ func TestRedirectProbeJSONReportsError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/settings/github/save", nil))
 	req.Header.Set("Accept", "application/json")
-	redirectProbe(rec, req, "/settings/github", "error", "dashboard URL must be configured first")
+	redirectProbe(rec, req, "/settings/github", dashboardLiteralError, "dashboard URL must be configured first")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.JSONEq(t, `{"error":"dashboard URL must be configured first"}`, rec.Body.String())
 }

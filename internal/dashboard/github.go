@@ -17,7 +17,6 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
-	"github.com/degoke/geass/pkg/platform"
 )
 
 type githubRepository struct {
@@ -25,11 +24,6 @@ type githubRepository struct {
 	DefaultBranch string
 	Private       bool
 	HTMLURL       string
-}
-
-type githubAccount struct {
-	Login string
-	Type  string
 }
 
 func githubConnectionName(project string) string {
@@ -49,31 +43,6 @@ func (s *Server) projectGitHubConnection(ctx context.Context, project string) (*
 		return nil, err
 	}
 	return connection, nil
-}
-
-func githubConnectionReady(connection *geassv1alpha1.GeassGitHubConnection) bool {
-	if connection == nil {
-		return false
-	}
-	return connection.Status.Ready || conditionStatus(connection.Status.Conditions, platform.ConditionReady) == "True"
-}
-
-func githubInstallationID(secret *corev1.Secret) int64 {
-	return githubapp.InstallationIDFromSecret(secret)
-}
-
-func githubTokenFromSecret(secret *corev1.Secret) string {
-	return githubapp.TokenFromSecret(secret)
-}
-
-func githubAccountFromSecret(secret *corev1.Secret) githubAccount {
-	if secret == nil || secret.Data == nil {
-		return githubAccount{}
-	}
-	return githubAccount{
-		Login: string(secret.Data["account"]),
-		Type:  string(secret.Data["account_type"]),
-	}
 }
 
 func (s *Server) githubConnectionSecret(ctx context.Context, connection *geassv1alpha1.GeassGitHubConnection) (*corev1.Secret, error) {
@@ -128,90 +97,6 @@ func mapGitHubRepositories(repos []githubapp.Repository) []githubRepository {
 		return strings.Compare(strings.ToLower(a.FullName), strings.ToLower(b.FullName))
 	})
 	return out
-}
-
-func (s *Server) projectDeployedRepositories(ctx context.Context, project string) []string {
-	var apps geassv1alpha1.GeassAppList
-	if err := s.Client.List(ctx, &apps, client.InNamespace(systemNamespace)); err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var repositories []string
-	for _, app := range apps.Items {
-		if app.Spec.Project != project || app.Spec.Source.Git == nil {
-			continue
-		}
-		repo := strings.TrimSpace(app.Spec.Source.Git.Repository)
-		if repo == "" || seen[repo] {
-			continue
-		}
-		seen[repo] = true
-		repositories = append(repositories, repo)
-	}
-	slices.Sort(repositories)
-	return repositories
-}
-
-func (s *Server) githubConnectionUsable(ctx context.Context, connection *geassv1alpha1.GeassGitHubConnection) bool {
-	if githubConnectionReady(connection) {
-		return true
-	}
-	if connection == nil {
-		return false
-	}
-	secret, err := s.githubConnectionSecret(ctx, connection)
-	if err != nil {
-		return false
-	}
-	return githubInstallationID(secret) > 0 || githubTokenFromSecret(secret) != ""
-}
-
-func filterGitHubRepositories(repos []githubRepository, query string) []githubRepository {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return repos
-	}
-	filtered := make([]githubRepository, 0, len(repos))
-	for _, repo := range repos {
-		if strings.Contains(strings.ToLower(repo.FullName), query) {
-			filtered = append(filtered, repo)
-		}
-	}
-	return filtered
-}
-
-func (s *Server) nextGitHubAppName(ctx context.Context, repository string) string {
-	base := strings.TrimSpace(repository)
-	if slash := strings.LastIndex(base, "/"); slash >= 0 {
-		base = base[slash+1:]
-	}
-	var sanitized strings.Builder
-	for _, r := range strings.ToLower(base) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			sanitized.WriteRune(r)
-		} else if sanitized.Len() > 0 && !strings.HasSuffix(sanitized.String(), "-") {
-			sanitized.WriteByte('-')
-		}
-	}
-	base = strings.Trim(sanitized.String(), "-")
-	if base == "" {
-		base = "service"
-	}
-	if len(base) > 50 {
-		base = strings.TrimRight(base[:50], "-")
-	}
-	used := map[string]bool{}
-	var apps geassv1alpha1.GeassAppList
-	if err := s.Client.List(ctx, &apps, client.InNamespace(systemNamespace)); err == nil {
-		for _, app := range apps.Items {
-			used[app.Name] = true
-		}
-	}
-	name := base
-	for suffix := 2; used[name]; suffix++ {
-		name = fmt.Sprintf("%s-%d", base, suffix)
-	}
-	return name
 }
 
 func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Request, project string) {

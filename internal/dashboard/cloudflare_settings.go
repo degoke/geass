@@ -26,11 +26,11 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	keepExisting := r.FormValue("keepExisting") == "on" || r.FormValue("keepExisting") == "true"
 
 	if accountID == "" || zoneID == "" {
-		redirectProbe(w, r, "/settings/connectors", "error", "account ID and zone ID are required")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "account ID and zone ID are required")
 		return
 	}
 	if apiToken == "" && !keepExisting {
-		redirectProbe(w, r, "/settings/connectors", "error", "API token is required")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "API token is required")
 		return
 	}
 
@@ -43,7 +43,7 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 			Data:       map[string][]byte{},
 		}
 	} else if err != nil {
-		redirectProbe(w, r, "/settings/connectors", "error", "could not load Cloudflare credentials")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not load Cloudflare credentials")
 		return
 	}
 	if apiToken != "" {
@@ -53,18 +53,18 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	if zoneName == "" {
 		zoneName = strings.TrimSpace(string(secret.Data[platform.SecretKeyCloudflareZoneName]))
 	}
-	if secret.Data[platform.SecretKeyCloudflareAPIToken] == nil || len(secret.Data[platform.SecretKeyCloudflareAPIToken]) == 0 {
-		redirectProbe(w, r, "/settings/connectors", "error", "API token is required")
+	if len(secret.Data[platform.SecretKeyCloudflareAPIToken]) == 0 {
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "API token is required")
 		return
 	}
 	if err := s.persistSecret(r.Context(), secret); err != nil {
-		redirectProbe(w, r, "/settings/connectors", "error", "could not save Cloudflare credentials")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not save Cloudflare credentials")
 		return
 	}
 
 	cf := &cloudflare.Client{AccountID: accountID, APIToken: string(secret.Data[platform.SecretKeyCloudflareAPIToken]), HTTP: s.HTTPClient}
 	if err := cf.Validate(r.Context()); err != nil {
-		redirectProbe(w, r, "/settings/connectors", "error", cloudflare.TokenValidationMessage(err))
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, cloudflare.TokenValidationMessage(err))
 		return
 	}
 	if zoneName == "" && zoneID != "" {
@@ -73,7 +73,7 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 		}
 	}
 	if zoneName == "" {
-		redirectProbe(w, r, "/settings/connectors", "error", "DNS zone name is required — pick a zone from the list")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "DNS zone name is required — pick a zone from the list")
 		return
 	}
 	zoneRecords := parseCloudflareZonesForm(r.FormValue("zonesJson"))
@@ -91,12 +91,12 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	platform.SetCloudflareZonesOnSecret(secret, zoneRecords)
 	secret.Data[platform.SecretKeyCloudflareZoneName] = []byte(zoneName)
 	if err := s.persistSecret(r.Context(), secret); err != nil {
-		redirectProbe(w, r, "/settings/connectors", "error", "could not save Cloudflare credentials")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not save Cloudflare credentials")
 		return
 	}
 
 	if err := s.attachCloudflareToPlatformConfig(r.Context(), zoneID); err != nil {
-		redirectProbe(w, r, "/settings/connectors", "error", "could not update platform config")
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not update platform config")
 		return
 	}
 	redirect(w, r, "/settings/connectors")
@@ -109,14 +109,14 @@ func (s *Server) handlePlatformCloudflareRefresh(w http.ResponseWriter, r *http.
 	respond := func(errMsg string, zoneCount int) {
 		if isJSONRequest(r) {
 			if errMsg != "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": errMsg})
+				writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: errMsg})
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": zoneCount})
 			return
 		}
 		if errMsg != "" {
-			redirectProbe(w, r, "/settings/connectors", "error", errMsg)
+			redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, errMsg)
 			return
 		}
 		redirectProbe(w, r, "/settings/connectors", "success", "")
@@ -281,35 +281,35 @@ func (s *Server) updateCloudflareZoneName(ctx context.Context, zoneID, rootDomai
 
 func (s *Server) handleAPICloudflareDiscover(w http.ResponseWriter, r *http.Request) {
 	if !s.sessionCanMutate(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "forbidden"})
 		return
 	}
 	if !sameOriginMutation(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "request origin could not be verified"})
+		writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "request origin could not be verified"})
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "invalid request"})
 		return
 	}
 	apiToken := cloudflare.NormalizeAPIToken(r.FormValue("apiToken"))
 	if apiToken == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "API token is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "API token is required"})
 		return
 	}
 	cf := &cloudflare.Client{APIToken: apiToken, HTTP: s.HTTPClient}
 	if err := cf.Validate(r.Context()); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": cloudflare.TokenValidationMessage(err)})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: cloudflare.TokenValidationMessage(err)})
 		return
 	}
 	accounts, err := cf.ListAccounts(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not list Cloudflare accounts"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not list Cloudflare accounts"})
 		return
 	}
 	zones, err := cf.ListZones(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not list Cloudflare zones"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not list Cloudflare zones"})
 		return
 	}
 	if len(accounts) == 0 {
@@ -336,7 +336,7 @@ func (s *Server) handleAPICloudflareDiscover(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleAPICloudflareSettings(w http.ResponseWriter, r *http.Request) {
 	config, err := s.platformConfig(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load Cloudflare settings"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load Cloudflare settings"})
 		return
 	}
 	if !s.sessionCanMutate(r) {
@@ -348,7 +348,7 @@ func (s *Server) handleAPICloudflareSettings(w http.ResponseWriter, r *http.Requ
 	}
 	info, err := s.cloudflareSettingsInfo(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load Cloudflare settings"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load Cloudflare settings"})
 		return
 	}
 	writeJSON(w, http.StatusOK, info)

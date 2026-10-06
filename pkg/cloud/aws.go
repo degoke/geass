@@ -15,6 +15,18 @@ import (
 	"time"
 )
 
+const (
+	defaultAWSRegion          = "us-east-1"
+	iamAPIVersion             = "2010-05-08"
+	iamActionCreateUser       = "CreateUser"
+	iamActionPutUserPolicy    = "PutUserPolicy"
+	iamActionCreateAccessKey  = "CreateAccessKey"
+	iamActionListAccessKeys   = "ListAccessKeys"
+	iamActionDeleteAccessKey  = "DeleteAccessKey"
+	iamActionDeleteUserPolicy = "DeleteUserPolicy"
+	iamActionDeleteUser       = "DeleteUser"
+)
+
 // AWSClient performs a small set of signed S3 and IAM operations without an SDK.
 type AWSClient struct {
 	HTTP        *http.Client
@@ -36,7 +48,7 @@ func (c *AWSClient) region() string {
 	if strings.TrimSpace(c.Region) != "" {
 		return c.Region
 	}
-	return "us-east-1"
+	return defaultAWSRegion
 }
 
 // EnsureBucket creates the bucket when it does not already exist.
@@ -236,35 +248,19 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 }
 
 func (c *AWSClient) emptyBucketVersions(bucket string) error {
-	keyMarker, versionMarker := "", ""
-	for page := 0; page < s3EmptyMaxPages; page++ {
-		versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
-		if err != nil {
-			if isS3NoSuchBucket(err) {
-				return err
+	return c.runS3MarkerPages(bucket, "version listing did not advance", "version listing exceeded",
+		func(keyMarker, versionMarker string) (int, string, string, bool, error) {
+			versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
+			if err != nil {
+				return 0, "", "", false, err
 			}
-			if isS3Unsupported(err) {
-				return nil
+			for _, version := range versions {
+				if err := c.deleteObject(bucket, version.key, version.versionID); err != nil && !isS3NoSuchBucket(err) {
+					return 0, "", "", false, err
+				}
 			}
-			return err
-		}
-		for _, version := range versions {
-			if err := c.deleteObject(bucket, version.key, version.versionID); err != nil && !isS3NoSuchBucket(err) {
-				return err
-			}
-		}
-		if !truncated {
-			return nil
-		}
-		if len(versions) == 0 || (nextKey == "" && nextVersion == "") || (nextKey == keyMarker && nextVersion == versionMarker) {
-			return fmt.Errorf("bucket %s version listing did not advance", bucket)
-		}
-		keyMarker, versionMarker = nextKey, nextVersion
-		if page == s3EmptyMaxPages-1 {
-			return fmt.Errorf("bucket %s version listing exceeded %d pages", bucket, s3EmptyMaxPages)
-		}
-	}
-	return fmt.Errorf("bucket %s version listing exceeded %d pages", bucket, s3EmptyMaxPages)
+			return len(versions), nextKey, nextVersion, truncated, nil
+		})
 }
 
 type objectVersion struct {
@@ -333,9 +329,30 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 }
 
 func (c *AWSClient) abortMultipartUploads(bucket string) error {
-	keyMarker, uploadMarker := "", ""
-	for page := 0; page < s3EmptyMaxPages; page++ {
-		uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
+	return c.runS3MarkerPages(bucket, "multipart listing did not advance", "multipart listing exceeded",
+		func(keyMarker, uploadMarker string) (int, string, string, bool, error) {
+			uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
+			if err != nil {
+				return 0, "", "", false, err
+			}
+			for _, upload := range uploads {
+				if err := c.abortMultipartUpload(bucket, upload.key, upload.uploadID); err != nil && !isS3NoSuchBucket(err) {
+					return 0, "", "", false, err
+				}
+			}
+			return len(uploads), nextKey, nextUpload, truncated, nil
+		})
+}
+
+func (c *AWSClient) runS3MarkerPages(
+	bucket string,
+	stallLabel string,
+	exceedLabel string,
+	page func(keyMarker, secondMarker string) (itemCount int, nextKey, nextMarker string, truncated bool, err error),
+) error {
+	keyMarker, secondMarker := "", ""
+	for pageNum := 0; pageNum < s3EmptyMaxPages; pageNum++ {
+		itemCount, nextKey, nextMarker, truncated, err := page(keyMarker, secondMarker)
 		if err != nil {
 			if isS3NoSuchBucket(err) {
 				return err
@@ -345,23 +362,18 @@ func (c *AWSClient) abortMultipartUploads(bucket string) error {
 			}
 			return err
 		}
-		for _, upload := range uploads {
-			if err := c.abortMultipartUpload(bucket, upload.key, upload.uploadID); err != nil && !isS3NoSuchBucket(err) {
-				return err
-			}
-		}
 		if !truncated {
 			return nil
 		}
-		if len(uploads) == 0 || (nextKey == "" && nextUpload == "") || (nextKey == keyMarker && nextUpload == uploadMarker) {
-			return fmt.Errorf("bucket %s multipart listing did not advance", bucket)
+		if itemCount == 0 || (nextKey == "" && nextMarker == "") || (nextKey == keyMarker && nextMarker == secondMarker) {
+			return fmt.Errorf("bucket %s %s", bucket, stallLabel)
 		}
-		keyMarker, uploadMarker = nextKey, nextUpload
-		if page == s3EmptyMaxPages-1 {
-			return fmt.Errorf("bucket %s multipart listing exceeded %d pages", bucket, s3EmptyMaxPages)
+		keyMarker, secondMarker = nextKey, nextMarker
+		if pageNum == s3EmptyMaxPages-1 {
+			return fmt.Errorf("bucket %s %s %d pages", bucket, exceedLabel, s3EmptyMaxPages)
 		}
 	}
-	return fmt.Errorf("bucket %s multipart listing exceeded %d pages", bucket, s3EmptyMaxPages)
+	return fmt.Errorf("bucket %s %s %d pages", bucket, exceedLabel, s3EmptyMaxPages)
 }
 
 type multipartUpload struct {
@@ -536,7 +548,7 @@ func isS3ErrorCode(payload []byte, code string) bool {
 }
 
 func (c *AWSClient) iamListAccessKeys(userName string) ([]string, error) {
-	payload, err := c.iamCall(url.Values{"Action": {"ListAccessKeys"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	payload, err := c.iamCall(url.Values{"Action": {iamActionListAccessKeys}, "UserName": {userName}, "Version": {iamAPIVersion}})
 	if err != nil {
 		return nil, err
 	}
@@ -560,22 +572,22 @@ func (c *AWSClient) iamListAccessKeys(userName string) ([]string, error) {
 }
 
 func (c *AWSClient) iamDeleteAccessKey(userName, accessKeyID string) error {
-	_, err := c.iamCall(url.Values{"Action": {"DeleteAccessKey"}, "UserName": {userName}, "AccessKeyId": {accessKeyID}, "Version": {"2010-05-08"}})
+	_, err := c.iamCall(url.Values{"Action": {iamActionDeleteAccessKey}, "UserName": {userName}, "AccessKeyId": {accessKeyID}, "Version": {iamAPIVersion}})
 	return err
 }
 
 func (c *AWSClient) iamDeleteUserPolicy(userName string) error {
-	_, err := c.iamCall(url.Values{"Action": {"DeleteUserPolicy"}, "UserName": {userName}, "PolicyName": {"geass-bucket"}, "Version": {"2010-05-08"}})
+	_, err := c.iamCall(url.Values{"Action": {iamActionDeleteUserPolicy}, "UserName": {userName}, "PolicyName": {"geass-bucket"}, "Version": {iamAPIVersion}})
 	return err
 }
 
 func (c *AWSClient) iamDeleteUser(userName string) error {
-	_, err := c.iamCall(url.Values{"Action": {"DeleteUser"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	_, err := c.iamCall(url.Values{"Action": {iamActionDeleteUser}, "UserName": {userName}, "Version": {iamAPIVersion}})
 	return err
 }
 
 func (c *AWSClient) iamCreateUser(userName string) error {
-	_, err := c.iamCall(url.Values{"Action": {"CreateUser"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	_, err := c.iamCall(url.Values{"Action": {iamActionCreateUser}, "UserName": {userName}, "Version": {iamAPIVersion}})
 	if err == nil || isIAMAlreadyExists(err) {
 		return nil
 	}
@@ -612,7 +624,7 @@ func (c *AWSClient) iamPutUserPolicy(userName string, buckets []string) error {
 		return err
 	}
 	_, err = c.iamCall(url.Values{
-		"Action":         {"PutUserPolicy"},
+		"Action":         {iamActionPutUserPolicy},
 		"UserName":       {userName},
 		"PolicyName":     {"geass-bucket"},
 		"PolicyDocument": {string(payload)},
@@ -622,7 +634,7 @@ func (c *AWSClient) iamPutUserPolicy(userName string, buckets []string) error {
 }
 
 func (c *AWSClient) iamCreateAccessKey(userName string) (string, string, error) {
-	payload, err := c.iamCall(url.Values{"Action": {"CreateAccessKey"}, "UserName": {userName}, "Version": {"2010-05-08"}})
+	payload, err := c.iamCall(url.Values{"Action": {iamActionCreateAccessKey}, "UserName": {userName}, "Version": {iamAPIVersion}})
 	if err != nil {
 		return "", "", err
 	}

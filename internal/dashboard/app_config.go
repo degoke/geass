@@ -24,7 +24,7 @@ func (s *Server) appSecretsFormError(w http.ResponseWriter, r *http.Request, nam
 
 func (s *Server) appPanelFormError(w http.ResponseWriter, r *http.Request, name, message string) {
 	if isHXRequest(r) || isJSONRequest(r) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: message})
 		return
 	}
 	redirectFormError(w, r, "/apps/"+name, message)

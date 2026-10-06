@@ -276,7 +276,7 @@ func appPendingUpdates(app *geassv1alpha1.GeassApp) int {
 
 func (r *GeassAppReconciler) appLabels(app *geassv1alpha1.GeassApp) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":   app.Name,
+		platform.K8sLabelAppName:   app.Name,
 		platform.K8sLabelManagedBy: platform.ManagedByValue,
 		platform.LabelProject:      app.Spec.Project,
 		platform.LabelEnvironment:  string(app.Spec.Environment),
@@ -405,20 +405,20 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 						continue
 					}
 					if variable.SecretRef != nil {
-						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-secrets"}, Key: variable.Name}}})
+						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedSecrets}, Key: variable.Name}}})
 					} else {
-						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-variables"}, Key: variable.Name}}})
+						sharedEnv = append(sharedEnv, corev1.EnvVar{Name: variable.Name, ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedVars}, Key: variable.Name}}})
 					}
 					continue
 				}
 				if variable.SecretRef != nil {
-					envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-secrets"}}})
+					envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedSecrets}}})
 					break
 				}
 			}
 			for _, variable := range project.Spec.SharedVariables {
 				if variable.Environment == string(app.Spec.Environment) && variable.SecretRef == nil {
-					envFrom = append(envFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "geass-shared-variables"}}})
+					envFrom = append(envFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: platform.ProjectSharedVars}}})
 					break
 				}
 			}
@@ -545,7 +545,7 @@ func appImagePullSecret(app *geassv1alpha1.GeassApp) *corev1.LocalObjectReferenc
 func (r *GeassAppReconciler) ensureGitBuild(ctx context.Context, app *geassv1alpha1.GeassApp) (*geassv1alpha1.GeassBuild, bool, error) {
 	git := app.Spec.Source.Git
 	if git == nil {
-		return nil, false, fmt.Errorf("Git source is required")
+		return nil, false, fmt.Errorf("git source is required")
 	}
 	registry := app.Spec.Build.Registry.Repository
 	credentialRef := app.Spec.Build.Registry.CredentialRef

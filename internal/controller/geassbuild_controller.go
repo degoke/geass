@@ -99,7 +99,7 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	} else if job.Status.Failed > 0 {
 		phase = geassv1alpha1.GeassBuildFailed
 		completed = ptr(metav1.Now())
-		failure = fmt.Errorf("Kaniko Job failed")
+		failure = fmt.Errorf("kaniko Job failed")
 	}
 	if completed != nil && build.Spec.LogStoreRef != nil {
 		if ref := r.archiveBuildLog(ctx, build); ref != "" {
@@ -368,9 +368,9 @@ func (r *GeassBuildReconciler) refreshGitCredentialToken(ctx context.Context, bu
 
 func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, build *geassv1alpha1.GeassBuild, path string, body io.Reader) ([]byte, error) {
 	repo := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(build.Spec.Repository, "https://github.com/"), "http://github.com/"), ".git")
-	client := r.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+	httpClient := r.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+repo+path, body)
 	if err != nil {
@@ -378,7 +378,7 @@ func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, 
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/vnd.github+json")
-	response, err := client.Do(request)
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return nil, err
 	}

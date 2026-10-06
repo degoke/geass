@@ -205,10 +205,6 @@ func (c clusterCapacity) Fits(est platform.WorkloadEstimate) (bool, string) {
 	return true, ""
 }
 
-func (s *Server) rejectIfNoCapacity(w http.ResponseWriter, r *http.Request, fallback, kind string, ha bool, replicas int32) bool {
-	return s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateWorkload(kind, ha, replicas))
-}
-
 func (s *Server) rejectIfNoCapacityFor(w http.ResponseWriter, r *http.Request, fallback string, est platform.WorkloadEstimate) bool {
 	snapshot := s.clusterCapacity(r.Context())
 	ok, message := snapshot.Fits(est)

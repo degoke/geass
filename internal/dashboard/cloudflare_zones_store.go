@@ -47,7 +47,7 @@ func cloudflareRequestError(err error) string {
 // /user/tokens/verify so refresh matches what zone-scoped tokens can actually do.
 func (s *Server) syncCloudflareZonesFromAPI(ctx context.Context, secret *corev1.Secret, zoneID, zoneName string) ([]platform.CloudflareZoneRecord, string, error) {
 	if secret == nil {
-		return nil, "", fmt.Errorf("Cloudflare credentials are missing")
+		return nil, "", fmt.Errorf("cloudflare credentials are missing")
 	}
 	token := cloudflare.NormalizeAPIToken(string(secret.Data[platform.SecretKeyCloudflareAPIToken]))
 	if token == "" {

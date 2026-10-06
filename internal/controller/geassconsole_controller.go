@@ -4,13 +4,11 @@ import (
 	"context"
 	"time"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-
-	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
 
 // GeassConsoleSessionReconciler enforces the short-lived, auditable session
@@ -56,8 +54,4 @@ func (r *GeassConsoleSessionReconciler) Reconcile(ctx context.Context, req ctrl.
 
 func (r *GeassConsoleSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&geassv1alpha1.GeassConsoleSession{}).Complete(r)
-}
-
-func newConsoleSessionOwner(app *geassv1alpha1.GeassApp, session *geassv1alpha1.GeassConsoleSession, scheme *runtime.Scheme) error {
-	return controllerutil.SetControllerReference(app, session, scheme)
 }

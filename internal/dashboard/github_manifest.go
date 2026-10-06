@@ -55,28 +55,28 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if code == "" {
-		redirectProbe(w, r, "/settings/github", "error", "GitHub did not return a manifest creation code")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "GitHub did not return a manifest creation code")
 		return
 	}
 	if !validManifestState(state) {
-		redirectProbe(w, r, "/settings/github", "error", "GitHub App creation state is invalid; try again from Geass")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "GitHub App creation state is invalid; try again from Geass")
 		return
 	}
 	cookie, err := r.Cookie(githubManifestStateCookieName(state))
 	if err != nil || cookie.Value == "" || state == "" || cookie.Value != state {
-		redirectProbe(w, r, "/settings/github", "error", "GitHub App creation state mismatch; try again from Geass")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "GitHub App creation state mismatch; try again from Geass")
 		return
 	}
 	http.SetCookie(w, newGitHubManifestStateCookie(r, state, "", -1))
 
 	converted, err := githubapp.ConvertManifestCode(r.Context(), s.HTTPClient, code)
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", "could not convert GitHub App manifest")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not convert GitHub App manifest")
 		return
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasDashboardURL && !s.ensureDashboardDomainVerified(r.Context(), readiness) {
@@ -84,7 +84,7 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		if readiness.DashboardURL == "" {
 			message = "dashboard URL must be configured first"
 		}
-		redirectProbe(w, r, "/settings/github", "error", message)
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, message)
 		return
 	}
 	if err := s.persistGitHubAppCredentials(r.Context(), readiness.DashboardURL, githubAppCredentialInput{
@@ -95,7 +95,7 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		WebhookSecret: converted.WebhookSecret,
 		PrivateKey:    converted.PEM,
 	}); err != nil {
-		redirectProbe(w, r, "/settings/github", "error", githubCredentialError(err))
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, githubCredentialError(err))
 		return
 	}
 	redirectProbe(w, r, "/settings/github", "success", "")

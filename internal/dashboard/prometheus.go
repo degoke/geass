@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -103,21 +102,6 @@ var overviewMetrics = []metricCard{
 	{Title: "Running pods", Query: `count(kube_pod_status_phase{phase="Running"})`},
 	{Title: "Nodes", Query: `count(kube_node_info)`},
 	{Title: "CPU cores used (5m rate)", Query: `sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))`},
-}
-
-func (s *Server) metricsCards(ctx context.Context) string {
-	mc := s.metricsClient(ctx, true)
-	var b strings.Builder
-	b.WriteString(`<div class="grid grid-cols-1 md:grid-cols-3 gap-4">`)
-	for _, m := range overviewMetrics {
-		val, err := mc.QueryInstant(ctx, m.Query)
-		if err != nil {
-			val = "unavailable"
-		}
-		fmt.Fprintf(&b, `<div class="card"><div class="card-body"><h3 class="card-title">%s</h3><p class="text-xl font-semibold">%s</p></div></div>`, m.Title, val)
-	}
-	b.WriteString(`</div>`)
-	return b.String()
 }
 
 func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) MetricsClient {

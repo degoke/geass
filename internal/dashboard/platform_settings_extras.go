@@ -31,11 +31,11 @@ func (s *Server) handleGeassProbe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (string, string) {
 	parsed, err := url.Parse(dashboardURL)
 	if err != nil || parsed.Host == "" {
-		return "dashboard URL is invalid", "error"
+		return "dashboard URL is invalid", dashboardLiteralError
 	}
 	host := parsed.Hostname()
 	if _, err := net.LookupHost(host); err != nil {
-		return fmt.Sprintf("DNS lookup failed for %s", host), "error"
+		return fmt.Sprintf("DNS lookup failed for %s", host), dashboardLiteralError
 	}
 	probeURL := strings.TrimRight(dashboardURL, "/") + platform.GeassDashboardProbePath
 	if _, ok := s.probeURL(ctx, probeURL); ok {
@@ -46,9 +46,9 @@ func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (s
 	}
 	publicMsg, _ := s.probeURL(ctx, probeURL)
 	if publicMsg != "" {
-		return publicMsg, "error"
+		return publicMsg, dashboardLiteralError
 	}
-	return fmt.Sprintf("%s did not return a successful Geass probe response", dashboardURL), "error"
+	return fmt.Sprintf("%s did not return a successful Geass probe response", dashboardURL), dashboardLiteralError
 }
 
 func (s *Server) internalProbeURL() string {
@@ -92,22 +92,22 @@ func (s *Server) handlePlatformGitHubTest(w http.ResponseWriter, r *http.Request
 	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", "could not load GitHub settings")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not load GitHub settings")
 		return
 	}
 	if !readiness.HasGitHubApp {
-		redirectProbe(w, r, "/settings/github", "error", "GitHub App is not configured")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "GitHub App is not configured")
 		return
 	}
 	gh := &githubapp.Client{Config: readiness.GitHubApp, HTTP: s.HTTPClient}
 	hook, err := gh.GetAppHookConfig()
 	if err != nil {
-		redirectProbe(w, r, "/settings/github", "error", "could not reach GitHub App")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not reach GitHub App")
 		return
 	}
 	expected := readiness.DashboardURL + "/webhooks/github"
 	if hook.URL != expected {
-		redirectProbe(w, r, "/settings/github", "error", fmt.Sprintf("GitHub webhook URL is %s, expected %s", hook.URL, expected))
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, fmt.Sprintf("GitHub webhook URL is %s, expected %s", hook.URL, expected))
 		return
 	}
 	redirectProbe(w, r, "/settings/github", "success", "")
@@ -118,21 +118,21 @@ func (s *Server) handlePlatformGitHubClear(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if strings.TrimSpace(r.FormValue("confirm")) != "remove-github" {
-		redirectProbe(w, r, "/settings/github", "error", "type remove-github to confirm removal")
+		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "type remove-github to confirm removal")
 		return
 	}
 	config := &geassv1alpha1.GeassPlatformConfig{}
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, config); err == nil {
 		config.Spec.GitHubAppRef = nil
 		if err := s.Client.Update(r.Context(), config); err != nil {
-			redirectProbe(w, r, "/settings/github", "error", "could not remove GitHub App")
+			redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not remove GitHub App")
 			return
 		}
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: platformGitHubAppSecretName, Namespace: systemNamespace}, secret); err == nil {
 		if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
-			redirectProbe(w, r, "/settings/github", "error", "could not remove GitHub App")
+			redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not remove GitHub App")
 			return
 		}
 	}

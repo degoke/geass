@@ -29,7 +29,7 @@ type GeassPlatformConfigReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch
 
 func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	var config geassv1alpha1.GeassPlatformConfig
 	if err := r.Get(ctx, req.NamespacedName, &config); err != nil {
@@ -38,7 +38,7 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	cfRequeue, cfErr := r.reconcileCloudflare(ctx, &config)
 	if cfErr != nil {
-		log.Error(cfErr, "Cloudflare reconciliation failed")
+		logger.Error(cfErr, "Cloudflare reconciliation failed")
 	}
 	if cfRequeue > 0 && platform.CloudflareConfigured(config) {
 		return ctrl.Result{RequeueAfter: cfRequeue}, nil
@@ -49,7 +49,7 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 	if requeueAfter > 0 && result.Status != metav1.ConditionTrue {
-		log.Info("Waiting for dashboard domain verification", "after", requeueAfter)
+		logger.Info("Waiting for dashboard domain verification", "after", requeueAfter)
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 	return ctrl.Result{}, nil

@@ -74,14 +74,14 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		session := s.currentSession(r)
 		if session == nil {
 			if isJSONRequest(r) || strings.HasPrefix(r.URL.Path, "/api/") {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				writeJSON(w, http.StatusUnauthorized, map[string]string{dashboardLiteralError: "authentication required"})
 				return
 			}
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
 		if !session.CanMutate && (isDashboardWriteMethod(r) || dashboardWriteCallback(r.URL.Path) || dashboardSensitiveRead(r.URL.Path)) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "viewer role cannot access this"})
+			writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "viewer role cannot access this"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -208,10 +208,6 @@ func (s *Server) handleDashboardSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": session.Username, "role": session.Role, "canMutate": session.CanMutate})
-}
-
-func (s *Server) sessionValid(r *http.Request) bool {
-	return s.currentSession(r) != nil
 }
 
 func (s *Server) sessionCanMutate(r *http.Request) bool {

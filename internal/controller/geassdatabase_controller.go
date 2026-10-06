@@ -244,13 +244,13 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		applyGeassLabels(deploy, db, "GeassDatabase")
 		deploy.Spec.Replicas = &replicas
-		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": db.Name}}
-		deploy.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": db.Name, platform.LabelManagedBy: platform.ManagedByValue}
+		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{platform.K8sLabelAppName: db.Name}}
+		deploy.Spec.Template.Labels = map[string]string{platform.K8sLabelAppName: db.Name, platform.LabelManagedBy: platform.ManagedByValue}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:      "sqlite",
 			Image:     platform.SQLiteImage,
 			Args:      []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)},
-			Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: 4001}},
+			Ports:     []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: 4001}},
 			Resources: databaseInstanceResources(db),
 			VolumeMounts: []corev1.VolumeMount{{
 				Name:      "data",
@@ -268,7 +268,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
 		applyGeassLabels(svc, db, "GeassDatabase")
-		svc.Spec.Selector = map[string]string{"app.kubernetes.io/name": db.Name}
+		svc.Spec.Selector = map[string]string{platform.K8sLabelAppName: db.Name}
 		svc.Spec.Ports = []corev1.ServicePort{{Name: "http", Port: 4001, TargetPort: intstr.FromInt(4001)}}
 		return setSameNamespaceOwner(db, svc, r.Scheme)
 	}); err != nil {
@@ -356,19 +356,19 @@ func (r *GeassDatabaseReconciler) createPlanetScaleDatabase(ctx context.Context,
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderPlanetScale {
 		return "", "", "", fmt.Errorf("connection %q is not a PlanetScale connection", connection.Name)
 	}
-	client := &cloud.PlanetScaleClient{
+	psClient := &cloud.PlanetScaleClient{
 		HTTP:  r.HTTP,
 		Token: secretValue(secret, platform.SecretKeyToken),
 		Org:   firstNonEmpty(connection.Spec.Organization, secretValue(secret, platform.SecretKeyOrganization)),
 	}
-	if client.Token == "" || client.Org == "" {
+	if psClient.Token == "" || psClient.Org == "" {
 		return "", "", "", fmt.Errorf("PlanetScale token and organization are required")
 	}
 	name := databaseName(db)
-	if err := client.EnsureDatabase(name); err != nil {
+	if err := psClient.EnsureDatabase(name); err != nil {
 		return "", "", "", err
 	}
-	pass, err := client.CreatePassword(name, db.Name)
+	pass, err := psClient.CreatePassword(name, db.Name)
 	if err != nil {
 		return "", "", "", err
 	}

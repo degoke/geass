@@ -25,7 +25,7 @@ const cloudflaredImage = "cloudflare/cloudflared:2024.10.0"
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 
 func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig) (time.Duration, error) {
-	log := log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 	if !platform.CloudflareConfigured(*config) {
 		if err := r.deleteCloudflared(ctx); err != nil {
 			return platform.RequeueAfterDomainVerify, err
@@ -39,7 +39,7 @@ func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context,
 		message := "Cloudflare API connected; dashboard DNS is managed via Cloudflare when a domain is saved"
 		if platform.RootDomainFromConfig(*config) != "" {
 			if err := r.ensureCloudflareDashboardIngressDNS(ctx, config); err != nil {
-				log.Info("Could not ensure Cloudflare dashboard DNS record", "error", err)
+				logger.Info("Could not ensure Cloudflare dashboard DNS record", "error", err)
 				_ = r.setCloudflareReady(ctx, config, metav1.ConditionFalse, "DNSError", "Could not create dashboard DNS record in Cloudflare")
 				return platform.RequeueAfterDomainVerify, err
 			}
@@ -93,7 +93,7 @@ func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context,
 	}
 	for _, host := range dnsHosts {
 		if err := cf.EnsureCNAMERecord(ctx, creds.ZoneID, host, tunnelCNAME); err != nil {
-			log.Info("Could not ensure Cloudflare DNS record", "host", host, "error", err)
+			logger.Info("Could not ensure Cloudflare DNS record", "host", host, "error", err)
 		}
 	}
 
@@ -115,7 +115,7 @@ func (r *GeassPlatformConfigReconciler) ensureCloudflareDashboardIngressDNS(ctx 
 	}
 	creds, err := r.loadCloudflareCredentials(ctx, config)
 	if err != nil || !creds.Valid() {
-		return fmt.Errorf("Cloudflare credentials are incomplete")
+		return fmt.Errorf("cloudflare credentials are incomplete")
 	}
 	nodes := &corev1.NodeList{}
 	if err := r.List(ctx, nodes); err != nil {
@@ -251,7 +251,7 @@ func (r *GeassPlatformConfigReconciler) ensureCloudflaredDeployment(ctx context.
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		deploy.Labels = map[string]string{
-			"app.kubernetes.io/name":      "geass",
+			platform.K8sLabelAppName:      "geass",
 			"app.kubernetes.io/component": "cloudflared",
 		}
 		replicas := int32(1)

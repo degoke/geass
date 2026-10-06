@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -218,17 +217,6 @@ func (s *Server) generateUniqueProject(ctx context.Context) (string, string, err
 	return "", "", fmt.Errorf("could not generate a unique project")
 }
 
-func (s *Server) projectDisplayName(ctx context.Context, project string) string {
-	var p geassv1alpha1.GeassProject
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &p); err != nil {
-		return project
-	}
-	if display := platform.NormalizeProjectName(p.Spec.DisplayName); display != "" {
-		return display
-	}
-	return project
-}
-
 func (s *Server) defaultCluster(ctx context.Context) (string, error) {
 	var clusters geassv1alpha1.GeassClusterList
 	if err := s.Client.List(ctx, &clusters); err != nil {
@@ -262,11 +250,11 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case len(parts) == 3 && parts[1] == "settings" && parts[2] == "save":
 			s.handleProjectSettingsSave(w, r)
-		case len(parts) == 3 && parts[1] == "settings" && parts[2] == "delete":
+		case len(parts) == 3 && parts[1] == "settings" && parts[2] == dashboardLiteralDelete:
 			s.handleProjectDelete(w, r, name)
 		case len(parts) == 3 && parts[1] == "variables" && parts[2] == "save":
 			s.handleProjectVariableSave(w, r, name)
-		case len(parts) == 3 && parts[1] == "variables" && parts[2] == "delete":
+		case len(parts) == 3 && parts[1] == "variables" && parts[2] == dashboardLiteralDelete:
 			s.handleProjectVariableDelete(w, r, name)
 		case len(parts) == 3 && parts[1] == "environments" && parts[2] == "create":
 			s.handleProjectEnvironmentCreate(w, r, name)
@@ -409,14 +397,6 @@ func (s *Server) handleProjectEnvironmentArchive(w http.ResponseWriter, r *http.
 		}
 	}
 	redirect(w, r, fallback+"&archived="+url.QueryEscape(environment))
-}
-
-func environmentNamespaceLabel(project, environment string) string {
-	name, err := platform.ProjectNamespace(project, environment)
-	if err != nil {
-		return "namespace unavailable"
-	}
-	return name
 }
 
 func (s *Server) handleProjectVariableSave(w http.ResponseWriter, r *http.Request, name string) {
@@ -1065,7 +1045,7 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleAppSharedVariablesSave(w, r, name)
 			return
 		}
-	case "delete":
+	case dashboardLiteralDelete:
 		s.handleAppDelete(w, r, name)
 		return
 	case "console", "networking", "runtime", "source", "edge":
@@ -1082,7 +1062,7 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if parts[1] == "networking" && len(parts) == 3 && parts[2] == "delete" {
+		if parts[1] == "networking" && len(parts) == 3 && parts[2] == dashboardLiteralDelete {
 			s.handleAppNetworkingDelete(w, r, name)
 			return
 		}
@@ -1097,7 +1077,7 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleAppConfigSet(w, r, name)
 			return
 		}
-		if len(parts) == 3 && parts[2] == "delete" {
+		if len(parts) == 3 && parts[2] == dashboardLiteralDelete {
 			s.handleAppConfigDelete(w, r, name)
 			return
 		}
@@ -1110,7 +1090,7 @@ func (s *Server) handleAppRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleAppSecretSet(w, r, name)
 			return
 		}
-		if len(parts) == 3 && parts[2] == "delete" {
+		if len(parts) == 3 && parts[2] == dashboardLiteralDelete {
 			s.handleAppSecretDelete(w, r, name)
 			return
 		}
@@ -1305,51 +1285,6 @@ func (s *Server) handleAppNetworkingDelete(w http.ResponseWriter, r *http.Reques
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "networking")
 }
 
-func probeLabel(probe *corev1.Probe) string {
-	if probe == nil || probe.HTTPGet == nil {
-		return "Not configured"
-	}
-	return probe.HTTPGet.Path
-}
-
-func (s *Server) archiveAppLogSnapshot(ctx context.Context, app *geassv1alpha1.GeassApp, pod string, data []byte) string {
-	if app.Spec.Logs.ArchiveStoreRef == nil {
-		return ""
-	}
-	store := &geassv1alpha1.GeassObjectStore{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: app.Spec.Logs.ArchiveStoreRef.Name, Namespace: systemNamespace}, store); err != nil || store.Status.Endpoint == "" || store.Status.ConnectionSecret == "" {
-		return ""
-	}
-	ns, err := resourceNamespaceForApp(*app)
-	if err != nil {
-		return ""
-	}
-	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: store.Status.ConnectionSecret, Namespace: ns}, secret); err != nil {
-		return ""
-	}
-	bucket := string(secret.Data["bucket"])
-	if bucket == "" {
-		bucket = store.Name
-	}
-	objectURL := strings.TrimRight(store.Status.Endpoint, "/") + "/" + url.PathEscape(bucket) + "/apps/" + url.PathEscape(app.Name) + "/" + url.PathEscape(pod) + ".log"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, objectURL, bytes.NewReader(data))
-	if err != nil {
-		return ""
-	}
-	request.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	request.SetBasicAuth(string(secret.Data["accessKey"]), string(secret.Data["secretKey"]))
-	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return ""
-	}
-	return "object://" + store.Name + "/apps/" + app.Name + "/" + pod + ".log"
-}
-
 func int64ptr(value int64) *int64 { return &value }
 
 func validatePlacementForm(r *http.Request) error {
@@ -1361,22 +1296,6 @@ func validatePlacementForm(r *http.Request) error {
 
 func resourceNamespaceForApp(app geassv1alpha1.GeassApp) (string, error) {
 	return platform.ProjectNamespace(app.Spec.Project, string(app.Spec.Environment))
-}
-
-func metricsWindow(value string) string {
-	switch value {
-	case "15m", "1h", "6h":
-		return value
-	default:
-		return "5m"
-	}
-}
-
-func selectedOption(value, option string) string {
-	if value == option {
-		return " selected"
-	}
-	return ""
 }
 
 func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name string) {
@@ -1433,21 +1352,6 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "overview")
 }
 
-func (s *Server) appHasDeployment(ctx context.Context, appName string) bool {
-	var list geassv1alpha1.GeassDeploymentList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: appName}); err != nil {
-		return false
-	}
-	return len(list.Items) > 0
-}
-
-func appReplicasFromDeployment(deployment geassv1alpha1.GeassDeployment) int32 {
-	if deployment.Spec.Replicas == nil {
-		return 1
-	}
-	return *deployment.Spec.Replicas
-}
-
 func appReplicas(app geassv1alpha1.GeassApp) int32 {
 	if app.Spec.Replicas == nil {
 		return 1
@@ -1465,13 +1369,6 @@ func appDeployEstimate(app *geassv1alpha1.GeassApp) platform.WorkloadEstimate {
 		copies = app.Spec.Autoscaling.MaxReplicas
 	}
 	return platform.EstimateFromResources("service", res, copies)
-}
-
-func resourceField(values corev1.ResourceList, name corev1.ResourceName) string {
-	if value, ok := values[name]; ok {
-		return value.String()
-	}
-	return ""
 }
 
 func parseResourceList(cpuValue, memoryValue string) (corev1.ResourceList, error) {
@@ -2040,7 +1937,7 @@ func (s *Server) handleDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 	case "query":
 		s.handleDatabaseQuery(w, r, name)
 		return
-	case "delete":
+	case dashboardLiteralDelete:
 		s.deleteResource(w, r, name, &geassv1alpha1.GeassDatabase{}, "/databases")
 		return
 	default:
@@ -2094,7 +1991,7 @@ func (s *Server) handleLogicalDatabaseRoutes(w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return
 	}
-	if parts[1] == "delete" {
+	if parts[1] == dashboardLiteralDelete {
 		s.deleteResource(w, r, name, &geassv1alpha1.GeassLogicalDatabase{}, "/logical-databases")
 		return
 	}
@@ -2319,7 +2216,7 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 	case routeActionUpdate:
 		s.handleObjectStoreUpdate(w, r, name)
 		return
-	case "delete":
+	case dashboardLiteralDelete:
 		s.deleteResource(w, r, name, &geassv1alpha1.GeassObjectStore{}, "/object-stores")
 		return
 	default:

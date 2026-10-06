@@ -69,11 +69,11 @@ func redirect(w http.ResponseWriter, r *http.Request, path string) {
 func redirectProbe(w http.ResponseWriter, r *http.Request, path, probe, message string) {
 	if isJSONRequest(r) {
 		switch probe {
-		case "error":
+		case dashboardLiteralError:
 			if strings.TrimSpace(message) == "" {
 				message = dashboardActionFailed
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
+			writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: message})
 		case "warning":
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": message})
 		default:
@@ -117,7 +117,7 @@ func isMutationPath(path string) bool {
 	}
 	parts := strings.Split(path, "/")
 	switch parts[len(parts)-1] {
-	case "save", "create", "delete", "clear", "test", "verify", "check", "set", "update", "raw",
+	case "save", "create", dashboardLiteralDelete, "clear", "test", "verify", "check", "set", "update", "raw",
 		"archive", "rollback", "build", "disconnect", "scale", "redeploy":
 		return true
 	default:
@@ -168,7 +168,7 @@ func stripFlashParams(path string) string {
 		return path
 	}
 	q := u.Query()
-	q.Del("error")
+	q.Del(dashboardLiteralError)
 	q.Del("notice")
 	q.Del("probe")
 	q.Del("message")
@@ -185,28 +185,14 @@ func withFlashError(path, message string) string {
 	q.Del("notice")
 	q.Del("probe")
 	q.Del("message")
-	q.Set("error", truncateFlashMessage(message))
-	u.RawQuery = q.Encode()
-	return u.String()
-}
-
-func withFlashNotice(path, message string) string {
-	u, err := url.Parse(path)
-	if err != nil || u.Path == "" {
-		u = &url.URL{Path: path}
-	}
-	q := u.Query()
-	q.Del("error")
-	q.Del("probe")
-	q.Del("message")
-	q.Set("notice", truncateFlashMessage(message))
+	q.Set(dashboardLiteralError, truncateFlashMessage(message))
 	u.RawQuery = q.Encode()
 	return u.String()
 }
 
 func redirectFormError(w http.ResponseWriter, r *http.Request, fallback, message string) {
 	if isJSONRequest(r) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: message})
 		return
 	}
 	redirect(w, r, withFlashError(formReturnPath(r, fallback), message))
@@ -231,14 +217,6 @@ func formProjectFallback(r *http.Request, listPath string) string {
 		return listPath
 	}
 	return workspaceURL(project, strings.TrimSpace(r.FormValue("environment")), nil)
-}
-
-func redirectFormNotice(w http.ResponseWriter, r *http.Request, fallback, message string) {
-	if isJSONRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]string{"notice": message})
-		return
-	}
-	redirect(w, r, withFlashNotice(formReturnPath(r, fallback), message))
 }
 
 // requireMutation enforces Post/Redirect/Get: GET (and other non-POST) methods redirect

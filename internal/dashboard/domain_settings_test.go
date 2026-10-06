@@ -106,13 +106,13 @@ func TestEnsureDashboardDomainVerifiedSkipsProbeForCurrentGeneration(t *testing.
 		"Dashboard HTTPS endpoint is reachable",
 		config.Generation,
 	)
-	client := &countingFailTransport{}
-	srv := &Server{Client: newFakeClient(config), HTTPClient: &http.Client{Transport: client}}
+	failTransport := &countingFailTransport{}
+	srv := &Server{Client: newFakeClient(config), HTTPClient: &http.Client{Transport: failTransport}}
 
 	readiness, err := srv.platformReadiness(context.Background())
 	require.NoError(t, err)
 	require.True(t, srv.ensureDashboardDomainVerified(context.Background(), readiness))
-	require.Zero(t, client.calls)
+	require.Zero(t, failTransport.calls)
 }
 
 type countingFailTransport struct {

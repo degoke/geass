@@ -64,7 +64,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{dashboardLiteralError: "method not allowed"})
 		return
 	}
 	mutation := r.Clone(r.Context())
@@ -122,7 +122,7 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	case mutation.URL.Path == "/cloud-connections/create":
 		s.handleCloudConnectionCreate(w, mutation)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}
 }
 
@@ -155,7 +155,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeDashboardUnavailable(w http.ResponseWriter) {
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load dashboard"})
+	writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load dashboard"})
 }
 
 func apiMutationPath(path string) string {

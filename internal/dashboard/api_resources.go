@@ -36,7 +36,7 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/variables"):
 		s.handleAPIAppVariables(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/databases/") && strings.HasSuffix(r.URL.Path, "/query"):
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{dashboardLiteralError: "method not allowed"})
 	default:
 		http.NotFound(w, r)
 	}
@@ -107,7 +107,7 @@ func (s *Server) dashboardSession(r *http.Request) dashboardSessionInfo {
 func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request) {
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load GitHub settings"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
 		return
 	}
 	payload := map[string]any{
@@ -143,12 +143,12 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load GitHub repositories"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return
 	}
 	repos, err := s.listGitHubRepositories(r.Context(), connection, token)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load GitHub repositories"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": repos})
@@ -158,7 +158,7 @@ func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/logs")
 	app, err := s.getApp(r, name)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "app not found"})
 		return
 	}
 	if s.Kube == nil {
@@ -167,12 +167,12 @@ func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	ns, err := resourceNamespaceForApp(*app)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load logs"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not load logs"})
 		return
 	}
 	pods, err := s.Kube.CoreV1().Pods(ns).List(r.Context(), metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app.Name})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load logs"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load logs"})
 		return
 	}
 	var out strings.Builder
@@ -199,7 +199,7 @@ func (s *Server) handleAPIAppRuntime(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/runtime")
 	app, err := s.getApp(r, name)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "app not found"})
 		return
 	}
 	payload := map[string]any{"pods": []map[string]string{}}
@@ -209,12 +209,12 @@ func (s *Server) handleAPIAppRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	ns, err := resourceNamespaceForApp(*app)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not load runtime"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not load runtime"})
 		return
 	}
 	pods, err := s.Kube.CoreV1().Pods(ns).List(r.Context(), metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app.Name})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not load runtime"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load runtime"})
 		return
 	}
 	items := make([]map[string]string, 0, len(pods.Items))
@@ -237,7 +237,7 @@ func (s *Server) handleAPIAppVariables(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/variables")
 	app, err := s.getApp(r, name)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "app not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "app not found"})
 		return
 	}
 	secrets := s.appSecretKeys(r.Context(), app)
@@ -272,12 +272,12 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 	}
 	query := strings.TrimSpace(r.FormValue("query"))
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "query is required"})
 		return
 	}
 	var db geassv1alpha1.GeassDatabase
 	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &db); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "database not found"})
 		return
 	}
 	if s.Kube == nil || s.Config == nil || db.Status.TargetNamespace == "" {
@@ -291,7 +291,7 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 	}
 	command, err := databaseQueryCommand(db.Spec.Engine, query)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
 		return
 	}
 	request := s.Kube.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(db.Status.TargetNamespace).SubResource("exec")
@@ -327,7 +327,7 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 	for _, selector := range selectors {
 		pods, err := s.Kube.CoreV1().Pods(db.Status.TargetNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
-			return nil, fmt.Errorf("No database pods are running yet.")
+			return nil, fmt.Errorf("no database pods are running yet")
 		}
 		for i := range pods.Items {
 			if pods.Items[i].Status.Phase == corev1.PodRunning {
@@ -335,7 +335,7 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 			}
 		}
 	}
-	return nil, fmt.Errorf("No database pods are running yet.")
+	return nil, fmt.Errorf("no database pods are running yet")
 }
 
 func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) ([]string, error) {

@@ -141,7 +141,7 @@ func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, p
 	}
 	labels := map[string]string{platform.LabelManagedBy: platform.ManagedByValue, platform.LabelProject: project.Name, platform.LabelEnvironment: environment}
 	if len(configData) > 0 {
-		config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-variables", Namespace: namespace}}
+		config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: platform.ProjectSharedVars, Namespace: namespace}}
 		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, config, func() error {
 			config.Labels = labels
 			config.Data = configData
@@ -150,10 +150,10 @@ func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, p
 			return err
 		}
 	} else {
-		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-variables", Namespace: namespace}}))
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: platform.ProjectSharedVars, Namespace: namespace}}))
 	}
 	if len(secretData) > 0 {
-		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-secrets", Namespace: namespace}}
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: platform.ProjectSharedSecrets, Namespace: namespace}}
 		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 			secret.Labels = labels
 			secret.Data = secretData
@@ -162,7 +162,7 @@ func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, p
 			return err
 		}
 	} else {
-		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "geass-shared-secrets", Namespace: namespace}}))
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: platform.ProjectSharedSecrets, Namespace: namespace}}))
 	}
 	return nil
 }

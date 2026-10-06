@@ -33,7 +33,7 @@ func (s *Server) handlePlatformDomainSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	redirectDomainError := func(message string) {
-		redirectProbe(w, r, "/settings/domain", "error", message)
+		redirectProbe(w, r, "/settings/domain", dashboardLiteralError, message)
 	}
 	rootDomain := platform.NormalizeRootDomainInput(r.FormValue("domain"))
 	if rootDomain == "" {
@@ -104,17 +104,17 @@ func (s *Server) handlePlatformDomainVerify(w http.ResponseWriter, r *http.Reque
 	case "pending":
 		redirectProbe(w, r, "/settings/domain", "warning", result.Message)
 	default:
-		redirectProbe(w, r, "/settings/domain", "error", result.Message)
+		redirectProbe(w, r, "/settings/domain", dashboardLiteralError, result.Message)
 	}
 }
 
 func (s *Server) verifyDashboardDomain(ctx context.Context) domainVerifyResult {
 	readiness, err := s.platformReadiness(ctx)
 	if err != nil {
-		return domainVerifyResult{State: "error", Message: "could not load platform config"}
+		return domainVerifyResult{State: dashboardLiteralError, Message: "could not load platform config"}
 	}
 	if readiness.DashboardURL == "" {
-		return domainVerifyResult{State: "error", Message: "save your domain first"}
+		return domainVerifyResult{State: dashboardLiteralError, Message: "save your domain first"}
 	}
 
 	message, result := s.verifyDashboardURL(ctx, readiness.DashboardURL)
@@ -127,7 +127,7 @@ func (s *Server) verifyDashboardDomain(ctx context.Context) domainVerifyResult {
 
 	latest := &geassv1alpha1.GeassPlatformConfig{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, latest); err != nil {
-		return domainVerifyResult{State: "error", Message: "could not reload platform config"}
+		return domainVerifyResult{State: dashboardLiteralError, Message: "could not reload platform config"}
 	}
 	if latest.Generation != readiness.Config.Generation {
 		return domainVerifyResult{State: "pending", Message: "Domain settings changed; checking again..."}
@@ -141,7 +141,7 @@ func (s *Server) verifyDashboardDomain(ctx context.Context) domainVerifyResult {
 		latest.Generation,
 	)
 	if err := s.Client.Status().Update(ctx, latest); err != nil {
-		return domainVerifyResult{State: "error", Message: "could not save verification status"}
+		return domainVerifyResult{State: dashboardLiteralError, Message: "could not save verification status"}
 	}
 	return domainVerifyResult{State: "success", Message: "Dashboard HTTPS endpoint is reachable"}
 }

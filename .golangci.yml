@@ -21,7 +21,6 @@ linters:
     - revive
     - staticcheck
     - unconvert
-    - unparam
     - unused
     - logcheck
   settings:
@@ -35,6 +34,13 @@ linters:
           deny:
             - pkg: sort
               desc: Should be replaced with slices package
+    dupl:
+      threshold: 250
+    goconst:
+      ignore-tests: true
+      min-occurrences: 8
+    gocyclo:
+      min-complexity: 60
     revive:
       rules:
         - name: comment-spacings
@@ -53,6 +59,13 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - lll
+          - unparam
+        path: .*_test\.go$
+      - linters:
+          - lll
+        path: ^pkg/
     paths:
       - third_party$
       - builtin$

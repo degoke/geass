@@ -220,9 +220,9 @@ func TestProjectWorkspaceResourceRouteAndSettings(t *testing.T) {
 	c := newFakeClient(project)
 	srv := &Server{Client: c}
 
-	resource := httptest.NewRecorder()
-	srv.handleProjectRoutes(resource, httptest.NewRequest(http.MethodGet, "/projects/payments/apps?environment=staging", nil).WithContext(ctx))
-	require.Equal(t, http.StatusNotFound, resource.Code)
+	rec := httptest.NewRecorder()
+	srv.handleProjectRoutes(rec, httptest.NewRequest(http.MethodGet, "/projects/payments/apps?environment=staging", nil).WithContext(ctx))
+	require.Equal(t, http.StatusNotFound, rec.Code)
 
 	workspace := httptest.NewRecorder()
 	srv.handleSPA(workspace, httptest.NewRequest(http.MethodGet, "/projects/payments?environment=staging", nil).WithContext(ctx))
