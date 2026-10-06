@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions: {}
 
@@ -30,6 +32,7 @@ jobs:
         run: make lint
 
   test:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Test
@@ -51,6 +54,7 @@ jobs:
           make test
 
   build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Build
