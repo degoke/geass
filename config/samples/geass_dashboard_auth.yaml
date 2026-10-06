@@ -8,4 +8,4 @@ stringData:
   # Replace CHANGE_ME before applying. Geass refuses that placeholder
   # password and hashes a real password on first login.
   users: |
-    [{"username":"admin","password":"password","role":"admin"}]
+    [{"username":"admin","password":"CHANGE_ME","role":"admin"}]
