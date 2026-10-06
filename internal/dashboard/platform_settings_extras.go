@@ -19,8 +19,13 @@ import (
 )
 
 func (s *Server) handleGeassProbe(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"ok":true,"service":"geass-dashboard"}`))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"service": "geass-dashboard",
+		"api": map[string]bool{
+			"cloudflareConnector": true,
+		},
+	})
 }
 
 func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (string, string) {
@@ -48,7 +53,7 @@ func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (s
 func (s *Server) internalProbeURL() string {
 	addr := strings.TrimSpace(s.Addr)
 	if addr == "" || addr == "0" {
-		return "http://127.0.0.1:8082"
+		return "http://127.0.0.1:8085"
 	}
 	if strings.HasPrefix(addr, ":") {
 		return "http://127.0.0.1" + addr

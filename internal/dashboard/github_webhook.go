@@ -189,6 +189,23 @@ func (s *Server) validateGitConnectionForProject(ctx context.Context, project, c
 	return nil
 }
 
+func (s *Server) validateCloudConnectionForProject(ctx context.Context, project, connectionRef string) error {
+	if connectionRef == "" {
+		return nil
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: connectionRef, Namespace: systemNamespace}, connection); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("cloud connection was not found")
+		}
+		return fmt.Errorf("cloud connection is unavailable")
+	}
+	if strings.TrimSpace(connection.Spec.Project) == "" {
+		return fmt.Errorf("use a project-scoped cloud connection")
+	}
+	return platform.ValidateCloudConnectionForProject(*connection, project)
+}
+
 func hmacSHA256(secret string, body []byte) string {
 	digest := hmac.New(sha256.New, []byte(secret))
 	_, _ = digest.Write(body)

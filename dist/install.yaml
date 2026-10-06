@@ -169,6 +169,11 @@ spec:
               deploy:
                 description: Deploy configures rollout, restart, and health behavior.
                 properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether Geass creates or maintains workload resources.
+                      False creates a configurable draft without deploying it.
+                    type: boolean
                   failureThreshold:
                     description: FailureThreshold is the number of failed rollout
                       health observations before action.
@@ -858,10 +863,6 @@ spec:
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
-              image:
-                description: Image is the container image to run (deprecated; use
-                  source.image.image).
-                type: string
               ingress:
                 description: Ingress configures Traefik ingress exposure.
                 properties:
@@ -1060,9 +1061,7 @@ spec:
                   type: string
                 type: array
               source:
-                description: |-
-                  Source selects exactly one image or Git source. Image is retained as a deprecated
-                  compatibility field for existing resources.
+                description: Source selects exactly one image or Git source.
                 properties:
                   git:
                     description: GeassAppGitSource identifies a GitHub source revision.
@@ -1140,6 +1139,7 @@ spec:
             required:
             - environment
             - project
+            - source
             type: object
           status:
             description: GeassAppStatus defines the observed state of GeassApp.
@@ -1481,167 +1481,6 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: geasscaches.geass.geass.dev
-spec:
-  group: geass.geass.dev
-  names:
-    kind: GeassCache
-    listKind: GeassCacheList
-    plural: geasscaches
-    singular: geasscache
-  scope: Namespaced
-  versions:
-  - additionalPrinterColumns:
-    - jsonPath: .spec.environment
-      name: Environment
-      type: string
-    - jsonPath: .spec.engine
-      name: Engine
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
-      type: string
-    name: v1alpha1
-    schema:
-      openAPIV3Schema:
-        description: GeassCache is the Schema for the geasscaches API.
-        properties:
-          apiVersion:
-            description: |-
-              APIVersion defines the versioned schema of this representation of an object.
-              Servers should convert recognized schemas to the latest internal value, and
-              may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-            type: string
-          kind:
-            description: |-
-              Kind is a string value representing the REST resource this object represents.
-              Servers may infer this from the endpoint the client submits requests to.
-              Cannot be updated.
-              In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-            type: string
-          metadata:
-            type: object
-          spec:
-            description: GeassCacheSpec defines the desired state of GeassCache.
-            properties:
-              engine:
-                description: Engine is the cache engine to provision.
-                enum:
-                - Redis
-                type: string
-              environment:
-                description: Environment is the project environment.
-                maxLength: 63
-                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                type: string
-              project:
-                description: Project is the owning project.
-                minLength: 1
-                type: string
-              version:
-                default: "7.4"
-                description: Version is the Redis chart/app version hint.
-                type: string
-            required:
-            - engine
-            - environment
-            - project
-            type: object
-          status:
-            description: GeassCacheStatus defines the observed state of GeassCache.
-            properties:
-              conditions:
-                description: conditions represent the current state of the GeassCache
-                  resource.
-                items:
-                  description: Condition contains details for one aspect of the current
-                    state of this API Resource.
-                  properties:
-                    lastTransitionTime:
-                      description: |-
-                        lastTransitionTime is the last time the condition transitioned from one status to another.
-                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
-                      format: date-time
-                      type: string
-                    message:
-                      description: |-
-                        message is a human readable message indicating details about the transition.
-                        This may be an empty string.
-                      maxLength: 32768
-                      type: string
-                    observedGeneration:
-                      description: |-
-                        observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
-                      format: int64
-                      minimum: 0
-                      type: integer
-                    reason:
-                      description: |-
-                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
-                        Producers of specific condition types may define expected values and meanings for this field,
-                        and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
-                      maxLength: 1024
-                      minLength: 1
-                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
-                      type: string
-                    status:
-                      description: status of the condition, one of True, False, Unknown.
-                      enum:
-                      - "True"
-                      - "False"
-                      - Unknown
-                      type: string
-                    type:
-                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
-                      maxLength: 316
-                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
-                      type: string
-                  required:
-                  - lastTransitionTime
-                  - message
-                  - reason
-                  - status
-                  - type
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
-              connectionSecret:
-                description: ConnectionSecret is the name of the Secret containing
-                  Redis credentials.
-                type: string
-              host:
-                description: Host is the in-cluster Redis hostname.
-                type: string
-              port:
-                description: Port is the Redis port.
-                format: int32
-                type: integer
-              targetNamespace:
-                description: TargetNamespace is the namespace workloads were created
-                  in.
-                type: string
-            type: object
-        required:
-        - spec
-        type: object
-    served: true
-    storage: true
-    subresources:
-      status: {}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
   name: geasscloudconnections.geass.geass.dev
 spec:
   group: geass.geass.dev
@@ -1675,10 +1514,40 @@ spec:
             type: object
           spec:
             properties:
-              provider:
+              organization:
+                description: Organization is the PlanetScale organization slug.
                 type: string
+              project:
+                description: Project optionally scopes this connection to a single
+                  Geass project.
+                type: string
+              provider:
+                description: Provider is the external cloud or database vendor.
+                enum:
+                - AWS
+                - PlanetScale
+                type: string
+              region:
+                description: Region is the default AWS region for this connection.
+                type: string
+              secretRef:
+                description: SecretRef stores provider credentials. Secret values
+                  are never copied into status.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
             required:
             - provider
+            - secretRef
             type: object
           status:
             properties:
@@ -2066,27 +1935,168 @@ spec:
           spec:
             description: GeassDatabaseSpec defines the desired state of GeassDatabase.
             properties:
+              connectionRef:
+                description: ConnectionRef identifies a GeassCloudConnection used
+                  for PlanetScale or AWS.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              databaseName:
+                description: DatabaseName overrides the default database name for
+                  external or logical-style servers.
+                type: string
               engine:
                 description: Engine is the database engine to provision.
                 enum:
                 - Postgres
+                - MySQL
+                - SQLite
+                - Redis
                 type: string
               environment:
                 description: Environment is the project environment.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              externalHost:
+                description: ExternalHost is the hostname used when connecting to
+                  an existing server.
+                type: string
+              externalPort:
+                description: ExternalPort is the port used when connecting to an existing
+                  server.
+                format: int32
+                type: integer
+              highAvailability:
+                description: |-
+                  HighAvailability requests a multi-instance topology. It is only valid when the
+                  cluster HA readiness check reports at least three healthy nodes.
+                type: boolean
               instances:
                 default: 1
-                description: Instances is the number of Postgres instances in the
-                  CNPG cluster.
+                description: Instances is the number of in-cluster instances. HighAvailability
+                  forces at least 3.
                 format: int32
                 minimum: 1
                 type: integer
+              mode:
+                description: Mode selects whether Geass should create a remote database
+                  or connect to an existing one.
+                enum:
+                - Create
+                - Connect
+                type: string
+              passwordSecretRef:
+                description: PasswordSecretRef points at the Secret that stores the
+                  external password.
+                properties:
+                  key:
+                    description: The key of the secret to select from.  Must be a
+                      valid secret key.
+                    type: string
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  optional:
+                    description: Specify whether the Secret or its key must be defined
+                    type: boolean
+                required:
+                - key
+                type: object
+                x-kubernetes-map-type: atomic
+              placement:
+                default: InCluster
+                description: Placement selects in-cluster provisioning or an external
+                  provider.
+                enum:
+                - InCluster
+                - External
+                type: string
               project:
                 description: Project is the owning project.
                 minLength: 1
                 type: string
+              provider:
+                description: Provider is required when Placement is External.
+                enum:
+                - PlanetScale
+                - AWS
+                type: string
+              resources:
+                description: Resources is the CPU and memory assigned to each in-cluster
+                  instance.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
               storageSize:
                 anyOf:
                 - type: integer
@@ -2095,9 +2105,13 @@ spec:
                 description: StorageSize is the requested PVC size per instance.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
+              username:
+                description: Username is the login used when connecting to an existing
+                  server.
+                type: string
               version:
                 default: "16"
-                description: Version is the Postgres major version.
+                description: Version is the engine major version for in-cluster servers.
                 type: string
             required:
             - engine
@@ -3102,26 +3116,65 @@ spec:
               buckets:
                 description: Buckets is an optional list of buckets to create on provision.
                 items:
+                  maxLength: 63
+                  minLength: 3
+                  pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
                   type: string
+                maxItems: 32
                 type: array
+                x-kubernetes-validations:
+                - message: bucket names must not be formatted as an IP address or
+                    contain consecutive periods
+                  rule: self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+                    && !b.contains('..'))
+              connectionRef:
+                description: ConnectionRef identifies a GeassCloudConnection used
+                  for AWS S3.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              createBucket:
+                description: CreateBucket requests that Geass create the named buckets
+                  when possible.
+                type: boolean
               engine:
                 description: Engine is the object store engine to provision.
                 enum:
                 - MinIO
+                - S3
                 type: string
               environment:
-                description: Environment is the project environment.
+                description: Environment is the project environment. Required when
+                  Project is set.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              placement:
+                default: InCluster
+                description: Placement selects in-cluster MinIO or an external S3
+                  provider.
+                enum:
+                - InCluster
+                - External
+                type: string
               project:
-                description: Project is the owning project.
-                minLength: 1
+                description: Project is the owning project. Leave empty for the cluster
+                  MinIO server.
+                type: string
+              region:
+                description: Region is the AWS region for external buckets.
                 type: string
             required:
             - engine
-            - environment
-            - project
             type: object
           status:
             description: GeassObjectStoreStatus defines the observed state of GeassObjectStore.
@@ -3783,77 +3836,6 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: geass
-  name: geass-geasscache-admin-role
-rules:
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches
-  verbs:
-  - '*'
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches/status
-  verbs:
-  - get
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: geass
-  name: geass-geasscache-editor-role
-rules:
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches/status
-  verbs:
-  - get
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: geass
-  name: geass-geasscache-viewer-role
-rules:
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - geass.geass.dev
-  resources:
-  - geasscaches/status
-  verbs:
-  - get
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: geass
   name: geass-geasscluster-admin-role
 rules:
 - apiGroups:
@@ -4142,6 +4124,7 @@ rules:
   resources:
   - configmaps
   - namespaces
+  - persistentvolumeclaims
   - secrets
   - services
   verbs:
@@ -4214,7 +4197,6 @@ rules:
   resources:
   - geassapps
   - geassbuilds
-  - geasscaches
   - geasscloudconnections
   - geassclusters
   - geassconsolesessions
@@ -4238,7 +4220,6 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps/finalizers
-  - geasscaches/finalizers
   - geassclusters/finalizers
   - geassdatabases/finalizers
   - geassnodes/finalizers
@@ -4251,7 +4232,6 @@ rules:
   resources:
   - geassapps/status
   - geassbuilds/status
-  - geasscaches/status
   - geasscloudconnections/status
   - geassclusters/status
   - geassconsolesessions/status
@@ -4438,7 +4418,7 @@ metadata:
 spec:
   ports:
   - name: http
-    port: 8082
+    port: 8085
     protocol: TCP
     targetPort: dashboard
   selector:
@@ -4473,29 +4453,29 @@ spec:
       - args:
         - --metrics-bind-address=:8443
         - --leader-elect
-        - --health-probe-bind-address=:8081
-        - --dashboard-bind-address=:8082
+        - --health-probe-bind-address=:8086
+        - --dashboard-bind-address=:8085
         command:
         - /manager
         image: controller:latest
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: 8086
           initialDelaySeconds: 15
           periodSeconds: 20
         name: manager
         ports:
-        - containerPort: 8081
+        - containerPort: 8086
           name: health
           protocol: TCP
-        - containerPort: 8082
+        - containerPort: 8085
           name: dashboard
           protocol: TCP
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: 8086
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:

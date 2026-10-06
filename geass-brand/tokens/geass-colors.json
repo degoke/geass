@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "palette": {
+    "signal": "#888CF8",
+    "surface": "#121214",
+    "light": "#F2F2F3",
+    "cloud": "#EAEAFF",
+    "layer": "#D8D6FF",
+    "healthy": "#59C77A",
+    "critical": "#E66A6A",
+    "canvas": "#0A0A0B",
+    "ink": "#171719"
+  },
+  "text": {
+    "primary": { "dark": "#F2F2F3", "light": "#121214" },
+    "secondary": { "dark": "#A3A3AB", "light": "#575761" },
+    "muted": { "dark": "#696972", "light": "#7D7D87" },
+    "faint": { "dark": "#6F6F78", "light": "#85858E" }
+  },
+  "border": {
+    "default": { "dark": "#27272E", "light": "#D8D6FF" },
+    "subtle": { "dark": "#1B1B20", "light": "#EAEAFF" },
+    "strong": { "dark": "#2A2A30", "light": "#C9C9CE" }
+  },
+  "mantine": {
+    "signal": [
+      "#f4f4fe",
+      "#e9e9fd",
+      "#d3d3fb",
+      "#bdbdfb",
+      "#a7a7f9",
+      "#888cf8",
+      "#6d6ce6",
+      "#5453c4",
+      "#3c3ba2",
+      "#292880"
+    ],
+    "healthy": [
+      "#ecf9f0",
+      "#d8f3e1",
+      "#b5e6c8",
+      "#92d9af",
+      "#76cc9a",
+      "#59c77a",
+      "#47a864",
+      "#388952",
+      "#2a6a3f",
+      "#1d4b2d"
+    ],
+    "dark": [
+      "#f2f2f3",
+      "#eaeaff",
+      "#d8d6ff",
+      "#c9c9ce",
+      "#a3a3ab",
+      "#121214",
+      "#0e0e10",
+      "#0a0a0b",
+      "#070708",
+      "#040405"
+    ]
+  }
+}

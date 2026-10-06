@@ -54,8 +54,8 @@ func TestRedirectProbeJSONReportsError(t *testing.T) {
 func TestRedirectFormErrorUsesCurrentPage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/create", nil))
-	req.Header.Set("HX-Current-URL", "http://localhost:8082/projects/payments?panel=apps")
-	req.Host = "localhost:8082"
+	req.Header.Set("HX-Current-URL", "http://localhost:8085/projects/payments?panel=apps")
+	req.Host = "localhost:8085"
 	redirectFormError(rec, req, "/apps", "name is required")
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	loc := rec.Header().Get("Location")
@@ -144,7 +144,7 @@ func TestRequireMutationAcceptsSameOrigin(t *testing.T) {
 
 func TestRequireMutationAcceptsForwardedHost(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
-	req.Host = "geass-dashboard.geass-system.svc:8082"
+	req.Host = "geass-dashboard.geass-system.svc:8085"
 	req.Header.Set("Origin", "https://geass.example.com")
 	req.Header.Set("X-Forwarded-Host", "geass.example.com")
 	rec := httptest.NewRecorder()
@@ -153,7 +153,7 @@ func TestRequireMutationAcceptsForwardedHost(t *testing.T) {
 
 func TestRequireMutationAcceptsForwardedHeaderHost(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
-	req.Host = "geass-dashboard.geass-system.svc.cluster.local:8082"
+	req.Host = "geass-dashboard.geass-system.svc.cluster.local:8085"
 	req.Header.Set("Origin", "https://geass.example.com")
 	req.Header.Set("Forwarded", `for=10.1.1.1;host=geass.example.com;proto=https`)
 	rec := httptest.NewRecorder()
@@ -180,7 +180,7 @@ func TestRequireMutationIgnoresForwardedHostWhenRequestHostIsPublic(t *testing.T
 
 func TestRequireMutationIgnoresForwardedHostOnLoopback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
-	req.Host = "127.0.0.1:8082"
+	req.Host = "127.0.0.1:8085"
 	req.Header.Set("Origin", "https://attacker.example")
 	req.Header.Set("X-Forwarded-Host", "attacker.example")
 	rec := httptest.NewRecorder()
@@ -189,7 +189,7 @@ func TestRequireMutationIgnoresForwardedHostOnLoopback(t *testing.T) {
 
 func TestRequireMutationIgnoresForwardedHostOnPrivateIP(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings/github/save", nil)
-	req.Host = "10.0.0.12:8082"
+	req.Host = "10.0.0.12:8085"
 	req.Header.Set("Origin", "https://attacker.example")
 	req.Header.Set("X-Forwarded-Host", "attacker.example")
 	rec := httptest.NewRecorder()

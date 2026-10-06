@@ -48,12 +48,12 @@ func (r *GeassPlatformConfigReconciler) reconcileTunnelDashboardDomain(ctx conte
 			Message: "Cloudflare tunnel ID is not configured",
 		}, platform.RequeueAfterDomainVerify
 	}
-	dashboardHost := platform.DashboardHostFromRoot(platform.RootDomainFromConfig(*config))
+	dashboardHost := platform.DashboardHostFromConfig(*config)
 	// A successful HTTPS probe proves that the public hostname resolves through
 	// the tunnel and serves the dashboard. Cloudflare proxied records commonly
 	// flatten the configured CNAME into A records, so the CNAME is not always
 	// observable from the controller's resolver.
-	if platform.ProbeDashboardURL(ctx, r.HTTPClient, platform.DashboardURLFromRoot(platform.RootDomainFromConfig(*config))) {
+	if platform.ProbeDashboardURL(ctx, r.HTTPClient, platform.DashboardURLFromConfig(*config)) {
 		return platform.DashboardDomainReconcileResult{
 			Status:  metav1.ConditionTrue,
 			Reason:  "Verified",
@@ -75,30 +75,32 @@ func (r *GeassPlatformConfigReconciler) reconcileTunnelDashboardDomain(ctx conte
 }
 
 func (r *GeassPlatformConfigReconciler) reconcileIngressDashboardDomain(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig, rootDomain string) (platform.DashboardDomainReconcileResult, time.Duration) {
-	dashboardHost := platform.DashboardHostFromRoot(rootDomain)
-
-	nodes := &corev1.NodeList{}
-	if err := r.List(ctx, nodes); err != nil {
-		return platform.DashboardDomainReconcileResult{
-			Status:  metav1.ConditionFalse,
-			Reason:  "Error",
-			Message: "could not list cluster nodes",
-		}, platform.RequeueAfterDomainVerify
-	}
-	externalIP, err := platform.ClusterExternalIP(ctx, nodes.Items, r.HTTPClient)
-	if err != nil {
-		return platform.DashboardDomainReconcileResult{
-			Status:  metav1.ConditionFalse,
-			Reason:  "PendingDNS",
-			Message: err.Error(),
-		}, platform.RequeueAfterDomainVerify
-	}
-	if ok, message := platform.VerifyHostResolvesToIP(ctx, dashboardHost, externalIP); !ok {
-		return platform.DashboardDomainReconcileResult{
-			Status:  metav1.ConditionFalse,
-			Reason:  "PendingDNS",
-			Message: message,
-		}, platform.RequeueAfterDomainVerify
+	dashboardHost := platform.DashboardHostFromConfig(*config)
+	cloudflareDNS := false
+	if platform.CloudflareConfigured(*config) {
+		creds, err := r.loadCloudflareCredentials(ctx, config)
+		if err != nil {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "Error",
+				Message: "Cloudflare credentials are unavailable",
+			}, platform.RequeueAfterDomainVerify
+		}
+		if creds.APIToken == "" || creds.AccountID == "" {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "Error",
+				Message: "Cloudflare credentials are incomplete",
+			}, platform.RequeueAfterDomainVerify
+		}
+		if creds.ZoneID == "" {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "ZoneRequired",
+				Message: "Select a Cloudflare zone in domain settings (multiple zones match this token)",
+			}, platform.RequeueAfterDomainVerify
+		}
+		cloudflareDNS = true
 	}
 
 	serviceName, err := r.dashboardServiceName(ctx)
@@ -116,7 +118,42 @@ func (r *GeassPlatformConfigReconciler) reconcileIngressDashboardDomain(ctx cont
 			Message: err.Error(),
 		}, platform.RequeueAfterDomainVerify
 	}
-	if !platform.ProbeDashboardURL(ctx, r.HTTPClient, platform.DashboardURLFromRoot(rootDomain)) {
+
+	if cloudflareDNS {
+		if err := r.ensureCloudflareDashboardIngressDNS(ctx, config); err != nil {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "PendingDNS",
+				Message: "Could not create dashboard DNS record in Cloudflare",
+			}, platform.RequeueAfterDomainVerify
+		}
+	} else if !platform.CloudflareConfigured(*config) {
+		nodes := &corev1.NodeList{}
+		if err := r.List(ctx, nodes); err != nil {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "Error",
+				Message: "could not list cluster nodes",
+			}, platform.RequeueAfterDomainVerify
+		}
+		externalIP, err := platform.ClusterExternalIP(ctx, nodes.Items, r.HTTPClient)
+		if err != nil {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "PendingDNS",
+				Message: err.Error(),
+			}, platform.RequeueAfterDomainVerify
+		}
+		if ok, message := platform.VerifyHostResolvesToIP(ctx, dashboardHost, externalIP); !ok {
+			return platform.DashboardDomainReconcileResult{
+				Status:  metav1.ConditionFalse,
+				Reason:  "PendingDNS",
+				Message: message,
+			}, platform.RequeueAfterDomainVerify
+		}
+	}
+
+	if !platform.ProbeDashboardURL(ctx, r.HTTPClient, platform.DashboardURLFromConfig(*config)) {
 		return platform.DashboardDomainReconcileResult{
 			Status:  metav1.ConditionFalse,
 			Reason:  "PendingHTTPS",
@@ -166,7 +203,7 @@ func (r *GeassPlatformConfigReconciler) reconcileDashboardIngress(ctx context.Co
 							Backend: networkingv1.IngressBackend{
 								Service: &networkingv1.IngressServiceBackend{
 									Name: serviceName,
-									Port: networkingv1.ServiceBackendPort{Number: 8082},
+									Port: networkingv1.ServiceBackendPort{Number: 8085},
 								},
 							},
 						}},

@@ -25,6 +25,7 @@ const (
 )
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+var dashboardSubdomainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 type DashboardDomainReconcileResult struct {
 	Status  metav1.ConditionStatus
@@ -65,15 +66,66 @@ func NormalizeDashboardURL(raw string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func DashboardHostFromRoot(rootDomain string) string {
+func NormalizeDashboardSubdomain(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return DashboardSubdomainLabel
+	}
+	if len(raw) > 63 || !dashboardSubdomainPattern.MatchString(raw) {
+		return ""
+	}
+	return raw
+}
+
+func DashboardHostFromParts(subdomain, rootDomain string) string {
+	rootDomain = NormalizeRootDomainInput(rootDomain)
 	if rootDomain == "" {
 		return ""
 	}
-	return DashboardSubdomainLabel + "." + rootDomain
+	subdomain = NormalizeDashboardSubdomain(subdomain)
+	if subdomain == "" {
+		return ""
+	}
+	return subdomain + "." + rootDomain
+}
+
+func DashboardURLFromParts(subdomain, rootDomain string) string {
+	return NormalizeDashboardURL(DashboardHostFromParts(subdomain, rootDomain))
+}
+
+func DashboardHostFromRoot(rootDomain string) string {
+	return DashboardHostFromParts(DashboardSubdomainLabel, rootDomain)
 }
 
 func DashboardURLFromRoot(rootDomain string) string {
-	return NormalizeDashboardURL(DashboardHostFromRoot(rootDomain))
+	return DashboardURLFromParts(DashboardSubdomainLabel, rootDomain)
+}
+
+func DashboardSubdomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	root := strings.TrimSpace(config.Spec.RootDomain)
+	host := DashboardHostFromURL(config.Spec.DashboardURL)
+	if root != "" && host != "" && strings.HasSuffix(host, "."+root) {
+		label := strings.TrimSuffix(host, "."+root)
+		if label != "" {
+			return label
+		}
+	}
+	return DashboardSubdomainLabel
+}
+
+func DashboardURLFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	if url := NormalizeDashboardURL(config.Spec.DashboardURL); url != "" {
+		return url
+	}
+	root := RootDomainFromConfig(config)
+	if root == "" {
+		return ""
+	}
+	return DashboardURLFromParts(DashboardSubdomainFromConfig(config), root)
+}
+
+func DashboardHostFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
+	return DashboardHostFromURL(DashboardURLFromConfig(config))
 }
 
 func RootDomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {

@@ -25,6 +25,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleBootstrap(w, r)
 	case r.URL.Path == "/api/settings/github":
 		s.handleAPIGitHubSettings(w, r)
+	case r.URL.Path == "/api/settings/cloudflare":
+		s.handleAPICloudflareSettings(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -40,13 +42,29 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) dashboardPlatformForViewer(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
+	return s.dashboardPlatformFromInventory(ctx, data)
+}
+
 func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
-	info := dashboardPlatform{}
+	info := s.dashboardPlatformFromInventory(ctx, data)
 	if readiness, err := s.platformReadiness(ctx); err == nil {
 		info.HasDashboardURL = readiness.HasDashboardURL
 		info.HasGitHubApp = readiness.HasGitHubApp
+		info.HasCloudflare = readiness.HasCloudflare
+		info.CloudflareReady = readiness.CloudflareReady
 		info.DashboardURL = readiness.DashboardURL
+		if readiness.HasCloudflare {
+			summary := s.cloudflareConnectionSummary(ctx, readiness.Config)
+			info.CloudflareZoneID = summary.ZoneID
+			info.CloudflareZoneName = summary.ZoneName
+		}
 	}
+	return info
+}
+
+func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
+	info := dashboardPlatform{}
 	for _, report := range data.HAReadiness.Items {
 		if report.Status.HealthyNodes > info.HealthyNodes {
 			info.HealthyNodes = report.Status.HealthyNodes

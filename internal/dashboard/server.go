@@ -300,7 +300,7 @@ func (s *Server) queryProjectUsage(ctx context.Context, project string) []projec
 		{"Memory", "bytes", `sum(container_memory_working_set_bytes{` + selector + `,container!=""})`},
 		{"Network egress", "bytes/second", `sum(rate(container_network_transmit_bytes_total{` + selector + `}[5m]))`},
 	}
-	mc := s.metricsClient(ctx)
+	mc := s.metricsClient(ctx, true)
 	metrics := make([]projectUsageMetric, 0, len(queries))
 	for _, query := range queries {
 		value, err := mc.QueryInstant(ctx, query.query)
@@ -691,16 +691,6 @@ func (s *Server) redirectDatabaseWorkspace(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (s *Server) redirectCacheWorkspace(w http.ResponseWriter, r *http.Request, name, view string) bool {
-	return s.redirectManagedWorkspace(w, r, "caches", name, view, func() (string, string, bool) {
-		var cache geassv1alpha1.GeassCache
-		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &cache); err != nil {
-			return "", "", false
-		}
-		return cache.Spec.Project, string(cache.Spec.Environment), true
-	})
-}
-
 func (s *Server) redirectObjectStoreWorkspace(w http.ResponseWriter, r *http.Request, name, view string) bool {
 	return s.redirectManagedWorkspace(w, r, "object-stores", name, view, func() (string, string, bool) {
 		var store geassv1alpha1.GeassObjectStore
@@ -774,11 +764,22 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
+	scopedProject := strings.TrimSpace(r.FormValue("project"))
+	if scopedProject == "" {
+		redirectFormError(w, r, fallback, "project scope is required for cloud connections")
+		return
+	}
+	var project geassv1alpha1.GeassProject
+	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: scopedProject, Namespace: systemNamespace}, &project); err != nil {
+		redirectFormError(w, r, fallback, "project was not found")
+		return
+	}
 	connection := &geassv1alpha1.GeassCloudConnection{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassCloudConnectionSpec{
 			Provider:     provider,
 			SecretRef:    corev1.LocalObjectReference{Name: secret.Name},
+			Project:      scopedProject,
 			Region:       strings.TrimSpace(r.FormValue("region")),
 			Organization: strings.TrimSpace(r.FormValue("organization")),
 		},
@@ -1398,15 +1399,12 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			http.NotFound(w, r)
 			return
 		}
-		secretName, envName = db.Status.ConnectionSecret, "DATABASE_URL"
-	}
-	if kind == "cache" {
-		var cache geassv1alpha1.GeassCache
-		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: resourceName, Namespace: systemNamespace}, &cache); err != nil {
-			http.NotFound(w, r)
-			return
+		secretName = db.Status.ConnectionSecret
+		if db.Spec.Engine == geassv1alpha1.DatabaseEngineRedis {
+			envName = "REDIS_URL"
+		} else {
+			envName = "DATABASE_URL"
 		}
-		secretName, envName = cache.Status.ConnectionSecret, "REDIS_URL"
 	}
 	if kind == "object-store" || kind == "object-stores" {
 		var store geassv1alpha1.GeassObjectStore
@@ -1985,6 +1983,10 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
 		db.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+		if err := s.validateCloudConnectionForProject(r.Context(), db.Spec.Project, ref); err != nil {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
 	}
 	if port := strings.TrimSpace(r.FormValue("port")); port != "" {
 		var parsed int
@@ -2134,102 +2136,6 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 	redirectAfterResourceUpdate(w, r, db.Spec.Project, string(db.Spec.Environment), "databases", name, "settings")
 }
 
-// --- Caches ---
-
-func (s *Server) handleCacheCreate(w http.ResponseWriter, r *http.Request) {
-	fallback := "/caches"
-	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
-		return
-	}
-	fallback = formProjectFallback(r, "/caches")
-	name := strings.TrimSpace(r.FormValue("name"))
-	if name == "" || strings.TrimSpace(r.FormValue("project")) == "" {
-		redirectFormError(w, r, fallback, "name and project are required")
-		return
-	}
-	if err := validatePlacementForm(r); err != nil {
-		redirectFormUserError(w, r, fallback, err)
-		return
-	}
-	res, err := resourcesFromForm(r, platform.DefaultAppResources())
-	if err != nil {
-		redirectFormUserError(w, r, fallback, err)
-		return
-	}
-	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("Redis database", res, 1)) {
-		return
-	}
-	cache := &geassv1alpha1.GeassCache{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
-		Spec: geassv1alpha1.GeassCacheSpec{
-			Project:     strings.TrimSpace(r.FormValue("project")),
-			Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")),
-			Engine:      geassv1alpha1.CacheEngineRedis,
-		},
-	}
-	if err := s.Client.Create(r.Context(), cache); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
-	}
-	redirectAfterResourceCreate(w, r, strings.TrimSpace(r.FormValue("project")), r.FormValue("environment"), "caches", name)
-}
-
-func (s *Server) handleCacheRoutes(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/caches/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		http.NotFound(w, r)
-		return
-	}
-	name := parts[0]
-	if len(parts) == 1 {
-		if isDelete(r) {
-			s.deleteResource(w, r, name, &geassv1alpha1.GeassCache{}, "/caches")
-			return
-		}
-		if s.redirectCacheWorkspace(w, r, name, "overview") {
-			return
-		}
-		http.NotFound(w, r)
-		return
-	}
-	switch parts[1] {
-	case routeActionEdit:
-		if s.redirectCacheWorkspace(w, r, name, "settings") {
-			return
-		}
-	case routeActionUpdate:
-		s.handleCacheUpdate(w, r, name)
-		return
-	case "delete":
-		s.deleteResource(w, r, name, &geassv1alpha1.GeassCache{}, "/caches")
-		return
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-func (s *Server) handleCacheUpdate(w http.ResponseWriter, r *http.Request, name string) {
-	fallback := "/caches/" + name
-	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
-		return
-	}
-	var cache geassv1alpha1.GeassCache
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &cache); err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	fallback = workspaceResourceURL(cache.Spec.Project, string(cache.Spec.Environment), "caches", name, "settings")
-	if env, ok := formNonEmpty(r, "environment"); ok {
-		cache.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
-	}
-	if err := s.Client.Update(r.Context(), &cache); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
-	}
-	redirectAfterResourceUpdate(w, r, cache.Spec.Project, string(cache.Spec.Environment), "caches", name, "settings")
-}
-
 // --- Object stores ---
 
 func isClusterMinIO(store *geassv1alpha1.GeassObjectStore) bool {
@@ -2325,6 +2231,10 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	if placement == geassv1alpha1.ObjectStorePlacementExternal {
 		if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
 			store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
+			if err := s.validateCloudConnectionForProject(r.Context(), project, ref); err != nil {
+				redirectFormUserError(w, r, fallback, err)
+				return
+			}
 		}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
@@ -2440,6 +2350,12 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 	}
 	if env, ok := formNonEmpty(r, "environment"); ok {
 		store.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+	}
+	if store.Spec.ConnectionRef != nil && strings.TrimSpace(store.Spec.ConnectionRef.Name) != "" {
+		if err := s.validateCloudConnectionForProject(r.Context(), store.Spec.Project, store.Spec.ConnectionRef.Name); err != nil {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
 	}
 	if err := s.Client.Update(r.Context(), &store); err != nil {
 		redirectFormInternalError(w, r, fallback)

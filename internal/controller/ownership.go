@@ -36,8 +36,6 @@ func geassResourceLabels(owner client.Object, kind string) map[string]string {
 		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	case *geassv1alpha1.GeassDatabase:
 		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
-	case *geassv1alpha1.GeassCache:
-		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	case *geassv1alpha1.GeassObjectStore:
 		labels[platform.LabelProject], labels[platform.LabelEnvironment] = resource.Spec.Project, string(resource.Spec.Environment)
 	}

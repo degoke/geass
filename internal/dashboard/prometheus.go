@@ -106,7 +106,7 @@ var overviewMetrics = []metricCard{
 }
 
 func (s *Server) metricsCards(ctx context.Context) string {
-	mc := s.metricsClient(ctx)
+	mc := s.metricsClient(ctx, true)
 	var b strings.Builder
 	b.WriteString(`<div class="grid grid-cols-1 md:grid-cols-3 gap-4">`)
 	for _, m := range overviewMetrics {
@@ -120,12 +120,12 @@ func (s *Server) metricsCards(ctx context.Context) string {
 	return b.String()
 }
 
-func (s *Server) metricsClient(ctx context.Context) MetricsClient {
+func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) MetricsClient {
 	if s.Metrics != nil {
 		return s.Metrics
 	}
 	prometheusURL := ""
-	if s.Client != nil {
+	if readPlatformConfig && s.Client != nil {
 		config := &geassv1alpha1.GeassPlatformConfig{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
 			prometheusURL = config.Spec.PrometheusURL

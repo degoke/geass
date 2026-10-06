@@ -114,6 +114,9 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	if !clusterServer {
+		if err := r.validateObjectStoreCloudConnection(ctx, &store); err != nil {
+			return r.setNotReady(ctx, &store, err.Error())
+		}
 		if err := platform.ValidateProjectPlacement(ctx, r.Client, store.Spec.Project, store.Spec.Environment); err != nil {
 			return r.setNotReady(ctx, &store, err.Error())
 		}
@@ -531,6 +534,20 @@ func (r *GeassObjectStoreReconciler) clearStaleMinIOHelmJob(ctx context.Context)
 	return r.Update(ctx, latest)
 }
 
+func (r *GeassObjectStoreReconciler) validateObjectStoreCloudConnection(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
+	if store.Spec.ConnectionRef == nil || strings.TrimSpace(store.Spec.ConnectionRef.Name) == "" {
+		return nil
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("cloud connection %q was not found", store.Spec.ConnectionRef.Name)
+		}
+		return fmt.Errorf("cloud connection %q is unavailable", store.Spec.ConnectionRef.Name)
+	}
+	return platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project)
+}
+
 func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
 	if store.Spec.ConnectionRef == nil || store.Spec.ConnectionRef.Name == "" {
 		return fmt.Errorf("AWS connection is required to delete this store")
@@ -538,6 +555,9 @@ func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, st
 	connection := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return fmt.Errorf("AWS connection is unavailable: %w", err)
+	}
+	if err := platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project); err != nil {
+		return err
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS || connection.Spec.SecretRef.Name == "" {
 		return fmt.Errorf("AWS connection is unavailable")
@@ -658,6 +678,9 @@ func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, stor
 	connection := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return r.setNotReady(ctx, store, "AWS connection is unavailable")
+	}
+	if err := platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS {
 		return r.setNotReady(ctx, store, "external buckets require an AWS connection")

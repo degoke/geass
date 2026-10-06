@@ -773,7 +773,15 @@ func TestAPIExternalDatabaseCreateSkipsCapacityGate(t *testing.T) {
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 		},
 	}
-	srv := &Server{Client: newFakeClient(node)}
+	psConn := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "ps-prod", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:  geassv1alpha1.CloudProviderPlanetScale,
+			Project:   testProjectName,
+			SecretRef: corev1.LocalObjectReference{Name: "ps-prod-creds"},
+		},
+	}
+	srv := &Server{Client: newFakeClient(node, psConn)}
 	form := url.Values{
 		"name":          {"orders-ps"},
 		"project":       {testProjectName},
@@ -998,6 +1006,28 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 }
 
+func TestHandleAppAttachRedisDatabaseUsesRedisURL(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: testProjectName, Source: imageAppSource("nginx")}}
+	db := &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineRedis},
+		Status:     geassv1alpha1.GeassDatabaseStatus{ConnectionSecret: "sessions-connection"},
+	}
+	c := newFakeClient(app, db)
+	srv := &Server{Client: c}
+	form := url.Values{"kind": {"database"}, formFieldName: {"sessions"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppAttach(rec, req, "api")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	var updated geassv1alpha1.GeassApp
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
+	require.Len(t, updated.Spec.Env, 1)
+	require.Equal(t, "REDIS_URL", updated.Spec.Env[0].Name)
+}
+
 func TestHandleDatabaseCRUD(t *testing.T) {
 	ctx := context.Background()
 	c := newFakeClient(roomyTestNode())
@@ -1035,7 +1065,15 @@ func TestHandleDatabaseCRUD(t *testing.T) {
 
 func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 	ctx := context.Background()
-	srv := &Server{Client: newFakeClient(roomyTestNode())}
+	psConn := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "ps-prod", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:  geassv1alpha1.CloudProviderPlanetScale,
+			Project:   testProjectName,
+			SecretRef: corev1.LocalObjectReference{Name: "ps-prod-creds"},
+		},
+	}
+	srv := &Server{Client: newFakeClient(roomyTestNode(), psConn)}
 
 	form := url.Values{
 		"name":             {"orders-mysql"},
@@ -1083,12 +1121,76 @@ func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 	require.Equal(t, "ps-prod", remote.Spec.ConnectionRef.Name)
 }
 
+func TestAPIDatabaseCreateRejectsPlatformWideCloudConnection(t *testing.T) {
+	ctx := context.Background()
+	psConn := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-ps", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:  geassv1alpha1.CloudProviderPlanetScale,
+			SecretRef: corev1.LocalObjectReference{Name: "shared-ps-creds"},
+		},
+	}
+	srv := &Server{Client: newFakeClient(roomyTestNode(), psConn)}
+	form := url.Values{
+		"name":          {"orders-ps"},
+		"project":       {testProjectName},
+		"environment":   {"production"},
+		"engine":        {"MySQL"},
+		"placement":     {"External"},
+		"provider":      {"PlanetScale"},
+		"mode":          {"Create"},
+		"databaseName":  {"app"},
+		"connectionRef": {"shared-ps"},
+	}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "project-scoped")
+}
+
+func TestAPIDatabaseCreateRejectsForeignCloudConnection(t *testing.T) {
+	ctx := context.Background()
+	psConn := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "billing-ps", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:  geassv1alpha1.CloudProviderPlanetScale,
+			Project:   "billing",
+			SecretRef: corev1.LocalObjectReference{Name: "billing-ps-creds"},
+		},
+	}
+	srv := &Server{Client: newFakeClient(roomyTestNode(), psConn)}
+	form := url.Values{
+		"name":          {"orders-ps"},
+		"project":       {testProjectName},
+		"environment":   {"production"},
+		"engine":        {"MySQL"},
+		"placement":     {"External"},
+		"provider":      {"PlanetScale"},
+		"mode":          {"Create"},
+		"databaseName":  {"app"},
+		"connectionRef": {"billing-ps"},
+	}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "scoped to project")
+}
+
 func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 	ctx := context.Background()
-	srv := &Server{Client: newFakeClient()}
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{Environments: []string{"production"}},
+	}
+	srv := &Server{Client: newFakeClient(project)}
 
 	aws := url.Values{
 		"name":            {"prod-aws"},
+		"project":         {testProjectName},
 		"provider":        {"AWS"},
 		"accessKeyId":     {"AKIATEST"},
 		"secretAccessKey": {"secret"},
@@ -1103,10 +1205,12 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 	var connection geassv1alpha1.GeassCloudConnection
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "prod-aws", Namespace: platform.SystemNamespace}, &connection))
 	require.Equal(t, geassv1alpha1.CloudProviderAWS, connection.Spec.Provider)
+	require.Equal(t, testProjectName, connection.Spec.Project)
 	require.Equal(t, "us-east-1", connection.Spec.Region)
 
 	ps := url.Values{
 		"name":         {"proj-ps"},
+		"project":      {testProjectName},
 		"provider":     {"PlanetScale"},
 		"organization": {"acme"},
 		"token":        {"pscale_token"},
@@ -1120,13 +1224,38 @@ func TestAPICloudConnectionCreateAWSAndPlanetScale(t *testing.T) {
 	var planet geassv1alpha1.GeassCloudConnection
 	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "proj-ps", Namespace: platform.SystemNamespace}, &planet))
 	require.Equal(t, geassv1alpha1.CloudProviderPlanetScale, planet.Spec.Provider)
-	require.Empty(t, planet.Spec.Project)
+	require.Equal(t, testProjectName, planet.Spec.Project)
 	require.Equal(t, "acme", planet.Spec.Organization)
+}
+
+func TestAPICloudConnectionCreateRequiresProjectScope(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient()}
+	form := url.Values{
+		"name":            {"prod-aws"},
+		"provider":        {"AWS"},
+		"accessKeyId":     {"AKIATEST"},
+		"secretAccessKey": {"secret"},
+	}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/cloud-connections/create", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "project scope is required")
 }
 
 func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
 	ctx := context.Background()
-	srv := &Server{Client: newFakeClient()}
+	awsConn := &geassv1alpha1.GeassCloudConnection{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-aws", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassCloudConnectionSpec{
+			Provider:  geassv1alpha1.CloudProviderAWS,
+			Project:   testProjectName,
+			SecretRef: corev1.LocalObjectReference{Name: "prod-aws-creds"},
+		},
+	}
+	srv := &Server{Client: newFakeClient(awsConn)}
 	form := url.Values{
 		"name":          {"assets"},
 		"project":       {testProjectName},
@@ -1481,13 +1610,12 @@ func TestAppSettingsPartialPatchKeepsImageAndMarksPending(t *testing.T) {
 	require.Equal(t, pendingChangeSettings, saved.Annotations[platform.AppPendingChangesAnnotation])
 }
 
-func TestResourceDeletePathsRemoveDatabasesCachesAndStores(t *testing.T) {
+func TestResourceDeletePathsRemoveDatabasesAndStores(t *testing.T) {
 	ctx := context.Background()
 	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
-	cache := &geassv1alpha1.GeassCache{ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassCacheSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
 	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
 	logical := &geassv1alpha1.GeassLogicalDatabase{ObjectMeta: metav1.ObjectMeta{Name: "appdb", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassLogicalDatabaseSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
-	c := newFakeClient(db, cache, store, logical)
+	c := newFakeClient(db, store, logical)
 	srv := &Server{Client: c}
 
 	for _, item := range []struct {
@@ -1497,7 +1625,6 @@ func TestResourceDeletePathsRemoveDatabasesCachesAndStores(t *testing.T) {
 		name string
 	}{
 		{"/databases/orders/delete", srv.handleDatabaseRoutes, &geassv1alpha1.GeassDatabase{}, "orders"},
-		{"/caches/sessions/delete", srv.handleCacheRoutes, &geassv1alpha1.GeassCache{}, "sessions"},
 		{"/object-stores/assets/delete", srv.handleObjectStoreRoutes, &geassv1alpha1.GeassObjectStore{}, "assets"},
 		{"/logical-databases/appdb/delete", srv.handleLogicalDatabaseRoutes, &geassv1alpha1.GeassLogicalDatabase{}, "appdb"},
 	} {
@@ -1566,22 +1693,11 @@ func TestDatabaseUpdateKeepsEnvironmentWithoutFormField(t *testing.T) {
 	require.Equal(t, "17", updated.Spec.Version)
 }
 
-func TestCacheAndObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
+func TestObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
 	ctx := context.Background()
-	cache := &geassv1alpha1.GeassCache{ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassCacheSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev}}
 	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.ObjectStoreEngineMinIO}}
-	c := newFakeClient(cache, store)
+	c := newFakeClient(store)
 	srv := &Server{Client: c}
-
-	cacheReq := withOrigin(httptest.NewRequest(http.MethodPost, "/caches/sessions/update", strings.NewReader(url.Values{}.Encode())).WithContext(ctx))
-	cacheReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	cacheRec := httptest.NewRecorder()
-	srv.handleCacheUpdate(cacheRec, cacheReq, "sessions")
-	require.Equal(t, http.StatusSeeOther, cacheRec.Code)
-	var updatedCache geassv1alpha1.GeassCache
-	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "sessions", Namespace: platform.SystemNamespace}, &updatedCache))
-	require.Equal(t, testProjectName, updatedCache.Spec.Project)
-	require.Equal(t, geassv1alpha1.EnvironmentDev, updatedCache.Spec.Environment)
 
 	storeReq := withOrigin(httptest.NewRequest(http.MethodPost, "/object-stores/assets/update", strings.NewReader(url.Values{"project": {""}, "environment": {""}}.Encode())).WithContext(ctx))
 	storeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")

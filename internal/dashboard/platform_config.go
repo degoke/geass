@@ -22,6 +22,8 @@ type platformReadiness struct {
 	GitHubAppSecret *corev1.Secret
 	HasDashboardURL bool
 	HasGitHubApp    bool
+	HasCloudflare   bool
+	CloudflareReady bool
 }
 
 func (s *Server) platformConfig(ctx context.Context) (geassv1alpha1.GeassPlatformConfig, error) {
@@ -43,12 +45,7 @@ func (s *Server) platformReadiness(ctx context.Context) (platformReadiness, erro
 		return platformReadiness{}, err
 	}
 	readiness := platformReadiness{Config: config}
-	rootDomain := platform.RootDomainFromConfig(config)
-	if rootDomain != "" {
-		readiness.DashboardURL = platform.DashboardURLFromRoot(rootDomain)
-	} else {
-		readiness.DashboardURL = platform.NormalizeDashboardURL(config.Spec.DashboardURL)
-	}
+	readiness.DashboardURL = platform.DashboardURLFromConfig(config)
 	readiness.HasDashboardURL = platform.DashboardDomainReady(config)
 
 	var secret *corev1.Secret
@@ -64,6 +61,8 @@ func (s *Server) platformReadiness(ctx context.Context) (platformReadiness, erro
 	readiness.GitHubAppSecret = secret
 	readiness.GitHubApp = s.resolveGitHubAppConfig(readiness.DashboardURL, secret, config.Spec.GitHubAppRef != nil && config.Spec.GitHubAppRef.Name != "")
 	readiness.HasGitHubApp = readiness.GitHubApp.Configured()
+	readiness.HasCloudflare = platform.CloudflareConfigured(config)
+	readiness.CloudflareReady = platform.IsConditionTrue(config.Status.Conditions, platform.ConditionCloudflareReady)
 	return readiness, nil
 }
 

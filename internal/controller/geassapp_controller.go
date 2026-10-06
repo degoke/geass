@@ -82,7 +82,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if !app.DeletionTimestamp.IsZero() {
-		if wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment)); err == nil {
+		for _, wsNS := range appDeletionNamespaces(&app) {
 			r.deleteTargetResources(ctx, &app, wsNS)
 		}
 		controllerutil.RemoveFinalizer(&app, appFinalizer)
@@ -102,6 +102,9 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := validateAppSource(&app); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if err := r.ensureCloudflarePublicHost(ctx, &app); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
@@ -755,6 +758,30 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	return err
 }
 
+// appDeletionNamespaces returns every project-environment namespace that may still
+// hold workloads for this app. Spec placement can be invalid while status still
+// records a previous target namespace after moves or edits.
+func appDeletionNamespaces(app *geassv1alpha1.GeassApp) []string {
+	seen := make(map[string]struct{})
+	var namespaces []string
+	add := func(ns string) {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			return
+		}
+		if _, ok := seen[ns]; ok {
+			return
+		}
+		seen[ns] = struct{}{}
+		namespaces = append(namespaces, ns)
+	}
+	if wsNS, err := resourceNamespace(app.Spec.Project, string(app.Spec.Environment)); err == nil {
+		add(wsNS)
+	}
+	add(app.Status.TargetNamespace)
+	return namespaces
+}
+
 func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
 	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics"}
 	for _, name := range names {
@@ -788,6 +815,28 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+}
+
+func (r *GeassAppReconciler) ensureCloudflarePublicHost(ctx context.Context, app *geassv1alpha1.GeassApp) error {
+	if strings.TrimSpace(app.Spec.Ingress.Host) != "" {
+		return nil
+	}
+	config := &geassv1alpha1.GeassPlatformConfig{}
+	if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !platform.IsConditionTrue(config.Status.Conditions, platform.ConditionCloudflareReady) {
+		return nil
+	}
+	rootDomain := platform.RootDomainFromConfig(*config)
+	host := platform.AppPublicHostname(app.Name, app.Spec.Project, string(app.Spec.Environment), rootDomain)
+	if host == "" {
+		return nil
+	}
+	patch := app.DeepCopy()
+	patch.Spec.Ingress.Host = host
+	patch.Spec.Ingress.TLSEnabled = false
+	return r.Update(ctx, patch)
 }
 
 // SetupWithManager sets up the controller with the Manager.

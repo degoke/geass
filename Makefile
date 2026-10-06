@@ -160,8 +160,8 @@ build: dashboard-build manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run the controller and React dashboard from your host.
 	$(MAKE) -j2 dashboard-backend dashboard-dev
 
-dashboard-backend: ## Run the Geass backend for the dashboard.
-	go run ./cmd/main.go --dashboard-bind-address=:8082
+dashboard-backend: ## Run the Geass backend for the dashboard (API :8085; health :8086).
+	go run ./cmd/main.go --dashboard-bind-address=:8085 --health-probe-bind-address=:8086
 
 dashboard-dev: ## Run the Vite/React dashboard in development mode.
 	cd dashboard-ui && pnpm dev --host 127.0.0.1

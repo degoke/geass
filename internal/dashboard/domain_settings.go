@@ -40,12 +40,13 @@ func (s *Server) handlePlatformDomainSave(w http.ResponseWriter, r *http.Request
 		redirectDomainError("enter your main domain, like example.com")
 		return
 	}
-	exposure := normalizeDashboardExposure(r.FormValue("exposure"))
-	tunnelTarget := platform.NormalizeTunnelCNAMETarget(r.FormValue("tunnelCNAMETarget"))
-	if exposure == geassv1alpha1.DashboardExposureCloudflareTunnel && tunnelTarget == "" {
-		redirectDomainError("enter your Cloudflare tunnel ID from cloudflared tunnel list")
+	subdomain := platform.NormalizeDashboardSubdomain(r.FormValue("subdomain"))
+	if subdomain == "" {
+		redirectDomainError("enter a valid subdomain label, like geass or app")
 		return
 	}
+	exposure := normalizeDashboardExposure(r.FormValue("exposure"))
+	tunnelTarget := platform.NormalizeTunnelCNAMETarget(r.FormValue("tunnelCNAMETarget"))
 	config := &geassv1alpha1.GeassPlatformConfig{}
 	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, config)
 	creating := apierrors.IsNotFound(err)
@@ -55,10 +56,26 @@ func (s *Server) handlePlatformDomainSave(w http.ResponseWriter, r *http.Request
 		redirectDomainError("could not load platform config")
 		return
 	}
+	if exposure == geassv1alpha1.DashboardExposureCloudflareTunnel && tunnelTarget == "" && !platform.CloudflareConfigured(*config) {
+		redirectDomainError("connect Cloudflare in settings or enter your tunnel ID from cloudflared tunnel list")
+		return
+	}
+	zoneID := strings.TrimSpace(r.FormValue("cloudflareZoneId"))
+	if zoneID != "" && platform.CloudflareConfigured(*config) {
+		config.Spec.CloudflareZoneID = zoneID
+		if err := s.updateCloudflareZoneName(r.Context(), zoneID, rootDomain); err != nil {
+			redirectDomainError("could not update Cloudflare zone")
+			return
+		}
+	}
 	config.Spec.RootDomain = rootDomain
-	config.Spec.DashboardURL = platform.DashboardURLFromRoot(rootDomain)
+	config.Spec.DashboardURL = platform.DashboardURLFromParts(subdomain, rootDomain)
 	config.Spec.DashboardExposure = exposure
-	config.Spec.TunnelCNAMETarget = tunnelTarget
+	if exposure == geassv1alpha1.DashboardExposureCloudflareTunnel && tunnelTarget != "" {
+		config.Spec.TunnelCNAMETarget = tunnelTarget
+	} else {
+		config.Spec.TunnelCNAMETarget = ""
+	}
 	if creating {
 		err = s.Client.Create(r.Context(), config)
 	} else {

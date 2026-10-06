@@ -408,9 +408,15 @@ type GeassPlatformConfigSpec struct {
 	DefaultClusterRef corev1.LocalObjectReference `json:"defaultClusterRef,omitempty"`
 	// GitHubAppRef references a Secret containing the platform GitHub App credentials.
 	// +optional
-	GitHubAppRef      *corev1.LocalObjectReference `json:"githubAppRef,omitempty"`
-	Registry          GeassPlatformRegistrySpec    `json:"registry,omitempty"`
-	TraefikAccessLogs GeassTraefikAccessLogsSpec   `json:"traefikAccessLogs,omitempty"`
+	GitHubAppRef *corev1.LocalObjectReference `json:"githubAppRef,omitempty"`
+	// CloudflareConnectionRef references a Secret with Cloudflare API credentials (apiToken, accountId).
+	// +optional
+	CloudflareConnectionRef *corev1.LocalObjectReference `json:"cloudflareConnectionRef,omitempty"`
+	// CloudflareZoneID is the DNS zone used for automatic records when Cloudflare is connected.
+	// +optional
+	CloudflareZoneID  string                     `json:"cloudflareZoneID,omitempty"`
+	Registry          GeassPlatformRegistrySpec  `json:"registry,omitempty"`
+	TraefikAccessLogs GeassTraefikAccessLogsSpec `json:"traefikAccessLogs,omitempty"`
 }
 
 type GeassTraefikAccessLogsSpec struct {
@@ -425,7 +431,10 @@ type GeassPlatformRegistrySpec struct {
 }
 
 type GeassPlatformConfigStatus struct {
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// CloudflareTunnelID is the managed Cloudflare tunnel UUID when the connector is enabled.
+	// +optional
+	CloudflareTunnelID string             `json:"cloudflareTunnelID,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

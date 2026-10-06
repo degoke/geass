@@ -93,6 +93,7 @@ func TestDeleteExternalStoreRequiresCredentials(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "aws", Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassCloudConnectionSpec{
 			Provider:  geassv1alpha1.CloudProviderAWS,
+			Project:   "payments",
 			SecretRef: corev1.LocalObjectReference{Name: "aws-creds"},
 		},
 	}
@@ -103,6 +104,7 @@ func TestDeleteExternalStoreRequiresCredentials(t *testing.T) {
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Project:       "payments",
 			CreateBucket:  true,
 			ConnectionRef: &corev1.LocalObjectReference{Name: "aws"},
 		},

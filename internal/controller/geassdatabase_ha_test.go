@@ -49,3 +49,21 @@ func TestProjectDatabaseSingleInstanceDoesNotRequireHA(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(database), &updated))
 	require.Contains(t, updated.Finalizers, platform.FinalizerDatabase)
 }
+
+func TestMysqlHostUsesPrimaryServiceWhenHAEnabled(t *testing.T) {
+	instances := int32(3)
+	db := &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "cache"},
+		Spec: geassv1alpha1.GeassDatabaseSpec{
+			Engine:           geassv1alpha1.DatabaseEngineMySQL,
+			HighAvailability: true,
+			Instances:        &instances,
+		},
+	}
+	host := mysqlHost(db, "payments-dev")
+	require.Equal(t, "geass-mysql-cache-primary.payments-dev.svc", host)
+	require.Equal(t, "geass-mysql-cache.payments-dev.svc", mysqlHost(&geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "cache"},
+		Spec:       geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMySQL},
+	}, "payments-dev"))
+}

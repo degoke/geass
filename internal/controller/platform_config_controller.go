@@ -36,6 +36,14 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	cfRequeue, cfErr := r.reconcileCloudflare(ctx, &config)
+	if cfErr != nil {
+		log.Error(cfErr, "Cloudflare reconciliation failed")
+	}
+	if cfRequeue > 0 && platform.CloudflareConfigured(config) {
+		return ctrl.Result{RequeueAfter: cfRequeue}, nil
+	}
+
 	result, requeueAfter := r.reconcileDashboardDomain(ctx, &config)
 	if err := r.setDashboardDomainReady(ctx, req.NamespacedName, result); err != nil {
 		return ctrl.Result{}, err

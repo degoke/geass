@@ -66,6 +66,9 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &db); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := r.validateDatabaseCloudConnection(ctx, &db); err != nil {
+		return r.setNotReady(ctx, &db, err.Error())
+	}
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
 		return r.setNotReady(ctx, &db, err.Error())
 	}
@@ -287,12 +290,28 @@ func (r *GeassDatabaseReconciler) reconcileExternal(ctx context.Context, db *gea
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	if db.Spec.Mode == geassv1alpha1.DatabaseModeCreate && db.Spec.Provider == geassv1alpha1.DatabaseProviderPlanetScale {
-		createdHost, createdUser, createdPass, err := r.createPlanetScaleDatabase(ctx, db)
-		if err != nil {
+		connSecret := &corev1.Secret{}
+		err := r.Get(ctx, client.ObjectKey{Name: db.Name + "-connection", Namespace: wsNS}, connSecret)
+		switch {
+		case err == nil:
+			host = secretValue(connSecret, platform.ConnectionKeyHost)
+			username = secretValue(connSecret, platform.ConnectionKeyUsername)
+			password = secretValue(connSecret, platform.ConnectionKeyPassword)
+			if port == "" {
+				port = secretValue(connSecret, platform.ConnectionKeyPort)
+			}
+		case apierrors.IsNotFound(err):
+			createdHost, createdUser, createdPass, createErr := r.createPlanetScaleDatabase(ctx, db)
+			if createErr != nil {
+				return r.setNotReady(ctx, db, createErr.Error())
+			}
+			host, username, password = createdHost, createdUser, createdPass
+			if port == "" {
+				port = platform.PostgresDefaultPort
+			}
+		default:
 			return r.setNotReady(ctx, db, err.Error())
 		}
-		host, username, password = createdHost, createdUser, createdPass
-		port = platform.PostgresDefaultPort
 	}
 	if host == "" || username == "" || password == "" {
 		return r.setNotReady(ctx, db, "external database host, username, and password are required")
@@ -330,7 +349,7 @@ func (r *GeassDatabaseReconciler) createPlanetScaleDatabase(ctx context.Context,
 	if db.Spec.ConnectionRef == nil || db.Spec.ConnectionRef.Name == "" {
 		return "", "", "", fmt.Errorf("a PlanetScale connection is required")
 	}
-	connection, secret, err := r.cloudConnection(ctx, db.Spec.ConnectionRef.Name)
+	connection, secret, err := r.cloudConnection(ctx, db.Spec.Project, db.Spec.ConnectionRef.Name)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -356,10 +375,27 @@ func (r *GeassDatabaseReconciler) createPlanetScaleDatabase(ctx context.Context,
 	return firstNonEmpty(pass.Host, db.Spec.ExternalHost), firstNonEmpty(pass.Username, db.Spec.Username), firstNonEmpty(pass.Plain, ""), nil
 }
 
-func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, name string) (*geassv1alpha1.GeassCloudConnection, *corev1.Secret, error) {
+func (r *GeassDatabaseReconciler) validateDatabaseCloudConnection(ctx context.Context, db *geassv1alpha1.GeassDatabase) error {
+	if db.Spec.ConnectionRef == nil || strings.TrimSpace(db.Spec.ConnectionRef.Name) == "" {
+		return nil
+	}
+	connection := &geassv1alpha1.GeassCloudConnection{}
+	if err := r.Get(ctx, client.ObjectKey{Name: db.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("cloud connection %q was not found", db.Spec.ConnectionRef.Name)
+		}
+		return fmt.Errorf("cloud connection %q is unavailable", db.Spec.ConnectionRef.Name)
+	}
+	return platform.ValidateCloudConnectionForProject(*connection, db.Spec.Project)
+}
+
+func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, project, name string) (*geassv1alpha1.GeassCloudConnection, *corev1.Secret, error) {
 	connection := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return nil, nil, fmt.Errorf("cloud connection %q is unavailable", name)
+	}
+	if err := platform.ValidateCloudConnectionForProject(*connection, project); err != nil {
+		return nil, nil, err
 	}
 	if connection.Spec.SecretRef.Name == "" {
 		return nil, nil, fmt.Errorf("cloud connection %q has no credentials", name)
@@ -541,7 +577,11 @@ func redisDatabaseChartName(name string) string {
 }
 
 func mysqlHost(db *geassv1alpha1.GeassDatabase, wsNS string) string {
-	return fmt.Sprintf("%s.%s.svc", mysqlChartName(db.Name), wsNS)
+	service := mysqlChartName(db.Name)
+	if databaseWantsHA(db) {
+		service += "-primary"
+	}
+	return fmt.Sprintf("%s.%s.svc", service, wsNS)
 }
 
 func redisDatabaseHost(db *geassv1alpha1.GeassDatabase, wsNS string) string {

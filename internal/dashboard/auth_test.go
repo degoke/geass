@@ -235,7 +235,7 @@ func TestDashboardCookieSecureOnPublicHost(t *testing.T) {
 	require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
 
 	loopback := httptest.NewRequest(http.MethodGet, "/", nil)
-	loopback.Host = "127.0.0.1:8082"
+	loopback.Host = "127.0.0.1:8085"
 	loopbackCookie := dashboardSessionCookie(loopback, "token", 60)
 	require.False(t, loopbackCookie.Secure)
 }
@@ -650,13 +650,21 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	}
 	database := &geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace},
-		Spec:       geassv1alpha1.GeassDatabaseSpec{Project: "payments", Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.DatabaseEnginePostgres},
-		Status:     geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"},
-	}
-	cache := &geassv1alpha1.GeassCache{
-		ObjectMeta: metav1.ObjectMeta{Name: "sessions", Namespace: platform.SystemNamespace},
-		Spec:       geassv1alpha1.GeassCacheSpec{Project: "payments", Environment: geassv1alpha1.EnvironmentDev},
-		Status:     geassv1alpha1.GeassCacheStatus{Host: "sessions-redis", ConnectionSecret: "sessions-connection"},
+		Spec: geassv1alpha1.GeassDatabaseSpec{
+			Project:          "payments",
+			Environment:      geassv1alpha1.EnvironmentDev,
+			Engine:           geassv1alpha1.DatabaseEnginePostgres,
+			Placement:        geassv1alpha1.DatabasePlacementExternal,
+			Provider:         geassv1alpha1.DatabaseProviderPlanetScale,
+			Mode:             geassv1alpha1.DatabaseModeCreate,
+			ExternalHost:     "db.example.internal",
+			ExternalPort:     3306,
+			Username:         "orders-user",
+			DatabaseName:     "orders_prod",
+			ConnectionRef:    &corev1.LocalObjectReference{Name: "payments-ps"},
+			PasswordSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-external"}, Key: "password"},
+		},
+		Status: geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"},
 	}
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace},
@@ -676,7 +684,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 		Spec:       geassv1alpha1.GeassBuildSpec{App: "demo", Repository: "geass-dev/api", Revision: "abc123"},
 		Status:     geassv1alpha1.GeassBuildStatus{SourceRevision: "abc123", ImageDigest: "sha256:deadbeef"},
 	}
-	srv := &Server{Client: newFakeClient(secret, app, project, database, cache, store, connection, config, build)}
+	srv := &Server{Client: newFakeClient(secret, app, project, database, store, connection, config, build)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
@@ -703,12 +711,11 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.Contains(t, body, `"hasGitHubApp":false`)
 	require.Contains(t, body, `"hasDashboardURL":false`)
 	require.Contains(t, body, `"dashboardURL":""`)
-	require.NotContains(t, body, `"name":"demo"`)
-	require.NotContains(t, body, "payments")
-	require.NotContains(t, body, "orders")
-	require.NotContains(t, body, "sessions")
-	require.NotContains(t, body, "assets")
-	require.NotContains(t, body, "Postgres")
+	require.Contains(t, body, `"name":"demo"`)
+	require.Contains(t, body, `"name":"payments"`)
+	require.Contains(t, body, `"name":"orders"`)
+	require.Contains(t, body, `"name":"assets"`)
+	require.NotContains(t, body, `"engine":"Postgres"`)
 	require.NotContains(t, body, "geass-dev/api")
 	require.NotContains(t, body, "demo.example")
 	require.NotContains(t, body, "demo-secrets")
@@ -717,18 +724,24 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.NotContains(t, body, "payments-github")
 	require.NotContains(t, body, "orders-rw")
 	require.NotContains(t, body, "orders-connection")
-	require.NotContains(t, body, "sessions-redis")
-	require.NotContains(t, body, "sessions-connection")
+	require.NotContains(t, body, "db.example.internal")
+	require.NotContains(t, body, "orders-user")
+	require.NotContains(t, body, "orders_prod")
+	require.NotContains(t, body, "payments-ps")
+	require.NotContains(t, body, "orders-external")
+	require.NotContains(t, body, `"externalPort":3306`)
+	require.NotContains(t, body, "PlanetScale")
+	require.NotContains(t, body, `"placement":"External"`)
 	require.NotContains(t, body, "uploads")
 	require.NotContains(t, body, "assets-connection")
+	require.NotContains(t, body, `"name":"aws"`)
 	require.NotContains(t, body, "us-east-1")
 	require.NotContains(t, body, "aws-credentials")
 	require.NotContains(t, body, "github-app")
 	require.NotContains(t, body, "abc.cfargotunnel.com")
 	require.NotContains(t, body, "abc123")
 	require.NotContains(t, body, "sha256:deadbeef")
-	require.NotContains(t, body, "demo")
-	require.NotContains(t, body, `"items":[{"metadata"`)
+	require.NotContains(t, body, `"name":"demo-1"`)
 }
 
 func TestViewerBootstrapDoesNotReadPlatformConfig(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // dashboardBootstrap is the read model used by the React dashboard. It deliberately
@@ -17,7 +16,6 @@ type dashboardBootstrap struct {
 	Apps             geassv1alpha1.GeassAppList             `json:"apps"`
 	Databases        geassv1alpha1.GeassDatabaseList        `json:"databases"`
 	LogicalDatabases geassv1alpha1.GeassLogicalDatabaseList `json:"logicalDatabases"`
-	Caches           geassv1alpha1.GeassCacheList           `json:"caches"`
 	ObjectStores     geassv1alpha1.GeassObjectStoreList     `json:"objectStores"`
 	Clusters         geassv1alpha1.GeassClusterList         `json:"clusters"`
 	CloudConnections geassv1alpha1.GeassCloudConnectionList `json:"cloudConnections"`
@@ -32,6 +30,10 @@ type dashboardBootstrap struct {
 type dashboardPlatform struct {
 	HasDashboardURL      bool                 `json:"hasDashboardURL"`
 	HasGitHubApp         bool                 `json:"hasGitHubApp"`
+	HasCloudflare        bool                 `json:"hasCloudflare"`
+	CloudflareReady      bool                 `json:"cloudflareReady"`
+	CloudflareZoneID     string               `json:"cloudflareZoneId,omitempty"`
+	CloudflareZoneName   string               `json:"cloudflareZoneName,omitempty"`
 	DashboardURL         string               `json:"dashboardURL"`
 	HAReady              bool                 `json:"haReady"`
 	HealthyNodes         int32                `json:"healthyNodes"`
@@ -69,7 +71,7 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	mutation.Header.Set("Accept", "application/json")
 	mutationURL := *r.URL
 	mutation.URL = &mutationURL
-	mutation.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+	mutation.URL.Path = apiMutationPath(r.URL.Path)
 	mutation.URL.RawPath = ""
 
 	switch {
@@ -93,10 +95,6 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleLogicalDatabaseCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/logical-databases/"):
 		s.handleLogicalDatabaseRoutes(w, mutation)
-	case mutation.URL.Path == "/caches/create":
-		s.handleCacheCreate(w, mutation)
-	case strings.HasPrefix(mutation.URL.Path, "/caches/"):
-		s.handleCacheRoutes(w, mutation)
 	case mutation.URL.Path == "/object-stores/create":
 		s.handleObjectStoreCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/object-stores/"):
@@ -111,6 +109,14 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformGitHubTest(w, mutation)
 	case mutation.URL.Path == "/settings/github/clear":
 		s.handlePlatformGitHubClear(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/save":
+		s.handlePlatformCloudflareSettingsSave(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/clear":
+		s.handlePlatformCloudflareClear(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/discover":
+		s.handleAPICloudflareDiscover(w, mutation)
+	case mutation.URL.Path == "/settings/cloudflare/refresh":
+		s.handlePlatformCloudflareRefresh(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create":
@@ -121,64 +127,22 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
-	if !s.sessionCanMutate(r) {
-		s.writeViewerBootstrap(w, r)
-		return
-	}
 	ctx := r.Context()
-	data := dashboardBootstrap{}
-	if err := s.Client.List(ctx, &data.Projects, client.InNamespace(systemNamespace)); err != nil {
+	viewer := !s.sessionCanMutate(r)
+	data, err := s.loadDashboardBootstrap(ctx, viewer)
+	if err != nil {
 		writeDashboardUnavailable(w)
 		return
 	}
-	if err := s.Client.List(ctx, &data.Apps, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
+	if viewer {
+		sanitizeDashboardForViewer(&data)
+		data.Platform = s.dashboardPlatformForViewer(ctx, data)
+	} else {
+		data.Platform = s.dashboardPlatform(ctx, data)
 	}
-	if err := s.Client.List(ctx, &data.Databases, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.LogicalDatabases, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Caches, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.ObjectStores, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.CloudConnections, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Clusters); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Deployments, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.Builds, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
-		writeDashboardUnavailable(w)
-		return
-	}
-	data.Platform = s.dashboardPlatform(ctx, data)
 	data.Platform.Session = s.dashboardSession(r)
 	for _, metric := range overviewMetrics {
-		value, err := s.metricsClient(ctx).QueryInstant(ctx, metric.Query)
+		value, err := s.metricsClient(ctx, !viewer).QueryInstant(ctx, metric.Query)
 		state := "measured"
 		if err != nil {
 			value, state = "unavailable", "unavailable"
@@ -190,16 +154,20 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func (s *Server) writeViewerBootstrap(w http.ResponseWriter, r *http.Request) {
-	data := dashboardBootstrap{Platform: dashboardPlatform{Session: s.dashboardSession(r)}}
-	sanitizeDashboardForViewer(&data)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(data)
-}
-
 func writeDashboardUnavailable(w http.ResponseWriter) {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load dashboard"})
+}
+
+func apiMutationPath(path string) string {
+	path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+	path = strings.TrimPrefix(path, "/api")
+	if path == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
 }
 
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
@@ -208,12 +176,4 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveFrontend(w)
-}
-
-func sanitizeDashboardForViewer(data *dashboardBootstrap) {
-	if data == nil {
-		return
-	}
-	session := data.Platform.Session
-	*data = dashboardBootstrap{Platform: dashboardPlatform{Session: session}}
 }
