@@ -37,13 +37,14 @@ func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (s
 	if _, err := net.LookupHost(host); err != nil {
 		return fmt.Sprintf("DNS lookup failed for %s", host), "error"
 	}
-	if _, ok := s.probeURL(ctx, dashboardURL+"/geass-probe"); ok {
+	probeURL := strings.TrimRight(dashboardURL, "/") + platform.GeassDashboardProbePath
+	if _, ok := s.probeURL(ctx, probeURL); ok {
 		return "", "success"
 	}
-	if _, ok := s.probeURL(ctx, s.internalProbeURL()+"/geass-probe"); ok {
+	if _, ok := s.probeURL(ctx, s.internalProbeURL()+platform.GeassDashboardProbePath); ok {
 		return "Dashboard responds locally, but the public URL could not be reached. Check ingress, TLS, and DNS routing.", "warning"
 	}
-	publicMsg, _ := s.probeURL(ctx, dashboardURL+"/geass-probe")
+	publicMsg, _ := s.probeURL(ctx, probeURL)
 	if publicMsg != "" {
 		return publicMsg, "error"
 	}
@@ -77,7 +78,7 @@ func (s *Server) probeURL(ctx context.Context, probeURL string) (string, bool) {
 	if err != nil {
 		return "could not reach the dashboard URL", false
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"ok":true`) {
 		return fmt.Sprintf("%s did not return a successful Geass probe response", probeURL), false

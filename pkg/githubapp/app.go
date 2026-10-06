@@ -202,7 +202,7 @@ func (c *Client) InstallationToken(installationID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return "", err
@@ -278,7 +278,7 @@ func (c *Client) apiRequest(token, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err

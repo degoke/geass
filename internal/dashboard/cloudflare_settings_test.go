@@ -88,7 +88,7 @@ func TestViewerCloudflareSettingsRedacted(t *testing.T) {
 func TestGeassProbeAdvertisesCloudflareAPI(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 	rec := httptest.NewRecorder()
-	srv.handleGeassProbe(rec, httptest.NewRequest(http.MethodGet, "/geass-probe", nil))
+	srv.handleGeassProbe(rec, httptest.NewRequest(http.MethodGet, platform.GeassDashboardProbePath, nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var payload map[string]any

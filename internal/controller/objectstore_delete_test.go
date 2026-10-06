@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -199,10 +200,5 @@ func containsFinalizer(store *geassv1alpha1.GeassObjectStore, name string) bool 
 	if store == nil {
 		return false
 	}
-	for _, item := range store.Finalizers {
-		if item == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(store.Finalizers, name)
 }

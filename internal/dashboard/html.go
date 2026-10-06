@@ -288,7 +288,7 @@ func sameOriginMutation(r *http.Request) bool {
 func requestHosts(r *http.Request) []string {
 	var hosts []string
 	add := func(value string) {
-		for _, part := range strings.Split(value, ",") {
+		for part := range strings.SplitSeq(value, ",") {
 			host := normalizeRequestHost(part)
 			if host == "" {
 				continue
@@ -311,8 +311,8 @@ func requestHosts(r *http.Request) []string {
 	}
 	add(r.Header.Get("X-Forwarded-Host"))
 	if forwarded := strings.TrimSpace(r.Header.Get("Forwarded")); forwarded != "" {
-		for _, element := range strings.Split(forwarded, ",") {
-			for _, field := range strings.Split(element, ";") {
+		for element := range strings.SplitSeq(forwarded, ",") {
+			for field := range strings.SplitSeq(element, ";") {
 				key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
 				if !ok || !strings.EqualFold(key, "host") {
 					continue

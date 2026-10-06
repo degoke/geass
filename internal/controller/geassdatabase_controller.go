@@ -245,7 +245,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 		applyGeassLabels(deploy, db, "GeassDatabase")
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": db.Name}}
-		deploy.Spec.Template.ObjectMeta.Labels = map[string]string{"app.kubernetes.io/name": db.Name, platform.LabelManagedBy: platform.ManagedByValue}
+		deploy.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": db.Name, platform.LabelManagedBy: platform.ManagedByValue}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:      "sqlite",
 			Image:     platform.SQLiteImage,

@@ -119,7 +119,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner := http.NewServeMux()
 	inner.HandleFunc("/api/", s.handleAPI)
 	inner.HandleFunc("/assets/", serveFrontendAsset)
-	inner.HandleFunc("/geass-probe", s.handleGeassProbe)
+	inner.HandleFunc(platform.GeassDashboardProbePath, s.handleGeassProbe)
 	inner.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
 	inner.HandleFunc("/github/callback", s.handleGitHubCallback)
@@ -1343,7 +1343,7 @@ func (s *Server) archiveAppLogSnapshot(ctx context.Context, app *geassv1alpha1.G
 	if err != nil {
 		return ""
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return ""
 	}
@@ -1588,10 +1588,7 @@ func applyAutoscalingFromForm(r *http.Request, app *geassv1alpha1.GeassApp) erro
 				return fmt.Errorf("target CPU must be between 1 and 100")
 			}
 		}
-		min := int(replicas)
-		if min < 1 {
-			min = 1
-		}
+		min := max(int(replicas), 1)
 		if value := strings.TrimSpace(r.FormValue("minReplicas")); value != "" {
 			if _, err := fmt.Sscanf(value, "%d", &min); err != nil || min < 1 || min > maxReplicas {
 				return fmt.Errorf("minimum replicas must be between 1 and maximum replicas")

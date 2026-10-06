@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	ConditionDashboardDomainReady = "DashboardDomainReady"
 	DashboardSubdomainLabel       = "geass"
 	DashboardIngressName          = "geass-dashboard"
+	GeassDashboardProbePath       = "/geass-probe"
 	RequeueAfterDomainVerify      = 5 * time.Second
 )
 
@@ -133,8 +135,8 @@ func RootDomainFromConfig(config geassv1alpha1.GeassPlatformConfig) string {
 		return strings.ToLower(root)
 	}
 	host := DashboardHostFromURL(config.Spec.DashboardURL)
-	if strings.HasPrefix(host, DashboardSubdomainLabel+".") {
-		return strings.TrimPrefix(host, DashboardSubdomainLabel+".")
+	if after, ok := strings.CutPrefix(host, DashboardSubdomainLabel+"."); ok {
+		return after
 	}
 	return ""
 }
@@ -215,10 +217,8 @@ func VerifyHostResolvesToIP(ctx context.Context, host, expectedIP string) (bool,
 	if err != nil || len(ips) == 0 {
 		return false, "DNS not detected yet"
 	}
-	for _, ip := range ips {
-		if ip == expectedIP {
-			return true, ""
-		}
+	if slices.Contains(ips, expectedIP) {
+		return true, ""
 	}
 	return false, "DNS not detected yet"
 }
@@ -244,7 +244,7 @@ func ProbeDashboardURL(ctx context.Context, httpClient *http.Client, dashboardUR
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(dashboardURL, "/")+"/geass-probe", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(dashboardURL, "/")+GeassDashboardProbePath, nil)
 	if err != nil {
 		return false
 	}
@@ -252,7 +252,7 @@ func ProbeDashboardURL(ctx context.Context, httpClient *http.Client, dashboardUR
 	if err != nil {
 		return false
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 	return response.StatusCode == http.StatusOK && strings.Contains(string(body), `"ok":true`)
 }

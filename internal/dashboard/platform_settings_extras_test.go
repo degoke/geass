@@ -68,7 +68,7 @@ func TestPlatformGitHubClearRequiresConfirm(t *testing.T) {
 
 func TestVerifyDashboardURLUsesProbe(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/geass-probe" {
+		if r.URL.Path == platform.GeassDashboardProbePath {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}
@@ -83,7 +83,7 @@ func TestVerifyDashboardURLUsesProbe(t *testing.T) {
 
 func TestVerifyDashboardURLWarnsWhenOnlyInternalProbeWorks(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/geass-probe" {
+		if r.URL.Path == platform.GeassDashboardProbePath {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}

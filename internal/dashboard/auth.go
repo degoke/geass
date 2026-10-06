@@ -121,7 +121,7 @@ func dashboardSensitiveRead(path string) bool {
 func dashboardPublicPath(r *http.Request) bool {
 	path := r.URL.Path
 	switch {
-	case path == "/geass-probe", path == "/webhooks/github":
+	case path == platform.GeassDashboardProbePath, path == "/webhooks/github":
 		return true
 	case path == "/api/login", path == "/api/logout", path == "/api/session":
 		return true
@@ -562,7 +562,7 @@ func parseDashboardUsersEnv(value string) []dashboardUser {
 		return filterDashboardUsers(users, false)
 	}
 	var users []dashboardUser
-	for _, part := range strings.Split(value, ",") {
+	for part := range strings.SplitSeq(value, ",") {
 		fields := strings.SplitN(strings.TrimSpace(part), ":", 3)
 		if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
 			continue
@@ -847,7 +847,7 @@ func (s *Server) loadLoginLockout(r *http.Request, username string) (loginAttemp
 
 func (s *Server) persistLoginLockout(r *http.Request, username string, attempt loginAttempt) error {
 	var lastErr error
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		secret := &corev1.Secret{}
 		err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 		if apierrors.IsNotFound(err) {

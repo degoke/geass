@@ -248,7 +248,7 @@ func (r *GeassBuildReconciler) archiveBuildLog(ctx context.Context, build *geass
 	if err != nil {
 		return ""
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return ""
 	}
@@ -382,7 +382,7 @@ func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, 
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err

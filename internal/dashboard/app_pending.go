@@ -36,7 +36,7 @@ func appPendingKinds(app *geassv1alpha1.GeassApp) []string {
 		raw = app.Annotations[platform.AppPendingChangesAnnotation]
 	}
 	var kinds []string
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		part = strings.TrimSpace(part)
 		if part != "" && !slices.Contains(kinds, part) {
 			kinds = append(kinds, part)
@@ -71,7 +71,7 @@ func markAppPendingChange(app *geassv1alpha1.GeassApp, kind string) {
 	}
 	kinds := []string{}
 	if raw := app.Annotations[platform.AppPendingChangesAnnotation]; raw != "" {
-		for _, part := range strings.Split(raw, ",") {
+		for part := range strings.SplitSeq(raw, ",") {
 			part = strings.TrimSpace(part)
 			if part != "" {
 				kinds = append(kinds, part)

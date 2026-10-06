@@ -76,7 +76,7 @@ func (c *PlanetScaleClient) do(method, path string, body any, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err

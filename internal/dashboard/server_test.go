@@ -1523,7 +1523,7 @@ func TestHandleAppRoutesEditDoesNotFallThroughToNotFound(t *testing.T) {
 }
 
 func TestHandleClusterOverviewListsClustersInAnyNamespace(t *testing.T) {
-	var cluster geassv1alpha1.GeassCluster = geassv1alpha1.GeassCluster{
+	var cluster = geassv1alpha1.GeassCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: testClusterName},
 		Spec: geassv1alpha1.GeassClusterSpec{
 			Version:   "v1",

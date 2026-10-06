@@ -63,12 +63,12 @@ func TestObjectStoreReconcileRejectsForeignCloudConnection(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace, Finalizers: []string{objectStoreFinalizer}},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
 			Project:       "payments",
-			Environment:     geassv1alpha1.EnvironmentDev,
-			Engine:          geassv1alpha1.ObjectStoreEngineS3,
-			Placement:       geassv1alpha1.ObjectStorePlacementExternal,
-			ConnectionRef:   &corev1.LocalObjectReference{Name: "billing-aws"},
-			Buckets:         []string{"uploads"},
-			CreateBucket:    true,
+			Environment:   geassv1alpha1.EnvironmentDev,
+			Engine:        geassv1alpha1.ObjectStoreEngineS3,
+			Placement:     geassv1alpha1.ObjectStorePlacementExternal,
+			ConnectionRef: &corev1.LocalObjectReference{Name: "billing-aws"},
+			Buckets:       []string{"uploads"},
+			CreateBucket:  true,
 		},
 	}
 	project, cluster := readyProjectCluster("payments", "dev")

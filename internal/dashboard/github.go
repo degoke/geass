@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -124,8 +124,8 @@ func mapGitHubRepositories(repos []githubapp.Repository) []githubRepository {
 			HTMLURL:       repo.HTMLURL,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].FullName) < strings.ToLower(out[j].FullName)
+	slices.SortFunc(out, func(a, b githubRepository) int {
+		return strings.Compare(strings.ToLower(a.FullName), strings.ToLower(b.FullName))
 	})
 	return out
 }
@@ -148,7 +148,7 @@ func (s *Server) projectDeployedRepositories(ctx context.Context, project string
 		seen[repo] = true
 		repositories = append(repositories, repo)
 	}
-	sort.Strings(repositories)
+	slices.Sort(repositories)
 	return repositories
 }
 
@@ -424,8 +424,8 @@ func (s *Server) listGitHubRepositoriesLegacy(ctx context.Context, token string)
 		}
 		page++
 	}
-	sort.Slice(repositories, func(i, j int) bool {
-		return strings.ToLower(repositories[i].FullName) < strings.ToLower(repositories[j].FullName)
+	slices.SortFunc(repositories, func(a, b githubRepository) int {
+		return strings.Compare(strings.ToLower(a.FullName), strings.ToLower(b.FullName))
 	})
 	return repositories, nil
 }
@@ -445,7 +445,7 @@ func (s *Server) githubAPIRequestLegacy(ctx context.Context, token, path string)
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err

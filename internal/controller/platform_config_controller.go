@@ -58,7 +58,7 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 // setDashboardDomainReady writes only the DashboardDomainReady condition.
 func (r *GeassPlatformConfigReconciler) setDashboardDomainReady(ctx context.Context, key client.ObjectKey, result platform.DashboardDomainReconcileResult) error {
 	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		latest := &geassv1alpha1.GeassPlatformConfig{}
 		if err := r.Get(ctx, key, latest); err != nil {
 			return client.IgnoreNotFound(err)

@@ -28,7 +28,7 @@ func TestIngressDashboardDomainRequiresCloudflareZoneWhenAmbiguous(t *testing.T)
 		Spec: geassv1alpha1.GeassPlatformConfigSpec{
 			RootDomain:              "c.com",
 			DashboardURL:            "https://geass.c.com",
-			DashboardExposure:         geassv1alpha1.DashboardExposureIngress,
+			DashboardExposure:       geassv1alpha1.DashboardExposureIngress,
 			CloudflareConnectionRef: &corev1.LocalObjectReference{Name: platform.PlatformCloudflareSecretName},
 		},
 	}

@@ -212,8 +212,8 @@ func forwardedProto(r *http.Request) string {
 	if forwarded == "" {
 		return ""
 	}
-	for _, element := range strings.Split(forwarded, ",") {
-		for _, field := range strings.Split(element, ";") {
+	for element := range strings.SplitSeq(forwarded, ",") {
+		for field := range strings.SplitSeq(element, ";") {
 			key, value, ok := strings.Cut(strings.TrimSpace(field), "=")
 			if !ok || !strings.EqualFold(key, "proto") {
 				continue

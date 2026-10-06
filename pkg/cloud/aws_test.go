@@ -159,8 +159,8 @@ func TestDeleteBucketRemovesObjectsThenBucket(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method)
 		paths = append(paths, r.URL.Path)
-		switch {
-		case r.Method == http.MethodGet:
+		switch r.Method {
+		case http.MethodGet:
 			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>logo.png</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
 		default:
 			w.WriteHeader(http.StatusOK)
@@ -394,7 +394,7 @@ func TestDeleteBucketFailsWhenListingExceedsPageCap(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
 			page++
-			_, _ = w.Write([]byte(fmt.Sprintf(`<ListBucketResult><Contents><Key>a-%d</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page-%d</NextContinuationToken></ListBucketResult>`, page, page+1)))
+			_, _ = fmt.Fprintf(w, `<ListBucketResult><Contents><Key>a-%d</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page-%d</NextContinuationToken></ListBucketResult>`, page, page+1)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

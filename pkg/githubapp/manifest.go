@@ -133,7 +133,7 @@ func ConvertManifestCode(ctx context.Context, httpClient *http.Client, code stri
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := readHTTPBody(response.Body, manifestResponseLimit)
 	if err != nil {
 		return nil, err

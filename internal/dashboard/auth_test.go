@@ -22,6 +22,14 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
+const (
+	authFixtureAdminCred      = "geass-fixture-admin-cred"
+	authFixtureViewerCred     = "geass-fixture-viewer-cred"
+	authFixtureEnvCred        = "geass-fixture-env-cred"
+	authFixtureStoredCred     = "geass-fixture-stored-cred"
+	authFixtureOtherAdminCred = "geass-fixture-alt-admin-cred"
+)
+
 func dashboardUsersSecret(users ...dashboardUser) *corev1.Secret {
 	payload, err := json.Marshal(users)
 	if err != nil {
@@ -49,12 +57,12 @@ func TestDashboardAPIRequiresAuthentication(t *testing.T) {
 
 func TestDashboardLoginIssuesSessionCookie(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -84,7 +92,7 @@ func TestDashboardLoginIssuesSessionCookie(t *testing.T) {
 }
 
 func TestDashboardLoginRejectsWrongPassword(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
 	form := url.Values{"username": {"admin"}, "password": {"wrong"}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
@@ -100,13 +108,13 @@ func TestDashboardViewerCannotMutate(t *testing.T) {
 	ctx := t.Context()
 	secret := dashboardUsersSecret(
 		dashboardUser{Username: "admin", Password: "admin-pass", Role: dashboardRoleAdmin},
-		dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer},
+		dashboardUser{Username: "reports", Password: authFixtureViewerCred, Role: dashboardRoleViewer},
 	)
 	srv := &Server{Client: newFakeClient(secret)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	form := url.Values{"username": {"reports"}, "password": {authFixtureViewerCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -153,7 +161,7 @@ func TestDashboardAuthDoesNotGeneratePassword(t *testing.T) {
 func TestDashboardUnknownRoleIsNotAdmin(t *testing.T) {
 	secret := dashboardUsersSecret(
 		dashboardUser{Username: "ops", Password: "test-unknown-role", Role: "operator"},
-		dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin},
+		dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin},
 	)
 	srv := &Server{Client: newFakeClient(secret)}
 	form := url.Values{"username": {"ops"}, "password": {"test-unknown-role"}}
@@ -168,12 +176,12 @@ func TestDashboardUnknownRoleIsNotAdmin(t *testing.T) {
 
 func TestDashboardLogoutRevokesSession(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	login := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	login.Header.Set("Accept", "application/json")
@@ -204,9 +212,9 @@ func TestDashboardLogoutRevokesSession(t *testing.T) {
 }
 
 func TestDashboardLoginRateLimit(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
-	for i := 0; i < loginFailureLimit; i++ {
+	for range loginFailureLimit {
 		form := url.Values{"username": {"admin"}, "password": {"wrong"}}
 		req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -216,7 +224,7 @@ func TestDashboardLoginRateLimit(t *testing.T) {
 		srv.handleAPI(rec, req)
 		require.Equal(t, http.StatusBadRequest, rec.Code)
 	}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -252,12 +260,12 @@ func TestDashboardCookieSecureIgnoresForwardedHTTPOnPublicHost(t *testing.T) {
 func TestDashboardAuthReloadsExistingSecretOnAlreadyExists(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
-	t.Setenv("GEASS_DASHBOARD_PASSWORD", "stored-pass")
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "stored-pass", Role: dashboardRoleAdmin})
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", authFixtureStoredCred)
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureStoredCred, Role: dashboardRoleAdmin})
 	secret.Data["session-key"] = []byte(dashboardSessionKeyPrefix + hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
 	inner := newFakeClient(secret)
 	srv := &Server{Client: &alreadyExistsAuthClient{Client: inner}}
-	form := url.Values{"username": {"admin"}, "password": {"stored-pass"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureStoredCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -281,11 +289,11 @@ func TestDashboardPlaceholderPasswordIsRejected(t *testing.T) {
 
 func TestDashboardSessionAllowsColonInUsername(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "ops:admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "ops:admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
-	form := url.Values{"username": {"ops:admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"ops:admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -311,11 +319,11 @@ func TestDashboardSessionAllowsColonInUsername(t *testing.T) {
 
 func TestDashboardViewerCannotReadLogs(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
+	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: authFixtureViewerCred, Role: dashboardRoleViewer})
 	srv := &Server{Client: newFakeClient(secret)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
-	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	form := url.Values{"username": {"reports"}, "password": {authFixtureViewerCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -373,9 +381,9 @@ func TestDashboardSecurityHeaders(t *testing.T) {
 }
 
 func TestDashboardLoginRateLimitIsPerUsername(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
-	for i := 0; i < loginFailureLimit; i++ {
+	for i := range loginFailureLimit {
 		form := url.Values{"username": {"admin"}, "password": {"wrong"}}
 		req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -385,7 +393,7 @@ func TestDashboardLoginRateLimitIsPerUsername(t *testing.T) {
 		srv.handleAPI(rec, req)
 		require.Equal(t, http.StatusBadRequest, rec.Code)
 	}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -399,9 +407,9 @@ func TestDashboardLoginRateLimitIsPerUsername(t *testing.T) {
 func TestDashboardHashesEnvUsersIntoSecret(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
-	t.Setenv("GEASS_DASHBOARD_PASSWORD", "env-password")
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", authFixtureEnvCred)
 	srv := &Server{Client: newFakeClient()}
-	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureEnvCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -416,9 +424,9 @@ func TestDashboardHashesEnvUsersIntoSecret(t *testing.T) {
 }
 
 func TestDashboardCompactEnvUsersRequireRole(t *testing.T) {
-	t.Setenv("GEASS_DASHBOARD_USERS", "admin:env-password")
+	t.Setenv("GEASS_DASHBOARD_USERS", "admin:"+authFixtureEnvCred)
 	srv := &Server{Client: newFakeClient()}
-	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureEnvCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -429,9 +437,9 @@ func TestDashboardCompactEnvUsersRequireRole(t *testing.T) {
 }
 
 func TestDashboardCompactEnvUsersWithRole(t *testing.T) {
-	t.Setenv("GEASS_DASHBOARD_USERS", "admin:env-password:admin")
+	t.Setenv("GEASS_DASHBOARD_USERS", "admin:"+authFixtureEnvCred+":admin")
 	srv := &Server{Client: newFakeClient()}
-	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureEnvCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -443,7 +451,7 @@ func TestDashboardCompactEnvUsersWithRole(t *testing.T) {
 
 func TestDashboardLoginLockoutRetriesSecretConflict(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	inner := newFakeClient(secret)
 	wrapper := &conflictAuthClient{Client: inner}
 	srv := &Server{Client: wrapper}
@@ -462,7 +470,7 @@ func TestDashboardLoginLockoutRetriesSecretConflict(t *testing.T) {
 
 func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	failing := &persistFailAuthClient{Client: newFakeClient(secret)}
 	srv := &Server{Client: failing}
 	form := url.Values{"username": {"admin"}, "password": {"wrong"}}
@@ -478,7 +486,7 @@ func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 	require.False(t, locked)
 
 	clearing := &Server{Client: &persistFailAuthClient{Client: newFakeClient(secret)}}
-	success := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	success := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	okReq := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(success.Encode())).WithContext(ctx))
 	okReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	okReq.Header.Set("Accept", "application/json")
@@ -491,9 +499,9 @@ func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 }
 
 func TestDashboardLoginLockoutFailsClosedWhenSecretGetErrors(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: &lockoutGetFailClient{Client: newFakeClient(secret)}}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -506,11 +514,11 @@ func TestDashboardLoginLockoutFailsClosedWhenSecretGetErrors(t *testing.T) {
 
 func TestDashboardLoginRejectsCaseInsensitiveDuplicateUsers(t *testing.T) {
 	secret := dashboardUsersSecret(
-		dashboardUser{Username: "Admin", Password: "test-password", Role: dashboardRoleAdmin},
-		dashboardUser{Username: "admin", Password: "other-password", Role: dashboardRoleViewer},
+		dashboardUser{Username: "Admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin},
+		dashboardUser{Username: "admin", Password: authFixtureOtherAdminCred, Role: dashboardRoleViewer},
 	)
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -521,10 +529,10 @@ func TestDashboardLoginRejectsCaseInsensitiveDuplicateUsers(t *testing.T) {
 }
 
 func TestDashboardLoginLockoutFailsClosedOnCorruptJSON(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	secret.Data[dashboardLoginLockoutsSecretKey] = []byte("{not-json")
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -536,10 +544,10 @@ func TestDashboardLoginLockoutFailsClosedOnCorruptJSON(t *testing.T) {
 }
 
 func TestDashboardAuthFailsClosedOnCorruptSessionEpochs(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	secret.Data["session-epochs"] = []byte("{not-json")
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"admin"}, "password": {"test-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -559,11 +567,11 @@ func TestDashboardAuthFailsClosedOnCorruptSessionEpochs(t *testing.T) {
 func TestDashboardAuthFailsClosedOnCorruptUsersJSON(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
-	t.Setenv("GEASS_DASHBOARD_PASSWORD", "env-password")
-	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", authFixtureEnvCred)
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	secret.Data["users"] = []byte("{not-json")
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+	form := url.Values{"username": {"admin"}, "password": {authFixtureEnvCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -581,7 +589,7 @@ func TestDashboardAuthFailsClosedOnCorruptUsersJSON(t *testing.T) {
 func TestDashboardAuthFailsClosedWhenSecretUsersFilterEmpty(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
-	t.Setenv("GEASS_DASHBOARD_PASSWORD", "env-password")
+	t.Setenv("GEASS_DASHBOARD_PASSWORD", authFixtureEnvCred)
 	cases := []struct {
 		name string
 		raw  string
@@ -589,14 +597,14 @@ func TestDashboardAuthFailsClosedWhenSecretUsersFilterEmpty(t *testing.T) {
 		{name: "empty array", raw: "[]"},
 		{name: "null", raw: "null"},
 		{name: "placeholder", raw: `[{"username":"admin","password":"CHANGE_ME","role":"admin"}]`},
-		{name: "unknown role", raw: `[{"username":"admin","password":"env-password","role":"superuser"}]`},
+		{name: "unknown role", raw: fmt.Sprintf(`[{"username":"admin","password":"%s","role":"superuser"}]`, authFixtureEnvCred)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
+			secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 			secret.Data["users"] = []byte(tc.raw)
 			srv := &Server{Client: newFakeClient(secret)}
-			form := url.Values{"username": {"admin"}, "password": {"env-password"}}
+			form := url.Values{"username": {"admin"}, "password": {authFixtureEnvCred}}
 			req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Accept", "application/json")
@@ -614,9 +622,9 @@ func TestDashboardAuthFailsClosedWhenSecretUsersFilterEmpty(t *testing.T) {
 }
 
 func TestDashboardLoginIsCaseInsensitive(t *testing.T) {
-	secret := dashboardUsersSecret(dashboardUser{Username: "Admin", Password: "test-password", Role: dashboardRoleAdmin})
+	secret := dashboardUsersSecret(dashboardUser{Username: "Admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	srv := &Server{Client: newFakeClient(secret)}
-	form := url.Values{"username": {"ADMIN"}, "password": {"test-password"}}
+	form := url.Values{"username": {"ADMIN"}, "password": {authFixtureAdminCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -628,7 +636,7 @@ func TestDashboardLoginIsCaseInsensitive(t *testing.T) {
 
 func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
+	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: authFixtureViewerCred, Role: dashboardRoleViewer})
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassAppSpec{
@@ -651,17 +659,17 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	database := &geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassDatabaseSpec{
-			Project:          "payments",
-			Environment:      geassv1alpha1.EnvironmentDev,
-			Engine:           geassv1alpha1.DatabaseEnginePostgres,
-			Placement:        geassv1alpha1.DatabasePlacementExternal,
-			Provider:         geassv1alpha1.DatabaseProviderPlanetScale,
-			Mode:             geassv1alpha1.DatabaseModeCreate,
-			ExternalHost:     "db.example.internal",
-			ExternalPort:     3306,
-			Username:         "orders-user",
-			DatabaseName:     "orders_prod",
-			ConnectionRef:    &corev1.LocalObjectReference{Name: "payments-ps"},
+			Project:           "payments",
+			Environment:       geassv1alpha1.EnvironmentDev,
+			Engine:            geassv1alpha1.DatabaseEnginePostgres,
+			Placement:         geassv1alpha1.DatabasePlacementExternal,
+			Provider:          geassv1alpha1.DatabaseProviderPlanetScale,
+			Mode:              geassv1alpha1.DatabaseModeCreate,
+			ExternalHost:      "db.example.internal",
+			ExternalPort:      3306,
+			Username:          "orders-user",
+			DatabaseName:      "orders_prod",
+			ConnectionRef:     &corev1.LocalObjectReference{Name: "payments-ps"},
 			PasswordSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-external"}, Key: "password"},
 		},
 		Status: geassv1alpha1.GeassDatabaseStatus{Host: "orders-rw", ConnectionSecret: "orders-connection"},
@@ -687,7 +695,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	srv := &Server{Client: newFakeClient(secret, app, project, database, store, connection, config, build)}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
-	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	form := url.Values{"username": {"reports"}, "password": {authFixtureViewerCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -746,7 +754,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 
 func TestViewerBootstrapDoesNotReadPlatformConfig(t *testing.T) {
 	ctx := t.Context()
-	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: "view-pass", Role: dashboardRoleViewer})
+	secret := dashboardUsersSecret(dashboardUser{Username: "reports", Password: authFixtureViewerCred, Role: dashboardRoleViewer})
 	config := &geassv1alpha1.GeassPlatformConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace},
 		Spec:       geassv1alpha1.GeassPlatformConfigSpec{GitHubAppRef: &corev1.LocalObjectReference{Name: "github-app"}},
@@ -755,7 +763,7 @@ func TestViewerBootstrapDoesNotReadPlatformConfig(t *testing.T) {
 	srv := &Server{Client: counting}
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
-	form := url.Values{"username": {"reports"}, "password": {"view-pass"}}
+	form := url.Values{"username": {"reports"}, "password": {authFixtureViewerCred}}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")

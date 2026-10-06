@@ -2,7 +2,7 @@ package platform
 
 import (
 	"encoding/json"
-	"sort"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -60,7 +60,9 @@ func NormalizeCloudflareZoneRecords(zones []CloudflareZoneRecord) []CloudflareZo
 		seen[id] = true
 		out = append(out, CloudflareZoneRecord{ID: id, Name: name})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b CloudflareZoneRecord) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 	return out
 }
 

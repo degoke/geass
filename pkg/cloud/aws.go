@@ -67,7 +67,7 @@ func (c *AWSClient) EnsureBucket(bucket string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err
@@ -199,7 +199,7 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readS3ListBody(resp.Body)
 	if err != nil {
 		return nil, "", err
@@ -291,7 +291,7 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 	if err != nil {
 		return nil, "", "", false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readS3ListBody(resp.Body)
 	if err != nil {
 		return nil, "", "", false, err
@@ -388,7 +388,7 @@ func (c *AWSClient) listMultipartUploads(bucket, keyMarker, uploadMarker string)
 	if err != nil {
 		return nil, "", "", false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readS3ListBody(resp.Body)
 	if err != nil {
 		return nil, "", "", false, err
@@ -432,7 +432,7 @@ func (c *AWSClient) abortMultipartUpload(bucket, key, uploadID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err
@@ -459,7 +459,7 @@ func (c *AWSClient) deleteObject(bucket, key, versionID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err
@@ -482,7 +482,7 @@ func (c *AWSClient) deleteBucketRequest(bucket string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err
@@ -662,7 +662,7 @@ func (c *AWSClient) iamCall(values url.Values) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return nil, err
@@ -729,7 +729,7 @@ func (c *AWSClient) ensurePathStyleBucket(bucket string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
 	if err != nil {
 		return err

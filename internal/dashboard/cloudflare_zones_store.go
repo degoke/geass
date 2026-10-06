@@ -37,8 +37,8 @@ func cloudflareRequestError(err error) string {
 		return "Cloudflare request failed"
 	}
 	msg := strings.TrimSpace(err.Error())
-	if strings.HasPrefix(msg, "cloudflare API:") {
-		return strings.TrimPrefix(msg, "cloudflare API:")
+	if after, ok := strings.CutPrefix(msg, "cloudflare API:"); ok {
+		return after
 	}
 	return cloudflare.TokenValidationMessage(err)
 }

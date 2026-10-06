@@ -99,14 +99,8 @@ func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
 	}
 	snapshot.CPURequestedMillis = requestedCPU
 	snapshot.MemoryRequestedBytes = requestedMem
-	snapshot.CPUAvailableMillis = snapshot.CPUAllocatableMillis - requestedCPU
-	if snapshot.CPUAvailableMillis < 0 {
-		snapshot.CPUAvailableMillis = 0
-	}
-	snapshot.MemoryAvailableBytes = snapshot.MemoryAllocatableBytes - requestedMem
-	if snapshot.MemoryAvailableBytes < 0 {
-		snapshot.MemoryAvailableBytes = 0
-	}
+	snapshot.CPUAvailableMillis = max(snapshot.CPUAllocatableMillis-requestedCPU, 0)
+	snapshot.MemoryAvailableBytes = max(snapshot.MemoryAllocatableBytes-requestedMem, 0)
 	snapshot.CPUAllocatable = platform.FormatCPUMillis(snapshot.CPUAllocatableMillis)
 	snapshot.CPURequested = platform.FormatCPUMillis(snapshot.CPURequestedMillis)
 	snapshot.CPUAvailable = platform.FormatCPUMillis(snapshot.CPUAvailableMillis)

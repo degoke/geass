@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -108,8 +108,8 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 		if err := s.Client.List(ctx, &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil || len(builds.Items) == 0 {
 			continue
 		}
-		sort.SliceStable(builds.Items, func(i, j int) bool {
-			return builds.Items[i].CreationTimestamp.After(builds.Items[j].CreationTimestamp.Time)
+		slices.SortStableFunc(builds.Items, func(a, b geassv1alpha1.GeassBuild) int {
+			return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 		})
 		if err := s.retriggerBuild(ctx, &builds.Items[0]); err != nil {
 			return triggered, err

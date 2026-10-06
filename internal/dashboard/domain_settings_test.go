@@ -43,7 +43,7 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 	ctx := context.Background()
 	config := testPlatformConfig("http://127.0.0.1:1")
 	config.Spec.RootDomain = "example.com"
-	config.ObjectMeta.ResourceVersion = "1"
+	config.ResourceVersion = "1"
 	c := newFakeClient(config)
 	srv := &Server{Client: c}
 
@@ -65,7 +65,7 @@ func TestHandlePlatformDomainVerifyDoesNotWriteStatusWhenProbeFails(t *testing.T
 func TestHandlePlatformDomainVerifyProbesAndUpdatesStatus(t *testing.T) {
 	ctx := context.Background()
 	probe := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/geass-probe" {
+		if r.URL.Path == platform.GeassDashboardProbePath {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}

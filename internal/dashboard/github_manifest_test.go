@@ -37,7 +37,7 @@ func TestHandleGitHubManifestCallbackPersistsCredentials(t *testing.T) {
 
 	config := testPlatformConfig("https://geass.example.com")
 	config.Spec.RootDomain = "example.com"
-	config.ObjectMeta.Generation = 1
+	config.Generation = 1
 	config.Status.Conditions = platform.SetConditionForGeneration(nil, platform.ConditionDashboardDomainReady, metav1.ConditionTrue, "Verified", "ok", 1)
 	c := newFakeClient(config, dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin}))
 	srv := &Server{

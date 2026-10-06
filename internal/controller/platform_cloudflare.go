@@ -257,7 +257,7 @@ func (r *GeassPlatformConfigReconciler) ensureCloudflaredDeployment(ctx context.
 		replicas := int32(1)
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": platform.CloudflaredDeploymentName}}
-		deploy.Spec.Template.ObjectMeta.Labels = map[string]string{"app": platform.CloudflaredDeploymentName}
+		deploy.Spec.Template.Labels = map[string]string{"app": platform.CloudflaredDeploymentName}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:  "cloudflared",
 			Image: cloudflaredImage,
