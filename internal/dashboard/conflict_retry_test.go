@@ -206,7 +206,7 @@ func TestEnvironmentCreateAndArchiveSurviveAControllerWriteConflict(t *testing.T
 	require.Contains(t, rec.Body.String(), `"deleted":2`, "the environment's app and database are reported as deleted")
 	var remaining geassv1alpha1.GeassAppList
 	require.NoError(t, c.List(ctx, &remaining, client.InNamespace(platform.SystemNamespace)))
-	names := []string{}
+	names := make([]string, 0, len(remaining.Items))
 	for _, app := range remaining.Items {
 		names = append(names, app.Name)
 	}

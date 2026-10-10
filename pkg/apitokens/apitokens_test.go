@@ -100,7 +100,7 @@ func TestExpired(t *testing.T) {
 
 func TestTokensAreUnique(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		token, _, err := New(Request{Name: "x", Scope: ScopeWorkspace}, now)
 		require.NoError(t, err)
 		require.False(t, seen[token])

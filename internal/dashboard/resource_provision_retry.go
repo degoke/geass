@@ -101,15 +101,6 @@ func dashboardReconcileRetryFromAPI(in *geassv1alpha1.GeassReconcileRetryStatus)
 	}
 }
 
-func dashboardWriteReconcileRetryToAPI(out *geassv1alpha1.GeassReconcileRetryStatus, state platform.ReconcileRetryState) {
-	if out == nil {
-		return
-	}
-	out.ReconcileFailures = state.Failures
-	out.ReconcileFailureStarted = state.FailureStarted
-	out.ReconcileFailureGeneration = state.FailureGeneration
-}
-
 func writeProvisionRetryStatus(ctx context.Context, c client.Client, obj client.Object, key client.ObjectKey, conditions []metav1.Condition, state platform.ReconcileRetryState) error {
 	latest := obj.DeepCopyObject().(client.Object)
 	if err := c.Get(ctx, key, latest); err != nil {

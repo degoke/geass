@@ -366,13 +366,13 @@ func retryable(status int) bool {
 }
 
 func (d *Dispatcher) pause(ctx context.Context, index int) bool {
-	wait := time.Second
+	delay := time.Second
 	if index < len(d.Backoff) {
-		wait = d.Backoff[index]
+		delay = d.Backoff[index]
 	} else if len(d.Backoff) > 0 {
-		wait = d.Backoff[len(d.Backoff)-1]
+		delay = d.Backoff[len(d.Backoff)-1]
 	}
-	timer := time.NewTimer(wait)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-timer.C:

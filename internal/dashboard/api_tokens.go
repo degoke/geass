@@ -1,13 +1,13 @@
 package dashboard
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -370,7 +370,7 @@ func (s *Server) handleAPITokenServices(w http.ResponseWriter, r *http.Request) 
 			Ready: conditionStatus(db.Status.Conditions, platform.ConditionReady) == string(metav1.ConditionTrue),
 		})
 	}
-	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	slices.SortFunc(services, func(a, b tokenService) int { return cmp.Compare(a.Name, b.Name) })
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "environment": environment, "services": services})
 }
 
@@ -418,11 +418,11 @@ func (s *Server) handleAPITokensList(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, viewOfToken(record, now))
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
-			return items[i].CreatedAt.After(items[j].CreatedAt)
+	slices.SortFunc(items, func(a, b apiTokenView) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return b.CreatedAt.Compare(a.CreatedAt) // newest first
 		}
-		return items[i].ID < items[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

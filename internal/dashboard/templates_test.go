@@ -304,7 +304,7 @@ func TestSavedTemplatesCannotShadowBuiltinsOrBeTampered(t *testing.T) {
 
 	list, err := srv.listTemplates(context.Background())
 	require.NoError(t, err)
-	ids := []string{}
+	ids := make([]string, 0, len(list))
 	for _, template := range list {
 		ids = append(ids, template.ID)
 	}
@@ -326,7 +326,7 @@ func TestViewersCannotBrowseTemplates(t *testing.T) {
 // Display names can be 120 characters, but template resource keys stop at 31.
 func TestSavingAProjectWithLongServiceNamesProducesValidUniqueKeys(t *testing.T) {
 	long := "customer-notification-email-dispatcher-for-the-european-region"
-	objects := []client.Object{}
+	objects := make([]client.Object, 0, 3)
 	for _, name := range []string{"first-service", "second-service", "third-service"} {
 		objects = append(objects, &geassv1alpha1.GeassApp{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Annotations: map[string]string{platform.DisplayNameAnnotation: long}},

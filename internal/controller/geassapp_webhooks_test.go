@@ -30,7 +30,7 @@ func (e *recordingEmitter) Emit(_ string, event webhooks.Event) {
 func (e *recordingEmitter) types() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := []string{}
+	out := make([]string, 0, len(e.events))
 	for _, event := range e.events {
 		out = append(out, event.Type)
 	}

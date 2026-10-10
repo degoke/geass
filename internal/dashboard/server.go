@@ -1759,19 +1759,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			app.Spec.Project = strings.TrimSpace(r.FormValue("project"))
 		}
 	}
-	if app.Spec.Source.Function != nil && formHasValue(r, "functionCode", "functionRuntime") {
-		runtime, code := app.Spec.Source.Function.Runtime, app.Spec.Source.Function.Code
-		if formHasValue(r, "functionRuntime") {
-			runtime = strings.TrimSpace(r.FormValue("functionRuntime"))
-		}
-		if formHasValue(r, "functionCode") {
-			code = r.FormValue("functionCode")
-		}
-		if err := platform.ValidateFunction(runtime, code); err != nil {
-			redirectFormUserError(w, r, fallback, err)
-			return
-		}
-		app.Spec.Source.Function.Runtime, app.Spec.Source.Function.Code = runtime, code
+	if err := applyFunctionSourceForm(r, app.Spec.Source.Function); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	if app.Spec.Source.Git == nil && app.Spec.Source.Function == nil && formHasValue(r, "image") {
 		image := strings.TrimSpace(r.FormValue("image"))
@@ -1966,6 +1956,26 @@ func parseReplicas(value string) (int32, error) {
 		return 0, fmt.Errorf("replicas must be a whole number from 0 to %d", maxAppReplicas)
 	}
 	return int32(parsed), nil
+}
+
+// applyFunctionSourceForm updates a function's runtime and code from the form. Nothing changes when the
+// service is not a function, the form has neither field, or the new source is invalid.
+func applyFunctionSourceForm(r *http.Request, function *geassv1alpha1.GeassAppFunctionSource) error {
+	if function == nil || !formHasValue(r, "functionCode", "functionRuntime") {
+		return nil
+	}
+	runtime, code := function.Runtime, function.Code
+	if formHasValue(r, "functionRuntime") {
+		runtime = strings.TrimSpace(r.FormValue("functionRuntime"))
+	}
+	if formHasValue(r, "functionCode") {
+		code = r.FormValue("functionCode")
+	}
+	if err := platform.ValidateFunction(runtime, code); err != nil {
+		return err
+	}
+	function.Runtime, function.Code = runtime, code
+	return nil
 }
 
 func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name string) {

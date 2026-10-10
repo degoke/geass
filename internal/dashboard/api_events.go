@@ -140,20 +140,20 @@ func (s *Server) watchDashboardResource(ctx context.Context, obj client.Object, 
 		return err
 	}
 	_, err = informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
-		AddFunc: func(raw interface{}) {
+		AddFunc: func(raw any) {
 			s.publishInformerEvent(kind, "add", raw)
 		},
-		UpdateFunc: func(_, raw interface{}) {
+		UpdateFunc: func(_, raw any) {
 			s.publishInformerEvent(kind, "update", raw)
 		},
-		DeleteFunc: func(raw interface{}) {
+		DeleteFunc: func(raw any) {
 			s.publishInformerEvent(kind, "delete", raw)
 		},
 	})
 	return err
 }
 
-func (s *Server) publishInformerEvent(kind, op string, raw interface{}) {
+func (s *Server) publishInformerEvent(kind, op string, raw any) {
 	accessor, err := meta.Accessor(raw)
 	if err != nil {
 		s.notifyDashboardChange(kind, "", op)

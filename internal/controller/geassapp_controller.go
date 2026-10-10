@@ -382,13 +382,13 @@ func (r *GeassAppReconciler) reconcileFunctionCode(ctx context.Context, app *gea
 	if fn == nil {
 		return client.IgnoreNotFound(r.Delete(ctx, cm))
 	}
-	runtime, ok := platform.FunctionRuntimeFor(fn.Runtime)
+	fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime)
 	if !ok {
 		return fmt.Errorf("unsupported function runtime %q", fn.Runtime)
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		applyGeassLabels(cm, app, "GeassApp")
-		cm.Data = map[string]string{runtime.File: fn.Code}
+		cm.Data = map[string]string{fnRuntime.File: fn.Code}
 		return setSameNamespaceOwner(app, cm, r.Scheme)
 	})
 	return err
@@ -547,15 +547,15 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		}
 		var automountToken *bool
 		if fn := app.Spec.Source.Function; fn != nil {
-			if runtime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
+			if fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
 				if len(command) == 0 {
-					command = runtime.Command
+					command = fnRuntime.Command
 				}
 				volumes = append(volumes, corev1.Volume{
 					Name: "function",
 					VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{Name: functionConfigMapName(app)},
-						Items:                []corev1.KeyToPath{{Key: runtime.File, Path: runtime.File}},
+						Items:                []corev1.KeyToPath{{Key: fnRuntime.File, Path: fnRuntime.File}},
 					}},
 				})
 				volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "function", MountPath: platform.FunctionMountPath, ReadOnly: true})
@@ -643,8 +643,8 @@ func appImage(app *geassv1alpha1.GeassApp) string {
 		return app.Spec.Source.Image.Image
 	}
 	if fn := app.Spec.Source.Function; fn != nil {
-		if runtime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
-			return runtime.Image
+		if fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
+			return fnRuntime.Image
 		}
 	}
 	return ""

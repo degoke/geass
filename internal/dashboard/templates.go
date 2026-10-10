@@ -1,16 +1,17 @@
 package dashboard
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 
 const (
 	templateLabel   = "geass.dev/template"
+	templateLabelOn = "true"
 	templateDataKey = "template.json"
 	templatePrefix  = "template-"
 )
@@ -49,7 +51,7 @@ func (s *Server) listTemplates(ctx context.Context) ([]templates.Template, error
 		builtinIDs[template.ID] = true
 	}
 	var configMaps corev1.ConfigMapList
-	if err := s.Client.List(ctx, &configMaps, client.InNamespace(systemNamespace), client.MatchingLabels{templateLabel: "true"}); err != nil {
+	if err := s.Client.List(ctx, &configMaps, client.InNamespace(systemNamespace), client.MatchingLabels{templateLabel: templateLabelOn}); err != nil {
 		return nil, err
 	}
 	saved := make([]templates.Template, 0, len(configMaps.Items))
@@ -68,7 +70,9 @@ func (s *Server) listTemplates(ctx context.Context) ([]templates.Template, error
 		template.Builtin = false
 		saved = append(saved, template)
 	}
-	sort.Slice(saved, func(i, j int) bool { return strings.ToLower(saved[i].Name) < strings.ToLower(saved[j].Name) })
+	slices.SortFunc(saved, func(a, b templates.Template) int {
+		return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
 	return append(list, saved...), nil
 }
 
@@ -83,7 +87,7 @@ func (s *Server) findTemplate(ctx context.Context, id string) (templates.Templat
 		}
 		return templates.Template{}, false, err
 	}
-	if configMap.Labels[templateLabel] != "true" {
+	if configMap.Labels[templateLabel] != templateLabelOn {
 		return templates.Template{}, false, nil
 	}
 	var template templates.Template
@@ -159,7 +163,7 @@ func (s *Server) handleTemplateDelete(w http.ResponseWriter, r *http.Request, id
 	}
 	configMap := &corev1.ConfigMap{}
 	key := client.ObjectKey{Name: templatePrefix + id, Namespace: systemNamespace}
-	if err := s.Client.Get(r.Context(), key, configMap); err != nil || configMap.Labels[templateLabel] != "true" {
+	if err := s.Client.Get(r.Context(), key, configMap); err != nil || configMap.Labels[templateLabel] != templateLabelOn {
 		http.NotFound(w, r)
 		return
 	}
@@ -331,7 +335,7 @@ func (s *Server) exportTemplate(ctx context.Context, projectName, environment, n
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: templatePrefix + template.ID, Namespace: systemNamespace,
-			Labels: map[string]string{templateLabel: "true", platform.LabelManagedBy: platform.ManagedByValue},
+			Labels: map[string]string{templateLabel: templateLabelOn, platform.LabelManagedBy: platform.ManagedByValue},
 		},
 		Data: map[string]string{templateDataKey: string(payload)},
 	}
@@ -361,22 +365,12 @@ func exportVariables(app *geassv1alpha1.GeassApp, secretKeys map[string]string, 
 			add(templates.Variable{Name: env.Name, Value: env.Value})
 		}
 	}
-	names := make([]string, 0, len(app.Spec.ConfigData))
-	for key := range app.Spec.ConfigData {
-		names = append(names, key)
-	}
-	sort.Strings(names)
-	for _, key := range names {
+	for _, key := range slices.Sorted(maps.Keys(app.Spec.ConfigData)) {
 		if value := app.Spec.ConfigData[key]; value != "" {
 			add(templates.Variable{Name: key, Value: value})
 		}
 	}
-	secretNames := make([]string, 0, len(secretKeys))
-	for key := range secretKeys {
-		secretNames = append(secretNames, key)
-	}
-	sort.Strings(secretNames)
-	for _, key := range secretNames {
+	for _, key := range slices.Sorted(maps.Keys(secretKeys)) {
 		add(templates.Variable{Name: key, Generate: templates.GenerateSecretKind})
 	}
 	return variables
@@ -419,8 +413,8 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 		if err == nil {
 			return
 		}
-		for i := len(cleanup) - 1; i >= 0; i-- {
-			_ = s.Client.Delete(context.WithoutCancel(ctx), cleanup[i])
+		for _, object := range slices.Backward(cleanup) {
+			_ = s.Client.Delete(context.WithoutCancel(ctx), object)
 		}
 		created = nil
 	}()
@@ -538,7 +532,7 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 func (s *Server) getProjectAllowingCacheLag(ctx context.Context, name string) (geassv1alpha1.GeassProject, error) {
 	var project geassv1alpha1.GeassProject
 	var err error
-	for attempt := 0; attempt < 10; attempt++ {
+	for range 10 {
 		err = s.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: systemNamespace}, &project)
 		if err == nil || !apierrors.IsNotFound(err) {
 			return project, err
@@ -561,7 +555,7 @@ func displayOr(display, fallback string) string {
 
 // createNamed creates obj under a fresh generated name, labelled with the template's display name.
 func (s *Server) createNamed(ctx context.Context, obj client.Object, display string) error {
-	for attempt := 0; attempt < 8; attempt++ {
+	for range 8 {
 		name, err := platform.GenerateDisplayName()
 		if err != nil {
 			return err

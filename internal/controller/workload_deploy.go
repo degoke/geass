@@ -13,7 +13,7 @@ import (
 const waitingForDeployMessage = "Resource is configured and waiting for deployment"
 
 // ErrAwaitingDeploy means the resource is a draft or has only pending edits.
-var ErrAwaitingDeploy = errors.New(waitingForDeployMessage)
+var ErrAwaitingDeploy = errors.New("resource is configured and waiting for deployment")
 
 func workloadAwaitingDeploy(meta metav1.ObjectMeta, deployEnabled bool) bool {
 	if !platform.UsesDeployWorkflow(meta) {

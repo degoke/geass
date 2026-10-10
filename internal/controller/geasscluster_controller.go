@@ -134,17 +134,6 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 	return allReady, nil
 }
 
-func (r *GeassClusterReconciler) helmChartReady(ctx context.Context, name string) (bool, error) {
-	chart, err := helmchart.Get(ctx, r.Client, name)
-	if apierrors.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return helmchart.IsReady(ctx, r.Client, chart)
-}
-
 func (r *GeassClusterReconciler) addonReady(ctx context.Context, chartName, targetNamespace string) (bool, error) {
 	chart, err := helmchart.Get(ctx, r.Client, chartName)
 	if apierrors.IsNotFound(err) {

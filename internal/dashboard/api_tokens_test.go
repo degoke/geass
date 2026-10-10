@@ -377,7 +377,7 @@ func TestTokenServicesListsOnlyWhatTheTokenCanSee(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
 	require.Equal(t, "production", listed.Environment)
-	var ids []string
+	ids := make([]string, 0, len(listed.Services))
 	for _, service := range listed.Services {
 		ids = append(ids, service.ID)
 	}
@@ -464,7 +464,7 @@ func TestRemovingAnEnvironmentOrProjectRevokesItsProjectTokens(t *testing.T) {
 func TestTokenCountIsCapped(t *testing.T) {
 	f := newTokenFixture(t)
 	require.NoError(t, f.srv.mutateAPITokens(context.Background(), func(records map[string]apitokens.Record) (bool, error) {
-		for i := 0; i < apitokens.MaxTokens; i++ {
+		for i := range apitokens.MaxTokens {
 			id := strings.Repeat("0", 6) + string(rune('a'+i/26)) + string(rune('a'+i%26))
 			records[id] = apitokens.Record{ID: id, Name: id, Scope: apitokens.ScopeWorkspace, Role: apitokens.RoleViewer, Hash: "00"}
 		}

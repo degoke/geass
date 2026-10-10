@@ -1,11 +1,13 @@
 package platform
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 )
 
 // FunctionMountPath is where a function's source file is mounted in its container.
@@ -53,11 +55,8 @@ func FunctionRuntimeFor(id string) (FunctionRuntime, bool) {
 
 // FunctionRuntimes lists the supported runtimes in a stable order.
 func FunctionRuntimes() []FunctionRuntime {
-	out := make([]FunctionRuntime, 0, len(functionRuntimes))
-	for _, runtime := range functionRuntimes {
-		out = append(out, runtime)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	out := slices.Collect(maps.Values(functionRuntimes))
+	slices.SortFunc(out, func(a, b FunctionRuntime) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
 

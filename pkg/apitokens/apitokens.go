@@ -180,7 +180,7 @@ func randomHex(size int) (string, error) {
 
 func isHex(value string) bool {
 	for _, r := range value {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

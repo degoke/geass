@@ -13,32 +13,8 @@ const (
 	pendingChangeVariables = "variables"
 )
 
-var pendingKindOrder = []string{pendingChangeCreated, pendingChangeSettings, pendingChangeVariables}
-
-func appPendingChanges(app *geassv1alpha1.GeassApp) int {
-	count := platform.PendingUpdates(app.Annotations)
-	if count == 0 && !app.Spec.Deploy.Enabled && platform.UsesDeployWorkflow(app.ObjectMeta) {
-		return 1
-	}
-	return count
-}
-
 func appPendingKinds(app *geassv1alpha1.GeassApp) []string {
 	return platform.PendingKinds(app.Annotations, app.Spec.Deploy.Enabled)
-}
-
-func normalizePendingKinds(kinds []string) []string {
-	seen := map[string]bool{}
-	for _, kind := range kinds {
-		seen[kind] = true
-	}
-	out := make([]string, 0, len(pendingKindOrder))
-	for _, kind := range pendingKindOrder {
-		if seen[kind] {
-			out = append(out, kind)
-		}
-	}
-	return out
 }
 
 func markAppPendingChange(app *geassv1alpha1.GeassApp, kind string) {

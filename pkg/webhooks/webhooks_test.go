@@ -275,7 +275,7 @@ func TestEmitSkipsDisabledAndUnsubscribedWebhooks(t *testing.T) {
 
 func TestOnlyTheNewestDeliveriesAreKept(t *testing.T) {
 	d, c := fixture(t)
-	for i := 0; i < MaxDeliveries+5; i++ {
+	for i := range MaxDeliveries + 5 {
 		require.NoError(t, d.record(context.Background(), testProject, geassv1alpha1.GeassWebhookDelivery{
 			WebhookID: hookID, Event: EventTest, DeliveryID: fmt.Sprintf("dlv_%02d", i), Time: metav1.Now(),
 		}))
