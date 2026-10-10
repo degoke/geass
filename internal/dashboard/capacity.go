@@ -67,50 +67,36 @@ func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
 		snapshot.Message = "Could not read cluster pods"
 		return snapshot
 	}
-	requestedCPU, requestedMem := podRequestedResources(pods.Items)
+	capacity := platform.ComputeClusterSnapshot(nodes.Items, pods.Items)
 	for _, node := range nodes.Items {
 		entry := describeCapacityNode(node)
 		snapshot.Nodes = append(snapshot.Nodes, entry)
 		if entry.Ready {
 			snapshot.HealthyNodes++
 		}
-		if !entry.Ready || !entry.Schedulable {
-			continue
-		}
-		cpuQty := node.Status.Allocatable[corev1.ResourceCPU]
-		memQty := node.Status.Allocatable[corev1.ResourceMemory]
-		cpuMillis := platform.QuantityMillis(cpuQty)
-		memBytes := platform.QuantityBytes(memQty)
-		if cpuMillis == 0 && memBytes == 0 {
-			continue
-		}
-		snapshot.SchedulableNodes++
-		snapshot.CPUAllocatableMillis += cpuMillis
-		snapshot.MemoryAllocatableBytes += memBytes
-		if cpuMillis > snapshot.LargestNodeCPUMillis {
-			snapshot.LargestNodeCPUMillis = cpuMillis
-		}
-		if memBytes > snapshot.LargestNodeMemoryBytes {
-			snapshot.LargestNodeMemoryBytes = memBytes
-		}
 		for _, pressure := range entry.Pressure {
 			snapshot.Issues = append(snapshot.Issues, capacityIssue{Severity: "warning", Message: fmt.Sprintf("Node %s reports %s", entry.Name, pressure)})
 		}
 	}
-	snapshot.CPURequestedMillis = requestedCPU
-	snapshot.MemoryRequestedBytes = requestedMem
-	snapshot.CPUAvailableMillis = max(snapshot.CPUAllocatableMillis-requestedCPU, 0)
-	snapshot.MemoryAvailableBytes = max(snapshot.MemoryAllocatableBytes-requestedMem, 0)
+	snapshot.SchedulableNodes = capacity.SchedulableNodes
+	snapshot.CPUAllocatableMillis = capacity.CPUAllocatableMillis
+	snapshot.CPURequestedMillis = capacity.CPURequestedMillis
+	snapshot.CPUAvailableMillis = capacity.CPUAvailableMillis
+	snapshot.MemoryAllocatableBytes = capacity.MemoryAllocatableBytes
+	snapshot.MemoryRequestedBytes = capacity.MemoryRequestedBytes
+	snapshot.MemoryAvailableBytes = capacity.MemoryAvailableBytes
+	snapshot.LargestNodeCPUMillis = capacity.LargestNodeCPUMillis
+	snapshot.LargestNodeMemoryBytes = capacity.LargestNodeMemoryBytes
 	snapshot.CPUAllocatable = platform.FormatCPUMillis(snapshot.CPUAllocatableMillis)
 	snapshot.CPURequested = platform.FormatCPUMillis(snapshot.CPURequestedMillis)
-	snapshot.CPUAvailable = platform.FormatCPUMillis(snapshot.CPUAvailableMillis)
+	snapshot.CPUAvailable = capacity.CPUAvailable
 	snapshot.MemoryAllocatable = platform.FormatMemoryBytes(snapshot.MemoryAllocatableBytes)
 	snapshot.MemoryRequested = platform.FormatMemoryBytes(snapshot.MemoryRequestedBytes)
-	snapshot.MemoryAvailable = platform.FormatMemoryBytes(snapshot.MemoryAvailableBytes)
+	snapshot.MemoryAvailable = capacity.MemoryAvailable
 	if snapshot.SchedulableNodes == 0 {
 		return snapshot
 	}
-	snapshot.Known = true
+	snapshot.Known = capacity.Known
 	snapshot.Message = ""
 	if snapshot.CPUAvailableMillis < 100 {
 		snapshot.Issues = append(snapshot.Issues, capacityIssue{Severity: "danger", Message: "Available CPU is too low for a new service. Scale up the cluster before creating in-cluster resources"})
@@ -158,51 +144,16 @@ func quantityString(q resource.Quantity) string {
 	return q.String()
 }
 
-func podRequestedResources(pods []corev1.Pod) (cpuMillis, memoryBytes int64) {
-	for _, pod := range pods {
-		if !pod.DeletionTimestamp.IsZero() || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-			continue
-		}
-		cpuMillis += containerRequestedCPU(pod.Spec.InitContainers) + containerRequestedCPU(pod.Spec.Containers)
-		memoryBytes += containerRequestedMemory(pod.Spec.InitContainers) + containerRequestedMemory(pod.Spec.Containers)
-		if pod.Spec.Overhead != nil {
-			cpuMillis += platform.QuantityMillis(pod.Spec.Overhead[corev1.ResourceCPU])
-			memoryBytes += platform.QuantityBytes(pod.Spec.Overhead[corev1.ResourceMemory])
-		}
-	}
-	return cpuMillis, memoryBytes
-}
-
-func containerRequestedCPU(containers []corev1.Container) int64 {
-	var total int64
-	for _, container := range containers {
-		total += platform.QuantityMillis(container.Resources.Requests[corev1.ResourceCPU])
-	}
-	return total
-}
-
-func containerRequestedMemory(containers []corev1.Container) int64 {
-	var total int64
-	for _, container := range containers {
-		total += platform.QuantityBytes(container.Resources.Requests[corev1.ResourceMemory])
-	}
-	return total
-}
-
 func (c clusterCapacity) Fits(est platform.WorkloadEstimate) (bool, string) {
-	if est.CPUMillis == 0 && est.MemoryBytes == 0 {
-		return true, ""
-	}
-	if !c.Known {
-		return false, platform.UnknownCapacityMessage(est)
-	}
-	if est.PerCPUMillis > c.LargestNodeCPUMillis || est.PerMemBytes > c.LargestNodeMemoryBytes {
-		return false, platform.NodeTooSmallMessage(est)
-	}
-	if est.CPUMillis > c.CPUAvailableMillis || est.MemoryBytes > c.MemoryAvailableBytes {
-		return false, platform.InsufficientCapacityMessage(est, c.CPUAvailable, c.MemoryAvailable)
-	}
-	return true, ""
+	return platform.ClusterSnapshot{
+		Known:                  c.Known,
+		CPUAvailableMillis:     c.CPUAvailableMillis,
+		MemoryAvailableBytes:   c.MemoryAvailableBytes,
+		LargestNodeCPUMillis:   c.LargestNodeCPUMillis,
+		LargestNodeMemoryBytes: c.LargestNodeMemoryBytes,
+		CPUAvailable:           c.CPUAvailable,
+		MemoryAvailable:        c.MemoryAvailable,
+	}.Fits(est)
 }
 
 func (s *Server) rejectIfNoCapacityFor(w http.ResponseWriter, r *http.Request, fallback string, est platform.WorkloadEstimate) bool {

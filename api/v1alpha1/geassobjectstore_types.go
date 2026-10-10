@@ -73,6 +73,14 @@ type GeassObjectStoreSpec struct {
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
 	// +kubebuilder:validation:XValidation:rule="self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))",message="bucket names must not be formatted as an IP address or contain consecutive periods"
 	Buckets []string `json:"buckets,omitempty"`
+
+	// Resources is the CPU and memory assigned to the in-cluster MinIO server.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Deploy gates bucket provisioning until the user deploys from the dashboard.
+	// +optional
+	Deploy GeassDeploySpec `json:"deploy,omitempty"`
 }
 
 // GeassObjectStoreStatus defines the observed state of GeassObjectStore.
@@ -88,6 +96,14 @@ type GeassObjectStoreStatus struct {
 	// Endpoint is the in-cluster S3-compatible endpoint URL.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
+
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+
+	// Provision tracks deploy attempts and errors for this resource.
+	// +optional
+	Provision GeassProvisionStatus `json:"provision,omitempty"`
 
 	// conditions represent the current state of the GeassObjectStore resource.
 	// +listType=map

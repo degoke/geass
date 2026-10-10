@@ -2,6 +2,7 @@ package platform
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,4 +25,15 @@ func TestLastDeployedSpecRoundTrip(t *testing.T) {
 	require.Equal(t, "payments", spec.Project)
 	require.Equal(t, "nginx:alpine", spec.Source.Image.Image)
 	require.Equal(t, int32(8080), spec.Port)
+}
+
+func TestSetLastDeployedSpecStampsANewRevisionEachTime(t *testing.T) {
+	app := &geassv1alpha1.GeassApp{}
+	require.NoError(t, SetLastDeployedSpec(app))
+	first := app.Annotations[AppDeployRevisionAnnotation]
+	require.NotEmpty(t, first)
+
+	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, SetLastDeployedSpec(app))
+	require.NotEqual(t, first, app.Annotations[AppDeployRevisionAnnotation], "an identical spec is still a new deploy")
 }

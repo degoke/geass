@@ -23,18 +23,40 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleDashboardSession(w, r)
 	case r.URL.Path == "/api/bootstrap":
 		s.handleBootstrap(w, r)
+	case r.URL.Path == "/api/token":
+		s.handleAPIToken(w, r)
+	case r.URL.Path == "/api/token/services":
+		s.handleAPITokenServices(w, r)
+	case r.URL.Path == "/api/tokens":
+		s.handleAPITokensList(w, r)
+	case r.URL.Path == "/api/events":
+		s.handleDashboardEvents(w, r)
 	case r.URL.Path == "/api/settings/github":
 		s.handleAPIGitHubSettings(w, r)
 	case r.URL.Path == "/api/settings/cloudflare":
 		s.handleAPICloudflareSettings(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
+	case strings.Contains(r.URL.Path, "/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
+		s.handleAPIDeploymentLogs(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/logs"):
 		s.handleAPIAppLogs(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/runtime"):
 		s.handleAPIAppRuntime(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/variables"):
 		s.handleAPIAppVariables(w, r)
+	case r.URL.Path == "/api/templates":
+		s.handleAPITemplates(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/console/ws"):
+		s.handleAppConsoleWS(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/console/ws"))
+	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/metrics"):
+		s.handleAPIMetrics(w, r, "apps", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/metrics"))
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/metrics"):
+		s.handleAPIMetrics(w, r, "projects", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/metrics"))
+	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/logs"):
+		s.handleAPIClusterObjectStoreLogs(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/runtime"):
+		s.handleAPIClusterObjectStoreRuntime(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/databases/") && strings.HasSuffix(r.URL.Path, "/query"):
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{dashboardLiteralError: "method not allowed"})
 	default:
@@ -220,6 +242,211 @@ func (s *Server) handleAPIAppRuntime(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]string, 0, len(pods.Items))
 	for _, pod := range pods.Items {
 		container := "app"
+		if len(pod.Spec.Containers) > 0 {
+			container = pod.Spec.Containers[0].Name
+		}
+		items = append(items, map[string]string{
+			"name":      pod.Name,
+			"phase":     string(pod.Status.Phase),
+			"container": container,
+		})
+	}
+	payload["pods"] = items
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func clusterObjectStoreAPIResource(path, suffix string) string {
+	name := strings.TrimSuffix(strings.TrimPrefix(path, "/api/object-stores/"), suffix)
+	return strings.Trim(name, "/")
+}
+
+func clusterMinIOPodLabelSelector() string {
+	return "app.kubernetes.io/instance=" + platform.ClusterMinIOChartName
+}
+
+func podBelongsToClusterMinIO(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	if pod.Labels["app.kubernetes.io/instance"] == platform.ClusterMinIOChartName {
+		return true
+	}
+	if pod.Labels["release"] == platform.ClusterMinIOChartName {
+		return true
+	}
+	if pod.Labels["app"] == "minio" && strings.Contains(pod.Name, platform.ClusterMinIOChartName) {
+		return true
+	}
+	if pod.Labels[platform.LabelManagedBy] == platform.ManagedByValue && strings.HasPrefix(pod.Name, platform.ClusterMinIOChartName) {
+		return true
+	}
+	if strings.HasPrefix(pod.Name, platform.ClusterMinIOChartName) {
+		return true
+	}
+	return false
+}
+
+func (s *Server) discoverClusterMinIOPods(ctx context.Context) ([]corev1.Pod, error) {
+	if s.Kube == nil {
+		return nil, fmt.Errorf("kubernetes client is not configured")
+	}
+	seen := map[string]struct{}{}
+	var pods []corev1.Pod
+	add := func(items []corev1.Pod) {
+		for i := range items {
+			pod := items[i]
+			if !podBelongsToClusterMinIO(&pod) {
+				continue
+			}
+			if _, ok := seen[pod.Name]; ok {
+				continue
+			}
+			seen[pod.Name] = struct{}{}
+			pods = append(pods, pod)
+		}
+	}
+	ns := platform.SystemNamespace
+	selectors := []string{
+		clusterMinIOPodLabelSelector(),
+		"release=" + platform.ClusterMinIOChartName,
+		"app.kubernetes.io/name=minio",
+		"app=minio",
+	}
+	for _, selector := range selectors {
+		list, err := s.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			continue
+		}
+		add(list.Items)
+	}
+	if len(pods) == 0 {
+		list, err := s.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, err
+		}
+		add(list.Items)
+	}
+	return pods, nil
+}
+
+func (s *Server) appendClusterMinIOHelmInstallLogs(ctx context.Context, out *strings.Builder) {
+	if s.Kube == nil {
+		return
+	}
+	prefix := "helm-install-" + platform.ClusterMinIOChartName
+	list, err := s.Kube.CoreV1().Pods(platform.HelmChartNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return
+	}
+	for _, pod := range list.Items {
+		if !strings.HasPrefix(pod.Name, prefix) {
+			continue
+		}
+		s.appendPodLogs(ctx, platform.HelmChartNamespace, &pod, out)
+	}
+}
+
+func (s *Server) appendPodLogs(ctx context.Context, namespace string, pod *corev1.Pod, out *strings.Builder) {
+	if pod == nil || s.Kube == nil {
+		return
+	}
+	wrote := false
+	for _, container := range pod.Spec.Containers {
+		result := s.Kube.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: container.Name,
+			TailLines: int64ptr(500),
+		}).Do(ctx)
+		data, readErr := result.Raw()
+		if readErr != nil {
+			continue
+		}
+		if len(data) == 0 {
+			continue
+		}
+		wrote = true
+		out.Write(data)
+		if data[len(data)-1] != '\n' {
+			out.WriteString("\n")
+		}
+	}
+	if !wrote && pod.Status.Phase == corev1.PodPending {
+		out.WriteString("Object storage is still starting.\n")
+	}
+}
+
+func (s *Server) clusterMinIOFromAPI(w http.ResponseWriter, r *http.Request, name string) (*geassv1alpha1.GeassObjectStore, bool) {
+	if name != platform.ClusterMinIOName {
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "object store not found"})
+		return nil, false
+	}
+	store, err := s.clusterMinIO(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load object store"})
+		return nil, false
+	}
+	if store == nil || !isClusterMinIO(store) {
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "cluster object storage is not set up"})
+		return nil, false
+	}
+	return store, true
+}
+
+func (s *Server) handleAPIClusterObjectStoreLogs(w http.ResponseWriter, r *http.Request) {
+	name := clusterObjectStoreAPIResource(r.URL.Path, "/logs")
+	if _, ok := s.clusterMinIOFromAPI(w, r, name); !ok {
+		return
+	}
+	if s.Kube == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"lines": "Logs are unavailable right now. Try again in a moment."})
+		return
+	}
+	pods, err := s.discoverClusterMinIOPods(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load logs"})
+		return
+	}
+	var out strings.Builder
+	for i := range pods {
+		s.appendPodLogs(r.Context(), platform.SystemNamespace, &pods[i], &out)
+	}
+	if out.Len() == 0 {
+		s.appendClusterMinIOHelmInstallLogs(r.Context(), &out)
+	}
+	if out.Len() == 0 {
+		if len(pods) == 0 {
+			out.WriteString("No object storage workloads were found yet. Logs appear after the service starts or during install.")
+		} else {
+			out.WriteString("The service is running but has not written logs recently. Refresh again in a moment.")
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lines": out.String()})
+}
+
+func (s *Server) handleAPIClusterObjectStoreRuntime(w http.ResponseWriter, r *http.Request) {
+	name := clusterObjectStoreAPIResource(r.URL.Path, "/runtime")
+	store, ok := s.clusterMinIOFromAPI(w, r, name)
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"pods":       []map[string]string{},
+		"endpoint":   strings.TrimSpace(store.Status.Endpoint),
+		"consoleURL": fmt.Sprintf("http://%s-console.%s.svc:9001", platform.ClusterMinIOChartName, platform.SystemNamespace),
+		"namespace":  platform.SystemNamespace,
+		"chart":      platform.ClusterMinIOChartName,
+	}
+	if s.Kube == nil {
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	pods, err := s.discoverClusterMinIOPods(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load runtime"})
+		return
+	}
+	items := make([]map[string]string, 0, len(pods))
+	for _, pod := range pods {
+		container := "minio"
 		if len(pod.Spec.Containers) > 0 {
 			container = pod.Spec.Containers[0].Name
 		}

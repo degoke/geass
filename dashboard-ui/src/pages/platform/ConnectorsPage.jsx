@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { CloudCog, GitBranch } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Cloud, CloudCog, Database, GitBranch } from "lucide-react";
+import { list } from "@/lib/api";
 import { Button } from "@/components/geass-ui";
 import { SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 import { GitHubConnectorPanel } from "@/pages/platform/GitHubConnectorPanel";
 import { CloudflareConnectorPanel } from "@/pages/platform/CloudflareConnectorPanel";
+import { CloudConnectionConnectorPanel } from "@/pages/platform/CloudConnectionConnectorPanel";
 
 const STATUS_LABEL = {
   connected: "Connected",
@@ -31,14 +33,24 @@ function ConnectorCard({ icon: Icon, name, description, actionLabel, onConfigure
   );
 }
 
-export function ConnectorsPage({ reload, githubInfo, cloudflareInfo }) {
+function providerConnectionStatus(connections, provider) {
+  const scoped = connections.filter((item) => item.spec?.provider === provider);
+  if (!scoped.length) return "disconnected";
+  if (scoped.every((item) => item.status?.available)) return "connected";
+  return "pending";
+}
+
+export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
   const [active, setActive] = useState(null);
+  const cloudConnections = useMemo(() => list(data, "cloudConnections"), [data]);
   const githubConnected = Boolean(githubInfo?.hasGitHubApp);
   const cloudflareConnected = Boolean(cloudflareInfo?.connected);
   const cloudflareReady = Boolean(cloudflareInfo?.ready);
 
   const cloudflareStatus = !cloudflareConnected ? "disconnected" : cloudflareReady ? "connected" : "pending";
   const githubStatus = githubConnected ? "connected" : "disconnected";
+  const awsStatus = providerConnectionStatus(cloudConnections, "AWS");
+  const planetScaleStatus = providerConnectionStatus(cloudConnections, "PlanetScale");
 
   const cloudflareDescription = !cloudflareConnected
     ? "Connect Cloudflare to run cloudflared in-cluster and manage tunnel routes and DNS."
@@ -49,7 +61,9 @@ export function ConnectorsPage({ reload, githubInfo, cloudflareInfo }) {
   return (
     <>
       <SettingsSection title="Connectors" flat>
-        <p className="rw-rail-body">Connect external services once for the whole workspace.</p>
+        <p className="rw-rail-body">
+          Connect external services for the workspace. Cloud credentials are scoped per Geass project when you add them.
+        </p>
         <div className="rw-settings-connectors-grid">
           <ConnectorCard
             icon={GitBranch}
@@ -70,6 +84,30 @@ export function ConnectorsPage({ reload, githubInfo, cloudflareInfo }) {
             description={cloudflareDescription}
             actionLabel={cloudflareConnected ? "Manage" : "Configure"}
             onConfigure={() => setActive("cloudflare")}
+          />
+          <ConnectorCard
+            icon={Cloud}
+            name="AWS"
+            status={awsStatus}
+            description={
+              awsStatus === "disconnected"
+                ? "Add AWS credentials for S3 buckets and external databases."
+                : "External buckets and databases can use your AWS connections."
+            }
+            actionLabel={awsStatus === "disconnected" ? "Configure" : "Manage"}
+            onConfigure={() => setActive("aws")}
+          />
+          <ConnectorCard
+            icon={Database}
+            name="PlanetScale"
+            status={planetScaleStatus}
+            description={
+              planetScaleStatus === "disconnected"
+                ? "Add PlanetScale credentials for external MySQL databases."
+                : "PlanetScale databases are available in the resource picker."
+            }
+            actionLabel={planetScaleStatus === "disconnected" ? "Configure" : "Manage"}
+            onConfigure={() => setActive("planetscale")}
           />
         </div>
       </SettingsSection>
@@ -96,6 +134,24 @@ export function ConnectorsPage({ reload, githubInfo, cloudflareInfo }) {
         }
       >
         <CloudflareConnectorPanel reload={reload} info={cloudflareInfo || {}} inSheet />
+      </SettingsSheet>
+
+      <SettingsSheet
+        opened={active === "aws"}
+        onClose={() => setActive(null)}
+        title="AWS"
+        description="Store AWS credentials for project-scoped S3 and database connections."
+      >
+        <CloudConnectionConnectorPanel data={data} reload={reload} provider="AWS" inSheet />
+      </SettingsSheet>
+
+      <SettingsSheet
+        opened={active === "planetscale"}
+        onClose={() => setActive(null)}
+        title="PlanetScale"
+        description="Store PlanetScale service tokens for project-scoped external databases."
+      >
+        <CloudConnectionConnectorPanel data={data} reload={reload} provider="PlanetScale" inSheet />
       </SettingsSheet>
     </>
   );

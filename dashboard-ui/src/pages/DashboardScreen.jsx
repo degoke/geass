@@ -2,20 +2,22 @@ import { Button, Center, Loader, Stack, Text, Title } from "@mantine/core";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { list, resourceName } from "@/lib/api";
 import { useBootstrap } from "@/lib/dashboard";
+import { useDashboardLiveSync } from "@/lib/dashboard-events";
 import { AppLayout } from "@/layout/AppLayout";
 import { Empty } from "@/components/geass-ui";
 import { LoginPage } from "@/pages/LoginPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { TemplatesPage } from "@/pages/TemplatesPage";
-import { WorkspacePage } from "@/pages/WorkspacePage";
+import { ProjectWorkspaceShell } from "@/pages/ProjectWorkspaceShell";
 import { ProjectSettingsPage } from "@/pages/ProjectSettingsPage";
 import { ProjectMonitorPage } from "@/pages/ProjectMonitorPage";
-import { ResourceDetailPage } from "@/pages/ResourceDetailPage";
+import { ProjectLogsPage } from "@/pages/ProjectLogsPage";
 import { PlatformSettingsPage } from "@/pages/platform/PlatformSettingsPage";
 import { PlatformSettingsLayout } from "@/layout/PlatformSettingsLayout";
 
 export function DashboardScreen({ mode }) {
   const { data, error, isPending, refetch } = useBootstrap();
+  useDashboardLiveSync(Boolean(data) && !error);
   const navigate = useNavigate();
   const routeState = useRouterState({ select: (state) => ({ location: state.location, params: state.matches.at(-1)?.params || {} }) });
   const search = routeState.location.search || {};
@@ -54,16 +56,34 @@ export function DashboardScreen({ mode }) {
   let environment = search.environment || project?.spec?.environments?.[0] || "";
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   if (mode === "projects") { content = <ProjectsPage data={data} />; }
-  else if (mode === "templates") { content = <TemplatesPage />; }
+  else if (mode === "templates") { content = <TemplatesPage data={data} />; }
   else if (mode === "workspace" && project) {
-    content = <WorkspacePage project={project} data={data} environment={environment} setEnvironment={setEnvironment} />;
-  } else if (mode === "project-monitor" && project) {
-    content = <ProjectMonitorPage project={project} data={data} environment={environment} setEnvironment={setEnvironment} />;
-  } else if (mode === "project-settings" && project) {
-    content = <ProjectSettingsPage project={project} data={data} reload={refetch} environment={environment} setEnvironment={setEnvironment} />;
+    content = (
+      <ProjectWorkspaceShell
+        project={project}
+        data={data}
+        environment={environment}
+        reload={refetch}
+      />
+    );
   } else if (mode.startsWith("resource:") && project) {
     const kind = mode.slice("resource:".length);
-    content = <ResourceDetailPage project={project} data={data} kind={kind} name={params.name} reload={refetch} />;
+    content = (
+      <ProjectWorkspaceShell
+        project={project}
+        data={data}
+        environment={environment}
+        resourceKind={kind}
+        resourceName={params.name}
+        reload={refetch}
+      />
+    );
+  } else if (mode === "project-monitor" && project) {
+    content = <ProjectMonitorPage project={project} data={data} environment={environment} setEnvironment={setEnvironment} />;
+  } else if (mode === "project-logs" && project) {
+    content = <ProjectLogsPage project={project} data={data} environment={environment} />;
+  } else if (mode === "project-settings" && project) {
+    content = <ProjectSettingsPage project={project} data={data} reload={refetch} environment={environment} setEnvironment={setEnvironment} />;
   } else if (mode === "settings" || mode.startsWith("settings:")) {
     const page = mode.split(":")[1] || "general";
     content = (

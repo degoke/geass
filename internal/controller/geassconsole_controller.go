@@ -31,13 +31,17 @@ func (r *GeassConsoleSessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	}
 	latest := session.DeepCopy()
 	if latest.Status.StartedAt == nil {
+		// Spec and status are separate resources: Update would silently drop the status below.
+		if latest.Spec.TimeoutSeconds <= 0 || latest.Spec.TimeoutSeconds > 900 {
+			latest.Spec.TimeoutSeconds = 300
+			if err := r.Update(ctx, latest); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		now := metav1.Now()
 		latest.Status.StartedAt = &now
 		latest.Status.Phase = geassv1alpha1.GeassConsoleActive
-		if latest.Spec.TimeoutSeconds <= 0 || latest.Spec.TimeoutSeconds > 900 {
-			latest.Spec.TimeoutSeconds = 300
-		}
-		if err := r.Update(ctx, latest); err != nil {
+		if err := r.Status().Update(ctx, latest); err != nil {
 			return ctrl.Result{}, err
 		}
 	}

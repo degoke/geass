@@ -16,9 +16,14 @@ export function EnvironmentMenu({ project, environment, onChange }) {
         </button>
       </Menu.Target>
       <Menu.Dropdown>
-        {envs.map((env) => (
-          <Menu.Item key={env} onClick={() => onChange?.(env)}>{env}</Menu.Item>
-        ))}
+        {envs.map((env) => {
+          const pullRequest = (project?.status?.pullRequests || []).find((entry) => entry.environment === env);
+          return (
+            <Menu.Item key={env} onClick={() => onChange?.(env)} rightSection={pullRequest ? <span className="rw-vars-kind">PR #{pullRequest.number}</span> : null}>
+              {env}
+            </Menu.Item>
+          );
+        })}
       </Menu.Dropdown>
     </Menu>
   );

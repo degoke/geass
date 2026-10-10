@@ -99,10 +99,6 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
-.PHONY: test-playwright
-test-playwright: ## Run dashboard browser smoke tests against GEASS_DASHBOARD_URL or localhost.
-	cd test/playwright && npm install && npx playwright install chromium && npm test
-
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
@@ -157,7 +153,7 @@ build: dashboard-build manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run dashboard-backend dashboard-dev
-run: manifests generate fmt vet ## Run the controller and React dashboard from your host.
+run: manifests generate fmt vet install ## Run the controller and React dashboard from your host (refreshes CRDs on the current kube context).
 	$(MAKE) -j2 dashboard-backend dashboard-dev
 
 dashboard-backend: ## Run the Geass backend for the dashboard (API :8085; health :8086).

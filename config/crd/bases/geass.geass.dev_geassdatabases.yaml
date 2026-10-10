@@ -68,6 +68,15 @@ spec:
                 description: DatabaseName overrides the default database name for
                   external or logical-style servers.
                 type: string
+              deploy:
+                description: Deploy gates database provisioning until the user deploys
+                  from the dashboard.
+                properties:
+                  enabled:
+                    description: Enabled is true after the user deploys. False keeps
+                      the resource as an editable draft.
+                    type: boolean
+                type: object
               engine:
                 description: Engine is the database engine to provision.
                 enum:
@@ -303,6 +312,105 @@ spec:
               host:
                 description: Host is the in-cluster database hostname.
                 type: string
+              provision:
+                description: Provision tracks deploy attempts and errors for this
+                  resource.
+                properties:
+                  activeProvisionAttempt:
+                    description: ActiveProvisionAttempt is the ID of the in-progress
+                      attempt, if any.
+                    type: string
+                  provisionAttempts:
+                    description: ProvisionAttempts is recent deploy/provision history
+                      (newest first, capped in controller).
+                    items:
+                      description: GeassProvisionAttempt tracks one deploy/provision
+                        run for a resource.
+                      properties:
+                        buildRef:
+                          description: BuildRef links to a GeassBuild for image build
+                            logs (services with Git source).
+                          type: string
+                        completedAt:
+                          description: CompletedAt is set when the attempt reaches
+                            a terminal phase.
+                          format: date-time
+                          type: string
+                        deploymentRef:
+                          description: DeploymentRef links to a GeassDeployment row
+                            for this deploy (services).
+                          type: string
+                        errors:
+                          description: Errors lists distinct errors seen during this
+                            attempt (newest last).
+                          items:
+                            description: GeassProvisionAttemptError is one user-safe
+                              error recorded during a provision attempt.
+                            properties:
+                              message:
+                                description: Message is product-facing text (no operator
+                                  internals).
+                                maxLength: 500
+                                type: string
+                              recordedAt:
+                                description: RecordedAt is when this error was observed.
+                                format: date-time
+                                type: string
+                            required:
+                            - message
+                            - recordedAt
+                            type: object
+                          maxItems: 12
+                          type: array
+                        id:
+                          description: ID uniquely identifies this attempt within
+                            the resource.
+                          maxLength: 64
+                          type: string
+                        phase:
+                          description: Phase is Running until the attempt succeeds
+                            or fails.
+                          enum:
+                          - Running
+                          - Succeeded
+                          - Failed
+                          type: string
+                        startedAt:
+                          description: StartedAt is when provisioning began.
+                          format: date-time
+                          type: string
+                        summary:
+                          description: Summary is a short user-facing outcome line
+                            when the attempt completes.
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      - startedAt
+                      type: object
+                    maxItems: 8
+                    type: array
+                type: object
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
               targetNamespace:
                 description: TargetNamespace is the namespace workloads were created
                   in.

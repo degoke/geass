@@ -14,6 +14,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/webhooks"
 )
 
 // GeassProjectReconciler creates only the namespaces explicitly enabled by a project.
@@ -35,6 +36,9 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, req.NamespacedName, &project); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if result, paused := beginProvisionReconcileUnlessDeleting(!project.DeletionTimestamp.IsZero(), project.Status.Conditions, project.Generation, &project.Status.ReconcileRetry); paused {
+		return result, nil
+	}
 
 	if !project.DeletionTimestamp.IsZero() {
 		environments := make(map[string]struct{}, len(project.Spec.Environments)+len(project.Status.Environments))
@@ -50,6 +54,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			}
 		}
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: project.Name + "-shared-secrets", Namespace: platform.SystemNamespace}}))
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: webhooks.SecretName(project.Name), Namespace: platform.SystemNamespace}}))
 		controllerutil.RemoveFinalizer(&project, platform.FinalizerProject)
 		return ctrl.Result{}, r.Update(ctx, &project)
 	}
@@ -63,23 +68,23 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	var cluster geassv1alpha1.GeassCluster
 	if err := r.Get(ctx, client.ObjectKey{Name: project.Spec.ClusterRef.Name, Namespace: platform.SystemNamespace}, &cluster); err != nil {
-		return r.setProjectNotReady(ctx, &project, "ClusterNotFound", "Referenced GeassCluster is not available")
+		return r.setProjectNotReady(ctx, &project, "Referenced GeassCluster is not available")
 	}
 	if conditionStatus(cluster.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
-		return r.setProjectNotReady(ctx, &project, "ClusterNotReady", "Referenced GeassCluster is not ready")
+		return r.setProjectNotReady(ctx, &project, "Referenced GeassCluster is not ready")
 	}
 	if project.Status.ClusterRef != "" && project.Status.ClusterRef != cluster.Name {
-		return r.setProjectNotReady(ctx, &project, "ClusterRefImmutable", "Changing a project's clusterRef is not supported")
+		return r.setProjectNotReady(ctx, &project, "Changing a project's clusterRef is not supported")
 	}
 
 	desired := make(map[string]string, len(project.Spec.Environments))
 	for _, env := range project.Spec.Environments {
 		if _, exists := desired[env]; exists {
-			return r.setProjectNotReady(ctx, &project, "DuplicateEnvironment", "Project environments must be unique")
+			return r.setProjectNotReady(ctx, &project, "Project environments must be unique")
 		}
 		namespace, err := platform.ProjectNamespace(project.Name, env)
 		if err != nil {
-			return r.setProjectNotReady(ctx, &project, "InvalidEnvironment", err.Error())
+			return r.setProjectNotReady(ctx, &project, err.Error())
 		}
 		desired[env] = namespace
 		if err := ensureNamespace(ctx, r.Client, namespace, map[string]string{
@@ -114,6 +119,9 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	for _, env := range project.Spec.Environments {
 		latest.Status.Environments = append(latest.Status.Environments, geassv1alpha1.GeassProjectEnvironmentStatus{Name: env, Namespace: desired[env]})
 	}
+	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+	platform.ClearReconcileRetry(&retryState)
+	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
 	return ctrl.Result{}, r.Status().Update(ctx, latest)
 }
@@ -167,13 +175,17 @@ func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, p
 	return nil
 }
 
-func (r *GeassProjectReconciler) setProjectNotReady(ctx context.Context, project *geassv1alpha1.GeassProject, reason, message string) (ctrl.Result, error) {
+func (r *GeassProjectReconciler) setProjectNotReady(ctx context.Context, project *geassv1alpha1.GeassProject, message string) (ctrl.Result, error) {
 	latest := project.DeepCopy()
 	if err := r.Get(ctx, client.ObjectKeyFromObject(project), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, reason, message)
-	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, r.Status().Update(ctx, latest)
+	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, nil, latest.Generation, message)
+	latest.Status.Conditions = conditions
+	if err := r.Status().Update(ctx, latest); err != nil {
+		return ctrl.Result{}, err
+	}
+	return result, nil
 }
 
 func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Box, Database, GitBranch, HardDrive, Maximize2, Plus, ZoomIn, ZoomOut } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Box, Database, GitBranch, HardDrive, Maximize2, Plus, SquareFunction, ZoomIn, ZoomOut } from "lucide-react";
 import { Status } from "@/components/Status";
 import { Button } from "@/components/geass-ui";
 
@@ -68,25 +68,40 @@ function layoutNodes(rows) {
   return nodes;
 }
 
+/** Only draw edges for explicit resource references (no decorative hub links). */
 function buildEdges(nodes) {
-  const apps = nodes.filter((node) => node.kind === "Service");
-  const hub = apps[0];
-  if (!hub) return [];
-  return nodes
-    .filter((node) => node.key !== hub.key)
-    .map((node) => ({ from: hub, to: node }));
+  const byResourceName = new Map();
+  for (const node of nodes) {
+    if (node.resourceName) {
+      byResourceName.set(node.resourceName, node);
+    }
+  }
+  const edges = [];
+  const seen = new Set();
+  for (const from of nodes) {
+    for (const targetName of from.linkTo || []) {
+      const to = byResourceName.get(String(targetName).trim());
+      if (!to || to.key === from.key) continue;
+      const edgeKey = `${from.key}->${to.key}`;
+      if (seen.has(edgeKey)) continue;
+      seen.add(edgeKey);
+      edges.push({ from, to });
+    }
+  }
+  return edges;
 }
 
 function edgePath(from, to) {
   const x1 = from.x + 115;
   const y1 = from.y + 56;
   const x2 = to.x + 115;
-  const y2 = to.y + 8;
+  const y2 = to.y - 1;
   const midY = (y1 + y2) / 2;
   return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 }
 
 export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) {
+  const navigate = useNavigate();
   const viewportRef = useRef(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -133,12 +148,15 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
   const endNodeDrag = useCallback(
     (event) => {
       if (!nodeDrag.current) return;
-      if (nodeDrag.current.moved) {
+      const { moved, href, envSearch } = nodeDrag.current;
+      if (moved) {
         suppressClick.current = true;
         setPositions((previous) => {
           savePositions(projectKey, previous);
           return previous;
         });
+      } else if (href) {
+        navigate({ to: href, search: envSearch });
       }
       clearNodeDragListeners.current();
       const viewport = viewportRef.current;
@@ -152,7 +170,7 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
       nodeDrag.current = null;
       setDraggingKey("");
     },
-    [projectKey],
+    [navigate, projectKey],
   );
 
   const onNodePointerMove = useCallback((event) => {
@@ -178,6 +196,8 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
     viewportRef.current?.setPointerCapture(event.pointerId);
     nodeDrag.current = {
       key: node.key,
+      href: node.href,
+      envSearch: environment ? { environment } : undefined,
       startX: event.clientX,
       startY: event.clientY,
       originX: node.x,
@@ -250,7 +270,7 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
       <div className="rw-project-canvas-toolbar">
         {canAdd ? (
           <Button variant="outline" onClick={onAdd} leftSection={<Plus size={14} />}>
-            {rows.length ? "Add" : "Add the first resource"}
+            Add
           </Button>
         ) : null}
       </div>
@@ -291,13 +311,16 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
 
         {nodes.map((node) => {
           const Icon = KIND_ICON[node.kind] || Database;
-          const isGit = node.kind === "Service" && String(node.source || "").includes("github");
+          const isGit = node.kind === "Service" && (node.sourceKind === "git" || String(node.source || "").includes("github"));
+          const isFunction = node.sourceKind === "function";
+          const pending = node.pendingKinds?.length;
+          const deleting = node.isDeleting;
           return (
             <Link
               key={node.key}
               to={node.href}
               search={search}
-              className={`rw-canvas-node${draggingKey === node.key ? " is-dragging" : ""}`}
+              className={`rw-canvas-node${draggingKey === node.key ? " is-dragging" : ""}${pending ? " has-pending" : ""}${node.isNew ? " is-new" : ""}${deleting ? " is-deleting" : ""}${node.volume ? " has-volume" : ""}`}
               style={{ left: node.x, top: node.y }}
               onPointerDown={(event) => onNodePointerDown(event, node)}
               onClick={onNodeClick}
@@ -305,13 +328,24 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
               draggable={false}
             >
               <div className="rw-canvas-node-head">
-                <span className="rw-canvas-node-icon">{isGit ? <GitBranch size={16} /> : <Icon size={16} />}</span>
+                <span className="rw-canvas-node-icon">{isFunction ? <SquareFunction size={16} /> : isGit ? <GitBranch size={16} /> : <Icon size={16} />}</span>
                 <span className="rw-canvas-node-name">{node.name}</span>
+                {deleting ? <span className="rw-canvas-node-badge is-deleting">Deleting</span> : null}
+                {!deleting && node.isNew ? <span className="rw-canvas-node-badge">New</span> : null}
               </div>
               <div className="rw-canvas-node-sub">{node.source}</div>
+              {pending ? (
+                <div className="rw-canvas-node-pending">{node.pendingCount} {node.pendingLabel}</div>
+              ) : null}
               <div className="rw-canvas-node-foot">
                 <Status value={node.status} />
               </div>
+              {node.volume ? (
+                <div className="rw-canvas-node-volume">
+                  <HardDrive size={12} aria-hidden />
+                  <span>{node.volume}</span>
+                </div>
+              ) : null}
             </Link>
           );
         })}

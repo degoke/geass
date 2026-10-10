@@ -5,8 +5,23 @@ export function Status({ value }) {
   const ready = value === "True" || value === "Ready" || value === "healthy" || value === true;
   const failed = value === "False" || value === "Failed" || value === "Error";
   const draft = value === "Draft";
-  const color = ready ? "#59c77a" : failed ? "#e66a6a" : "#a3a3ab";
-  const label = ready ? "Ready" : failed ? "Failed" : draft ? "Draft" : "Pending";
+  const deleting = value === "Deleting";
+  const unavailable = value === "Unavailable";
+  const settingUp = value === "Setting up" || value === "Pending";
+  const color = ready ? "#59c77a" : failed ? "#e66a6a" : unavailable ? "#e8a84a" : deleting ? "#e8a84a" : "#a3a3ab";
+  const label = ready
+    ? "Ready"
+    : failed
+      ? "Failed"
+      : draft
+        ? "Draft"
+        : deleting
+          ? "Deleting"
+          : unavailable
+            ? "Unavailable"
+            : settingUp
+              ? "Setting up"
+              : "Pending";
   return (
     <Group gap={6} wrap="nowrap">
       {ready ? <Check size={14} color={color} strokeWidth={2.5} /> : (

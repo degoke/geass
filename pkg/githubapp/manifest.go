@@ -61,10 +61,11 @@ func NewGeassAppManifest(dashboardURL, appName string) AppManifest {
 		SetupURL:     base + "/github/callback",
 		Public:       false,
 		DefaultPermissions: map[string]string{
-			"contents": "read",
-			"metadata": "read",
+			"contents":      "read",
+			"metadata":      "read",
+			"pull_requests": "read",
 		},
-		DefaultEvents: []string{"push"},
+		DefaultEvents: []string{"push", "pull_request"},
 	}
 }
 

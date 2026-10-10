@@ -10,9 +10,9 @@ export function useBootstrap() {
   return useQuery({
     queryKey: ["dashboard", "bootstrap"],
     queryFn: () => api("/api/bootstrap"),
-    staleTime: 4000,
+    staleTime: 2000,
     retry: (count, error) => bootstrapShouldPoll(error) && count < 2,
-    refetchInterval: (query) => (bootstrapShouldPoll(query.state.error) ? 8000 : false),
+    refetchInterval: (query) => (bootstrapShouldPoll(query.state.error) ? 60000 : false),
   });
 }
 

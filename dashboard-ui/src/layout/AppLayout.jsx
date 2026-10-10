@@ -6,6 +6,7 @@ import {
   Activity,
   BarChart3,
   Bell,
+  FileText,
   ChevronDown,
   ExternalLink,
   FolderKanban,
@@ -209,7 +210,8 @@ function AccountNav({ pathname, username, onSignOut, collapsed, projectSlug, env
   const onPlatformSettings = settingsActive(pathname);
   const onProjectSettings = Boolean(projectSlug) && pathname.includes("/settings");
   const onMetrics = Boolean(projectSlug) && pathname.endsWith("/monitor");
-  const onCanvas = Boolean(projectSlug) && !onProjectSettings && !onMetrics;
+  const onLogs = Boolean(projectSlug) && pathname.endsWith("/logs");
+  const onCanvas = Boolean(projectSlug) && !onProjectSettings && !onMetrics && !onLogs;
   const UsageIcon = NAV_ICONS.cluster;
   const sideLink = (to, active, icon, label, search) => (
     <Link
@@ -243,6 +245,7 @@ function AccountNav({ pathname, username, onSignOut, collapsed, projectSlug, env
             <div className="rw-nav-group">
               {sideLink(`/projects/${projectSlug}`, onCanvas, <LayoutGrid size={16} />, "Canvas", envSearch)}
               {sideLink(`/projects/${projectSlug}/monitor`, onMetrics, <Activity size={16} />, "Metrics", envSearch)}
+              {sideLink(`/projects/${projectSlug}/logs`, onLogs, <FileText size={16} />, "Logs", envSearch)}
               {sideLink(`/projects/${projectSlug}/settings`, onProjectSettings, <Settings size={16} />, "Settings", envSearch)}
             </div>
           ) : (

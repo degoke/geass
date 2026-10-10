@@ -256,15 +256,17 @@ export function DomainSettingsPage({
                 token—either an A record to cluster ingress or a Cloudflare Tunnel.
               </p>
             )}
-            <div className="rw-domain-quick-actions">
-              <Button
-                type="button"
-                disabled={!canMutate(data) || saving || !previewURL || isActiveDomain}
-                onClick={quickApply}
-              >
-                {isActiveDomain ? "Dashboard domain set" : previewURL ? `Use ${previewURL}` : "Set dashboard domain"}
-              </Button>
-            </div>
+            {!isActiveDomain ? (
+              <div className="rw-domain-quick-actions">
+                <Button
+                  type="button"
+                  disabled={!canMutate(data) || saving || !previewURL}
+                  onClick={quickApply}
+                >
+                  {previewURL ? `Use ${previewURL}` : "Set dashboard domain"}
+                </Button>
+              </div>
+            ) : null}
           </SettingsPanel>
 
           <details className="rw-domain-customize" open={needsApexInput}>

@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, list } from "@/lib/api";
+import { ApiTokens } from "@/components/ApiTokens";
 import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
+import { canMutate } from "@/lib/dashboard";
 import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
 import { ClusterCapacityPage } from "@/pages/platform/ClusterCapacityPage";
-import { CloudConnectionsPage } from "@/pages/platform/CloudConnectionsPage";
 import { ObjectStorageSettingsPage } from "@/pages/platform/ObjectStorageSettingsPage";
 import { ConnectorsPage } from "@/pages/platform/ConnectorsPage";
 
@@ -69,14 +70,21 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (connectorsPage) {
     return (
       <ConnectorsPage
+        data={data}
         reload={reload}
         githubInfo={github.data || {}}
         cloudflareInfo={cloudflareInfoFromBootstrap(data, cloudflare.data)}
       />
     );
   }
+  if (page === "tokens") {
+    return (
+      <SettingsSection title="API tokens" flat>
+        <ApiTokens scope="workspace" projects={list(data, "projects")} mutable={canMutate(data)} />
+      </SettingsSection>
+    );
+  }
   if (page === "ha" || page === "cluster") return <ClusterCapacityPage data={data} embedded />;
-  if (page === "cloud") return <CloudConnectionsPage data={data} reload={reload} embedded />;
   if (page === "object") return <ObjectStorageSettingsPage data={data} reload={reload} embedded />;
   return (
     <>

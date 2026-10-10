@@ -84,6 +84,29 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              prEnvironments:
+                description: PREnvironments creates a temporary copy of an environment
+                  for every pull request.
+                properties:
+                  baseEnvironment:
+                    description: BaseEnvironment is copied for every pull request.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  enabled:
+                    description: Enabled turns pull request environments on.
+                    type: boolean
+                  maxOpen:
+                    default: 5
+                    description: MaxOpen limits how many pull request environments
+                      can exist at once.
+                    format: int32
+                    maximum: 25
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.
@@ -136,6 +159,43 @@ spec:
                   - environment
                   - name
                   type: object
+                type: array
+              webhooks:
+                description: |-
+                  Webhooks receive signed notifications about deployments in this project. The signing secret of
+                  each webhook is kept in the Secret <project>-webhooks, never in this spec.
+                items:
+                  description: GeassWebhook is an outbound webhook for project events.
+                  properties:
+                    disabled:
+                      description: Disabled pauses deliveries without deleting the
+                        webhook.
+                      type: boolean
+                    events:
+                      description: Events limits which events are sent. Empty means
+                        every event.
+                      items:
+                        enum:
+                        - deployment.started
+                        - deployment.succeeded
+                        - deployment.failed
+                        type: string
+                      type: array
+                    id:
+                      description: ID identifies the webhook in the dashboard and
+                        in delivery records.
+                      pattern: ^[a-z0-9]{8}$
+                      type: string
+                    url:
+                      description: URL receives a POST for each event.
+                      maxLength: 2048
+                      minLength: 8
+                      type: string
+                  required:
+                  - id
+                  - url
+                  type: object
+                maxItems: 20
                 type: array
             required:
             - clusterRef
@@ -214,6 +274,92 @@ spec:
                   - name
                   - namespace
                   type: object
+                type: array
+              pullRequests:
+                description: PullRequests are the open pull request environments.
+                items:
+                  description: GeassPullRequestEnvironment records an environment
+                    created for a pull request.
+                  properties:
+                    branch:
+                      type: string
+                    environment:
+                      type: string
+                    number:
+                      format: int32
+                      type: integer
+                    openedAt:
+                      format: date-time
+                      type: string
+                    repository:
+                      type: string
+                    url:
+                      type: string
+                  required:
+                  - branch
+                  - environment
+                  - number
+                  - openedAt
+                  - repository
+                  type: object
+                maxItems: 50
+                type: array
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
+              webhookDeliveries:
+                description: WebhookDeliveries are the most recent webhook deliveries,
+                  newest first.
+                items:
+                  description: GeassWebhookDelivery records the outcome of one webhook
+                    delivery.
+                  properties:
+                    attempts:
+                      format: int32
+                      type: integer
+                    deliveryId:
+                      type: string
+                    durationMillis:
+                      format: int64
+                      type: integer
+                    error:
+                      type: string
+                    event:
+                      type: string
+                    statusCode:
+                      format: int32
+                      type: integer
+                    time:
+                      format: date-time
+                      type: string
+                    webhookId:
+                      type: string
+                  required:
+                  - attempts
+                  - deliveryId
+                  - durationMillis
+                  - event
+                  - time
+                  - webhookId
+                  type: object
+                maxItems: 20
                 type: array
             type: object
         required:
