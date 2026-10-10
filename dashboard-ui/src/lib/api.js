@@ -57,5 +57,12 @@ export async function action(path, values = {}, options = {}) {
 
 export const list = (data, key) => data?.[key]?.items || [];
 export const resourceName = (item) => item?.metadata?.name || "Unnamed";
+const resourceDisplayNameAnnotation = "geass.dev/display-name";
+
+export function resourceDisplayName(item) {
+  const label = item?.metadata?.annotations?.[resourceDisplayNameAnnotation];
+  if (typeof label === "string" && label.trim()) return label.trim();
+  return resourceName(item);
+}
 export const condition = (item) => item?.status?.conditions?.find((entry) => entry.type === "Ready")?.status || item?.status?.phase || "Pending";
 export const isReady = (item) => condition(item) === "True" || condition(item) === "Ready";

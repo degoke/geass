@@ -66,6 +66,29 @@ func markHelmChartReady(ctx context.Context, name string) {
 	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 }
 
+func markHelmReleaseWorkloadReady(ctx context.Context, namespace, release string) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      release + "-0",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/instance": release,
+			},
+		},
+	}
+	Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{{
+		Type:   corev1.PodReady,
+		Status: corev1.ConditionTrue,
+	}}
+	Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+}
+
+func markClusterMinIOWorkloadReady(ctx context.Context) {
+	markHelmReleaseWorkloadReady(ctx, platform.SystemNamespace, platform.ClusterMinIOChartName)
+}
+
 func conditionIsTrue(conditions []metav1.Condition, t string) bool {
 	for _, c := range conditions {
 		if c.Type == t {
@@ -157,6 +180,8 @@ var _ = Describe("GeassCluster Controller", func() {
 
 		markHelmChartReady(ctx, platform.CertManagerChartName)
 		markHelmChartReady(ctx, platform.MonitoringChartName)
+		markHelmReleaseWorkloadReady(ctx, platform.CertManagerTargetNS, platform.CertManagerChartName)
+		markHelmReleaseWorkloadReady(ctx, platform.MonitoringTargetNS, platform.MonitoringChartName)
 
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 		Expect(err).NotTo(HaveOccurred())
@@ -407,6 +432,7 @@ var _ = Describe("GeassDatabase Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		markHelmChartReady(ctx, platform.CNPGChartName)
+		markHelmReleaseWorkloadReady(ctx, platform.CNPGTargetNS, platform.CNPGChartName)
 
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testDBName, Namespace: ns}})
 		Expect(err).NotTo(HaveOccurred())

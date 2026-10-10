@@ -3,14 +3,18 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Kbd, TextInput } from "@mantine/core";
 import { Box, ChevronDown, Database, HardDrive, Plus, Search } from "lucide-react";
-import { action, list, resourceName } from "@/lib/api";
+import { action, isReady, list, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { projectResources } from "@/lib/project-resources";
 import { Button } from "@/components/geass-ui";
 
+function allResources(resources) {
+  return [...resources.apps, ...resources.databases, ...resources.stores, ...resources.logical];
+}
+
 function resourceTotal(resources) {
-  return resources.apps.length + resources.databases.length + resources.stores.length + resources.logical.length;
+  return allResources(resources).length;
 }
 
 const ICONS = [
@@ -93,6 +97,7 @@ export function ProjectsPage({ data }) {
           const name = resourceName(project);
           const resources = projectResources(data, name);
           const total = resourceTotal(resources);
+          const online = allResources(resources).filter((item) => isReady(item)).length;
           const env = (project.spec?.environments || [])[0] || "production";
           const icons = ICONS.filter((entry) => resources[entry.key]?.length);
           return (
@@ -109,9 +114,9 @@ export function ProjectsPage({ data }) {
                 })}
               </div>
               <div className="rw-project-foot">
-                <i className={`rw-dot${total ? "" : " rw-dot-idle"}`} />
+                <i className={`rw-dot${total && online === total ? "" : " rw-dot-idle"}${total && online < total ? " rw-dot-warn" : ""}`} />
                 <span>
-                  {env} · {total} {total === 1 ? "resource" : "resources"}
+                  {env} · {total ? `${online}/${total} ${total === 1 ? "service" : "services"} online` : "No services yet"}
                 </span>
               </div>
             </Link>

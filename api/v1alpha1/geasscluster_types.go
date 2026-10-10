@@ -79,6 +79,10 @@ type GeassClusterStatus struct {
 
 	// Phase is the current phase of the GeassCluster.
 	Phase ClusterPhase `json:"phase,omitempty"`
+
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -35,6 +35,7 @@ import (
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/ssh"
+	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	// +kubebuilder:scaffold:imports
 )
@@ -204,9 +205,11 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnode")
 		os.Exit(1)
 	}
+	webhookDispatcher := webhooks.NewDispatcher(mgr.GetClient())
 	if err := (&controller.GeassAppReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Webhooks: webhookDispatcher,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
 		os.Exit(1)
@@ -287,10 +290,12 @@ func main() {
 	if dashboardAddr != "0" {
 		if err := mgr.Add(&dashboard.Server{
 			Client:    mgr.GetClient(),
+			Cache:     mgr.GetCache(),
 			Addr:      dashboardAddr,
 			Kube:      kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
 			Config:    ctrl.GetConfigOrDie(),
 			GitHubApp: githubapp.LoadConfigFromEnv(),
+			Webhooks:  webhookDispatcher,
 		}); err != nil {
 			setupLog.Error(err, "Failed to add dashboard server")
 			os.Exit(1)

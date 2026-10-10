@@ -61,6 +61,71 @@ type GeassProjectSpec struct {
 	// GitHubConnectionRef references a Secret containing GitHub credentials and webhook data.
 	// +optional
 	GitHubConnectionRef *corev1.LocalObjectReference `json:"githubConnectionRef,omitempty"`
+	// Webhooks receive signed notifications about deployments in this project. The signing secret of
+	// each webhook is kept in the Secret <project>-webhooks, never in this spec.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	Webhooks []GeassWebhook `json:"webhooks,omitempty"`
+	// PREnvironments creates a temporary copy of an environment for every pull request.
+	// +optional
+	PREnvironments *GeassPREnvironments `json:"prEnvironments,omitempty"`
+}
+
+// GeassWebhook is an outbound webhook for project events.
+type GeassWebhook struct {
+	// ID identifies the webhook in the dashboard and in delivery records.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]{8}$`
+	ID string `json:"id"`
+	// URL receives a POST for each event.
+	// +kubebuilder:validation:MinLength=8
+	// +kubebuilder:validation:MaxLength=2048
+	URL string `json:"url"`
+	// Events limits which events are sent. Empty means every event.
+	// +kubebuilder:validation:items:Enum=deployment.started;deployment.succeeded;deployment.failed
+	// +optional
+	Events []string `json:"events,omitempty"`
+	// Disabled pauses deliveries without deleting the webhook.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+// GeassWebhookDelivery records the outcome of one webhook delivery.
+type GeassWebhookDelivery struct {
+	WebhookID      string      `json:"webhookId"`
+	Event          string      `json:"event"`
+	DeliveryID     string      `json:"deliveryId"`
+	StatusCode     int32       `json:"statusCode,omitempty"`
+	Error          string      `json:"error,omitempty"`
+	Attempts       int32       `json:"attempts"`
+	DurationMillis int64       `json:"durationMillis"`
+	Time           metav1.Time `json:"time"`
+}
+
+// GeassPREnvironments configures pull request environments.
+type GeassPREnvironments struct {
+	// Enabled turns pull request environments on.
+	Enabled bool `json:"enabled"`
+	// BaseEnvironment is copied for every pull request.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	BaseEnvironment string `json:"baseEnvironment,omitempty"`
+	// MaxOpen limits how many pull request environments can exist at once.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=25
+	// +kubebuilder:default=5
+	// +optional
+	MaxOpen int32 `json:"maxOpen,omitempty"`
+}
+
+// GeassPullRequestEnvironment records an environment created for a pull request.
+type GeassPullRequestEnvironment struct {
+	Number      int32       `json:"number"`
+	Repository  string      `json:"repository"`
+	Branch      string      `json:"branch"`
+	Environment string      `json:"environment"`
+	URL         string      `json:"url,omitempty"`
+	OpenedAt    metav1.Time `json:"openedAt"`
 }
 
 type GeassProjectEnvironmentStatus struct {
@@ -72,7 +137,18 @@ type GeassProjectStatus struct {
 	// ClusterRef is the cluster observed by the controller. It prevents silent project migration.
 	ClusterRef   string                          `json:"clusterRef,omitempty"`
 	Environments []GeassProjectEnvironmentStatus `json:"environments,omitempty"`
-	Conditions   []metav1.Condition              `json:"conditions,omitempty"`
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+	Conditions     []metav1.Condition        `json:"conditions,omitempty"`
+	// WebhookDeliveries are the most recent webhook deliveries, newest first.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	WebhookDeliveries []GeassWebhookDelivery `json:"webhookDeliveries,omitempty"`
+	// PullRequests are the open pull request environments.
+	// +kubebuilder:validation:MaxItems=50
+	// +optional
+	PullRequests []GeassPullRequestEnvironment `json:"pullRequests,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -331,9 +407,15 @@ type GeassLogicalDatabaseSpec struct {
 }
 
 type GeassLogicalDatabaseStatus struct {
-	ConnectionSecret string             `json:"connectionSecret,omitempty"`
-	JobName          string             `json:"jobName,omitempty"`
-	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	ConnectionSecret string `json:"connectionSecret,omitempty"`
+	JobName          string `json:"jobName,omitempty"`
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+	// Provision tracks deploy attempts and errors for this resource.
+	// +optional
+	Provision  GeassProvisionStatus `json:"provision,omitempty"`
+	Conditions []metav1.Condition   `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

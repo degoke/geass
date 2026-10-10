@@ -2,10 +2,10 @@ import { Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
 import { Status } from "@/components/Status";
 import { resourceStatus } from "@/lib/services";
-import { resourceName } from "@/lib/api";
+import { resourceDisplayName } from "@/lib/api";
 
 export function ResourceCompactRow({ href, item, kind }) {
-  const name = resourceName(item);
+  const name = resourceDisplayName(item);
   const status = resourceStatus(item);
   return (
     <UnstyledButton component={Link} to={href} w="100%" className="geass-resource-compact">

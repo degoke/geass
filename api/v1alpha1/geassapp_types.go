@@ -75,12 +75,24 @@ type GeassAppGitSource struct {
 	WatchPatterns []string `json:"watchPatterns,omitempty"`
 }
 
-// GeassAppSource is a mutually exclusive image or Git source.
+// GeassAppFunctionSource runs inline source code on a managed language runtime.
+type GeassAppFunctionSource struct {
+	// Runtime selects the language runtime that executes Code.
+	// +kubebuilder:validation:Enum=bun;node;python
+	Runtime string `json:"runtime"`
+	// Code is the program. It must serve HTTP on the port in the PORT environment variable.
+	// +kubebuilder:validation:MaxLength=262144
+	Code string `json:"code"`
+}
+
+// GeassAppSource is a mutually exclusive image, Git, or function source.
 type GeassAppSource struct {
 	// +optional
 	Image *GeassAppImageSource `json:"image,omitempty"`
 	// +optional
 	Git *GeassAppGitSource `json:"git,omitempty"`
+	// +optional
+	Function *GeassAppFunctionSource `json:"function,omitempty"`
 }
 
 // GeassAppRegistrySpec configures the destination image registry.
@@ -297,6 +309,14 @@ type GeassAppStatus struct {
 	DNSMessage          string `json:"dnsMessage,omitempty"`
 	HealthCheckFailures int32  `json:"healthCheckFailures,omitempty"`
 	RolloutPaused       bool   `json:"rolloutPaused,omitempty"`
+
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+
+	// Provision tracks deploy attempts and errors for this resource.
+	// +optional
+	Provision GeassProvisionStatus `json:"provision,omitempty"`
 
 	// conditions represent the current state of the GeassApp resource.
 	// +listType=map

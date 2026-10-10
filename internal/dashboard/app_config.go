@@ -3,14 +3,19 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -58,6 +63,87 @@ func writeAppPendingJSON(w http.ResponseWriter, app *geassv1alpha1.GeassApp) {
 	})
 }
 
+var errVariableNotFound = errors.New("variable was not found")
+
+// writeRetry paces retries of read-modify-write requests that lose a race with a controller
+// or with another dashboard request.
+var writeRetry = wait.Backoff{Steps: 8, Duration: 20 * time.Millisecond, Factor: 1.5, Jitter: 0.2}
+
+// updateReapplying saves obj. When the controller changed the object since it was read (it adds a
+// finalizer to every new resource), the latest copy is fetched and reapply runs again on it, so the
+// request succeeds instead of failing with a conflict.
+func (s *Server) updateReapplying(ctx context.Context, obj client.Object, reapply func() error) error {
+	key := client.ObjectKeyFromObject(obj)
+	return retry.RetryOnConflict(writeRetry, func() error {
+		err := s.Client.Update(ctx, obj)
+		if !apierrors.IsConflict(err) {
+			return err
+		}
+		if getErr := s.Client.Get(ctx, key, obj); getErr != nil {
+			return getErr
+		}
+		if reapplyErr := reapply(); reapplyErr != nil {
+			return reapplyErr
+		}
+		return err
+	})
+}
+
+// upsertSecretKey stores one key in a Secret, creating the Secret when needed. It retries when
+// a concurrent request created or changed the Secret first, so parallel saves keep every key.
+func (s *Server) upsertSecretKey(ctx context.Context, key client.ObjectKey, dataKey, value string) error {
+	return retry.RetryOnConflict(writeRetry, func() error {
+		secret := &corev1.Secret{}
+		err := s.Client.Get(ctx, key, secret)
+		if apierrors.IsNotFound(err) {
+			err = s.Client.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Data:       map[string][]byte{dataKey: []byte(value)},
+			})
+			if apierrors.IsAlreadyExists(err) {
+				return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, key.Name, err)
+			}
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data[dataKey] = []byte(value)
+		return s.Client.Update(ctx, secret)
+	})
+}
+
+// mutateApp applies mutate to the latest copy of the app and saves it, retrying when the
+// controller updated the app between our read and write.
+func (s *Server) mutateApp(ctx context.Context, name string, mutate func(app *geassv1alpha1.GeassApp) error) (*geassv1alpha1.GeassApp, error) {
+	app := &geassv1alpha1.GeassApp{}
+	err := retry.RetryOnConflict(writeRetry, func() error {
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: systemNamespace}, app); err != nil {
+			return err
+		}
+		if err := mutate(app); err != nil {
+			return err
+		}
+		return s.Client.Update(ctx, app)
+	})
+	return app, err
+}
+
+// appMutationFailed reports a failed mutateApp to the client with the right status.
+func (s *Server) appMutationFailed(w http.ResponseWriter, r *http.Request, name string, err error) {
+	switch {
+	case apierrors.IsNotFound(err):
+		http.NotFound(w, r)
+	case errors.Is(err, errVariableNotFound):
+		s.appConfigFormError(w, r, name, err.Error())
+	default:
+		s.appConfigFormError(w, r, name, dashboardActionFailed)
+	}
+}
+
 func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -69,18 +155,16 @@ func (s *Server) handleAppConfigSet(w http.ResponseWriter, r *http.Request, name
 		s.appConfigFormError(w, r, name, "key is required")
 		return
 	}
-	app, err := s.getApp(r, name)
+	app, err := s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		if app.Spec.ConfigData == nil {
+			app.Spec.ConfigData = map[string]string{}
+		}
+		app.Spec.ConfigData[key] = value
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
 	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if app.Spec.ConfigData == nil {
-		app.Spec.ConfigData = map[string]string{}
-	}
-	app.Spec.ConfigData[key] = value
-	markAppPendingChange(app, pendingChangeVariables)
-	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, dashboardActionFailed)
+		s.appMutationFailed(w, r, name, err)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -96,18 +180,49 @@ func (s *Server) handleAppConfigDelete(w http.ResponseWriter, r *http.Request, n
 		s.appConfigFormError(w, r, name, "key is required")
 		return
 	}
-	app, err := s.getApp(r, name)
+	app, err := s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		delete(app.Spec.ConfigData, key)
+		if len(app.Spec.ConfigData) == 0 {
+			app.Spec.ConfigData = nil
+		}
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
 	if err != nil {
-		http.NotFound(w, r)
+		s.appMutationFailed(w, r, name, err)
 		return
 	}
-	delete(app.Spec.ConfigData, key)
-	if len(app.Spec.ConfigData) == 0 {
-		app.Spec.ConfigData = nil
+	s.renderAppConfigPanel(w, r, app)
+}
+
+// handleAppEnvDelete removes an attached env reference (for example DATABASE_URL
+// added by the attach flow) from the app spec.
+func (s *Server) handleAppEnvDelete(w http.ResponseWriter, r *http.Request, name string) {
+	fallback := "/apps/" + name
+	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
+		return
 	}
-	markAppPendingChange(app, pendingChangeVariables)
-	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, dashboardActionFailed)
+	key := strings.TrimSpace(r.FormValue("key"))
+	if key == "" {
+		s.appConfigFormError(w, r, name, "key is required")
+		return
+	}
+	app, err := s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		kept := app.Spec.Env[:0:0]
+		for _, variable := range app.Spec.Env {
+			if variable.Name != key {
+				kept = append(kept, variable)
+			}
+		}
+		if len(kept) == len(app.Spec.Env) {
+			return errVariableNotFound
+		}
+		app.Spec.Env = kept
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
+	if err != nil {
+		s.appMutationFailed(w, r, name, err)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -129,18 +244,16 @@ func (s *Server) handleAppConfigRaw(w http.ResponseWriter, r *http.Request, name
 			return
 		}
 	}
-	app, err := s.getApp(r, name)
+	app, err := s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		app.Spec.ConfigData = values
+		if len(values) == 0 {
+			app.Spec.ConfigData = nil
+		}
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
 	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	app.Spec.ConfigData = values
-	if len(values) == 0 {
-		app.Spec.ConfigData = nil
-	}
-	markAppPendingChange(app, pendingChangeVariables)
-	if err := s.Client.Update(r.Context(), app); err != nil {
-		s.appConfigFormError(w, r, name, dashboardActionFailed)
+		s.appMutationFailed(w, r, name, err)
 		return
 	}
 	s.renderAppConfigPanel(w, r, app)
@@ -197,10 +310,13 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 		s.appSecretsFormError(w, r, name, saveErr.Error())
 		return
 	}
-	app.Spec.SecretRef = &corev1.LocalObjectReference{Name: secretName}
-	app.Spec.SecretData = nil
-	markAppPendingChange(app, pendingChangeVariables)
-	if err := s.Client.Update(r.Context(), app); err != nil {
+	app, err = s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		app.Spec.SecretRef = &corev1.LocalObjectReference{Name: secretName}
+		app.Spec.SecretData = nil
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
+	if err != nil {
 		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}
@@ -222,6 +338,7 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 		http.NotFound(w, r)
 		return
 	}
+	clearSecretRef := false
 	if app.Spec.SecretRef != nil {
 		secret := &corev1.Secret{}
 		secretKey := client.ObjectKey{Name: app.Spec.SecretRef.Name, Namespace: systemNamespace}
@@ -232,7 +349,7 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 					s.appSecretsFormError(w, r, name, dashboardActionFailed)
 					return
 				}
-				app.Spec.SecretRef = nil
+				clearSecretRef = true
 			} else if err := s.Client.Update(r.Context(), secret); err != nil {
 				s.appSecretsFormError(w, r, name, dashboardActionFailed)
 				return
@@ -241,14 +358,21 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 			s.appSecretsFormError(w, r, name, dashboardActionFailed)
 			return
 		}
-	} else {
-		delete(app.Spec.SecretData, key)
-		if len(app.Spec.SecretData) == 0 {
-			app.Spec.SecretData = nil
-		}
 	}
-	markAppPendingChange(app, pendingChangeVariables)
-	if err := s.Client.Update(r.Context(), app); err != nil {
+	app, err = s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
+		if clearSecretRef {
+			app.Spec.SecretRef = nil
+		}
+		if app.Spec.SecretRef == nil {
+			delete(app.Spec.SecretData, key)
+			if len(app.Spec.SecretData) == 0 {
+				app.Spec.SecretData = nil
+			}
+		}
+		markAppPendingChange(app, pendingChangeVariables)
+		return nil
+	})
+	if err != nil {
 		s.appSecretsFormError(w, r, name, dashboardActionFailed)
 		return
 	}

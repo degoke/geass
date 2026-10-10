@@ -25,7 +25,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { Box as BoxIcon } from "lucide-react";
+import { Box as BoxIcon, ChevronRight } from "lucide-react";
 
 export const Checkbox = MantineCheckbox;
 export const Switch = MantineSwitch;
@@ -35,16 +35,17 @@ const buttonColor = { default: "signal", outline: "gray", ghost: "gray", danger:
 
 export function Button({ variant = "default", size, leftSection, fullWidth, style, children, ...props }) {
   const mantineSize = size === "sm" ? "compact-sm" : size === "icon" ? "compact-sm" : "sm";
+  const isDanger = variant === "danger";
   return (
     <MantineButton
       variant={buttonVariant[variant] || "filled"}
-      color={buttonColor[variant] || "cf"}
+      color={isDanger ? "red" : buttonColor[variant] || "cf"}
+      data-geass-variant={isDanger ? "danger" : undefined}
       size={mantineSize}
       leftSection={leftSection}
       fullWidth={fullWidth}
       style={{
         alignSelf: fullWidth ? undefined : "flex-start",
-        ...(variant === "danger" ? { background: "#e66a6a", color: "#fff" } : {}),
         ...style,
       }}
       {...props}
@@ -245,7 +246,7 @@ export function PageHeader({ leading, title, description, actions }) {
       <Group gap="sm" wrap="nowrap" align="center">
         {leading}
         <div>
-          {title && <Title order={1}>{title}</Title>}
+          {title && (typeof title === "string" ? <Title order={1}>{title}</Title> : title)}
           {description && <Text size="sm" c="dimmed">{description}</Text>}
         </div>
       </Group>
@@ -341,37 +342,70 @@ export function Section({ title, description, children }) {
   );
 }
 
-export function ResourceModal({ open, onOpenChange, title, description, children }) {
+export function ResourceModal({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+  size = "lg",
+  variant,
+  hideDescription,
+}) {
+  const contentClass = ["rw-resource-dialog", variant ? `rw-resource-dialog--${variant}` : ""].filter(Boolean).join(" ");
   return (
-    <Modal opened={open} onClose={() => onOpenChange(false)} title={title} size="lg">
-      {description && <Text c="dimmed" size="sm" mb="md">{description}</Text>}
+    <Modal
+      opened={open}
+      onClose={() => onOpenChange(false)}
+      title={title}
+      size={size}
+      classNames={{
+        content: contentClass,
+        header: variant === "docker-image" ? "rw-resource-dialog-header--hidden" : undefined,
+        body: variant === "docker-image" ? "rw-resource-dialog-body--docker" : undefined,
+      }}
+    >
+      {description && !hideDescription && <Text c="dimmed" size="sm" mb="md">{description}</Text>}
       {children}
     </Modal>
   );
 }
 
-export function ChoiceCard({ selected, disabled, onClick, title, description }) {
+export function ChoiceCard({
+  selected,
+  disabled,
+  onClick,
+  title,
+  description,
+  showChevron = false,
+  compact = false,
+}) {
   return (
     <Paper
       withBorder
       radius="md"
-      p="sm"
+      p={compact ? "xs" : "sm"}
       component="button"
       type="button"
       w="100%"
+      className={[
+        "rw-resource-dialog-choice",
+        selected ? "is-selected" : "",
+        disabled ? "is-disabled" : "",
+        compact ? "is-compact" : "",
+      ].filter(Boolean).join(" ")}
       onClick={onClick}
       disabled={disabled}
-      style={{
-        textAlign: "left",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        background: selected ? "color-mix(in srgb, #888cf8 16%, #17171a)" : "#1c1c21",
-        borderColor: selected ? "#888cf8" : "#3a3a44",
-        color: "#f2f2f3",
-      }}
     >
-      <Text size="sm" fw={500}>{title}</Text>
-      <Text size="sm" c="dimmed">{description}</Text>
+      <Group justify="space-between" wrap="nowrap" gap="sm" align={compact ? "center" : "flex-start"}>
+        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <Text size="sm" fw={500}>{title}</Text>
+          {description && !compact ? <Text size="sm" c="dimmed" mt={2}>{description}</Text> : null}
+        </div>
+        {showChevron && !disabled ? (
+          <ChevronRight size={16} strokeWidth={2} color="var(--geass-text-muted)" aria-hidden />
+        ) : null}
+      </Group>
     </Paper>
   );
 }
@@ -430,8 +464,8 @@ export function NavTabs({ value, items }) {
   );
 }
 
-export function DetailTabs({ value, tabs, hrefFor }) {
-  const label = (tab) => tab.charAt(0).toUpperCase() + tab.slice(1);
+export function DetailTabs({ value, tabs, hrefFor, labels = {} }) {
+  const label = (tab) => labels[tab] || tab.charAt(0).toUpperCase() + tab.slice(1);
   return (
     <div className="rw-tabs">
       {tabs.map((tab) => (
@@ -439,6 +473,28 @@ export function DetailTabs({ value, tabs, hrefFor }) {
           {label(tab)}
         </Link>
       ))}
+    </div>
+  );
+}
+
+/** Same look as DetailTabs, for panels that switch tabs without routing. */
+export function DetailTabsButtons({ value, tabs, onChange, className }) {
+  return (
+    <div className={className ? `rw-tabs ${className}` : "rw-tabs"}>
+      {tabs.map((tab) => {
+        const id = tab.id ?? tab;
+        const label = tab.label ?? (typeof tab === "string" ? tab.charAt(0).toUpperCase() + tab.slice(1) : id);
+        return (
+          <button
+            key={id}
+            type="button"
+            className={value === id ? "rw-tab rw-tab-on rw-tab-btn" : "rw-tab rw-tab-btn"}
+            onClick={() => onChange(id)}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

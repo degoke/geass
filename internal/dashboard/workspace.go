@@ -43,6 +43,10 @@ func workspacePanelURL(project, environment, panel, section string) string {
 }
 
 func redirectAfterResourceCreate(w http.ResponseWriter, r *http.Request, project, environment, kind, name string) {
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": name, "kind": kind})
+		return
+	}
 	if project != "" {
 		redirect(w, r, workspaceResourceURL(project, environment, kind, name, "overview"))
 		return

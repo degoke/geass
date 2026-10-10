@@ -58,11 +58,17 @@ type GeassClusterReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
 
 func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var cluster geassv1alpha1.GeassCluster
 	if err := r.Get(ctx, req.NamespacedName, &cluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if result, paused := beginProvisionReconcileUnlessDeleting(!cluster.DeletionTimestamp.IsZero(), cluster.Status.Conditions, cluster.Generation, &cluster.Status.ReconcileRetry); paused {
+		return result, nil
 	}
 
 	addonsReady, err := r.reconcileAddons(ctx, &cluster)
@@ -89,13 +95,11 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 		if err := helmchart.Ensure(ctx, r.Client, platform.CertManagerChartName, spec); err != nil {
 			return false, err
 		}
-		ready, err := r.helmChartReady(ctx, platform.CertManagerChartName)
-		if err != nil {
+		if ready, err := r.addonReady(ctx, platform.CertManagerChartName, platform.CertManagerTargetNS); err != nil {
 			return false, err
-		}
-		if !ready {
+		} else if !ready {
 			allReady = false
-			log.Info("Waiting for cert-manager HelmChart")
+			log.Info("Waiting for cert-manager add-on")
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.CertManagerChartName); err != nil && !apierrors.IsNotFound(err) {
 		return false, err
@@ -117,13 +121,11 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 		if err := helmchart.Ensure(ctx, r.Client, platform.MonitoringChartName, spec); err != nil {
 			return false, err
 		}
-		ready, err := r.helmChartReady(ctx, platform.MonitoringChartName)
-		if err != nil {
+		if ready, err := r.addonReady(ctx, platform.MonitoringChartName, platform.MonitoringTargetNS); err != nil {
 			return false, err
-		}
-		if !ready {
+		} else if !ready {
 			allReady = false
-			log.Info("Waiting for monitoring HelmChart")
+			log.Info("Waiting for monitoring add-on")
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.MonitoringChartName); err != nil && !apierrors.IsNotFound(err) {
 		return false, err
@@ -132,15 +134,23 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 	return allReady, nil
 }
 
-func (r *GeassClusterReconciler) helmChartReady(ctx context.Context, name string) (bool, error) {
-	chart, err := helmchart.Get(ctx, r.Client, name)
+func (r *GeassClusterReconciler) addonReady(ctx context.Context, chartName, targetNamespace string) (bool, error) {
+	chart, err := helmchart.Get(ctx, r.Client, chartName)
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return helmchart.IsReady(ctx, r.Client, chart)
+	installed, err := waitForHelmChart(ctx, r.Client, chart)
+	if err != nil {
+		return false, err
+	}
+	if !installed {
+		return false, nil
+	}
+	ready, _, err := helmReleaseWorkloadReady(ctx, r.Client, targetNamespace, chartName, 1)
+	return ready, err
 }
 
 func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geassv1alpha1.GeassCluster, addonsReady bool, reconcileErr error) (ctrl.Result, error) {
@@ -150,9 +160,12 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 	}
 
 	conditions := latest.Status.Conditions
+	var failureOutcome platform.NotReadyOutcome
 	if reconcileErr != nil {
-		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, "ReconcileError", reconcileErr.Error())
-		conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", reconcileErr.Error())
+		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, platform.ConditionReasonReconcileError, reconcileErr.Error())
+		failureOutcome = platform.ApplyNotReady(conditions, reconcileRetryFromAPI(&latest.Status.ReconcileRetry), latest.Generation, reconcileErr.Error())
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, failureOutcome.Retry)
+		conditions = failureOutcome.Conditions
 	} else if addonsReady {
 		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionTrue, "AddonsReady", platform.ConditionMessage(platform.ConditionAddonsReady, true))
 	} else {
@@ -161,6 +174,9 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 
 	overallReady := addonsReady && reconcileErr == nil
 	if overallReady {
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
 		conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionTrue, "ClusterReady", "Geass cluster is ready")
 		latest.Status.Phase = geassv1alpha1.ClusterPhaseReady
 	} else {
@@ -176,7 +192,10 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 	}
 
 	if reconcileErr != nil {
-		return ctrl.Result{}, reconcileErr
+		if failureOutcome.RequeueAfter == 0 {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{RequeueAfter: failureOutcome.RequeueAfter}, nil
 	}
 	if !overallReady {
 		return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil

@@ -10,6 +10,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -58,6 +59,9 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -66,11 +70,18 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &db); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if err := r.validateDatabaseCloudConnection(ctx, &db); err != nil {
-		return r.setNotReady(ctx, &db, err.Error())
+	if result, paused := beginProvisionReconcileUnlessDeleting(!db.DeletionTimestamp.IsZero(), db.Status.Conditions, db.Generation, &db.Status.ReconcileRetry); paused {
+		return result, nil
 	}
-	if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
-		return r.setNotReady(ctx, &db, err.Error())
+	// A database being deleted must always be able to release its finalizer, even after its
+	// environment or cloud connection was removed from the project.
+	if db.DeletionTimestamp.IsZero() {
+		if err := r.validateDatabaseCloudConnection(ctx, &db); err != nil {
+			return r.setNotReady(ctx, &db, err.Error())
+		}
+		if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
+			return r.setNotReady(ctx, &db, err.Error())
+		}
 	}
 
 	wsNS, err := resourceNamespace(db.Spec.Project, string(db.Spec.Environment))
@@ -91,6 +102,14 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if prevNS, moved := previousTargetNamespace(db.Status.TargetNamespace, wsNS); moved {
 		r.deleteTargetResources(ctx, &db, prevNS)
+	}
+
+	if err := applyDatabaseDeployedSpec(&db); err != nil {
+		if errors.Is(err, ErrAwaitingDeploy) {
+			r.deleteTargetResources(ctx, &db, wsNS)
+			return r.setNotReady(ctx, &db, waitingForDeployMessage)
+		}
+		return r.setNotReady(ctx, &db, err.Error())
 	}
 
 	if databasePlacement(&db) == geassv1alpha1.DatabasePlacementExternal {
@@ -156,16 +175,19 @@ func databaseName(db *geassv1alpha1.GeassDatabase) string {
 }
 
 func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
+	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db)); !ok {
+		return r.setNotReady(ctx, db, msg)
+	}
 	if err := r.ensureCNPGOperator(ctx); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	operatorReady, err := r.cnpgOperatorReady(ctx)
+	operatorReady, operatorMsg, err := r.cnpgOperatorReady(ctx)
 	if err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	if !operatorReady {
-		log.Info("Waiting for CloudNativePG operator")
-		return r.setNotReady(ctx, db, "CloudNativePG operator is not ready")
+		log.Info("Waiting for CloudNativePG operator", "message", operatorMsg)
+		return r.setNotReady(ctx, db, operatorMsg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -178,7 +200,7 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 		return r.setNotReady(ctx, db, "CNPG cluster was not created")
 	}
 	if !cnpgClusterReady(cluster) {
-		return r.setNotReady(ctx, db, "Postgres cluster is not healthy yet")
+		return r.setNotReady(ctx, db, "Postgres database is starting")
 	}
 	host := fmt.Sprintf("%s-rw.%s.svc", db.Name, wsNS)
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, platform.PostgresDefaultPort, "postgresql"); err != nil {
@@ -188,6 +210,9 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 }
 
 func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, chartName, chart, repo, version, values, host, port, scheme string) (ctrl.Result, error) {
+	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: chartName, Namespace: platform.HelmChartNamespace}}, databaseCapacityEstimate(db)); !ok {
+		return r.setNotReady(ctx, db, msg)
+	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
@@ -211,7 +236,17 @@ func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db 
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	if !ready {
-		return r.setNotReady(ctx, db, chart+" HelmChart is not ready")
+		return r.setNotReady(ctx, db, installingChartMessage(string(db.Spec.Engine)+" database"))
+	}
+	workloadReady, waitMsg, err := helmReleaseWorkloadReady(ctx, r.Client, wsNS, chartName, databaseInstances(db))
+	if err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
+	if !workloadReady {
+		if waitMsg == "" {
+			waitMsg = messageServiceStarting
+		}
+		return r.setNotReady(ctx, db, waitMsg)
 	}
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, port, scheme); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -222,6 +257,9 @@ func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db 
 func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (ctrl.Result, error) {
 	if db.Spec.HighAvailability {
 		return r.setNotReady(ctx, db, "SQLite does not support high availability")
+	}
+	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db)); !ok {
+		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -274,8 +312,11 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	}); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	if deploy.Status.ReadyReplicas < 1 {
-		return r.setNotReady(ctx, db, "SQLite deployment is not ready")
+	if err := r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, deploy); err != nil {
+		return r.setNotReady(ctx, db, "SQLite deployment was not created")
+	}
+	if !deploymentReady(deploy, replicas) {
+		return r.setNotReady(ctx, db, messageServiceStarting)
 	}
 	host := fmt.Sprintf("%s.%s.svc", db.Name, wsNS)
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, platform.SQLiteDefaultPort, "http"); err != nil {
@@ -443,15 +484,22 @@ func (r *GeassDatabaseReconciler) ensureCNPGOperator(ctx context.Context) error 
 	return helmchart.Ensure(ctx, r.Client, platform.CNPGChartName, spec)
 }
 
-func (r *GeassDatabaseReconciler) cnpgOperatorReady(ctx context.Context) (bool, error) {
+func (r *GeassDatabaseReconciler) cnpgOperatorReady(ctx context.Context) (bool, string, error) {
 	chart, err := helmchart.Get(ctx, r.Client, platform.CNPGChartName)
 	if apierrors.IsNotFound(err) {
-		return false, nil
+		return false, installingChartMessage("Postgres operator"), nil
 	}
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return helmchart.IsReady(ctx, r.Client, chart)
+	installed, err := waitForHelmChart(ctx, r.Client, chart)
+	if err != nil {
+		return false, "", err
+	}
+	if !installed {
+		return false, installingChartMessage("Postgres operator"), nil
+	}
+	return helmReleaseWorkloadReady(ctx, r.Client, platform.CNPGTargetNS, platform.CNPGChartName, 1)
 }
 
 func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
@@ -552,6 +600,10 @@ func (r *GeassDatabaseReconciler) setReady(ctx context.Context, db *geassv1alpha
 	latest.Status.TargetNamespace = wsNS
 	latest.Status.ConnectionSecret = db.Name + "-connection"
 	latest.Status.Host = host
+	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+	platform.ClearReconcileRetry(&retryState)
+	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+	completeProvisionSuccess(&latest.Status.Provision)
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "DatabaseReady", message)
 	return ctrl.Result{}, r.Status().Update(ctx, latest)
 }
@@ -561,11 +613,12 @@ func (r *GeassDatabaseReconciler) setNotReady(ctx context.Context, db *geassv1al
 	if err := r.Get(ctx, client.ObjectKeyFromObject(db), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+	latest.Status.Conditions = conditions
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+	return result, nil
 }
 
 func mysqlChartName(name string) string {
@@ -650,6 +703,17 @@ func databaseInstanceResources(db *geassv1alpha1.GeassDatabase) corev1.ResourceR
 		return platform.DefaultSQLiteResources()
 	}
 	return platform.DefaultDatabaseResources()
+}
+
+func databaseCapacityEstimate(db *geassv1alpha1.GeassDatabase) platform.WorkloadEstimate {
+	if db == nil {
+		return platform.EstimateFromResources("database", platform.DefaultDatabaseResources(), 1)
+	}
+	label := string(db.Spec.Engine) + " database"
+	if db.Spec.Engine == "" {
+		label = "PostgreSQL database"
+	}
+	return platform.EstimateFromResources(label, databaseInstanceResources(db), databaseInstances(db))
 }
 
 func resourceQuantity(list corev1.ResourceList, name corev1.ResourceName) string {

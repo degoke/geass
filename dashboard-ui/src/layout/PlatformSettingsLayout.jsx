@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { BarChart3, Cloud, Globe, HardDrive, Plug, Settings } from "lucide-react";
+import { BarChart3, Globe, HardDrive, KeyRound, Plug, Settings } from "lucide-react";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
 import { SettingsShell } from "@/layout/SettingsShell";
 
@@ -8,8 +8,8 @@ const SETTINGS_ICONS = {
   usage: BarChart3,
   domain: Globe,
   connectors: Plug,
+  tokens: KeyRound,
   object: HardDrive,
-  cloud: Cloud,
 };
 
 export function PlatformSettingsLayout({ children }) {

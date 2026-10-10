@@ -47,6 +47,7 @@ function dashboardApiProxy(target) {
   return {
     target,
     changeOrigin: false,
+    ws: true,
     configure(proxy) {
       proxy.on("error", (_error, _req, res) => {
         if (res.writeHead) {

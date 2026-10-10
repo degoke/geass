@@ -79,10 +79,18 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleDashboardLogin(w, mutation)
 	case mutation.URL.Path == "/logout":
 		s.handleDashboardLogout(w, mutation)
+	case mutation.URL.Path == "/tokens/create":
+		s.handleAPITokenCreate(w, mutation)
+	case mutation.URL.Path == "/tokens/revoke":
+		s.handleAPITokenRevoke(w, mutation)
+	case mutation.URL.Path == "/token/deploy":
+		s.handleAPITokenDeploy(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):
 		s.handleProjectRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/templates/"):
+		s.handleTemplateRoutes(w, mutation)
 	case mutation.URL.Path == "/apps/create":
 		s.handleAppCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/apps/"):

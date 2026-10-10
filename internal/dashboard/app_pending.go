@@ -1,8 +1,6 @@
 package dashboard
 
 import (
-	"slices"
-	"strconv"
 	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -15,95 +13,24 @@ const (
 	pendingChangeVariables = "variables"
 )
 
-var pendingKindOrder = []string{pendingChangeCreated, pendingChangeSettings, pendingChangeVariables}
-
-func appPendingChanges(app *geassv1alpha1.GeassApp) int {
-	count, err := strconv.Atoi(app.Annotations[platform.AppPendingUpdatesAnnotation])
-	if err != nil || count < 0 {
-		count = 0
-	}
-	// A draft is itself a pending change, even when it was created before the
-	// pending-updates annotation was introduced.
-	if count == 0 && !app.Spec.Deploy.Enabled {
-		return 1
-	}
-	return count
-}
-
 func appPendingKinds(app *geassv1alpha1.GeassApp) []string {
-	raw := ""
-	if app.Annotations != nil {
-		raw = app.Annotations[platform.AppPendingChangesAnnotation]
-	}
-	var kinds []string
-	for part := range strings.SplitSeq(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" && !slices.Contains(kinds, part) {
-			kinds = append(kinds, part)
-		}
-	}
-	if !app.Spec.Deploy.Enabled && !slices.Contains(kinds, pendingChangeCreated) {
-		kinds = append([]string{pendingChangeCreated}, kinds...)
-	}
-	if len(kinds) == 0 && appPendingChanges(app) > 0 {
-		kinds = []string{pendingChangeSettings}
-	}
-	return normalizePendingKinds(kinds)
-}
-
-func normalizePendingKinds(kinds []string) []string {
-	seen := map[string]bool{}
-	for _, kind := range kinds {
-		seen[kind] = true
-	}
-	out := make([]string, 0, len(pendingKindOrder))
-	for _, kind := range pendingKindOrder {
-		if seen[kind] {
-			out = append(out, kind)
-		}
-	}
-	return out
+	return platform.PendingKinds(app.Annotations, app.Spec.Deploy.Enabled)
 }
 
 func markAppPendingChange(app *geassv1alpha1.GeassApp, kind string) {
-	if app.Annotations == nil {
-		app.Annotations = map[string]string{}
-	}
-	kinds := []string{}
-	if raw := app.Annotations[platform.AppPendingChangesAnnotation]; raw != "" {
-		for part := range strings.SplitSeq(raw, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				kinds = append(kinds, part)
-			}
-		}
-	}
-	if kind != "" && !slices.Contains(kinds, kind) {
-		kinds = append(kinds, kind)
-	}
-	app.Annotations[platform.AppPendingChangesAnnotation] = strings.Join(normalizePendingKinds(kinds), ",")
-	app.Annotations[platform.AppPendingUpdatesAnnotation] = strconv.Itoa(appPendingChanges(app) + 1)
+	platform.MarkPendingChange(&app.ObjectMeta, kind)
 }
 
 func clearAppPendingChanges(app *geassv1alpha1.GeassApp) {
-	if app.Annotations == nil {
-		app.Annotations = map[string]string{}
-	}
-	app.Annotations[platform.AppPendingUpdatesAnnotation] = "0"
-	delete(app.Annotations, platform.AppPendingChangesAnnotation)
+	platform.ClearPendingChanges(&app.ObjectMeta)
 }
 
 func initializeAppPendingChanges(app *geassv1alpha1.GeassApp) {
-	if app.Annotations == nil {
-		app.Annotations = map[string]string{}
-	}
 	if app.Spec.Deploy.Enabled {
-		app.Annotations[platform.AppPendingUpdatesAnnotation] = "0"
-		delete(app.Annotations, platform.AppPendingChangesAnnotation)
+		platform.ClearPendingChanges(&app.ObjectMeta)
 		return
 	}
-	app.Annotations[platform.AppPendingUpdatesAnnotation] = "1"
-	app.Annotations[platform.AppPendingChangesAnnotation] = pendingChangeCreated
+	platform.InitializePendingCreated(&app.ObjectMeta)
 }
 
 func pendingKindLabels(kinds []string) []string {

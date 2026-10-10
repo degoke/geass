@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
@@ -12,14 +13,11 @@ func SetLastDeployedSpec(app *geassv1alpha1.GeassApp) error {
 	if app == nil {
 		return nil
 	}
-	raw, err := json.Marshal(app.Spec)
-	if err != nil {
+	if err := SetLastDeployedJSON(&app.ObjectMeta, app.Spec); err != nil {
 		return err
 	}
-	if app.Annotations == nil {
-		app.Annotations = map[string]string{}
-	}
-	app.Annotations[AppLastDeployedAnnotation] = string(raw)
+	// Every deploy is a new revision, even when only variables or secrets changed.
+	app.Annotations[AppDeployRevisionAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
 	return nil
 }
 

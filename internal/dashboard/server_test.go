@@ -54,6 +54,8 @@ func newFakeClient(objects ...client.Object) client.Client {
 			&geassv1alpha1.GeassGitHubConnection{},
 			&geassv1alpha1.GeassApp{},
 			&geassv1alpha1.GeassPlatformConfig{},
+			&geassv1alpha1.GeassConsoleSession{},
+			&geassv1alpha1.GeassProject{},
 		).
 		Build()
 }
@@ -212,6 +214,41 @@ func TestHandleProjectCreateAndDetail(t *testing.T) {
 	require.Equal(t, http.StatusOK, detail.Code)
 	require.Contains(t, detail.Body.String(), project.Name)
 	require.Contains(t, detail.Body.String(), project.Spec.DisplayName)
+}
+
+func TestHandleProjectDeleteRemovesOwnedResources(t *testing.T) {
+	ctx := context.Background()
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{DisplayName: "Payments", ClusterRef: corev1.LocalObjectReference{Name: testClusterName}, Environments: []string{"production"}},
+	}
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentProduction},
+	}
+	other := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "billing-api", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassAppSpec{Project: "billing", Environment: geassv1alpha1.EnvironmentProduction},
+	}
+	c := newFakeClient(project, app, other)
+	srv := &Server{Client: c}
+
+	form := url.Values{"confirmName": {"Payments"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/projects/payments/settings/delete", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleProjectRoutes(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var projects geassv1alpha1.GeassProjectList
+	require.NoError(t, c.List(ctx, &projects, client.InNamespace(platform.SystemNamespace)))
+	require.Empty(t, projects.Items)
+
+	var apps geassv1alpha1.GeassAppList
+	require.NoError(t, c.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)))
+	require.Len(t, apps.Items, 1)
+	require.Equal(t, "billing-api", apps.Items[0].Name)
 }
 
 func TestProjectWorkspaceResourceRouteAndSettings(t *testing.T) {
@@ -732,7 +769,7 @@ func TestAPIAppCreateStoresAssignedSizeAndAutoscaling(t *testing.T) {
 	require.Empty(t, deployments.Items)
 }
 
-func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
+func TestAPIDatabaseDeployRejectedWhenClusterIsTooSmall(t *testing.T) {
 	ctx := context.Background()
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "tiny"},
@@ -744,21 +781,66 @@ func TestAPIDatabaseCreateRejectedWhenClusterIsTooSmall(t *testing.T) {
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 		},
 	}
-	srv := &Server{Client: newFakeClient(node)}
-	form := url.Values{
-		"name":             {"orders"},
-		"project":          {testProjectName},
-		"environment":      {"dev"},
-		"engine":           {"Postgres"},
-		"placement":        {"InCluster"},
-		"highAvailability": {"on"},
+	db := &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "orders",
+			Namespace: platform.SystemNamespace,
+			Annotations: map[string]string{
+				platform.DeployWorkflowAnnotation: "true",
+				platform.PendingUpdatesAnnotation: "1",
+				platform.PendingChangesAnnotation: platform.PendingChangeCreated,
+			},
+		},
+		Spec: geassv1alpha1.GeassDatabaseSpec{
+			Project:          testProjectName,
+			Environment:      geassv1alpha1.EnvironmentDev,
+			Engine:           geassv1alpha1.DatabaseEnginePostgres,
+			Placement:        geassv1alpha1.DatabasePlacementInCluster,
+			HighAvailability: true,
+		},
 	}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/create", strings.NewReader(form.Encode())).WithContext(ctx))
+	instances := int32(3)
+	db.Spec.Instances = &instances
+	srv := &Server{Client: newFakeClient(node, db)}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/databases/orders/deploy", strings.NewReader(url.Values{}.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "Scale up")
+}
+
+func TestAPIResourceDisplayNameDoesNotMarkPending(t *testing.T) {
+	ctx := context.Background()
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "floral-pebble",
+			Namespace: platform.SystemNamespace,
+			Annotations: map[string]string{
+				platform.DeployWorkflowAnnotation: "true",
+				platform.PendingUpdatesAnnotation: "1",
+				platform.PendingChangesAnnotation: platform.PendingChangeCreated,
+			},
+		},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Project:     testProjectName,
+			Environment: geassv1alpha1.EnvironmentProduction,
+			Engine:      geassv1alpha1.ObjectStoreEngineMinIO,
+		},
+	}
+	srv := &Server{Client: newFakeClient(store)}
+	form := url.Values{"displayName": {"Floral Pebble"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/floral-pebble/display-name", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var updated geassv1alpha1.GeassObjectStore
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "floral-pebble", Namespace: platform.SystemNamespace}, &updated))
+	require.Equal(t, "Floral Pebble", updated.Annotations[platform.DisplayNameAnnotation])
+	require.Equal(t, "1", updated.Annotations[platform.PendingUpdatesAnnotation])
+	require.Equal(t, platform.PendingChangeCreated, updated.Annotations[platform.PendingChangesAnnotation])
 }
 
 func TestAPIExternalDatabaseCreateSkipsCapacityGate(t *testing.T) {
@@ -921,7 +1003,8 @@ func TestRecordDeploymentUsesGitHubSourceDetails(t *testing.T) {
 		},
 	}
 	srv := &Server{Client: newFakeClient()}
-	require.NoError(t, srv.recordDeployment(ctx, app))
+	_, deployErr := srv.recordDeployment(ctx, app)
+	require.NoError(t, deployErr)
 
 	var deployments geassv1alpha1.GeassDeploymentList
 	require.NoError(t, srv.Client.List(ctx, &deployments, client.MatchingLabels{platform.LabelApp: testWorkerAppName}))
@@ -1288,6 +1371,8 @@ func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
 		"cluster":   {"on"},
 		"engine":    {"MinIO"},
 		"placement": {"InCluster"},
+		"cpu":       {"250m"},
+		"memory":    {"512Mi"},
 	}
 	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1300,6 +1385,59 @@ func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
 	require.Equal(t, geassv1alpha1.ObjectStoreEngineMinIO, store.Spec.Engine)
 	require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
 	require.Empty(t, store.Spec.Project)
+	require.Equal(t, "250m", store.Spec.Resources.Requests.Cpu().String())
+	require.Equal(t, "512Mi", store.Spec.Resources.Requests.Memory().String())
+}
+
+func TestAPIObjectStoreUpdateClusterMinIOResources(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient(roomyTestNode())}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+			Resources: platform.DefaultDatabaseResources(),
+		},
+	}
+	require.NoError(t, srv.Client.Create(ctx, store))
+
+	form := url.Values{"cpu": {"500m"}, "memory": {"1Gi"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/"+platform.ClusterMinIOName+"/update", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleObjectStoreUpdate(rec, req, platform.ClusterMinIOName)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var latest geassv1alpha1.GeassObjectStore
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace}, &latest))
+	require.Equal(t, "500m", latest.Spec.Resources.Requests.Cpu().String())
+	require.Equal(t, "1Gi", latest.Spec.Resources.Requests.Memory().String())
+}
+
+func TestAPIObjectStoreCreateDraftBucketWithoutName(t *testing.T) {
+	ctx := context.Background()
+	server := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+	}
+	srv := &Server{Client: newFakeClient(server)}
+	form := url.Values{
+		"project":     {testProjectName},
+		"environment": {"production"},
+		"draft":       {"on"},
+		"engine":      {"MinIO"},
+		"placement":   {"InCluster"},
+	}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"name"`)
 }
 
 func TestAPIObjectStoreCreateInClusterRequiresMinIO(t *testing.T) {

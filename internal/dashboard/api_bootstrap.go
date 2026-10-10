@@ -59,6 +59,9 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 		spec := &data.Projects.Items[i].Spec
 		spec.SharedVariables = nil
 		spec.GitHubConnectionRef = nil
+		// Webhook URLs often carry secret tokens, and delivery records name them.
+		spec.Webhooks = nil
+		data.Projects.Items[i].Status.WebhookDeliveries = nil
 	}
 	for i := range data.Apps.Items {
 		spec := &data.Apps.Items[i].Spec
@@ -122,6 +125,11 @@ func redactAppSource(source geassv1alpha1.GeassAppSource) geassv1alpha1.GeassApp
 		image := *source.Image
 		image.PullSecret = nil
 		source.Image = &image
+	}
+	if source.Function != nil {
+		function := *source.Function
+		function.Code = ""
+		source.Function = &function
 	}
 	return source
 }

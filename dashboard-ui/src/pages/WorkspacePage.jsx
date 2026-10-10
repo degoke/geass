@@ -1,37 +1,84 @@
 import { canMutate } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import { projectResources } from "@/lib/project-resources";
-import { resourceName } from "@/lib/api";
+import { resourceDisplayName, resourceName } from "@/lib/api";
 import { resourceHref } from "@/lib/resource-links";
-import { resourceStatus } from "@/lib/services";
+import { functionSourceLabel } from "@/lib/functions";
+import { isResourceDeleting, pendingChangeCount, pendingChangeKinds, pendingKindsSummary, resourceStatus, usesDeployWorkflow } from "@/lib/services";
 import { ProjectCanvas } from "@/components/ProjectCanvas";
+import { ProjectPendingBanner } from "@/components/ProjectPendingBanner";
 import { ResourceDialog } from "@/components/ResourceDialog";
 import { ProjectChrome } from "@/layout/ProjectChrome";
 
-export function WorkspacePage({ project, data, environment }) {
+export function WorkspacePage({ project, data, environment, reload }) {
   const name = resourceName(project);
   const resources = projectResources(data, name, environment);
+  // Connection secrets identify which database or bucket a service references through its env.
+  const secretOwners = new Map();
+  [...resources.databases, ...resources.stores].forEach((item) => {
+    const secret = item.status?.connectionSecret;
+    if (secret) secretOwners.set(secret, resourceName(item));
+  });
+  const referencedResources = (app) => {
+    const refs = new Set();
+    for (const variable of app.spec?.env || []) {
+      const owner = secretOwners.get(variable.valueFrom?.secretKeyRef?.name);
+      if (owner) refs.add(owner);
+    }
+    return [...refs];
+  };
+
   const rows = [
     ...resources.apps.map((item) => ({
       item,
       kind: "Service",
-      source: item.spec?.source?.git?.repository || item.spec?.source?.image?.image || item.spec?.source?.image || "Docker",
+      sourceKind: item.spec?.source?.function ? "function" : item.spec?.source?.git ? "git" : "image",
+      source: item.spec?.ingress?.host
+        || (item.spec?.source?.function ? functionSourceLabel(item.spec.source.function) : "")
+        || item.spec?.source?.git?.repository
+        || item.spec?.source?.image?.image
+        || item.spec?.source?.image
+        || "Docker",
+      linkTo: referencedResources(item),
     })),
-    ...resources.databases.map((item) => ({ item, kind: item.spec?.engine || "Database", source: item.spec?.engine || "Managed" })),
-    ...resources.logical.map((item) => ({ item, kind: "Logical DB", source: "Managed" })),
+    ...resources.databases.map((item) => ({
+      item,
+      kind: item.spec?.engine || "Database",
+      source: item.spec?.engine || "Managed",
+      volume: item.spec?.placement !== "External" && item.spec?.storageSize ? `${item.metadata?.name}-volume · ${item.spec.storageSize}` : "",
+    })),
+    ...resources.logical.map((item) => ({
+      item,
+      kind: "Logical DB",
+      source: "Managed",
+      linkTo: item.spec?.serverRef ? [item.spec.serverRef] : [],
+    })),
     ...resources.stores.map((item) => ({ item, kind: "Bucket", source: item.spec?.engine || "Object storage" })),
-  ].map(({ item, kind, source }) => ({
-    key: `${kind}-${resourceName(item)}`,
-    name: resourceName(item),
-    href: resourceHref(name, environment, item, kind).split("?")[0],
-    kind,
-    source: typeof source === "string" ? source : "Managed",
-    status: resourceStatus(item),
-  }));
+  ].map(({ item, kind, source, sourceKind, linkTo, volume }) => {
+    const kinds = usesDeployWorkflow(item) ? pendingChangeKinds(item) : [];
+    return {
+      key: `${kind}-${resourceName(item)}`,
+      resourceName: resourceName(item),
+      linkTo: linkTo || [],
+      name: resourceDisplayName(item),
+      href: resourceHref(name, environment, item, kind).split("?")[0],
+      kind,
+      source: typeof source === "string" ? source : "Managed",
+      sourceKind: sourceKind || "",
+      volume: volume || "",
+      status: resourceStatus(item),
+      pendingKinds: kinds,
+      pendingCount: kinds.length ? pendingChangeCount(item) : 0,
+      pendingLabel: kinds.length ? pendingKindsSummary(kinds) : "",
+      isNew: usesDeployWorkflow(item) && !item.spec?.deploy?.enabled,
+      isDeleting: isResourceDeleting(item),
+    };
+  });
 
   return (
     <ProjectChrome>
       <div className="rw-project-canvas-shell">
+        <ProjectPendingBanner projectName={name} environment={environment} data={data} reload={reload} />
         <ProjectCanvas
           projectKey={name}
           rows={rows}

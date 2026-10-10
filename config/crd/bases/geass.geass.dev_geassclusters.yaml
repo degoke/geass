@@ -166,6 +166,26 @@ spec:
               phase:
                 description: Phase is the current phase of the GeassCluster.
                 type: string
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
             type: object
         required:
         - spec

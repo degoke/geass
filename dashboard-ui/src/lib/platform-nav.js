@@ -32,8 +32,8 @@ export const SETTINGS_PATHS = [
   "/settings/domain",
   "/settings/connectors",
   "/settings/github",
+  "/settings/tokens",
   "/object-storage",
-  "/cloud-connections",
   "/cluster",
   "/ha-readiness",
 ];
@@ -47,8 +47,8 @@ export const SETTINGS_LINKS = [
   { id: "usage", label: "Usage", to: "/cluster", active: (path) => path === "/cluster" || path === "/ha-readiness" || path.startsWith("/cluster/") },
   { id: "domain", label: "Domain", to: "/settings/domain", active: (path) => path.startsWith("/settings/domain") },
   { id: "connectors", label: "Connectors", to: "/settings/connectors", active: (path) => path.startsWith("/settings/connectors") || path.startsWith("/settings/github") },
+  { id: "tokens", label: "Tokens", to: "/settings/tokens", active: (path) => path.startsWith("/settings/tokens") },
   { id: "object", label: "Object storage", to: "/object-storage", active: (path) => path.startsWith("/object-storage") },
-  { id: "cloud", label: "Cloud connections", to: "/cloud-connections", active: (path) => path.startsWith("/cloud-connections") },
 ];
 
 /** @deprecated use SETTINGS_LINKS */

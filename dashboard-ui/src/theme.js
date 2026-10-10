@@ -41,6 +41,10 @@ export const geassTheme = createTheme({
     },
   },
   components: {
+    Modal: {
+      // Above in-canvas resource / deployment drawers (z-index ~200–202) and pending banner (400).
+      defaultProps: { zIndex: 450 },
+    },
     Button: { defaultProps: { radius: 6, size: "sm", fw: 500 } },
     Paper: { defaultProps: { radius: 8, shadow: "none" } },
     TextInput: { defaultProps: { radius: 6, size: "sm" } },

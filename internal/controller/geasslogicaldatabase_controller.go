@@ -36,6 +36,9 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	if err := r.Get(ctx, req.NamespacedName, &logical); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if result, paused := beginProvisionReconcileUnlessDeleting(!logical.DeletionTimestamp.IsZero(), logical.Status.Conditions, logical.Generation, &logical.Status.ReconcileRetry); paused {
+		return result, nil
+	}
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, logical.Spec.Project, logical.Spec.Environment); err != nil {
 		return r.setNotReady(ctx, &logical, err.Error())
 	}
@@ -127,6 +130,10 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	latest.Status.ConnectionSecret = secret.Name
 	latest.Status.JobName = jobName
+	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+	platform.ClearReconcileRetry(&retryState)
+	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+	completeProvisionSuccess(&latest.Status.Provision)
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "LogicalDatabaseReady", "Logical database connection is available")
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
@@ -171,11 +178,12 @@ func (r *GeassLogicalDatabaseReconciler) setNotReady(ctx context.Context, logica
 	if err := r.Get(ctx, client.ObjectKeyFromObject(logical), latest); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+	latest.Status.Conditions = conditions
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+	return result, nil
 }
 
 func (r *GeassLogicalDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {

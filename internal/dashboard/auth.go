@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/degoke/geass/pkg/apitokens"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -71,6 +72,21 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if presented, ok := bearerToken(r); ok {
+			record, err := s.authenticateAPIToken(r.Context(), presented)
+			if err != nil {
+				if errors.Is(err, errInvalidToken) {
+					writeJSON(w, http.StatusUnauthorized, map[string]string{dashboardLiteralError: errInvalidToken.Error()})
+				} else {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not verify the API token"})
+				}
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), apiTokenContextKey{}, record))
+			if record.Scope == apitokens.ScopeProject && !s.allowProjectToken(w, r, record) {
+				return
+			}
+		}
 		session := s.currentSession(r)
 		if session == nil {
 			if isJSONRequest(r) || strings.HasPrefix(r.URL.Path, "/api/") {
@@ -103,15 +119,21 @@ func dashboardWriteCallback(path string) bool {
 
 func dashboardSensitiveRead(path string) bool {
 	switch {
+	case strings.Contains(path, "/deployments/") && strings.HasSuffix(path, "/logs"):
+		return true
 	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/logs"):
 		return true
 	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/runtime"):
 		return true
 	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/variables"):
 		return true
+	case strings.HasPrefix(path, "/api/apps/") && strings.HasSuffix(path, "/console/ws"):
+		return true
+	case strings.HasPrefix(path, "/api/object-stores/") && (strings.HasSuffix(path, "/runtime") || strings.HasSuffix(path, "/logs")):
+		return true
 	case strings.HasPrefix(path, "/api/projects/") && strings.HasSuffix(path, "/github/repos"):
 		return true
-	case path == "/api/settings/github":
+	case path == "/api/settings/github", path == "/api/templates", path == "/api/tokens":
 		return true
 	default:
 		return false
@@ -216,6 +238,9 @@ func (s *Server) sessionCanMutate(r *http.Request) bool {
 }
 
 func (s *Server) currentSession(r *http.Request) *dashboardSessionInfo {
+	if record := tokenFromRequest(r); record != nil {
+		return tokenSession(record)
+	}
 	cookie, err := r.Cookie(platform.DashboardSessionCookie)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return nil

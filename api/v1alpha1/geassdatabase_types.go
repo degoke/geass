@@ -133,6 +133,10 @@ type GeassDatabaseSpec struct {
 	// Resources is the CPU and memory assigned to each in-cluster instance.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Deploy gates database provisioning until the user deploys from the dashboard.
+	// +optional
+	Deploy GeassDeploySpec `json:"deploy,omitempty"`
 }
 
 // GeassDatabaseStatus defines the observed state of GeassDatabase.
@@ -148,6 +152,14 @@ type GeassDatabaseStatus struct {
 	// Host is the in-cluster database hostname.
 	// +optional
 	Host string `json:"host,omitempty"`
+
+	// ReconcileRetry tracks provision retries before reconciliation gives up.
+	// +optional
+	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+
+	// Provision tracks deploy attempts and errors for this resource.
+	// +optional
+	Provision GeassProvisionStatus `json:"provision,omitempty"`
 
 	// conditions represent the current state of the GeassDatabase resource.
 	// +listType=map

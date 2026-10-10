@@ -65,11 +65,13 @@ func TestProjectReconcilerCleansSharedSecretOnDeletion(t *testing.T) {
 		Spec: geassv1alpha1.GeassProjectSpec{Environments: []string{testEnvDev}},
 	}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testProjectName + "-shared-secrets", Namespace: platform.SystemNamespace}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project, secret).Build()
+	webhookSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testProjectName + "-webhooks", Namespace: platform.SystemNamespace}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project, secret, webhookSecret).Build()
 	r := &GeassProjectReconciler{Client: c, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), requestFor(project))
 	require.NoError(t, err)
 	require.Error(t, c.Get(context.Background(), client.ObjectKeyFromObject(secret), &corev1.Secret{}))
+	require.Error(t, c.Get(context.Background(), client.ObjectKeyFromObject(webhookSecret), &corev1.Secret{}), "webhook signing secrets go with the project")
 }
 
 func requestFor(obj client.Object) ctrl.Request {

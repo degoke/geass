@@ -1,92 +1,152 @@
 import { useState } from "react";
-import { action, condition, list, resourceName } from "@/lib/api";
-import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
-import { capacityFits, cpuMillis, memoryBytes } from "@/lib/capacity";
-import { AppLink } from "@/components/AppLink";
-import { SizeFields } from "@/components/SizeFields";
-import { Badge, Button, DangerZone, DataTable, Field, FormStack, Input, Muted, PageSection } from "@/components/geass-ui";
-import { SettingsSection } from "@/layout/SettingsShell";
+import { HardDrive, Layers, Warehouse } from "lucide-react";
+import { condition, list } from "@/lib/api";
+import { Button } from "@/components/geass-ui";
+import { SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 import { PlatformPage } from "@/layout/PlatformPage";
-import { Trash2 } from "lucide-react";
+import { MinIOObjectStoragePanel } from "@/pages/platform/MinIOObjectStoragePanel";
+
+const STATUS_LABEL = {
+  connected: "Active",
+  pending: "Pending",
+  disconnected: "Not set up",
+  unavailable: "Coming soon",
+};
+
+const CLUSTER_PROVIDER = {
+  id: "minio",
+  icon: HardDrive,
+  name: "MinIO",
+};
+
+function ObjectStorageProviderCard({
+  icon: Icon,
+  name,
+  description,
+  status = "disconnected",
+  enabled = true,
+  actionLabel,
+  onConfigure,
+}) {
+  return (
+    <div
+      className={`rw-settings-integration-card is-${status}${enabled ? "" : " is-disabled"}`}
+      data-connection-status={status}
+    >
+      <div className="rw-settings-integration-icon" aria-hidden="true">
+        <Icon size={22} />
+      </div>
+      <div className="rw-settings-integration-body">
+        <div className="rw-settings-integration-heading">
+          <h3>{name}</h3>
+          <span className={`rw-integration-status is-${status}`}>{STATUS_LABEL[status] || status}</span>
+        </div>
+        <p>{description}</p>
+        {enabled ? (
+          <Button type="button" variant="outline" onClick={onConfigure} aria-label={`${actionLabel} ${name}`}>
+            {actionLabel}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function clusterMinIOServer(data) {
+  const items = list(data, "objectStores").filter(
+    (item) => !item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External",
+  );
+  return items[0];
+}
 
 export function ObjectStorageSettingsPage({ data, reload, embedded = false }) {
-  const items = list(data, "objectStores").filter((item) => !item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External");
-  const server = items[0];
-  const ready = condition(server) === "True";
-  const capacity = data?.platform?.capacity || {};
-  const [cpu, setCpu] = useState("250m");
-  const [memory, setMemory] = useState("512Mi");
-  const [confirmDelete, setConfirmDelete] = useState("");
-  const live = { cpu, memory, cpuMillis: cpuMillis(cpu), memoryBytes: memoryBytes(memory), perCpuMillis: cpuMillis(cpu), perMemoryBytes: memoryBytes(memory), replicas: 1 };
-  const fits = capacityFits(capacity, live);
-  const projectBuckets = list(data, "objectStores").filter((item) => item.spec?.project && item.spec?.engine !== "S3" && item.spec?.placement !== "External");
-  const serverName = resourceName(server);
-  const body = (
-    <>
-      <PageSection
-        title={server ? "MinIO server" : "Set up MinIO"}
-        description={server ? server.status?.endpoint || "Cluster MinIO server" : "In-cluster buckets stay disabled until this server exists."}
-        plain={embedded}
-      >
-        {server ? (
-          <>
-            <DataTable
-              columns={[
-                { label: "Server", key: "name" },
-                { label: "Endpoint", key: "endpoint" },
-                {
-                  label: "Status",
-                  align: "right",
-                  render: (row) => <Badge tone={row.ready ? "success" : "warning"}>{row.ready ? "Ready" : "Pending"}</Badge>,
-                },
-              ]}
-              rows={[{ name: serverName, endpoint: server.status?.endpoint || "Cluster MinIO server", ready }]}
-              getRowKey={(row) => row.name}
-            />
-            {canMutate(data) && (
-              projectBuckets.length
-                ? <Muted size="sm" mt="md">Delete project buckets before removing the MinIO server.</Muted>
-                : (
-                  <DangerZone>
-                    <Field label={`Type ${serverName} to remove the MinIO server`}>
-                      <Input value={confirmDelete} onChange={(event) => setConfirmDelete(event.target.value)} autoComplete="off" placeholder={serverName} />
-                    </Field>
-                    <Button type="button" variant="danger" disabled={confirmDelete !== serverName} onClick={() => action(`/object-stores/${serverName}/delete`, { confirmName: confirmDelete }).then(() => { reload(); alertUser("MinIO server removed"); }).catch((error) => alertUser(error.message))}>
-                      <Trash2 size={15} /> Remove MinIO server
-                    </Button>
-                  </DangerZone>
-                )
-            )}
-          </>
-        ) : (
-          <FormStack>
-            <SizeFields cpu={cpu} memory={memory} onChange={(key, value) => { if (key === "cpu") setCpu(value); else setMemory(value); }} data={data} />
-            {!fits && (
-              <Muted size="sm">
-                The cluster does not have enough capacity. <AppLink href="/cluster">Open cluster capacity</AppLink> before creating MinIO.
-              </Muted>
-            )}
-            <Button disabled={!canMutate(data) || !fits} onClick={() => action("/object-stores/create", { cluster: "on", engine: "MinIO", placement: "InCluster", cpu, memory }).then(() => { reload(); alertUser("MinIO server created"); }).catch((error) => alertUser(error.message))}>
-              Set up MinIO server
-            </Button>
-          </FormStack>
-        )}
-      </PageSection>
-    </>
+  const [setupOpen, setSetupOpen] = useState(false);
+  const server = clusterMinIOServer(data);
+  const ready = server ? condition(server) === "True" : false;
+  const minioStatus = !server ? "disconnected" : ready ? "connected" : "pending";
+  const hasClusterBackend = Boolean(server);
+
+  const storageDescription = hasClusterBackend
+    ? "MinIO serves in-cluster project buckets. Other backends stay disabled until you remove it."
+    : "Choose one cluster-wide backend. Only one can be installed at a time.";
+
+  const providerPicker = !hasClusterBackend ? (
+    <SettingsSection
+      title={embedded ? "Object storage" : undefined}
+      description={embedded ? storageDescription : undefined}
+      flat={embedded}
+    >
+      <div className="rw-settings-connectors-grid">
+        <ObjectStorageProviderCard
+          icon={CLUSTER_PROVIDER.icon}
+          name={CLUSTER_PROVIDER.name}
+          status={minioStatus}
+          enabled
+          description="S3-compatible object storage for in-cluster project buckets."
+          actionLabel="Set up"
+          onConfigure={() => setSetupOpen(true)}
+        />
+        <ObjectStorageProviderCard
+          icon={Warehouse}
+          name="Garage SFS"
+          status="unavailable"
+          enabled={false}
+          description="Distributed object storage for self-hosted S3-compatible buckets."
+        />
+        <ObjectStorageProviderCard
+          icon={Layers}
+          name="SeaweedFS"
+          status="unavailable"
+          enabled={false}
+          description="Fast blob storage with optional S3 gateway for project buckets."
+        />
+      </div>
+    </SettingsSection>
+  ) : null;
+
+  const activeBackend = hasClusterBackend ? (
+    <SettingsSection
+      title={embedded ? "Object storage" : undefined}
+      description={embedded ? storageDescription : undefined}
+      flat={embedded && !providerPicker}
+      actions={(
+        <span className={`rw-integration-status is-${minioStatus}`} title={`${CLUSTER_PROVIDER.name} cluster backend`}>
+          {CLUSTER_PROVIDER.name} · {STATUS_LABEL[minioStatus]}
+        </span>
+      )}
+    >
+      <div className="rw-storage-active">
+        <MinIOObjectStoragePanel data={data} reload={reload} showSetup={false} />
+      </div>
+    </SettingsSection>
+  ) : null;
+
+  const setupSheet = (
+    <SettingsSheet
+      opened={setupOpen}
+      onClose={() => setSetupOpen(false)}
+      title="MinIO"
+      description="Provision a MinIO server for project buckets across the cluster."
+    >
+      <MinIOObjectStoragePanel data={data} reload={() => { reload(); setSetupOpen(false); }} showSetup />
+    </SettingsSheet>
   );
 
   if (embedded) {
     return (
-      <SettingsSection title="Object storage" description="One MinIO server for the cluster. Project buckets are created on this server.">
-        {body}
-      </SettingsSection>
+      <>
+        {providerPicker}
+        {activeBackend}
+        {setupSheet}
+      </>
     );
   }
 
   return (
-    <PlatformPage title="Object storage" description="One MinIO server for the cluster. Project buckets are created on this server.">
-      {body}
+    <PlatformPage title="Object storage" description={storageDescription}>
+      {providerPicker}
+      {activeBackend}
+      {setupSheet}
     </PlatformPage>
   );
 }

@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -36,6 +37,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
@@ -52,11 +54,15 @@ const (
 type GeassAppReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Webhooks receives deployment outcomes; nil disables webhook notifications.
+	Webhooks webhooks.Emitter
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassapps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassapps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdeployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdeployments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -67,6 +73,7 @@ type GeassAppReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -74,6 +81,9 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var app geassv1alpha1.GeassApp
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if result, paused := beginProvisionReconcileUnlessDeleting(!app.DeletionTimestamp.IsZero(), app.Status.Conditions, app.Generation, &app.Status.ReconcileRetry); paused {
+		return result, nil
 	}
 
 	if !controllerutil.ContainsFinalizer(&app, appFinalizer) {
@@ -85,6 +95,14 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		for _, wsNS := range appDeletionNamespaces(&app) {
 			r.deleteTargetResources(ctx, &app, wsNS)
 		}
+		// Deployment history records are not owned by the app, so remove them here; otherwise a
+		// new service that reuses the name would show the old service's history.
+		if err := r.DeleteAllOf(ctx, &geassv1alpha1.GeassDeployment{}, client.InNamespace(app.Namespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil {
+			log.Error(err, "Could not delete deployment history", "app", app.Name)
+		}
+		// The service's own secret values (<app>-secrets) live in the system namespace with no owner
+		// reference, so they have to be removed here or they outlive the service.
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-secrets", Namespace: app.Namespace}}))
 		controllerutil.RemoveFinalizer(&app, appFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &app)
 	}
@@ -152,8 +170,15 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.reconcileConfigMap(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
+	if err := r.reconcileFunctionCode(ctx, &app, wsNS); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
 	if err := r.reconcileSecret(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
+	}
+	est := platform.EstimateFromResources("service", appContainerResources(&app), deploymentReplicas(&app))
+	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est); !ok {
+		return r.setNotReady(ctx, &app, msg)
 	}
 	if err := r.reconcileDeployment(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
@@ -203,7 +228,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				}
 			}
 		}
-		return r.setNotReady(ctx, &app, "Deployment is not available yet")
+		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}
 	if app.Status.HealthCheckFailures != 0 {
 		latest := app.DeepCopy()
@@ -257,10 +282,16 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			latest.Status.DNSMessage = "DNS hostname is required"
 		}
 	}
+	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+	platform.ClearReconcileRetry(&retryState)
+	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+	completeProvisionSuccess(&latest.Status.Provision)
 	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
+	app.Status = latest.Status
+	r.notifyDeployOutcome(ctx, &app, webhooks.EventDeploymentSucceeded, "")
 
 	log.Info("Reconciled GeassApp", "environment", app.Spec.Environment, "namespace", wsNS)
 	return ctrl.Result{}, nil
@@ -335,6 +366,31 @@ func (r *GeassAppReconciler) reconcileConfigMap(ctx context.Context, app *geassv
 		return setSameNamespaceOwner(app, cm, r.Scheme)
 	})
 	_ = op
+	return err
+}
+
+// functionConfigMapName is the ConfigMap that holds a function's source file.
+func functionConfigMapName(app *geassv1alpha1.GeassApp) string {
+	return app.Name + "-function"
+}
+
+// reconcileFunctionCode publishes a function's code as a ConfigMap, or removes the ConfigMap
+// when the service is not a function.
+func (r *GeassAppReconciler) reconcileFunctionCode(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: functionConfigMapName(app), Namespace: wsNS}}
+	fn := app.Spec.Source.Function
+	if fn == nil {
+		return client.IgnoreNotFound(r.Delete(ctx, cm))
+	}
+	fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime)
+	if !ok {
+		return fmt.Errorf("unsupported function runtime %q", fn.Runtime)
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+		applyGeassLabels(cm, app, "GeassApp")
+		cm.Data = map[string]string{fnRuntime.File: fn.Code}
+		return setSameNamespaceOwner(app, cm, r.Scheme)
+	})
 	return err
 }
 
@@ -423,6 +479,14 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 				}
 			}
 		}
+		// Service variables are environment variables. They come after the shared project variables so
+		// a service can override a shared value.
+		if len(app.Spec.ConfigData) > 0 {
+			envFrom = append(envFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: app.Name + "-config"}}})
+		}
+		if len(app.Spec.SecretData) > 0 || app.Spec.SecretRef != nil {
+			envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: app.Name + "-secret"}}})
+		}
 		if len(app.Spec.ConfigData) > 0 {
 			volumes = append(volumes, corev1.Volume{
 				Name: "config",
@@ -475,18 +539,49 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 				ReadOnly:  true,
 			})
 		}
+		command := app.Spec.Build.Command
+		env := append(append([]corev1.EnvVar(nil), app.Spec.Env...), sharedEnv...)
+		podAnnotations := map[string]string{}
+		if revision := app.Annotations[platform.AppDeployRevisionAnnotation]; revision != "" {
+			podAnnotations[platform.AppDeployRevisionAnnotation] = revision
+		}
+		var automountToken *bool
+		if fn := app.Spec.Source.Function; fn != nil {
+			if fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
+				if len(command) == 0 {
+					command = fnRuntime.Command
+				}
+				volumes = append(volumes, corev1.Volume{
+					Name: "function",
+					VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: functionConfigMapName(app)},
+						Items:                []corev1.KeyToPath{{Key: fnRuntime.File, Path: fnRuntime.File}},
+					}},
+				})
+				volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "function", MountPath: platform.FunctionMountPath, ReadOnly: true})
+				if !hasEnvVar(env, "PORT") {
+					env = append(env, corev1.EnvVar{Name: "PORT", Value: strconv.Itoa(int(port))})
+				}
+				// The pod template changes with the code, so a code edit rolls the pods.
+				podAnnotations[platform.AnnotationFunctionHash] = platform.FunctionCodeHash(fn.Runtime, fn.Code)
+				// User code does not need Kubernetes API credentials.
+				noToken := false
+				automountToken = &noToken
+			}
+		}
 		deploy.Spec.Template = corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
+			ObjectMeta: metav1.ObjectMeta{Labels: podLabels, Annotations: podAnnotations},
 			Spec: corev1.PodSpec{
-				RestartPolicy: geassRestartPolicy(app.Spec.Deploy.RestartPolicy),
+				RestartPolicy:                geassRestartPolicy(app.Spec.Deploy.RestartPolicy),
+				AutomountServiceAccountToken: automountToken,
 				Containers: []corev1.Container{{
 					Name:           appContainerName,
 					Image:          appImage(app),
 					Ports:          []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: port}},
-					Command:        app.Spec.Build.Command,
+					Command:        command,
 					Args:           app.Spec.Build.Args,
 					WorkingDir:     app.Spec.Build.WorkingDir,
-					Env:            append(append([]corev1.EnvVar(nil), app.Spec.Env...), sharedEnv...),
+					Env:            env,
 					EnvFrom:        envFrom,
 					ReadinessProbe: app.Spec.Deploy.ReadinessProbe,
 					LivenessProbe:  app.Spec.Deploy.LivenessProbe,
@@ -506,13 +601,23 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 }
 
 func validateAppSource(app *geassv1alpha1.GeassApp) error {
+	if !app.Spec.Deploy.Enabled {
+		return nil
+	}
 	imageSource := app.Spec.Source.Image != nil
 	gitSource := app.Spec.Source.Git != nil
-	if imageSource && gitSource {
-		return fmt.Errorf("source.image and source.git are mutually exclusive")
+	functionSource := app.Spec.Source.Function != nil
+	configured := 0
+	for _, set := range []bool{imageSource, gitSource, functionSource} {
+		if set {
+			configured++
+		}
 	}
-	if !imageSource && !gitSource {
-		return fmt.Errorf("one of spec.source.image or spec.source.git is required")
+	if configured > 1 {
+		return fmt.Errorf("source.image, source.git, and source.function are mutually exclusive")
+	}
+	if configured == 0 {
+		return fmt.Errorf("one of spec.source.image, spec.source.git, or spec.source.function is required")
 	}
 	if imageSource && app.Spec.Source.Image.Image == "" {
 		return fmt.Errorf("source.image.image is required")
@@ -520,6 +625,11 @@ func validateAppSource(app *geassv1alpha1.GeassApp) error {
 	if gitSource {
 		if app.Spec.Source.Git.ConnectionRef.Name == "" || app.Spec.Source.Git.Repository == "" || app.Spec.Source.Git.Branch == "" {
 			return fmt.Errorf("source.git.connectionRef, repository, and branch are required")
+		}
+	}
+	if functionSource {
+		if err := platform.ValidateFunction(app.Spec.Source.Function.Runtime, app.Spec.Source.Function.Code); err != nil {
+			return fmt.Errorf("source.function: %w", err)
 		}
 	}
 	return nil
@@ -532,7 +642,21 @@ func appImage(app *geassv1alpha1.GeassApp) string {
 	if app.Spec.Source.Image != nil {
 		return app.Spec.Source.Image.Image
 	}
+	if fn := app.Spec.Source.Function; fn != nil {
+		if fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
+			return fnRuntime.Image
+		}
+	}
 	return ""
+}
+
+func hasEnvVar(env []corev1.EnvVar, name string) bool {
+	for _, variable := range env {
+		if variable.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func appImagePullSecret(app *geassv1alpha1.GeassApp) *corev1.LocalObjectReference {
@@ -726,7 +850,8 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	name := app.Name + "-metrics"
 	if !app.Spec.Metrics.Enabled {
 		sm := &monitoringv1.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(sm), sm); apierrors.IsNotFound(err) {
+		// Clusters without the Prometheus Operator have no ServiceMonitor kind at all.
+		if err := r.Get(ctx, client.ObjectKeyFromObject(sm), sm); apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			return nil
 		} else if err != nil {
 			return err
@@ -755,6 +880,9 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 		}}
 		return setSameNamespaceOwner(app, sm, r.Scheme)
 	})
+	if meta.IsNoMatchError(err) {
+		return fmt.Errorf("metrics are enabled but Prometheus Operator is not installed in this cluster")
+	}
 	return err
 }
 
@@ -783,7 +911,7 @@ func appDeletionNamespaces(app *geassv1alpha1.GeassApp) []string {
 }
 
 func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
-	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics"}
+	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics", functionConfigMapName(app)}
 	for _, name := range names {
 		_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
 		_ = r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
@@ -806,7 +934,8 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 	if err := r.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "ReconcileError", message)
+	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+	latest.Status.Conditions = conditions
 	if app.Status.ResolvedImage != "" {
 		latest.Status.ResolvedImage = app.Status.ResolvedImage
 		latest.Status.ActiveBuild = app.Status.ActiveBuild
@@ -814,7 +943,10 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
+	if platform.ReadyConditionReason(latest.Status.Conditions) == platform.ConditionReasonProvisionFailed {
+		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.ProvisionFailedUserMessage)
+	}
+	return result, nil
 }
 
 func (r *GeassAppReconciler) ensureCloudflarePublicHost(ctx context.Context, app *geassv1alpha1.GeassApp) error {
@@ -833,10 +965,18 @@ func (r *GeassAppReconciler) ensureCloudflarePublicHost(ctx context.Context, app
 	if host == "" {
 		return nil
 	}
-	patch := app.DeepCopy()
-	patch.Spec.Ingress.Host = host
-	patch.Spec.Ingress.TLSEnabled = false
-	return r.Update(ctx, patch)
+	// Reconcile may have replaced app.Spec with the last-deployed snapshot, so saving a copy of it
+	// would overwrite the user's pending edits. Change only the live object.
+	live := &geassv1alpha1.GeassApp{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(app), live); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if strings.TrimSpace(live.Spec.Ingress.Host) != "" {
+		return nil
+	}
+	live.Spec.Ingress.Host = host
+	live.Spec.Ingress.TLSEnabled = false
+	return r.Update(ctx, live)
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -166,6 +166,47 @@ func TestDeleteClusterMinIOBlockedByProjectBuckets(t *testing.T) {
 	require.Contains(t, latest.Finalizers, objectStoreFinalizer)
 }
 
+func TestDeleteDraftProjectBucketSkipsMinIOWhenNeverDeployed(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	now := metav1.Now()
+	cluster := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
+		},
+		Status: geassv1alpha1.GeassObjectStoreStatus{},
+	}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "sleepy-coral",
+			Namespace:         platform.SystemNamespace,
+			Finalizers:        []string{objectStoreFinalizer},
+			DeletionTimestamp: &now,
+			Annotations: map[string]string{
+				platform.DeployWorkflowAnnotation: "true",
+			},
+		},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{
+			Project:     "payments",
+			Environment: geassv1alpha1.EnvironmentProduction,
+			Engine:      geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement:   geassv1alpha1.ObjectStorePlacementInCluster,
+			Deploy:      geassv1alpha1.GeassDeploySpec{Enabled: false},
+		},
+	}
+	r := &GeassObjectStoreReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, store).Build(),
+		Scheme: scheme,
+	}
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: store.Name, Namespace: store.Namespace}})
+	require.NoError(t, err)
+	err = r.Get(context.Background(), types.NamespacedName{Name: store.Name, Namespace: store.Namespace}, store)
+	require.True(t, apierrors.IsNotFound(err))
+}
+
 func TestDeleteProjectBucketSucceedsWhenClusterMinIOMissing(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))

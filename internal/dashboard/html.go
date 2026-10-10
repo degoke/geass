@@ -118,7 +118,7 @@ func isMutationPath(path string) bool {
 	parts := strings.Split(path, "/")
 	switch parts[len(parts)-1] {
 	case "save", "create", dashboardLiteralDelete, "clear", "test", "verify", "check", "set", "update", "raw",
-		"archive", "rollback", "build", "disconnect", "scale", "redeploy":
+		"archive", "rollback", "build", "disconnect", "scale", "redeploy", "display-name":
 		return true
 	default:
 		return false
@@ -239,6 +239,11 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 // service.namespace.svc.cluster.local), not loopback, private IPs, two-label *.svc,
 // or a public hostname that happens to contain ".svc".
 func sameOriginMutation(r *http.Request) bool {
+	// An API token is sent explicitly in a header, never attached by the browser, so a cross-site
+	// form post cannot carry one and there is no origin to check.
+	if tokenFromRequest(r) != nil {
+		return true
+	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		origin = strings.TrimSpace(r.Header.Get("Referer"))

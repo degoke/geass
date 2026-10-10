@@ -54,6 +54,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - autoscaling
   resources:
   - horizontalpodautoscalers
@@ -86,6 +94,7 @@ rules:
   - geassclusters
   - geassconsolesessions
   - geassdatabases
+  - geassdeployments
   - geassgithubconnections
   - geasshareadinesses
   - geasslogicaldatabases
@@ -121,6 +130,7 @@ rules:
   - geassclusters/status
   - geassconsolesessions/status
   - geassdatabases/status
+  - geassdeployments/status
   - geassgithubconnections/status
   - geasshareadinesses/status
   - geasslogicaldatabases/status

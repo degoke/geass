@@ -18,15 +18,19 @@ import (
 )
 
 func TestValidateAppSource(t *testing.T) {
+	deployed := geassv1alpha1.GeassAppDeploySpec{Enabled: true}
 	cases := []struct {
 		name    string
 		app     geassv1alpha1.GeassApp
 		wantErr bool
 	}{
-		{name: "image source", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Source: geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx:latest"}}}}},
-		{name: "both", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Source: geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx"}, Git: &geassv1alpha1.GeassAppGitSource{ConnectionRef: corev1.LocalObjectReference{Name: "github"}, Repository: "acme/app", Branch: "main"}}}}, wantErr: true},
-		{name: "none", app: geassv1alpha1.GeassApp{}, wantErr: true},
-		{name: "incomplete git", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "acme/app"}}}}, wantErr: true},
+		{name: "image source", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Deploy: deployed, Source: geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx:latest"}}}}},
+		{name: "both", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Deploy: deployed, Source: geassv1alpha1.GeassAppSource{Image: &geassv1alpha1.GeassAppImageSource{Image: "nginx"}, Git: &geassv1alpha1.GeassAppGitSource{ConnectionRef: corev1.LocalObjectReference{Name: "github"}, Repository: "acme/app", Branch: "main"}}}}, wantErr: true},
+		{name: "none", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Deploy: deployed}}, wantErr: true},
+		{name: "incomplete git", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Deploy: deployed, Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "acme/app"}}}}, wantErr: true},
+		// Drafts may be saved with an incomplete source; validation applies once they are deployed.
+		{name: "draft without source", app: geassv1alpha1.GeassApp{}},
+		{name: "draft with incomplete git", app: geassv1alpha1.GeassApp{Spec: geassv1alpha1.GeassAppSpec{Source: geassv1alpha1.GeassAppSource{Git: &geassv1alpha1.GeassAppGitSource{Repository: "acme/app"}}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

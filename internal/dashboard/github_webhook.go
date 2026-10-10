@@ -57,6 +57,21 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"accepted":true,"event":"ping"}`))
 		return
 	}
+	if event == "pull_request" {
+		var payload githubPullRequestPayload
+		if err := json.Unmarshal(body, &payload); err != nil {
+			http.Error(w, "invalid webhook payload", http.StatusBadRequest)
+			return
+		}
+		results, err := s.handlePullRequestEvent(r.Context(), payload)
+		if err != nil {
+			http.Error(w, "could not process webhook", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "environments": results})
+		return
+	}
 	if event != "" && event != "push" {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"accepted":true,"ignored":true}`))
