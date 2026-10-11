@@ -5,7 +5,20 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
+
+func TestDefaultDatabaseStorageIsSmallForSQLite(t *testing.T) {
+	require.Equal(t, "1Gi", DefaultDatabaseStorage(geassv1alpha1.DatabaseEngineSQLite))
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{
+		geassv1alpha1.DatabaseEnginePostgres,
+		geassv1alpha1.DatabaseEngineMySQL,
+		geassv1alpha1.DatabaseEngineRedis,
+	} {
+		require.Equal(t, "10Gi", DefaultDatabaseStorage(engine), string(engine))
+	}
+}
 
 func TestResourcesFromSizeSetsAssignedCPUAndMemory(t *testing.T) {
 	res, err := ResourcesFromSize("250m", "512Mi")

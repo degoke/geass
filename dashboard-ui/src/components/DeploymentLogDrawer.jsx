@@ -84,6 +84,17 @@ export function DeploymentLogDrawer({ kind, name, data, deploymentId, onClose })
         <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Status</Text>
         <Muted size="sm">{row.outcome || row.statusLabel}</Muted>
       </div>
+      {row.resolvedErrors?.length ? (
+        <div className="rw-deployment-details-block">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Resolved during deploy</Text>
+          <Muted size="xs">These cleared on their own and the deploy succeeded.</Muted>
+          <ul className="rw-deployment-resolved-list">
+            {row.resolvedErrors.map((message, index) => (
+              <li key={`${index}-${message}`}><Muted size="sm">{message}</Muted></li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {row.meta ? (
         <div className="rw-deployment-details-block">
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Source</Text>

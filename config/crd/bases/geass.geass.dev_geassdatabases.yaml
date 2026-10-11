@@ -224,8 +224,10 @@ spec:
                 anyOf:
                 - type: integer
                 - type: string
-                default: 10Gi
-                description: StorageSize is the requested PVC size per instance.
+                description: |-
+                  StorageSize is the requested PVC size per instance. Left unset, the engine's
+                  default applies (platform.DefaultDatabaseStorage); there is deliberately no
+                  CRD default, which could not vary by engine.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
               username:

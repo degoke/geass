@@ -59,6 +59,9 @@ type ClusterSpec struct {
 // StorageConfiguration defines PVC settings.
 type StorageConfiguration struct {
 	Size string `json:"size,omitempty"`
+	// StorageClass names the class the instance volumes are created from. Left nil
+	// the cluster default is used. It cannot change once the volumes exist.
+	StorageClass *string `json:"storageClass,omitempty"`
 }
 
 // BootstrapConfiguration defines initial database bootstrap.

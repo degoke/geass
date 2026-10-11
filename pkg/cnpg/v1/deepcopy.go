@@ -13,6 +13,10 @@ func (in *Cluster) DeepCopyInto(out *Cluster) {
 func (in *ClusterSpec) DeepCopyInto(out *ClusterSpec) {
 	*out = *in
 	in.Resources.DeepCopyInto(&out.Resources)
+	if in.Storage.StorageClass != nil {
+		class := *in.Storage.StorageClass
+		out.Storage.StorageClass = &class
+	}
 }
 
 func (in *Cluster) DeepCopy() *Cluster {

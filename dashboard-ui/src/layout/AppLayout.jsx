@@ -128,6 +128,7 @@ export function AppLayout({ children }) {
                 environment={environment}
                 onEnvironmentChange={setEnvironment}
                 onProjectChange={(name) => navigate({ to: `/projects/${name}` })}
+                onAllProjects={() => navigate({ to: "/projects" })}
               />
               <div className="rw-stage rw-stage-project">
                 <div className="rw-frame rw-frame-flush">
@@ -159,6 +160,7 @@ function HomeTopBar({
   environment,
   onEnvironmentChange,
   onProjectChange,
+  onAllProjects,
 }) {
   const inProject = Boolean(project && projectSlug);
   return (
@@ -191,6 +193,10 @@ function HomeTopBar({
                     </Menu.Item>
                   );
                 })}
+                <Menu.Divider />
+                <Menu.Item leftSection={<FolderKanban size={14} />} onClick={() => onAllProjects?.()}>
+                  All projects
+                </Menu.Item>
               </Menu.Dropdown>
             </Menu>
             <EnvironmentMenu project={project} environment={environment} onChange={onEnvironmentChange} />
@@ -242,12 +248,17 @@ function AccountNav({ pathname, username, onSignOut, collapsed, projectSlug, env
       <div className="rw-account-body">
         <nav className="rw-nav-stack" aria-label={inProject ? "Project" : "Account"}>
           {inProject ? (
-            <div className="rw-nav-group">
-              {sideLink(`/projects/${projectSlug}`, onCanvas, <LayoutGrid size={16} />, "Canvas", envSearch)}
-              {sideLink(`/projects/${projectSlug}/monitor`, onMetrics, <Activity size={16} />, "Metrics", envSearch)}
-              {sideLink(`/projects/${projectSlug}/logs`, onLogs, <FileText size={16} />, "Logs", envSearch)}
-              {sideLink(`/projects/${projectSlug}/settings`, onProjectSettings, <Settings size={16} />, "Settings", envSearch)}
-            </div>
+            <>
+              <div className="rw-nav-group">
+                {sideLink("/projects", false, <FolderKanban size={16} />, "All projects")}
+              </div>
+              <div className="rw-nav-group rw-nav-group-separated">
+                {sideLink(`/projects/${projectSlug}`, onCanvas, <LayoutGrid size={16} />, "Canvas", envSearch)}
+                {sideLink(`/projects/${projectSlug}/monitor`, onMetrics, <Activity size={16} />, "Metrics", envSearch)}
+                {sideLink(`/projects/${projectSlug}/logs`, onLogs, <FileText size={16} />, "Logs", envSearch)}
+                {sideLink(`/projects/${projectSlug}/settings`, onProjectSettings, <Settings size={16} />, "Settings", envSearch)}
+              </div>
+            </>
           ) : (
             <>
               <div className="rw-nav-group">

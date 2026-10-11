@@ -7,6 +7,8 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
 type Provisioner interface {
@@ -37,12 +39,29 @@ func (p *sshProvisioner) Provision(ctx context.Context, in ProvisionInput) error
 	}
 	defer func() { _ = client.Close() }()
 
-	steps := []struct {
-		name string
-		cmd  string
-	}{
-		{"check-curl", "which curl || (apt-get update -qq && apt-get install -y curl)"},
-		{"install-k3s", fmt.Sprintf(
+	for _, step := range provisionSteps(in) {
+		if err := runStep(ctx, client, step.name, step.cmd); err != nil && !step.optional {
+			return err
+		}
+	}
+	return nil
+}
+
+type provisionStep struct {
+	name string
+	cmd  string
+	// optional steps may fail without stopping the node from joining.
+	optional bool
+}
+
+// provisionSteps are the commands that turn a bare machine into a cluster node,
+// in order. The iSCSI initiator goes in before k3s so the node can serve Longhorn
+// replicas the moment the scheduler starts placing them there.
+func provisionSteps(in ProvisionInput) []provisionStep {
+	return []provisionStep{
+		{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"},
+		{name: "install-iscsi", cmd: platform.NodePrerequisitesScript, optional: true},
+		{name: "install-k3s", cmd: fmt.Sprintf(
 			`curl -sfL https://get.k3s.io | \
  INSTALL_K3S_VERSION=%s \
  INSTALL_K3S_EXEC="agent" \
@@ -55,15 +74,8 @@ func (p *sshProvisioner) Provision(ctx context.Context, in ProvisionInput) error
 			in.Token,
 			in.NodeName,
 		)},
-		{"enable-k3s", "systemctl enable k3s-agent && systemctl start k3s-agent"},
+		{name: "enable-k3s", cmd: "systemctl enable k3s-agent && systemctl start k3s-agent"},
 	}
-
-	for _, step := range steps {
-		if err := runStep(ctx, client, step.name, step.cmd); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (p *sshProvisioner) Drain(ctx context.Context, host string, key []byte, user string) error {

@@ -2,6 +2,7 @@ import { canMutate } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import { projectResources } from "@/lib/project-resources";
 import { resourceDisplayName, resourceName } from "@/lib/api";
+import { databaseHasVolume } from "@/lib/capacity";
 import { resourceHref } from "@/lib/resource-links";
 import { functionSourceLabel } from "@/lib/functions";
 import { isResourceDeleting, pendingChangeCount, pendingChangeKinds, pendingKindsSummary, resourceStatus, usesDeployWorkflow } from "@/lib/services";
@@ -45,7 +46,7 @@ export function WorkspacePage({ project, data, environment, reload }) {
       item,
       kind: item.spec?.engine || "Database",
       source: item.spec?.engine || "Managed",
-      volume: item.spec?.placement !== "External" && item.spec?.storageSize ? `${item.metadata?.name}-volume · ${item.spec.storageSize}` : "",
+      volume: item.spec?.placement !== "External" && item.spec?.storageSize && databaseHasVolume(item.spec?.engine) ? `${item.metadata?.name}-volume · ${item.spec.storageSize}` : "",
     })),
     ...resources.logical.map((item) => ({
       item,
