@@ -17,7 +17,8 @@ export function ResourceDeploymentsView({ item, kind, name, deployments, onOpenD
   const offline = kind === "apps" && !active && !history.length && !ready && status !== "Setting up" && status !== "Failed";
   const showServiceBar = kind === "apps";
   const host = String(item?.status?.url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const barLabel = host || (offline ? "Service is offline" : ready ? "No public domain" : "Service is starting");
+  const draft = status === "Draft";
+  const barLabel = host || (draft ? "Not deployed yet" : offline ? "Service is offline" : ready ? "No public domain" : "Service is starting");
   const replicas = item?.spec?.replicas ?? 1;
 
   if (!active && !historyRows.length && !showServiceBar) {

@@ -36,6 +36,17 @@ type GeassClusterMonitoringAddon struct {
 	Profile string `json:"profile,omitempty"`
 }
 
+// GeassClusterLonghornAddon controls the Longhorn block storage engine that backs
+// database volumes. Geass creates and selects the storage classes itself.
+type GeassClusterLonghornAddon struct {
+	// Enabled installs Longhorn and the Geass-managed storage classes. It defaults to
+	// off because Longhorn needs iSCSI on every node, which clusters such as kind do
+	// not provide; the installer turns it on for the clusters it builds.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // GeassClusterAddonsSpec groups platform add-on toggles.
 type GeassClusterAddonsSpec struct {
 	// CertManager controls cert-manager installation.
@@ -45,6 +56,10 @@ type GeassClusterAddonsSpec struct {
 	// Monitoring controls kube-prometheus-stack installation.
 	// +optional
 	Monitoring GeassClusterMonitoringAddon `json:"monitoring,omitempty"`
+
+	// Longhorn controls the Longhorn storage engine installation.
+	// +optional
+	Longhorn GeassClusterLonghornAddon `json:"longhorn,omitempty"`
 }
 
 // GeassClusterSpec defines the desired state of GeassCluster.
@@ -124,4 +139,11 @@ func init() {
 // AddonEnabled returns whether an addon pointer is enabled (default true).
 func AddonEnabled(enabled *bool) bool {
 	return enabled == nil || *enabled
+}
+
+// LonghornEnabled reports whether Longhorn was explicitly turned on. Unlike the
+// other add-ons it is opt-in: an unset value means "not installed", so existing
+// clusters and test fixtures never start installing a storage engine by accident.
+func LonghornEnabled(spec GeassClusterAddonsSpec) bool {
+	return spec.Longhorn.Enabled != nil && *spec.Longhorn.Enabled
 }

@@ -233,6 +233,12 @@ func newBackupEnv(t *testing.T, mutate ...func(*backupEnvConfig)) *backupEnv {
 	}
 }
 
+// ensureCluster runs reconcileCNPGCluster with no storage class, which is all the backup tests need.
+func (e *backupEnv) ensureCluster(plan *backupPlan, recovery *recoveryPlan) error {
+	_, err := e.r.reconcileCNPGCluster(context.Background(), e.db, e.wsNS, "", plan, recovery)
+	return err
+}
+
 func (e *backupEnv) reload() *geassv1alpha1.GeassDatabase {
 	e.t.Helper()
 	var db geassv1alpha1.GeassDatabase

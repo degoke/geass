@@ -25,6 +25,14 @@ const (
 	DashboardIngressName          = "geass-dashboard"
 	GeassDashboardProbePath       = "/geass-probe"
 	RequeueAfterDomainVerify      = 5 * time.Second
+
+	// DomainVerifyTimeout is how long the controller polls at RequeueAfterDomainVerify
+	// before reporting the dashboard domain as timed out. DNS propagation and
+	// certificate issuance normally settle well inside this window.
+	DomainVerifyTimeout = 15 * time.Minute
+	// RequeueAfterDomainVerifyTimedOut is the retry cadence once the window has
+	// elapsed, so a late DNS fix still heals without an operator re-saving the domain.
+	RequeueAfterDomainVerifyTimedOut = 5 * time.Minute
 )
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)

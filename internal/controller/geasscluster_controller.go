@@ -11,11 +11,14 @@ package controller
 import (
 	"context"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -76,7 +79,16 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.updateStatus(ctx, &cluster, false, err)
 	}
 
-	return r.updateStatus(ctx, &cluster, addonsReady, nil)
+	result, err := r.updateStatus(ctx, &cluster, addonsReady, nil)
+	if err != nil {
+		return result, err
+	}
+
+	// Growing existing volumes is background work, so it runs after the status is
+	// written and only ever shortens the requeue. It cannot affect readiness, and a
+	// problem in it must not feed the failure count that pauses this reconciler.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornVolumeReplicas(ctx, &cluster))
+	return result, nil
 }
 
 func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *geassv1alpha1.GeassCluster) (bool, error) {
@@ -129,6 +141,18 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.MonitoringChartName); err != nil && !apierrors.IsNotFound(err) {
 		return false, err
+	}
+
+	// Unlike the add-ons above there is deliberately no "else: uninstall" branch.
+	// Longhorn holds user data, so switching the flag off must never be what
+	// removes it; taking it out is an explicit, manual operation.
+	if geassv1alpha1.LonghornEnabled(cluster.Spec.Addons) {
+		if ready, err := r.reconcileLonghorn(ctx); err != nil {
+			return false, err
+		} else if !ready {
+			allReady = false
+			log.Info("Waiting for Longhorn add-on")
+		}
 	}
 
 	return allReady, nil
@@ -206,6 +230,11 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassCluster{}).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(nodeSchedulingChanged())).
+		// A replicated volume provisioned after the last pass would otherwise stay at
+		// its old replica count until the next node event. The mapper enqueues every
+		// cluster whatever object it is given.
+		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(replicatedVolumeBound())).
 		Named("geasscluster").
 		Complete(r)
 }

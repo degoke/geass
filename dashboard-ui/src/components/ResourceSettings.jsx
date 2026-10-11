@@ -12,8 +12,9 @@ import { action, resourceDisplayName, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
-import { defaultSizeForKind } from "@/lib/capacity";
+import { databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
 import { supportsBackups } from "@/lib/backups";
+import { deployedStorageSize } from "@/lib/services";
 import { SizeFields } from "@/components/SizeFields";
 import { RailCopyField } from "@/components/rail-controls";
 import { DatabaseBackups } from "@/components/DatabaseBackups";
@@ -37,6 +38,16 @@ import {
   SettingsFormActions,
   SettingsPanel,
 } from "@/layout/SettingsShell";
+function storageDescription(deployed, expandable, locked) {
+  if (locked) return "This database's storage can't be resized, so its size is fixed.";
+  if (!expandable && !deployed) {
+    return "Disk for each instance. This cluster's storage can't be resized, so choose carefully: the size can't be changed after deploying.";
+  }
+  return deployed
+    ? "Disk for each instance. Once deployed it can be increased but not decreased."
+    : "Disk for each instance. You can increase it after deploying, but not decrease it.";
+}
+
 export function ResourceSettings({ item, kind, name, data, project, reload, navigate, onClose }) {
   const defaults = defaultSizeForKind(kind === "apps" ? "service" : "database", (item.spec?.engine || "postgres").toLowerCase());
   const [cpu, setCpu] = useState(item.spec?.resources?.requests?.cpu || defaults.cpu);
@@ -46,6 +57,17 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
   const [targetCPU, setTargetCPU] = useState(item.spec?.autoscaling?.targetCPUUtilization || 50);
   const [version, setVersion] = useState(item.spec?.version || "");
+  const [storageSize, setStorageSize] = useState(item.spec?.storageSize || defaultStorageForEngine(item.spec?.engine, data?.platform?.defaultStorage));
+  const deployedStorage = deployedStorageSize(item);
+  // Unknown counts as resizable; the backend makes the same call and the cluster has the last word.
+  const storageExpandable = data?.platform?.storageExpandable !== false;
+  // Resizing depends on the class a database's own volume was created with, which can differ
+  // between databases in one cluster (one made before Longhorn was installed, say).
+  const storageLocked = Boolean(deployedStorage) && Boolean(data?.platform?.fixedSizeDatabases?.includes(name));
+  const shownStorage = storageLocked ? deployedStorage : storageSize;
+  const storageOptions = storageLocked
+    ? storageSizeOptions(deployedStorage, deployedStorage).filter((option) => option.value === deployedStorage)
+    : storageSizeOptions(storageSize, deployedStorage);
   const [bucketName, setBucketName] = useState(item.spec?.buckets?.[0] || "");
   const [createBucket, setCreateBucket] = useState(Boolean(item.spec?.createBucket));
   const [connectionRef, setConnectionRef] = useState(item.spec?.connectionRef?.name || "");
@@ -67,6 +89,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const showScale = (isApp || (inCluster && !isBucket && !isLogical));
   const showDatabase = kind === "databases";
   const showBackups = kind === "databases" && supportsBackups(item);
+  const showStorage = showDatabase && inCluster && databaseHasVolume(item.spec?.engine);
   const showBucket = isBucket;
   const showSource = isApp;
   const showLogical = isLogical;
@@ -166,6 +189,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
       }
     }
     if (kind === "databases" && inCluster) Object.assign(values, { cpu, memory });
+    if (kind === "databases" && showStorage && !storageLocked) values.storageSize = storageSize;
     if (isBucket) {
       Object.assign(values, {
         bucket: bucketName || name,
@@ -379,6 +403,26 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                           }}
                           data={data}
                         />
+                      </SettingsPanel>
+                    </ResourceSettingsBlock>
+                  )}
+                  {showStorage && (
+                    <ResourceSettingsBlock
+                      title="Storage"
+                      description={storageDescription(deployedStorage, storageExpandable, storageLocked)}
+                    >
+                      <SettingsPanel>
+                        <Field label="Size">
+                          <Select
+                            value={shownStorage}
+                            disabled={storageLocked}
+                            onChange={(event) => setStorageSize(event.target.value)}
+                          >
+                            {storageOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </Select>
+                        </Field>
                       </SettingsPanel>
                     </ResourceSettingsBlock>
                   )}

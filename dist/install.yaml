@@ -2144,6 +2144,17 @@ spec:
                         description: Enabled installs cert-manager when true.
                         type: boolean
                     type: object
+                  longhorn:
+                    description: Longhorn controls the Longhorn storage engine installation.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs Longhorn and the Geass-managed storage classes. It defaults to
+                          off because Longhorn needs iSCSI on every node, which clusters such as kind do
+                          not provide; the installer turns it on for the clusters it builds.
+                        type: boolean
+                    type: object
                   monitoring:
                     description: Monitoring controls kube-prometheus-stack installation.
                     properties:
@@ -2640,8 +2651,10 @@ spec:
                 anyOf:
                 - type: integer
                 - type: string
-                default: 10Gi
-                description: StorageSize is the requested PVC size per instance.
+                description: |-
+                  StorageSize is the requested PVC size per instance. Left unset, the engine's
+                  default applies (platform.DefaultDatabaseStorage); there is deliberately no
+                  CRD default, which could not vary by engine.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
               username:
@@ -5286,6 +5299,7 @@ rules:
   - ""
   resources:
   - nodes
+  - persistentvolumes
   - pods
   verbs:
   - get
@@ -5430,6 +5444,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - longhorn.io
+  resources:
+  - volumes
+  verbs:
+  - get
+  - list
+  - patch
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - servicemonitors
@@ -5470,10 +5492,22 @@ rules:
 - apiGroups:
   - storage.k8s.io
   resources:
-  - storageclasses
+  - csidrivers
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1

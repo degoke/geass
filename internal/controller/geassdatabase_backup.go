@@ -45,8 +45,6 @@ const (
 
 	messageRestoringDatabase = "Restoring database from backup"
 	defaultPostgresVersion   = "16"
-	defaultDatabaseStorage   = "10Gi"
-	defaultSQLiteStorage     = "1Gi"
 )
 
 // backupPlan is what a database's backups look like this reconcile.
@@ -124,9 +122,6 @@ func databaseVersion(db *geassv1alpha1.GeassDatabase) string {
 }
 
 func databaseStorageQuantity(db *geassv1alpha1.GeassDatabase) resource.Quantity {
-	if db.Spec.StorageSize == nil && db.Spec.Engine == geassv1alpha1.DatabaseEngineSQLite {
-		return resource.MustParse(defaultSQLiteStorage)
-	}
 	return resource.MustParse(storageSize(db))
 }
 

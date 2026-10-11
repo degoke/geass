@@ -459,7 +459,7 @@ func TestReconcileCNPGClusterCreatesARecoveryBootstrapForARestore(t *testing.T) 
 	recovery, err := env.r.planRecovery(context.Background(), env.db, env.wsNS)
 	require.NoError(t, err)
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, nil, recovery))
+	require.NoError(t, env.ensureCluster(nil, recovery))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -482,7 +482,7 @@ func TestReconcileCNPGClusterNeverChangesTheBootstrapOfAnExistingCluster(t *test
 	recovery, err := env.r.planRecovery(context.Background(), env.db, env.wsNS)
 	require.NoError(t, err)
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, nil, recovery))
+	require.NoError(t, env.ensureCluster(nil, recovery))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -504,7 +504,7 @@ func TestReconcileCNPGClusterKeepsTheRecoverySourceOfAnExistingRestore(t *testin
 	}
 	env, _ := recoveryEnv(t, func(c *backupEnvConfig) { c.extraObjects = append(c.extraObjects, existing) })
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, nil, nil))
+	require.NoError(t, env.ensureCluster(nil, nil))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -525,7 +525,7 @@ func TestReconcileCNPGClusterAddsBackupsToARunningCluster(t *testing.T) {
 	plan, err := env.r.planBackups(context.Background(), env.db, env.wsNS)
 	require.NoError(t, err)
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, plan, nil))
+	require.NoError(t, env.ensureCluster(plan, nil))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -545,7 +545,7 @@ func TestReconcileCNPGClusterRemovesBackupsWhenTurnedOff(t *testing.T) {
 	}
 	env := newBackupEnv(t, func(c *backupEnvConfig) { c.backup = nil; c.extraObjects = append(c.extraObjects, existing) })
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, nil, nil))
+	require.NoError(t, env.ensureCluster(nil, nil))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -581,7 +581,7 @@ func TestReconcileCNPGClusterKeepsArchivingThroughATemporaryStorageProblem(t *te
 	require.NotNil(t, plan, "backups are still wanted")
 	require.Nil(t, plan.archive)
 
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, plan, nil))
+	require.NoError(t, env.ensureCluster(plan, nil))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))
@@ -656,10 +656,10 @@ func TestADegradedPlanKeepsTheClusterArchiving(t *testing.T) {
 	env := newBackupEnv(t)
 	plan, err := env.r.planBackups(context.Background(), env.db, env.wsNS)
 	require.NoError(t, err)
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, plan, nil))
+	require.NoError(t, env.ensureCluster(plan, nil))
 
 	// Working out the plan failed this time: whatever is configured must stay as it is.
-	require.NoError(t, env.r.reconcileCNPGCluster(context.Background(), env.db, env.wsNS, &backupPlan{degraded: true}, nil))
+	require.NoError(t, env.ensureCluster(&backupPlan{degraded: true}, nil))
 
 	var cluster cnpgv1.Cluster
 	require.NoError(t, env.client.Get(context.Background(), client.ObjectKey{Name: testDBName, Namespace: env.wsNS}, &cluster))

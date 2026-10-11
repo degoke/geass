@@ -1091,6 +1091,16 @@ button.rw-side-link.rw-side-on {
   gap: 0.25rem;
 }
 
+.rw-deployment-resolved-list {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  list-style: disc;
+  color: var(--geass-text-secondary);
+}
+
 .rw-deployment-log-scroll {
   flex: 1;
   min-height: 0;

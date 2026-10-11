@@ -22,10 +22,40 @@ export function cpuMillis(value) {
 
 export function memoryBytes(value) {
   const text = String(value || "").trim();
+  if (text.endsWith("Ti")) return (parseInt(text, 10) || 0) * 1024 ** 4;
   if (text.endsWith("Gi")) return (parseInt(text, 10) || 0) * 1024 ** 3;
   if (text.endsWith("Mi")) return (parseInt(text, 10) || 0) * 1024 ** 2;
   if (text.endsWith("Ki")) return (parseInt(text, 10) || 0) * 1024;
   return parseInt(text, 10) || 0;
+}
+
+/** Redis runs without persistence, so it has no volume to size. Mirrors platform.DatabaseHasVolume. */
+export function databaseHasVolume(engine) {
+  return String(engine || "").toLowerCase() !== "redis";
+}
+
+/**
+ * Default volume size for an engine, as served by the backend in
+ * `platform.defaultStorage` so there is only one place these numbers live.
+ */
+export function defaultStorageForEngine(engine, defaults) {
+  return defaults?.[String(engine || "postgres").toLowerCase()] || "";
+}
+
+const STORAGE_PRESETS = ["1Gi", "5Gi", "10Gi", "20Gi", "50Gi", "100Gi", "200Gi", "500Gi"];
+
+/**
+ * Disk sizes offered for a database. `current` is always included, so a value set
+ * outside the UI is not silently swapped for a preset, and nothing below `floor`
+ * is offered because a deployed volume cannot shrink.
+ */
+export function storageSizeOptions(current, floor) {
+  const floorBytes = memoryBytes(floor);
+  const values = STORAGE_PRESETS.includes(current) || !current ? STORAGE_PRESETS : [...STORAGE_PRESETS, current];
+  return values
+    .filter((value) => value === current || memoryBytes(value) >= floorBytes)
+    .sort((a, b) => memoryBytes(a) - memoryBytes(b))
+    .map((value) => ({ value, label: value.replace(/(\d+)Gi$/, "$1 GB").replace(/(\d+)Ti$/, "$1 TB") }));
 }
 
 export function sizeLabel(options, value, fallback) {

@@ -29,20 +29,26 @@ type dashboardBootstrap struct {
 }
 
 type dashboardPlatform struct {
-	HasDashboardURL      bool                 `json:"hasDashboardURL"`
-	HasGitHubApp         bool                 `json:"hasGitHubApp"`
-	HasCloudflare        bool                 `json:"hasCloudflare"`
-	CloudflareReady      bool                 `json:"cloudflareReady"`
-	CloudflareZoneID     string               `json:"cloudflareZoneId,omitempty"`
-	CloudflareZoneName   string               `json:"cloudflareZoneName,omitempty"`
-	DashboardURL         string               `json:"dashboardURL"`
-	HAReady              bool                 `json:"haReady"`
-	HealthyNodes         int32                `json:"healthyNodes"`
-	AWSAvailable         bool                 `json:"awsAvailable"`
-	PlanetScaleAvailable bool                 `json:"planetScaleAvailable"`
-	MinIOAvailable       bool                 `json:"minioAvailable"`
-	Capacity             clusterCapacity      `json:"capacity"`
-	Session              dashboardSessionInfo `json:"session"`
+	HasDashboardURL      bool            `json:"hasDashboardURL"`
+	HasGitHubApp         bool            `json:"hasGitHubApp"`
+	HasCloudflare        bool            `json:"hasCloudflare"`
+	CloudflareReady      bool            `json:"cloudflareReady"`
+	CloudflareZoneID     string          `json:"cloudflareZoneId,omitempty"`
+	CloudflareZoneName   string          `json:"cloudflareZoneName,omitempty"`
+	DashboardURL         string          `json:"dashboardURL"`
+	HAReady              bool            `json:"haReady"`
+	HealthyNodes         int32           `json:"healthyNodes"`
+	AWSAvailable         bool            `json:"awsAvailable"`
+	PlanetScaleAvailable bool            `json:"planetScaleAvailable"`
+	MinIOAvailable       bool            `json:"minioAvailable"`
+	Capacity             clusterCapacity `json:"capacity"`
+	StorageExpandable    bool            `json:"storageExpandable"`
+	// FixedSizeDatabases names deployed databases whose volume cannot be resized,
+	// for example ones created before Longhorn was installed.
+	FixedSizeDatabases []string `json:"fixedSizeDatabases,omitempty"`
+	// DefaultStorage is the default volume size per engine, so the UI carries no copy.
+	DefaultStorage map[string]string    `json:"defaultStorage"`
+	Session        dashboardSessionInfo `json:"session"`
 }
 
 type dashboardMetric struct {

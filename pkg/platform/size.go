@@ -6,6 +6,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
 
 const DefaultAutoscalingTargetCPU int32 = 50
@@ -38,6 +40,31 @@ func MemorySizes() []SizeOption {
 		{Value: "2Gi", Label: "2 GB"},
 		{Value: "4Gi", Label: "4 GB"},
 	}
+}
+
+// DefaultDatabaseStorage is the persistent volume size an in-cluster database gets
+// when nobody chose one. SQLite is a single embedded file, so it starts small; the
+// server engines start larger because their volumes also hold logs and indexes.
+func DefaultDatabaseStorage(engine geassv1alpha1.GeassDatabaseEngine) string {
+	if engine == geassv1alpha1.DatabaseEngineSQLite {
+		return "1Gi"
+	}
+	return "10Gi"
+}
+
+// DatabaseStorageDefaults is the default volume size for each engine that has one,
+// keyed by lower-case engine name. The dashboard serves it so the UI never has to
+// carry its own copy of these numbers.
+func DatabaseStorageDefaults() map[string]string {
+	defaults := map[string]string{}
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{
+		geassv1alpha1.DatabaseEnginePostgres,
+		geassv1alpha1.DatabaseEngineMySQL,
+		geassv1alpha1.DatabaseEngineSQLite,
+	} {
+		defaults[strings.ToLower(string(engine))] = DefaultDatabaseStorage(engine)
+	}
+	return defaults
 }
 
 // DefaultDatabaseResources is the CPU and memory assigned to Postgres, MySQL, Redis, and MinIO.

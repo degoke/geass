@@ -24,6 +24,7 @@ rules:
   - ""
   resources:
   - nodes
+  - persistentvolumes
   - pods
   verbs:
   - get
@@ -168,6 +169,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - longhorn.io
+  resources:
+  - volumes
+  verbs:
+  - get
+  - list
+  - patch
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - servicemonitors
@@ -208,8 +217,20 @@ rules:
 - apiGroups:
   - storage.k8s.io
   resources:
-  - storageclasses
+  - csidrivers
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch

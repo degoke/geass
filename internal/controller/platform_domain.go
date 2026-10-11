@@ -20,6 +20,7 @@ const (
 	domainReasonVerified   = "Verified"
 	domainReasonPendingDNS = "PendingDNS"
 	domainReasonError      = "Error"
+	domainReasonTimedOut   = "VerificationTimedOut"
 )
 
 func (r *GeassPlatformConfigReconciler) reconcileDashboardDomain(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig) (platform.DashboardDomainReconcileResult, time.Duration) {
@@ -44,6 +45,35 @@ func (r *GeassPlatformConfigReconciler) reconcileDashboardDomain(ctx context.Con
 		return r.reconcileTunnelDashboardDomain(ctx, config)
 	}
 	return r.reconcileIngressDashboardDomain(ctx, config, rootDomain)
+}
+
+// applyDomainVerifyDeadline converts a verification that has stayed pending past
+// platform.DomainVerifyTimeout into a VerificationTimedOut failure and drops the
+// poll rate to platform.RequeueAfterDomainVerifyTimedOut. Verification keeps
+// running at the slow cadence, so a late DNS fix still flips the condition to True.
+//
+// The window is anchored on the stored condition's LastTransitionTime, which
+// survives controller restarts and resets whenever the spec generation changes.
+func (r *GeassPlatformConfigReconciler) applyDomainVerifyDeadline(config *geassv1alpha1.GeassPlatformConfig, result platform.DashboardDomainReconcileResult, requeueAfter time.Duration) (platform.DashboardDomainReconcileResult, time.Duration) {
+	if result.Status == metav1.ConditionTrue || requeueAfter <= 0 {
+		return result, requeueAfter
+	}
+	now := r.clock()
+	pendingSince := now
+	if stored := platform.DashboardDomainCondition(config.Status.Conditions); stored != nil &&
+		stored.Status == metav1.ConditionFalse &&
+		stored.ObservedGeneration == config.Generation &&
+		!stored.LastTransitionTime.IsZero() {
+		pendingSince = stored.LastTransitionTime.Time
+	}
+	if now.Sub(pendingSince) < platform.DomainVerifyTimeout {
+		return result, requeueAfter
+	}
+	return platform.DashboardDomainReconcileResult{
+		Status:  metav1.ConditionFalse,
+		Reason:  domainReasonTimedOut,
+		Message: fmt.Sprintf("Not verified after %d minutes: %s", int(platform.DomainVerifyTimeout.Minutes()), result.Message),
+	}, platform.RequeueAfterDomainVerifyTimedOut
 }
 
 func (r *GeassPlatformConfigReconciler) reconcileTunnelDashboardDomain(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig) (platform.DashboardDomainReconcileResult, time.Duration) {

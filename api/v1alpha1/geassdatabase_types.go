@@ -125,8 +125,9 @@ type GeassDatabaseSpec struct {
 	// +optional
 	Instances *int32 `json:"instances,omitempty"`
 
-	// StorageSize is the requested PVC size per instance.
-	// +kubebuilder:default="10Gi"
+	// StorageSize is the requested PVC size per instance. Left unset, the engine's
+	// default applies (platform.DefaultDatabaseStorage); there is deliberately no
+	// CRD default, which could not vary by engine.
 	// +optional
 	StorageSize *resource.Quantity `json:"storageSize,omitempty"`
 
