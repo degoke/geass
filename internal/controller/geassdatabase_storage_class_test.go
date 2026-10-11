@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -295,7 +296,8 @@ func TestDatabaseStorageClassStopsWaitingWhenLonghornNeverComesUp(t *testing.T) 
 	// still not pinned to local storage, so Retry works once storage is fixed.
 	r, c = storageTestReconciler(t, db, longhornClusterStuckFor(storageWaitTimeout+time.Minute, metav1.ConditionFalse))
 	_, wait, err = r.databaseStorageClass(context.Background(), db, storageTestNS)
-	require.EqualError(t, err, messageStorageUnavailable)
+	require.ErrorIs(t, err, errStorageUnavailable)
+	require.Equal(t, messageStorageUnavailable, storageFailureMessage(err), "the database shows the user-facing text")
 	require.False(t, wait)
 	_, pinned = pinnedClass(t, c, db)
 	require.False(t, pinned)
@@ -303,6 +305,10 @@ func TestDatabaseStorageClassStopsWaitingWhenLonghornNeverComesUp(t *testing.T) 
 	// A failed attempt has to count, or it would never reach a terminal state.
 	require.True(t, platform.ReconcileFailureShouldCount(messageStorageUnavailable))
 	require.False(t, platform.ReconcileFailureShouldCount(messageStorageStarting))
+}
+
+func TestStorageFailureMessagePassesOtherErrorsThrough(t *testing.T) {
+	require.Equal(t, "boom", storageFailureMessage(errors.New("boom")))
 }
 
 func TestDatabaseStorageClassKeepsWaitingWhileAddonsAreReadyButClassesLag(t *testing.T) {

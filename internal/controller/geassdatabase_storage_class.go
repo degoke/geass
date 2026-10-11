@@ -31,6 +31,20 @@ const (
 	storageWaitTimeout = 15 * time.Minute
 )
 
+// errStorageUnavailable is the error behind messageStorageUnavailable. Error strings
+// are lower case by convention while the message is shown to users, so the two are
+// kept apart and mapped by storageFailureMessage, as ErrAwaitingDeploy is.
+var errStorageUnavailable = errors.New("storage is unavailable")
+
+// storageFailureMessage is what a database reports for an error from
+// databaseStorageClass: the user-facing text for a known failure, else the error's own.
+func storageFailureMessage(err error) string {
+	if errors.Is(err, errStorageUnavailable) {
+		return messageStorageUnavailable
+	}
+	return err.Error()
+}
+
 // databaseStorageClass decides which storage class a database's volume is created
 // with. "" means the cluster default. wait is true when the answer is not known yet
 // because Longhorn is still being installed; the caller should retry later.
@@ -85,7 +99,7 @@ func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db 
 		return "", false, nil
 	}
 	if stuckFor > storageWaitTimeout {
-		return "", false, errors.New(messageStorageUnavailable)
+		return "", false, errStorageUnavailable
 	}
 	return "", true, nil
 }

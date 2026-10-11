@@ -130,7 +130,7 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	storageClass, waitForStorage, err := r.databaseStorageClass(ctx, &db, wsNS)
 	if err != nil {
-		return r.setNotReady(ctx, &db, err.Error())
+		return r.setNotReady(ctx, &db, storageFailureMessage(err))
 	}
 	if waitForStorage {
 		return r.setNotReady(ctx, &db, messageStorageStarting)
