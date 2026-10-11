@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,6 +22,16 @@ type GeassPlatformConfigReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	HTTPClient *http.Client
+
+	// now overrides the wall clock in tests; nil means time.Now.
+	now func() time.Time
+}
+
+func (r *GeassPlatformConfigReconciler) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -40,30 +51,57 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 	if cfErr != nil {
 		logger.Error(cfErr, "Cloudflare reconciliation failed")
 	}
-	if cfRequeue > 0 && platform.CloudflareConfigured(config) {
-		return ctrl.Result{RequeueAfter: cfRequeue}, nil
+	if !platform.CloudflareConfigured(config) {
+		cfRequeue = 0
 	}
 
-	result, requeueAfter := r.reconcileDashboardDomain(ctx, &config)
-	if err := r.setDashboardDomainReady(ctx, req.NamespacedName, result); err != nil {
+	// Dashboard domain verification always runs, even while the Cloudflare
+	// connector is being kept in sync: the managed tunnel path asks to be
+	// requeued on every pass, and skipping verification for that would leave
+	// DashboardDomainReady unset for the lifetime of the tunnel.
+	result, domainRequeue := r.reconcileDashboardDomain(ctx, &config)
+	result, domainRequeue = r.applyDomainVerifyDeadline(&config, result, domainRequeue)
+	changed, err := r.setDashboardDomainReady(ctx, req.NamespacedName, result)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if requeueAfter > 0 && result.Status != metav1.ConditionTrue {
-		logger.Info("Waiting for dashboard domain verification", "after", requeueAfter)
-		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+
+	requeueAfter := cfRequeue
+	if domainRequeue > 0 && result.Status != metav1.ConditionTrue {
+		// Log condition changes only: the Cloudflare sync cadence can be much
+		// shorter than the domain retry cadence and would repeat this line.
+		if changed {
+			logger.Info("Dashboard domain not verified", "reason", result.Reason, "message", result.Message, "after", domainRequeue)
+		}
+		if requeueAfter == 0 || domainRequeue < requeueAfter {
+			requeueAfter = domainRequeue
+		}
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
 // setDashboardDomainReady writes only the DashboardDomainReady condition.
-func (r *GeassPlatformConfigReconciler) setDashboardDomainReady(ctx context.Context, key client.ObjectKey, result platform.DashboardDomainReconcileResult) error {
+//
+// LastTransitionTime is the "pending since" anchor for the verification
+// deadline, so it only moves when the status or the observed generation does.
+// Reason and message churn (PendingDNS -> PendingHTTPS -> VerificationTimedOut)
+// must not restart the clock.
+//
+// It reports whether the stored condition changed.
+func (r *GeassPlatformConfigReconciler) setDashboardDomainReady(ctx context.Context, key client.ObjectKey, result platform.DashboardDomainReconcileResult) (bool, error) {
 	var lastErr error
 	for range 5 {
 		latest := &geassv1alpha1.GeassPlatformConfig{}
 		if err := r.Get(ctx, key, latest); err != nil {
-			return client.IgnoreNotFound(err)
+			return false, client.IgnoreNotFound(err)
 		}
-		before := platform.DashboardDomainCondition(latest.Status.Conditions)
+		// Copy: SetConditionForGeneration mutates the slice element in place, so a
+		// pointer taken here would always compare equal to the updated condition.
+		var before *metav1.Condition
+		if existing := platform.DashboardDomainCondition(latest.Status.Conditions); existing != nil {
+			snapshot := *existing
+			before = &snapshot
+		}
 		latest.Status.Conditions = platform.SetConditionForGeneration(
 			latest.Status.Conditions,
 			platform.ConditionDashboardDomainReady,
@@ -74,18 +112,25 @@ func (r *GeassPlatformConfigReconciler) setDashboardDomainReady(ctx context.Cont
 		)
 		after := platform.DashboardDomainCondition(latest.Status.Conditions)
 		if domainConditionUnchanged(before, after) {
-			return nil
+			return false, nil
+		}
+		if before != nil {
+			if before.Status == after.Status && before.ObservedGeneration == after.ObservedGeneration {
+				after.LastTransitionTime = before.LastTransitionTime
+			} else {
+				after.LastTransitionTime = metav1.NewTime(r.clock())
+			}
 		}
 		if err := r.Status().Update(ctx, latest); err != nil {
 			if apierrors.IsConflict(err) {
 				lastErr = err
 				continue
 			}
-			return err
+			return false, err
 		}
-		return nil
+		return true, nil
 	}
-	return lastErr
+	return false, lastErr
 }
 
 func domainConditionUnchanged(before, after *metav1.Condition) bool {
