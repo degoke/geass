@@ -24,6 +24,7 @@ rules:
   - ""
   resources:
   - nodes
+  - persistentvolumes
   - pods
   verbs:
   - get
@@ -164,6 +165,14 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - longhorn.io
+  resources:
+  - volumes
+  verbs:
+  - get
+  - list
+  - patch
 - apiGroups:
   - monitoring.coreos.com
   resources:
