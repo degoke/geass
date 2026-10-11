@@ -136,6 +136,11 @@ spec:
                 properties:
                   size:
                     type: string
+                  storageClass:
+                    description: |-
+                      StorageClass names the class the instance volumes are created from. Left nil
+                      the cluster default is used. It cannot change once the volumes exist.
+                    type: string
                 type: object
             type: object
           status:

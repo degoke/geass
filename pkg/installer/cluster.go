@@ -68,5 +68,8 @@ spec:
   tokenSecretRef:
     name: geass-token
     namespace: geass-system
+  addons:
+    longhorn:
+      enabled: true
 `, geassClusterAPIVersion, name, version, serverURL)
 }

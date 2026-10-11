@@ -433,6 +433,11 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 				Version: resource.Version, Resources: defaultResourcesForEngine(engine),
 			},
 		}
+		size, sizeErr := databaseStorageForCreate("", db)
+		if sizeErr != nil {
+			return nil, sizeErr
+		}
+		db.Spec.StorageSize = size
 		db.Spec.Deploy.Enabled = false
 		platform.InitializePendingCreated(&db.ObjectMeta)
 		if err = s.createNamed(ctx, db, resource.Name); err != nil {

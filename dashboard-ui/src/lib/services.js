@@ -114,6 +114,10 @@ export function resourceProvisionAttempts(item) {
 export function resourceProvisionAttemptsForUI(item) {
   const stored = resourceProvisionAttempts(item);
   if (stored.length) return stored;
+  // A draft has never been deployed: the operator parks it in ReconcileError
+  // ("configured and waiting for deployment") without recording an attempt, and
+  // that must not be mistaken for a legacy in-flight deploy.
+  if (isDraftResource(item)) return [];
   const reason = readyConditionReason(item);
   if (reason !== "ProvisionFailed" && reason !== "ReconcileError") return [];
   const entry = readyConditionEntry(item);
@@ -198,6 +202,10 @@ function rowFromProvisionAttempt(attempt, index) {
   if (phase === "Failed") statusLabel = "Failed";
   const errorMessages = errors.map((e) => e.message).filter(Boolean);
   const lastError = errorMessages.length ? errorMessages[errorMessages.length - 1] : "";
+  // Errors recorded on an attempt that went on to succeed were transient (a cache
+  // race, an optimistic-concurrency conflict). They are history, not a live problem,
+  // so they must not surface as `detail`, which the UI renders as a warning.
+  const succeeded = phase === "Succeeded";
   return {
     id: attempt.id || `attempt-${index}`,
     logId: attempt.id || `attempt-${index}`,
@@ -211,7 +219,8 @@ function rowFromProvisionAttempt(attempt, index) {
     buildRef: attempt.buildRef || "",
     legacy: Boolean(attempt.legacy),
     errors: errorMessages,
-    detail: lastError,
+    detail: succeeded ? "" : lastError,
+    resolvedErrors: succeeded ? errorMessages : [],
   };
 }
 
@@ -337,6 +346,16 @@ function lastDeployedSpec(item) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Volume size the database was last deployed with, or "" while it is still a
+ * draft. A deployed volume cannot shrink, so this is the floor for new sizes;
+ * the spec may hold a larger value that is staged but not yet applied.
+ */
+export function deployedStorageSize(item) {
+  if (!item?.spec?.deploy?.enabled) return "";
+  return lastDeployedSpec(item)?.storageSize || item.spec?.storageSize || "";
 }
 
 function resourceLabel(item) {

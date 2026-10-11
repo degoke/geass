@@ -113,6 +113,18 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 		}
 	}
 	info.Capacity = s.clusterCapacity(ctx)
+	classes := s.storageClasses(ctx)
+	info.StorageExpandable = classes.newVolumeExpandable()
+	info.DefaultStorage = platform.DatabaseStorageDefaults()
+	for i := range data.Databases.Items {
+		db := &data.Databases.Items[i]
+		hasVolume := db.Spec.Deploy.Enabled &&
+			db.Spec.Placement != geassv1alpha1.DatabasePlacementExternal &&
+			platform.DatabaseHasVolume(db.Spec.Engine)
+		if hasVolume && !classAllowsExpansion(classes.forDatabase(db)) {
+			info.FixedSizeDatabases = append(info.FixedSizeDatabases, db.Name)
+		}
+	}
 	if info.HealthyNodes == 0 && info.Capacity.HealthyNodes > 0 {
 		info.HealthyNodes = int32(info.Capacity.HealthyNodes)
 	}

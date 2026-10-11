@@ -2132,6 +2132,12 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 			Resources:        res,
 		},
 	}
+	storageSize, err := databaseStorageForCreate(r.FormValue("storageSize"), db)
+	if err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	db.Spec.StorageSize = storageSize
 	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
 		db.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
 		if err := s.validateCloudConnectionForProject(r.Context(), db.Spec.Project, ref); err != nil {
@@ -2311,22 +2317,43 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 	fallback = workspaceResourceURL(db.Spec.Project, string(db.Spec.Environment), "databases", name, "settings")
-	if env, ok := formNonEmpty(r, "environment"); ok {
-		db.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+	env, hasEnv := formNonEmpty(r, "environment")
+	version := strings.TrimSpace(r.FormValue("version"))
+	storageSize, err := requestedDatabaseStorage(r.FormValue("storageSize"), &db, s.storageClasses(r.Context()).forDatabase(&db))
+	if err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
-	if v := strings.TrimSpace(r.FormValue("version")); v != "" {
-		db.Spec.Version = v
-	}
+	var resources *corev1.ResourceRequirements
 	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
 		res, err := resourcesFromForm(r, databaseResources(&db))
 		if err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
-		db.Spec.Resources = res
+		resources = &res
 	}
-	platform.MarkPendingChange(&db.ObjectMeta, platform.PendingChangeSettings)
-	if err := s.Client.Update(r.Context(), &db); err != nil {
+	// Everything is validated, so applying it is repeatable: the operator also writes
+	// to this object (it records the storage class at first provision), and a save
+	// that races it is re-applied to the fresh copy instead of failing.
+	apply := func() error {
+		if hasEnv {
+			db.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
+		}
+		if version != "" {
+			db.Spec.Version = version
+		}
+		if storageSize != nil {
+			db.Spec.StorageSize = storageSize
+		}
+		if resources != nil {
+			db.Spec.Resources = *resources
+		}
+		platform.MarkPendingChange(&db.ObjectMeta, platform.PendingChangeSettings)
+		return nil
+	}
+	_ = apply()
+	if err := s.updateReapplying(r.Context(), &db, apply); err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}

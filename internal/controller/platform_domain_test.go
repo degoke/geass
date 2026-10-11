@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -103,6 +104,143 @@ func TestPlatformConfigReconcileSetsDashboardDomainCondition(t *testing.T) {
 	require.NotNil(t, condition)
 	require.Equal(t, metav1.ConditionFalse, condition.Status)
 	require.Equal(t, "PendingDNS", condition.Reason)
+}
+
+func tunnelPlatformConfig() *geassv1alpha1.GeassPlatformConfig {
+	return &geassv1alpha1.GeassPlatformConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace, Generation: 1},
+		Spec: geassv1alpha1.GeassPlatformConfigSpec{
+			RootDomain:        "example.com",
+			DashboardURL:      "https://geass.example.com",
+			DashboardExposure: geassv1alpha1.DashboardExposureCloudflareTunnel,
+			TunnelCNAMETarget: "abc.cfargotunnel.com",
+		},
+	}
+}
+
+func getDomainCondition(t *testing.T, c client.Client, config *geassv1alpha1.GeassPlatformConfig) *metav1.Condition {
+	t.Helper()
+	var updated geassv1alpha1.GeassPlatformConfig
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(config), &updated))
+	condition := platform.DashboardDomainCondition(updated.Status.Conditions)
+	require.NotNil(t, condition)
+	return condition
+}
+
+func TestPlatformConfigReconcileUpdatesExistingDashboardDomainCondition(t *testing.T) {
+	config := tunnelPlatformConfig()
+	c := fake.NewClientBuilder().
+		WithScheme(testPlatformScheme()).
+		WithObjects(config).
+		WithStatusSubresource(&geassv1alpha1.GeassPlatformConfig{}).
+		Build()
+	r := &GeassPlatformConfigReconciler{Client: c, Scheme: testPlatformScheme()}
+
+	_, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, metav1.ConditionFalse, getDomainCondition(t, c, config).Status)
+
+	r.HTTPClient = &http.Client{Transport: dashboardProbeTransport{}}
+	result, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Zero(t, result.RequeueAfter)
+
+	condition := getDomainCondition(t, c, config)
+	require.Equal(t, metav1.ConditionTrue, condition.Status)
+	require.Equal(t, "Verified", condition.Reason)
+}
+
+func TestPlatformConfigReconcileTimesOutDashboardDomainVerification(t *testing.T) {
+	config := tunnelPlatformConfig()
+	c := fake.NewClientBuilder().
+		WithScheme(testPlatformScheme()).
+		WithObjects(config).
+		WithStatusSubresource(&geassv1alpha1.GeassPlatformConfig{}).
+		Build()
+	r := &GeassPlatformConfigReconciler{Client: c, Scheme: testPlatformScheme()}
+
+	result, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, platform.RequeueAfterDomainVerify, result.RequeueAfter)
+	pending := getDomainCondition(t, c, config)
+	require.Equal(t, "PendingDNS", pending.Reason)
+	startedAt := pending.LastTransitionTime.Time
+
+	r.now = func() time.Time { return startedAt.Add(platform.DomainVerifyTimeout - time.Minute) }
+	result, err = r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, platform.RequeueAfterDomainVerify, result.RequeueAfter, "still inside the verification window")
+
+	r.now = func() time.Time { return startedAt.Add(platform.DomainVerifyTimeout + time.Second) }
+	result, err = r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, platform.RequeueAfterDomainVerifyTimedOut, result.RequeueAfter)
+
+	timedOut := getDomainCondition(t, c, config)
+	require.Equal(t, metav1.ConditionFalse, timedOut.Status)
+	require.Equal(t, "VerificationTimedOut", timedOut.Reason)
+	require.Contains(t, timedOut.Message, "DNS not detected yet", "message should keep the underlying cause")
+	require.True(t, timedOut.LastTransitionTime.Time.Equal(startedAt), "pending-since anchor must survive reason changes")
+
+	r.now = func() time.Time { return startedAt.Add(2 * platform.DomainVerifyTimeout) }
+	result, err = r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, platform.RequeueAfterDomainVerifyTimedOut, result.RequeueAfter, "stays on the slow retry cadence")
+}
+
+func TestPlatformConfigReconcileRecoversAfterDashboardDomainTimeout(t *testing.T) {
+	config := tunnelPlatformConfig()
+	c := fake.NewClientBuilder().
+		WithScheme(testPlatformScheme()).
+		WithObjects(config).
+		WithStatusSubresource(&geassv1alpha1.GeassPlatformConfig{}).
+		Build()
+	r := &GeassPlatformConfigReconciler{Client: c, Scheme: testPlatformScheme()}
+
+	_, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	startedAt := getDomainCondition(t, c, config).LastTransitionTime.Time
+
+	r.now = func() time.Time { return startedAt.Add(platform.DomainVerifyTimeout + time.Minute) }
+	_, err = r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, "VerificationTimedOut", getDomainCondition(t, c, config).Reason)
+
+	r.HTTPClient = &http.Client{Transport: dashboardProbeTransport{}}
+	result, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Zero(t, result.RequeueAfter)
+	require.Equal(t, metav1.ConditionTrue, getDomainCondition(t, c, config).Status)
+}
+
+func TestPlatformConfigReconcileRestartsDomainTimeoutWhenSpecChanges(t *testing.T) {
+	config := tunnelPlatformConfig()
+	c := fake.NewClientBuilder().
+		WithScheme(testPlatformScheme()).
+		WithObjects(config).
+		WithStatusSubresource(&geassv1alpha1.GeassPlatformConfig{}).
+		Build()
+	r := &GeassPlatformConfigReconciler{Client: c, Scheme: testPlatformScheme()}
+
+	_, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	startedAt := getDomainCondition(t, c, config).LastTransitionTime.Time
+
+	late := startedAt.Add(platform.DomainVerifyTimeout + time.Minute)
+	r.now = func() time.Time { return late }
+	_, err = r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, "VerificationTimedOut", getDomainCondition(t, c, config).Reason)
+
+	var latest geassv1alpha1.GeassPlatformConfig
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(config), &latest))
+	latest.Generation++
+	require.NoError(t, c.Update(context.Background(), &latest))
+
+	result, err := r.Reconcile(context.Background(), reconcileRequest(config))
+	require.NoError(t, err)
+	require.Equal(t, platform.RequeueAfterDomainVerify, result.RequeueAfter, "new generation gets a fresh verification window")
+	require.Equal(t, "PendingDNS", getDomainCondition(t, c, config).Reason)
 }
 
 func testPlatformScheme() *runtime.Scheme {
