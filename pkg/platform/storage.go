@@ -17,6 +17,12 @@ const (
 	// LonghornProvisioner is the CSI driver both classes use.
 	LonghornProvisioner = "driver.longhorn.io"
 
+	// LonghornAPIGroup and LonghornAPIVersion address Longhorn's own custom
+	// resources. A volume's replica count lives on its Longhorn Volume object, not
+	// on the PersistentVolume, so raising it means patching that object.
+	LonghornAPIGroup   = "longhorn.io"
+	LonghornAPIVersion = "v1beta2"
+
 	// LonghornAllowsExpansion is set on both classes: online resizing is why
 	// Longhorn is installed.
 	LonghornAllowsExpansion = true

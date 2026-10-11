@@ -56,21 +56,34 @@ func (r *GeassClusterReconciler) reconcileLonghorn(ctx context.Context) (bool, e
 	if err != nil || !installed {
 		return false, err
 	}
-	nodes, err := r.schedulableNodeCount(ctx)
-	if err != nil {
+	replicas, hosted, err := r.longhornReplicaTarget(ctx)
+	if err != nil || !hosted {
 		return false, err
 	}
-	// One manager pod being ready only proves Longhorn is up on one node. The
-	// replicated class asks for a replica per node, so wait until every node can
-	// host one; otherwise the first volumes start out degraded.
-	managers, err := r.longhornManagersReady(ctx)
-	if err != nil || managers < max(nodes, 1) {
-		return false, err
-	}
-	if err := r.ensureLonghornStorageClasses(ctx, platform.LonghornReplicaCount(nodes)); err != nil {
+	if err := r.ensureLonghornStorageClasses(ctx, replicas); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// longhornReplicaTarget is how many replicas a replicated volume should have, and
+// whether Longhorn can host that many yet. It is the one definition both the
+// storage class and the step that raises existing volumes work from, so the two
+// cannot disagree about either.
+//
+// One manager pod being ready only proves Longhorn is up on one node. A replica
+// per node is asked for, so hosted is false until every node has a ready manager;
+// otherwise the first volumes start out degraded.
+func (r *GeassClusterReconciler) longhornReplicaTarget(ctx context.Context) (replicas int, hosted bool, err error) {
+	nodes, err := r.schedulableNodeCount(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	managers, err := r.longhornManagersReady(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	return platform.LonghornReplicaCount(nodes), managers >= max(nodes, 1), nil
 }
 
 // longhornManagersReady counts ready longhorn-manager pods, one per usable node.

@@ -79,7 +79,16 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.updateStatus(ctx, &cluster, false, err)
 	}
 
-	return r.updateStatus(ctx, &cluster, addonsReady, nil)
+	result, err := r.updateStatus(ctx, &cluster, addonsReady, nil)
+	if err != nil {
+		return result, err
+	}
+
+	// Growing existing volumes is background work, so it runs after the status is
+	// written and only ever shortens the requeue. It cannot affect readiness, and a
+	// problem in it must not feed the failure count that pauses this reconciler.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornVolumeReplicas(ctx, &cluster))
+	return result, nil
 }
 
 func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *geassv1alpha1.GeassCluster) (bool, error) {
@@ -222,6 +231,10 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassCluster{}).
 		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(nodeSchedulingChanged())).
+		// A replicated volume provisioned after the last pass would otherwise stay at
+		// its old replica count until the next node event. The mapper enqueues every
+		// cluster whatever object it is given.
+		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(replicatedVolumeBound())).
 		Named("geasscluster").
 		Complete(r)
 }
