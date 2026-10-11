@@ -48,7 +48,7 @@ func TestReconcileCNPGClusterToleratesCacheLagAfterCreate(t *testing.T) {
 		Spec:       geassv1alpha1.GeassDatabaseSpec{Project: testProjectName, Engine: geassv1alpha1.DatabaseEnginePostgres},
 	}
 
-	cluster, err := r.reconcileCNPGCluster(context.Background(), db, "proj-production", "")
+	cluster, err := r.reconcileCNPGCluster(context.Background(), db, "proj-production", "", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cluster)
 	require.Equal(t, testDBName, cluster.Name)

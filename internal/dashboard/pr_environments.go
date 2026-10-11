@@ -359,6 +359,9 @@ func (s *Server) cloneEnvironmentResources(ctx context.Context, project *geassv1
 		// A pull request environment is for review, so one instance is enough.
 		clone.Spec.HighAvailability = false
 		clone.Spec.Instances = nil
+		// Review databases are throwaway: they are neither backed up nor restored from backups.
+		clone.Spec.Backup = nil
+		clone.Spec.RestoreFrom = nil
 		clone.Spec.Deploy.Enabled = true
 		if err := platform.SetLastDeployedJSON(&clone.ObjectMeta, clone.Spec); err != nil {
 			return created, err

@@ -17,6 +17,7 @@ resources:
 - bases/geass.geass.dev_geasshareadinesses.yaml
 - bases/geass.geass.dev_geassplatformconfigs.yaml
 - bases/geass.geass.dev_geasscloudconnections.yaml
+- bases/geass.geass.dev_geassbackuparchives.yaml
 - external/helmcharts.helm.cattle.io.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 

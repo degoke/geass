@@ -203,7 +203,7 @@ func TestReconcileCNPGClusterCreatesVolumesOnTheChosenClass(t *testing.T) {
 	db := storageTestDB(geassv1alpha1.DatabaseEnginePostgres, false)
 	r, _ := storageTestReconciler(t)
 
-	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated)
+	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cluster.Spec.Storage.StorageClass)
 	require.Equal(t, platform.StorageClassReplicated, *cluster.Spec.Storage.StorageClass)
@@ -219,7 +219,7 @@ func TestReconcileCNPGClusterNeverMovesExistingVolumes(t *testing.T) {
 
 	// CNPG rejects a storage class change on a live cluster, and its volumes are
 	// bound to the old class regardless, so the existing choice must survive.
-	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated)
+	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, cluster.Spec.Storage.StorageClass)
 }

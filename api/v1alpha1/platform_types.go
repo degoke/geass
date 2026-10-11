@@ -69,6 +69,10 @@ type GeassProjectSpec struct {
 	// PREnvironments creates a temporary copy of an environment for every pull request.
 	// +optional
 	PREnvironments *GeassPREnvironments `json:"prEnvironments,omitempty"`
+	// BackupStorage is where this project's databases keep their backups. Without it, databases
+	// that have backups turned on report that they need storage.
+	// +optional
+	BackupStorage *GeassBackupStorage `json:"backupStorage,omitempty"`
 }
 
 // GeassWebhook is an outbound webhook for project events.

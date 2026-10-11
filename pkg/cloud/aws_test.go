@@ -51,6 +51,8 @@ func TestEnsureBucketUserCreatesScopedIAMUser(t *testing.T) {
 		case "PutUserPolicy":
 			require.Contains(t, r.FormValue("PolicyDocument"), "arn:aws:s3:::uploads")
 			require.Contains(t, r.FormValue("PolicyDocument"), "arn:aws:s3:::uploads/*")
+			require.Contains(t, r.FormValue("PolicyDocument"), "s3:ListBucketVersions", "pruning in a versioned bucket must be able to list versions")
+			require.Contains(t, r.FormValue("PolicyDocument"), "s3:DeleteObjectVersion")
 			require.True(t, json.Valid([]byte(r.FormValue("PolicyDocument"))))
 			w.WriteHeader(http.StatusOK)
 		case "CreateAccessKey":
@@ -431,4 +433,202 @@ func TestIAMCallFailsWhenResponseExceedsLimit(t *testing.T) {
 	_, _, err := client.EnsureBucketUser([]string{"uploads"}, "assets", "", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeded")
+}
+
+func TestDeletePrefixOnlyRemovesObjectsUnderThePrefix(t *testing.T) {
+	var listedPrefixes, deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			listedPrefixes = append(listedPrefixes, r.URL.Query().Get("prefix"))
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>payments/orders-1a2b/wals/0001</Key></Contents><Contents><Key>payments/orders-1a2b/base/2026/data.tar.gz</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<Result><IsTruncated>false</IsTruncated></Result>`))
+		case r.Method == http.MethodDelete:
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeletePrefix("backups", "payments/orders-1a2b"))
+
+	require.Equal(t, []string{"payments/orders-1a2b/"}, listedPrefixes, "a trailing slash stops orders-1a2b from also matching orders-1a2bc")
+	require.ElementsMatch(t, []string{"/backups/payments/orders-1a2b/wals/0001", "/backups/payments/orders-1a2b/base/2026/data.tar.gz"}, deleted)
+	require.NotContains(t, deleted, "/backups", "the bucket itself must survive a prefix purge")
+}
+
+func TestDeletePrefixRefusesAnEmptyPrefix(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	for _, prefix := range []string{"", "  ", "/"} {
+		require.Error(t, client.DeletePrefix("backups", prefix), "prefix %q would purge the whole bucket", prefix)
+	}
+	require.Error(t, client.DeletePrefix("", "payments/orders"))
+	require.False(t, called, "no request may be sent for an unsafe prefix")
+}
+
+func TestDeletePrefixRemovesVersionsAndMultipartUploadsUnderThePrefix(t *testing.T) {
+	var versionPrefix, uploadPrefix string
+	var deletedVersions, abortedUploads []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("list-type"):
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			versionPrefix = r.URL.Query().Get("prefix")
+			_, _ = w.Write([]byte(`<ListVersionsResult><Version><Key>p/x/wals/1</Key><VersionId>v1</VersionId></Version><DeleteMarker><Key>p/x/wals/1</Key><VersionId>v0</VersionId></DeleteMarker><IsTruncated>false</IsTruncated></ListVersionsResult>`))
+		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
+			uploadPrefix = r.URL.Query().Get("prefix")
+			_, _ = w.Write([]byte(`<ListMultipartUploadsResult><Upload><Key>p/x/base/big</Key><UploadId>u1</UploadId></Upload><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`))
+		case r.Method == http.MethodDelete && r.URL.Query().Get("versionId") != "":
+			deletedVersions = append(deletedVersions, r.URL.Query().Get("versionId"))
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Query().Get("uploadId") != "":
+			abortedUploads = append(abortedUploads, r.URL.Query().Get("uploadId"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeletePrefix("backups", "p/x/"))
+	require.Equal(t, "p/x/", versionPrefix)
+	require.Equal(t, "p/x/", uploadPrefix)
+	require.ElementsMatch(t, []string{"v1", "v0"}, deletedVersions)
+	require.Equal(t, []string{"u1"}, abortedUploads)
+}
+
+func TestDeletePrefixTreatsMissingBucketAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<Error><Code>NoSuchBucket</Code></Error>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.NoError(t, client.DeletePrefix("backups", "p/x/"))
+}
+
+func TestDeletePrefixFailsWhenListingIsForbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	require.Error(t, client.DeletePrefix("backups", "p/x/"), "a purge that could not list must not report success and drop the record of the data")
+}
+
+func TestListKeysReturnsEveryKeyUnderThePrefixAcrossPages(t *testing.T) {
+	var requested []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "p/s/dumps/", r.URL.Query().Get("prefix"))
+		token := r.URL.Query().Get("continuation-token")
+		requested = append(requested, token)
+		switch token {
+		case "":
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>p/s/dumps/a.sql.gz</Key></Contents><Contents><Key>p/s/dumps/b.sql.gz</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page2</NextContinuationToken></ListBucketResult>`))
+		case "page2":
+			_, _ = w.Write([]byte(`<ListBucketResult><Contents><Key>p/s/dumps/c.sql.gz</Key></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`))
+		default:
+			t.Errorf("unexpected token %q", token)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	keys, err := client.ListKeys("backups", "p/s/dumps")
+	require.NoError(t, err)
+	require.Equal(t, []string{"p/s/dumps/a.sql.gz", "p/s/dumps/b.sql.gz", "p/s/dumps/c.sql.gz"}, keys)
+	require.Equal(t, []string{"", "page2"}, requested)
+}
+
+func TestListKeysRefusesAnUnsafePrefixAndReportsFailures(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+	}))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+
+	_, err := client.ListKeys("backups", "")
+	require.Error(t, err, "listing a whole bucket is never what a database wants")
+	_, err = client.ListKeys("", "p/s/")
+	require.Error(t, err)
+	require.False(t, called, "no request may be sent for an unsafe prefix")
+
+	_, err = client.ListKeys("backups", "p/s/")
+	require.ErrorContains(t, err, "AccessDenied", "a failed listing must not look like an empty folder")
+}
+
+func TestDeleteObjectRemovesOneKeyAndTreatsAMissingOneAsDone(t *testing.T) {
+	var deleted []string
+	status := http.StatusNoContent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("versions") {
+			_, _ = w.Write([]byte(`<ListVersionsResult><IsTruncated>false</IsTruncated></ListVersionsResult>`))
+			return
+		}
+		require.Equal(t, http.MethodDelete, r.Method)
+		deleted = append(deleted, r.URL.Path)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+
+	require.NoError(t, client.DeleteObject("backups", "p/s/dumps/20261011T020000Z.sql.gz"))
+	require.Equal(t, []string{"/backups/p/s/dumps/20261011T020000Z.sql.gz"}, deleted)
+
+	status = http.StatusNotFound
+	require.NoError(t, client.DeleteObject("backups", "p/s/dumps/gone.sql.gz"), "already deleted is the outcome that was wanted")
+
+	status = http.StatusForbidden
+	require.Error(t, client.DeleteObject("backups", "p/s/dumps/x.sql.gz"))
+	require.Error(t, client.DeleteObject("backups", ""), "an empty key would address the bucket itself")
+	require.Error(t, client.DeleteObject("", "k"))
+}
+
+func TestDeleteObjectRemovesEveryVersionOfThatKeyOnly(t *testing.T) {
+	var versionPrefix string
+	var deletedVersions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
+			versionPrefix = r.URL.Query().Get("prefix")
+			_, _ = w.Write([]byte(`<ListVersionsResult>` +
+				`<Version><Key>p/s/dumps/a.sql.gz</Key><VersionId>v1</VersionId></Version>` +
+				`<DeleteMarker><Key>p/s/dumps/a.sql.gz</Key><VersionId>v2</VersionId></DeleteMarker>` +
+				`<Version><Key>p/s/dumps/a.sql.gz.keep</Key><VersionId>other</VersionId></Version>` +
+				`<IsTruncated>false</IsTruncated></ListVersionsResult>`))
+		case r.Method == http.MethodDelete && r.URL.Query().Get("versionId") != "":
+			deletedVersions = append(deletedVersions, r.URL.Query().Get("versionId"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+
+	require.NoError(t, client.DeleteObject("backups", "p/s/dumps/a.sql.gz"))
+
+	require.Equal(t, "p/s/dumps/a.sql.gz", versionPrefix)
+	require.ElementsMatch(t, []string{"v1", "v2"}, deletedVersions,
+		"a versioned bucket keeps old versions behind a delete marker, and a key that merely starts the same must be left alone")
 }

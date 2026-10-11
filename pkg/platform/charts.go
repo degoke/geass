@@ -48,4 +48,9 @@ const (
 	ClusterMinIOChartName  = "geass-minio"
 
 	SQLiteImage = "rqlite/rqlite:8.36.16"
+
+	// BackupTransferImage moves MySQL and SQLite snapshots to and from the project's bucket. curl signs
+	// S3 requests itself (--aws-sigv4), so the image needs nothing else. The MinIO client that the MinIO
+	// chart uses was not chosen because the minio/* images are no longer reliably published.
+	BackupTransferImage = "curlimages/curl:8.10.1"
 )

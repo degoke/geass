@@ -307,6 +307,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectPREnvironments(w, r, name, parts[2])
 		case len(parts) == 3 && parts[1] == "webhooks":
 			s.handleProjectWebhooks(w, r, name, parts[2])
+		case len(parts) == 2 && parts[1] == "backup-storage":
+			s.handleProjectBackupStorage(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "install":
 			s.handleProjectGitHubInstall(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "disconnect":
@@ -2163,6 +2165,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		instances := int32(3)
 		db.Spec.Instances = &instances
 	}
+	db.Spec.Backup = defaultBackups(db)
 	db.Spec.Deploy.Enabled = false
 	platform.InitializePendingCreated(&db.ObjectMeta)
 	if err := s.Client.Create(r.Context(), db); err != nil {
@@ -2333,6 +2336,11 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		}
 		resources = &res
 	}
+	// The backup fields are checked up front, on a copy, so applying them below cannot fail.
+	if err := applyBackupForm(r, db.DeepCopy()); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
 	// Everything is validated, so applying it is repeatable: the operator also writes
 	// to this object (it records the storage class at first provision), and a save
 	// that races it is re-applied to the fresh copy instead of failing.
@@ -2349,10 +2357,13 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		if resources != nil {
 			db.Spec.Resources = *resources
 		}
+		if err := applyBackupForm(r, &db); err != nil {
+			return err
+		}
 		platform.MarkPendingChange(&db.ObjectMeta, platform.PendingChangeSettings)
 		return nil
 	}
-	_ = apply()
+	_ = apply() // validated above
 	if err := s.updateReapplying(r.Context(), &db, apply); err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return

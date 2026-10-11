@@ -285,6 +285,13 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassobjectstore")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassBackupArchiveReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassbackuparchive")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if dashboardAddr != "0" {

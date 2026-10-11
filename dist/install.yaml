@@ -1063,6 +1063,27 @@ spec:
               source:
                 description: Source selects exactly one image or Git source.
                 properties:
+                  function:
+                    description: GeassAppFunctionSource runs inline source code on
+                      a managed language runtime.
+                    properties:
+                      code:
+                        description: Code is the program. It must serve HTTP on the
+                          port in the PORT environment variable.
+                        maxLength: 262144
+                        type: string
+                      runtime:
+                        description: Runtime selects the language runtime that executes
+                          Code.
+                        enum:
+                        - bun
+                        - node
+                        - python
+                        type: string
+                    required:
+                    - code
+                    - runtime
+                    type: object
                   git:
                     description: GeassAppGitSource identifies a GitHub source revision.
                     properties:
@@ -1219,6 +1240,105 @@ spec:
               healthCheckFailures:
                 format: int32
                 type: integer
+              provision:
+                description: Provision tracks deploy attempts and errors for this
+                  resource.
+                properties:
+                  activeProvisionAttempt:
+                    description: ActiveProvisionAttempt is the ID of the in-progress
+                      attempt, if any.
+                    type: string
+                  provisionAttempts:
+                    description: ProvisionAttempts is recent deploy/provision history
+                      (newest first, capped in controller).
+                    items:
+                      description: GeassProvisionAttempt tracks one deploy/provision
+                        run for a resource.
+                      properties:
+                        buildRef:
+                          description: BuildRef links to a GeassBuild for image build
+                            logs (services with Git source).
+                          type: string
+                        completedAt:
+                          description: CompletedAt is set when the attempt reaches
+                            a terminal phase.
+                          format: date-time
+                          type: string
+                        deploymentRef:
+                          description: DeploymentRef links to a GeassDeployment row
+                            for this deploy (services).
+                          type: string
+                        errors:
+                          description: Errors lists distinct errors seen during this
+                            attempt (newest last).
+                          items:
+                            description: GeassProvisionAttemptError is one user-safe
+                              error recorded during a provision attempt.
+                            properties:
+                              message:
+                                description: Message is product-facing text (no operator
+                                  internals).
+                                maxLength: 500
+                                type: string
+                              recordedAt:
+                                description: RecordedAt is when this error was observed.
+                                format: date-time
+                                type: string
+                            required:
+                            - message
+                            - recordedAt
+                            type: object
+                          maxItems: 12
+                          type: array
+                        id:
+                          description: ID uniquely identifies this attempt within
+                            the resource.
+                          maxLength: 64
+                          type: string
+                        phase:
+                          description: Phase is Running until the attempt succeeds
+                            or fails.
+                          enum:
+                          - Running
+                          - Succeeded
+                          - Failed
+                          type: string
+                        startedAt:
+                          description: StartedAt is when provisioning began.
+                          format: date-time
+                          type: string
+                        summary:
+                          description: Summary is a short user-facing outcome line
+                            when the attempt completes.
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      - startedAt
+                      type: object
+                    maxItems: 8
+                    type: array
+                type: object
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
               resolvedImage:
                 description: ResolvedImage is the immutable digest used by the active
                   deployment.
@@ -1235,6 +1355,350 @@ spec:
               url:
                 description: URL is the primary ingress URL when configured.
                 type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassbackuparchives.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassBackupArchive
+    listKind: GeassBackupArchiveList
+    plural: geassbackuparchives
+    singular: geassbackuparchive
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.database
+      name: Database
+      type: string
+    - jsonPath: .status.lastBackupTime
+      name: Last backup
+      type: date
+    - jsonPath: .spec.deleteAfter
+      name: Delete after
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassBackupArchive is the Schema for the geassbackuparchives
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GeassBackupArchiveSpec defines the backups kept for one database. The archive is created when
+              backups are turned on and survives the database so it can still be restored for a while.
+            properties:
+              database:
+                description: Database is the name of the GeassDatabase that owns the
+                  backups.
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: database cannot be changed
+                  rule: self == oldSelf
+              databaseUID:
+                description: DatabaseUID tells a database apart from a later one that
+                  reuses its name.
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: databaseUID cannot be changed
+                  rule: self == oldSelf
+              deleteAfter:
+                description: |-
+                  DeleteAfter is when the backups are removed. It is set when the database is deleted or
+                  backups are turned off, and stays empty while the database is protected.
+                format: date-time
+                type: string
+              environment:
+                description: Environment is the environment the database ran in.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              project:
+                description: Project is the project that owned the database.
+                minLength: 1
+                type: string
+              retentionDays:
+                description: RetentionDays is how many days back the database can
+                  be restored.
+                format: int32
+                maximum: 365
+                minimum: 1
+                type: integer
+              serverName:
+                description: |-
+                  ServerName is the unique folder the backups live in, so a new database with a reused name
+                  never writes into an old database's backups.
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: serverName cannot be changed
+                  rule: self == oldSelf
+              source:
+                description: Source describes the database so a restore can size the
+                  new one.
+                properties:
+                  databaseName:
+                    description: DatabaseName is the name of the database inside the
+                      Postgres server.
+                    type: string
+                  engine:
+                    description: |-
+                      Engine is the kind of database the backups came from. Empty means Postgres, which is what
+                      archives created before other engines had backups hold.
+                    enum:
+                    - Postgres
+                    - MySQL
+                    - SQLite
+                    - Redis
+                    type: string
+                  resources:
+                    description: Resources is the CPU and memory the source database
+                      used.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  storageSize:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: StorageSize is the disk size of the source database;
+                      a restored database needs at least this much.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  version:
+                    description: Version is the Postgres major version of the source
+                      database. Other engines do not record one.
+                    type: string
+                type: object
+              storage:
+                description: Storage is where the backups are kept. It is fixed when
+                  the archive is created.
+                properties:
+                  bucket:
+                    description: Bucket is the S3 bucket that holds backups. Geass
+                      creates it when it does not exist.
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                  connectionRef:
+                    description: ConnectionRef is the AWS GeassCloudConnection that
+                      owns the bucket.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  region:
+                    description: Region is the bucket's AWS region. It defaults to
+                      the connection's region.
+                    type: string
+                required:
+                - bucket
+                - connectionRef
+                type: object
+                x-kubernetes-validations:
+                - message: storage cannot be changed
+                  rule: self == oldSelf
+            required:
+            - database
+            - databaseUID
+            - environment
+            - project
+            - retentionDays
+            - serverName
+            - storage
+            type: object
+          status:
+            description: GeassBackupArchiveStatus defines the observed state of GeassBackupArchive.
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassBackupArchive
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastBackupTime:
+                description: LastBackupTime is when the most recent backup finished.
+                format: date-time
+                type: string
+              recoveryWindowEnd:
+                description: |-
+                  RecoveryWindowEnd is the latest moment known to be recoverable. It stops moving once the
+                  database is deleted.
+                format: date-time
+                type: string
+              recoveryWindowStart:
+                description: RecoveryWindowStart is the earliest moment the database
+                  can be restored to.
+                format: date-time
+                type: string
+              restorePoints:
+                description: RestorePoints lists base backups, newest first.
+                items:
+                  description: GeassRestorePoint is a base backup a database can be
+                    restored to.
+                  properties:
+                    id:
+                      description: ID identifies the backup.
+                      type: string
+                    time:
+                      description: Time is when the backup finished.
+                      format: date-time
+                      type: string
+                  required:
+                  - id
+                  - time
+                  type: object
+                maxItems: 100
+                type: array
             type: object
         required:
         - spec
@@ -1680,6 +2144,17 @@ spec:
                         description: Enabled installs cert-manager when true.
                         type: boolean
                     type: object
+                  longhorn:
+                    description: Longhorn controls the Longhorn storage engine installation.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs Longhorn and the Geass-managed storage classes. It defaults to
+                          off because Longhorn needs iSCSI on every node, which clusters such as kind do
+                          not provide; the installer turns it on for the clusters it builds.
+                        type: boolean
+                    type: object
                   monitoring:
                     description: Monitoring controls kube-prometheus-stack installation.
                     properties:
@@ -1788,6 +2263,26 @@ spec:
               phase:
                 description: Phase is the current phase of the GeassCluster.
                 type: string
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
             type: object
         required:
         - spec
@@ -1935,6 +2430,27 @@ spec:
           spec:
             description: GeassDatabaseSpec defines the desired state of GeassDatabase.
             properties:
+              backup:
+                description: |-
+                  Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
+                  moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+                  recovery path beyond its own disks.
+                properties:
+                  enabled:
+                    description: Enabled turns continuous backups on. They are stored
+                      in the project's backup storage.
+                    type: boolean
+                  retentionDays:
+                    default: 7
+                    description: RetentionDays is how many days back the database
+                      can be restored.
+                    format: int32
+                    maximum: 365
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               connectionRef:
                 description: ConnectionRef identifies a GeassCloudConnection used
                   for PlanetScale or AWS.
@@ -1954,6 +2470,15 @@ spec:
                 description: DatabaseName overrides the default database name for
                   external or logical-style servers.
                 type: string
+              deploy:
+                description: Deploy gates database provisioning until the user deploys
+                  from the dashboard.
+                properties:
+                  enabled:
+                    description: Enabled is true after the user deploys. False keeps
+                      the resource as an editable draft.
+                    type: boolean
+                type: object
               engine:
                 description: Engine is the database engine to provision.
                 enum:
@@ -2097,12 +2622,39 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              restoreFrom:
+                description: |-
+                  RestoreFrom creates this database from another database's backups instead of an empty one.
+                  It is only read while the database is first provisioned; changing it afterwards has no effect.
+                properties:
+                  archive:
+                    description: Archive is the GeassBackupArchive to restore from.
+                    minLength: 1
+                    type: string
+                  restorePoint:
+                    description: RestorePoint is the ID of a restore point listed
+                      on the archive.
+                    type: string
+                  time:
+                    description: |-
+                      Time restores the database as it was at this moment, which must be inside the archive's
+                      recovery window.
+                    format: date-time
+                    type: string
+                required:
+                - archive
+                type: object
+                x-kubernetes-validations:
+                - message: set either restorePoint or time, not both
+                  rule: '!(has(self.restorePoint) && has(self.time))'
               storageSize:
                 anyOf:
                 - type: integer
                 - type: string
-                default: 10Gi
-                description: StorageSize is the requested PVC size per instance.
+                description: |-
+                  StorageSize is the requested PVC size per instance. Left unset, the engine's
+                  default applies (platform.DefaultDatabaseStorage); there is deliberately no
+                  CRD default, which could not vary by engine.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
               username:
@@ -2121,6 +2673,37 @@ spec:
           status:
             description: GeassDatabaseStatus defines the observed state of GeassDatabase.
             properties:
+              backup:
+                description: Backup summarises backup protection. It is absent while
+                  backups are off.
+                properties:
+                  archive:
+                    description: Archive is the GeassBackupArchive holding this database's
+                      backups.
+                    type: string
+                  lastBackupTime:
+                    description: LastBackupTime is when the most recent backup finished.
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message explains the state in plain language.
+                    type: string
+                  recoveryWindowStart:
+                    description: RecoveryWindowStart is the earliest moment the database
+                      can be restored to.
+                    format: date-time
+                    type: string
+                  state:
+                    description: State is how well the database is protected.
+                    enum:
+                    - NeedsStorage
+                    - Starting
+                    - Protected
+                    - AtRisk
+                    type: string
+                required:
+                - state
+                type: object
               conditions:
                 description: conditions represent the current state of the GeassDatabase
                   resource.
@@ -2188,6 +2771,112 @@ spec:
                 type: string
               host:
                 description: Host is the in-cluster database hostname.
+                type: string
+              provision:
+                description: Provision tracks deploy attempts and errors for this
+                  resource.
+                properties:
+                  activeProvisionAttempt:
+                    description: ActiveProvisionAttempt is the ID of the in-progress
+                      attempt, if any.
+                    type: string
+                  provisionAttempts:
+                    description: ProvisionAttempts is recent deploy/provision history
+                      (newest first, capped in controller).
+                    items:
+                      description: GeassProvisionAttempt tracks one deploy/provision
+                        run for a resource.
+                      properties:
+                        buildRef:
+                          description: BuildRef links to a GeassBuild for image build
+                            logs (services with Git source).
+                          type: string
+                        completedAt:
+                          description: CompletedAt is set when the attempt reaches
+                            a terminal phase.
+                          format: date-time
+                          type: string
+                        deploymentRef:
+                          description: DeploymentRef links to a GeassDeployment row
+                            for this deploy (services).
+                          type: string
+                        errors:
+                          description: Errors lists distinct errors seen during this
+                            attempt (newest last).
+                          items:
+                            description: GeassProvisionAttemptError is one user-safe
+                              error recorded during a provision attempt.
+                            properties:
+                              message:
+                                description: Message is product-facing text (no operator
+                                  internals).
+                                maxLength: 500
+                                type: string
+                              recordedAt:
+                                description: RecordedAt is when this error was observed.
+                                format: date-time
+                                type: string
+                            required:
+                            - message
+                            - recordedAt
+                            type: object
+                          maxItems: 12
+                          type: array
+                        id:
+                          description: ID uniquely identifies this attempt within
+                            the resource.
+                          maxLength: 64
+                          type: string
+                        phase:
+                          description: Phase is Running until the attempt succeeds
+                            or fails.
+                          enum:
+                          - Running
+                          - Succeeded
+                          - Failed
+                          type: string
+                        startedAt:
+                          description: StartedAt is when provisioning began.
+                          format: date-time
+                          type: string
+                        summary:
+                          description: Summary is a short user-facing outcome line
+                            when the attempt completes.
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      - startedAt
+                      type: object
+                    maxItems: 8
+                    type: array
+                type: object
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
+              restoredAt:
+                description: |-
+                  RestoredAt is when the backups named by spec.restoreFrom were loaded into this database.
+                  It is only used by engines that restore by loading a snapshot; it stops the restore from
+                  running a second time and overwriting newer data.
+                format: date-time
                 type: string
               targetNamespace:
                 description: TargetNamespace is the namespace workloads were created
@@ -2757,6 +3446,105 @@ spec:
                 type: string
               jobName:
                 type: string
+              provision:
+                description: Provision tracks deploy attempts and errors for this
+                  resource.
+                properties:
+                  activeProvisionAttempt:
+                    description: ActiveProvisionAttempt is the ID of the in-progress
+                      attempt, if any.
+                    type: string
+                  provisionAttempts:
+                    description: ProvisionAttempts is recent deploy/provision history
+                      (newest first, capped in controller).
+                    items:
+                      description: GeassProvisionAttempt tracks one deploy/provision
+                        run for a resource.
+                      properties:
+                        buildRef:
+                          description: BuildRef links to a GeassBuild for image build
+                            logs (services with Git source).
+                          type: string
+                        completedAt:
+                          description: CompletedAt is set when the attempt reaches
+                            a terminal phase.
+                          format: date-time
+                          type: string
+                        deploymentRef:
+                          description: DeploymentRef links to a GeassDeployment row
+                            for this deploy (services).
+                          type: string
+                        errors:
+                          description: Errors lists distinct errors seen during this
+                            attempt (newest last).
+                          items:
+                            description: GeassProvisionAttemptError is one user-safe
+                              error recorded during a provision attempt.
+                            properties:
+                              message:
+                                description: Message is product-facing text (no operator
+                                  internals).
+                                maxLength: 500
+                                type: string
+                              recordedAt:
+                                description: RecordedAt is when this error was observed.
+                                format: date-time
+                                type: string
+                            required:
+                            - message
+                            - recordedAt
+                            type: object
+                          maxItems: 12
+                          type: array
+                        id:
+                          description: ID uniquely identifies this attempt within
+                            the resource.
+                          maxLength: 64
+                          type: string
+                        phase:
+                          description: Phase is Running until the attempt succeeds
+                            or fails.
+                          enum:
+                          - Running
+                          - Succeeded
+                          - Failed
+                          type: string
+                        startedAt:
+                          description: StartedAt is when provisioning began.
+                          format: date-time
+                          type: string
+                        summary:
+                          description: Summary is a short user-facing outcome line
+                            when the attempt completes.
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      - startedAt
+                      type: object
+                    maxItems: 8
+                    type: array
+                type: object
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
             type: object
         required:
         - metadata
@@ -3146,6 +3934,15 @@ spec:
                 description: CreateBucket requests that Geass create the named buckets
                   when possible.
                 type: boolean
+              deploy:
+                description: Deploy gates bucket provisioning until the user deploys
+                  from the dashboard.
+                properties:
+                  enabled:
+                    description: Enabled is true after the user deploys. False keeps
+                      the resource as an editable draft.
+                    type: boolean
+                type: object
               engine:
                 description: Engine is the object store engine to provision.
                 enum:
@@ -3173,6 +3970,66 @@ spec:
               region:
                 description: Region is the AWS region for external buckets.
                 type: string
+              resources:
+                description: Resources is the CPU and memory assigned to the in-cluster
+                  MinIO server.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
             required:
             - engine
             type: object
@@ -3247,6 +4104,105 @@ spec:
               endpoint:
                 description: Endpoint is the in-cluster S3-compatible endpoint URL.
                 type: string
+              provision:
+                description: Provision tracks deploy attempts and errors for this
+                  resource.
+                properties:
+                  activeProvisionAttempt:
+                    description: ActiveProvisionAttempt is the ID of the in-progress
+                      attempt, if any.
+                    type: string
+                  provisionAttempts:
+                    description: ProvisionAttempts is recent deploy/provision history
+                      (newest first, capped in controller).
+                    items:
+                      description: GeassProvisionAttempt tracks one deploy/provision
+                        run for a resource.
+                      properties:
+                        buildRef:
+                          description: BuildRef links to a GeassBuild for image build
+                            logs (services with Git source).
+                          type: string
+                        completedAt:
+                          description: CompletedAt is set when the attempt reaches
+                            a terminal phase.
+                          format: date-time
+                          type: string
+                        deploymentRef:
+                          description: DeploymentRef links to a GeassDeployment row
+                            for this deploy (services).
+                          type: string
+                        errors:
+                          description: Errors lists distinct errors seen during this
+                            attempt (newest last).
+                          items:
+                            description: GeassProvisionAttemptError is one user-safe
+                              error recorded during a provision attempt.
+                            properties:
+                              message:
+                                description: Message is product-facing text (no operator
+                                  internals).
+                                maxLength: 500
+                                type: string
+                              recordedAt:
+                                description: RecordedAt is when this error was observed.
+                                format: date-time
+                                type: string
+                            required:
+                            - message
+                            - recordedAt
+                            type: object
+                          maxItems: 12
+                          type: array
+                        id:
+                          description: ID uniquely identifies this attempt within
+                            the resource.
+                          maxLength: 64
+                          type: string
+                        phase:
+                          description: Phase is Running until the attempt succeeds
+                            or fails.
+                          enum:
+                          - Running
+                          - Succeeded
+                          - Failed
+                          type: string
+                        startedAt:
+                          description: StartedAt is when provisioning began.
+                          format: date-time
+                          type: string
+                        summary:
+                          description: Summary is a short user-facing outcome line
+                            when the attempt completes.
+                          type: string
+                      required:
+                      - id
+                      - phase
+                      - startedAt
+                      type: object
+                    maxItems: 8
+                    type: array
+                type: object
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
               targetNamespace:
                 description: TargetNamespace is the namespace workloads were created
                   in.
@@ -3298,6 +4254,25 @@ spec:
             type: object
           spec:
             properties:
+              cloudflareConnectionRef:
+                description: CloudflareConnectionRef references a Secret with Cloudflare
+                  API credentials (apiToken, accountId).
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              cloudflareZoneID:
+                description: CloudflareZoneID is the DNS zone used for automatic records
+                  when Cloudflare is connected.
+                type: string
               dashboardExposure:
                 default: ingress
                 description: DashboardExposure selects how the dashboard is published
@@ -3390,6 +4365,10 @@ spec:
             type: object
           status:
             properties:
+              cloudflareTunnelID:
+                description: CloudflareTunnelID is the managed Cloudflare tunnel UUID
+                  when the connector is enabled.
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -3498,6 +4477,41 @@ spec:
             type: object
           spec:
             properties:
+              backupStorage:
+                description: |-
+                  BackupStorage is where this project's databases keep their backups. Without it, databases
+                  that have backups turned on report that they need storage.
+                properties:
+                  bucket:
+                    description: Bucket is the S3 bucket that holds backups. Geass
+                      creates it when it does not exist.
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                  connectionRef:
+                    description: ConnectionRef is the AWS GeassCloudConnection that
+                      owns the bucket.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  region:
+                    description: Region is the bucket's AWS region. It defaults to
+                      the connection's region.
+                    type: string
+                required:
+                - bucket
+                - connectionRef
+                type: object
               clusterRef:
                 description: ClusterRef identifies the GeassCluster that owns this
                   project.
@@ -3541,6 +4555,29 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              prEnvironments:
+                description: PREnvironments creates a temporary copy of an environment
+                  for every pull request.
+                properties:
+                  baseEnvironment:
+                    description: BaseEnvironment is copied for every pull request.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  enabled:
+                    description: Enabled turns pull request environments on.
+                    type: boolean
+                  maxOpen:
+                    default: 5
+                    description: MaxOpen limits how many pull request environments
+                      can exist at once.
+                    format: int32
+                    maximum: 25
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.
@@ -3593,6 +4630,43 @@ spec:
                   - environment
                   - name
                   type: object
+                type: array
+              webhooks:
+                description: |-
+                  Webhooks receive signed notifications about deployments in this project. The signing secret of
+                  each webhook is kept in the Secret <project>-webhooks, never in this spec.
+                items:
+                  description: GeassWebhook is an outbound webhook for project events.
+                  properties:
+                    disabled:
+                      description: Disabled pauses deliveries without deleting the
+                        webhook.
+                      type: boolean
+                    events:
+                      description: Events limits which events are sent. Empty means
+                        every event.
+                      items:
+                        enum:
+                        - deployment.started
+                        - deployment.succeeded
+                        - deployment.failed
+                        type: string
+                      type: array
+                    id:
+                      description: ID identifies the webhook in the dashboard and
+                        in delivery records.
+                      pattern: ^[a-z0-9]{8}$
+                      type: string
+                    url:
+                      description: URL receives a POST for each event.
+                      maxLength: 2048
+                      minLength: 8
+                      type: string
+                  required:
+                  - id
+                  - url
+                  type: object
+                maxItems: 20
                 type: array
             required:
             - clusterRef
@@ -3671,6 +4745,92 @@ spec:
                   - name
                   - namespace
                   type: object
+                type: array
+              pullRequests:
+                description: PullRequests are the open pull request environments.
+                items:
+                  description: GeassPullRequestEnvironment records an environment
+                    created for a pull request.
+                  properties:
+                    branch:
+                      type: string
+                    environment:
+                      type: string
+                    number:
+                      format: int32
+                      type: integer
+                    openedAt:
+                      format: date-time
+                      type: string
+                    repository:
+                      type: string
+                    url:
+                      type: string
+                  required:
+                  - branch
+                  - environment
+                  - number
+                  - openedAt
+                  - repository
+                  type: object
+                maxItems: 50
+                type: array
+              reconcileRetry:
+                description: ReconcileRetry tracks provision retries before reconciliation
+                  gives up.
+                properties:
+                  reconcileFailureGeneration:
+                    description: ReconcileFailureGeneration is spec generation when
+                      provisioning was marked failed.
+                    format: int64
+                    type: integer
+                  reconcileFailureStarted:
+                    description: ReconcileFailureStarted is set when ReconcileFailures
+                      first increments.
+                    format: date-time
+                    type: string
+                  reconcileFailures:
+                    description: ReconcileFailures counts consecutive infrastructure
+                      errors while not ready.
+                    format: int32
+                    type: integer
+                type: object
+              webhookDeliveries:
+                description: WebhookDeliveries are the most recent webhook deliveries,
+                  newest first.
+                items:
+                  description: GeassWebhookDelivery records the outcome of one webhook
+                    delivery.
+                  properties:
+                    attempts:
+                      format: int32
+                      type: integer
+                    deliveryId:
+                      type: string
+                    durationMillis:
+                      format: int64
+                      type: integer
+                    error:
+                      type: string
+                    event:
+                      type: string
+                    statusCode:
+                      format: int32
+                      type: integer
+                    time:
+                      format: date-time
+                      type: string
+                    webhookId:
+                      type: string
+                  required:
+                  - attempts
+                  - deliveryId
+                  - durationMillis
+                  - event
+                  - time
+                  - webhookId
+                  type: object
+                maxItems: 20
                 type: array
             type: object
         required:
@@ -4139,6 +5299,7 @@ rules:
   - ""
   resources:
   - nodes
+  - persistentvolumes
   - pods
   verbs:
   - get
@@ -4169,6 +5330,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - autoscaling
   resources:
   - horizontalpodautoscalers
@@ -4183,6 +5352,7 @@ rules:
 - apiGroups:
   - batch
   resources:
+  - cronjobs
   - jobs
   verbs:
   - create
@@ -4196,11 +5366,13 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps
+  - geassbackuparchives
   - geassbuilds
   - geasscloudconnections
   - geassclusters
   - geassconsolesessions
   - geassdatabases
+  - geassdeployments
   - geassgithubconnections
   - geasshareadinesses
   - geasslogicaldatabases
@@ -4231,11 +5403,13 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps/status
+  - geassbackuparchives/status
   - geassbuilds/status
   - geasscloudconnections/status
   - geassclusters/status
   - geassconsolesessions/status
   - geassdatabases/status
+  - geassdeployments/status
   - geassgithubconnections/status
   - geasshareadinesses/status
   - geasslogicaldatabases/status
@@ -4270,6 +5444,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - longhorn.io
+  resources:
+  - volumes
+  verbs:
+  - get
+  - list
+  - patch
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - servicemonitors
@@ -4296,7 +5478,9 @@ rules:
 - apiGroups:
   - postgresql.cnpg.io
   resources:
+  - backups
   - clusters
+  - scheduledbackups
   verbs:
   - create
   - delete
@@ -4308,10 +5492,22 @@ rules:
 - apiGroups:
   - storage.k8s.io
   resources:
-  - storageclasses
+  - csidrivers
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1

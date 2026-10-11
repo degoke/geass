@@ -49,6 +49,9 @@ func (s *Server) loadDashboardBootstrap(ctx context.Context, viewer bool) (dashb
 	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
 		return data, err
 	}
+	if err := s.Client.List(ctx, &data.BackupArchives, client.InNamespace(systemNamespace)); err != nil {
+		return data, err
+	}
 	data.sortStable()
 	return data, nil
 }
@@ -72,6 +75,7 @@ func (data *dashboardBootstrap) sortStable() {
 	sortOldestFirst(data.Deployments.Items)
 	sortOldestFirst(data.Builds.Items)
 	sortOldestFirst(data.HAReadiness.Items)
+	sortOldestFirst(data.BackupArchives.Items)
 }
 
 // sortOldestFirst orders by creation time, then namespace and name. Creation
@@ -117,6 +121,11 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 		// Webhook URLs often carry secret tokens, and delivery records name them.
 		spec.Webhooks = nil
 		data.Projects.Items[i].Status.WebhookDeliveries = nil
+		// Which AWS connection and bucket hold the backups is not for read-only users.
+		spec.BackupStorage = nil
+	}
+	for i := range data.BackupArchives.Items {
+		data.BackupArchives.Items[i].Spec.Storage = geassv1alpha1.GeassBackupStorage{}
 	}
 	for i := range data.Apps.Items {
 		spec := &data.Apps.Items[i].Spec

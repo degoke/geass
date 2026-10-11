@@ -337,6 +337,7 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
               {pending ? (
                 <div className="rw-canvas-node-pending">{node.pendingCount} {node.pendingLabel}</div>
               ) : null}
+              {node.warning ? <div className="rw-backup-node-warning">{node.warning}</div> : null}
               <div className="rw-canvas-node-foot">
                 <Status value={node.status} />
               </div>

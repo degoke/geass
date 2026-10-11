@@ -6,15 +6,18 @@ import {
   GitBranch,
   HardDrive,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
+import { supportsBackups } from "@/lib/backups";
 import { deployedStorageSize } from "@/lib/services";
 import { SizeFields } from "@/components/SizeFields";
 import { RailCopyField } from "@/components/rail-controls";
+import { DatabaseBackups } from "@/components/DatabaseBackups";
 import { ResourceDangerSection } from "@/components/ResourceDangerSection";
 import {
   Button,
@@ -85,6 +88,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const inCluster = kind === "apps" || (kind === "databases" && item.spec?.placement !== "External");
   const showScale = (isApp || (inCluster && !isBucket && !isLogical));
   const showDatabase = kind === "databases";
+  const showBackups = kind === "databases" && supportsBackups(item);
   const showStorage = showDatabase && inCluster && databaseHasVolume(item.spec?.engine);
   const showBucket = isBucket;
   const showSource = isApp;
@@ -123,6 +127,14 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
         keywords: ["database", "version", item.spec?.engine],
       });
     }
+    if (showBackups) {
+      items.push({
+        id: "backups",
+        label: "Backups",
+        icon: ShieldCheck,
+        keywords: ["backups", "backup", "restore", "recovery", "restore point", "retention", "protect", "storage"],
+      });
+    }
     if (showLogical) {
       items.push({
         id: "logical",
@@ -147,7 +159,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
       keywords: ["danger", "delete", "remove"],
     });
     return items;
-  }, [showBucket, showDatabase, showSource, showLogical, showScale, name, displayLabel, bucketName, containerImage, repository, item.spec?.engine, item.spec?.serverRef, item.spec?.databaseName]);
+  }, [showBucket, showDatabase, showBackups, showSource, showLogical, showScale, name, displayLabel, bucketName, containerImage, repository, item.spec?.engine, item.spec?.serverRef, item.spec?.databaseName]);
 
   if (!canMutate(data)) {
     return (
@@ -418,6 +430,12 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                     <Button type="submit">Save changes</Button>
                   </SettingsFormActions>
                 </FormStack>
+              </ResourceSettingsSection>
+            )}
+
+            {show("backups") && (
+              <ResourceSettingsSection id="backups" icon={ShieldCheck} title="Backups">
+                <DatabaseBackups item={item} name={name} data={data} reload={reload} />
               </ResourceSettingsSection>
             )}
 

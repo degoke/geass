@@ -41,6 +41,41 @@ spec:
             type: object
           spec:
             properties:
+              backupStorage:
+                description: |-
+                  BackupStorage is where this project's databases keep their backups. Without it, databases
+                  that have backups turned on report that they need storage.
+                properties:
+                  bucket:
+                    description: Bucket is the S3 bucket that holds backups. Geass
+                      creates it when it does not exist.
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                  connectionRef:
+                    description: ConnectionRef is the AWS GeassCloudConnection that
+                      owns the bucket.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  region:
+                    description: Region is the bucket's AWS region. It defaults to
+                      the connection's region.
+                    type: string
+                required:
+                - bucket
+                - connectionRef
+                type: object
               clusterRef:
                 description: ClusterRef identifies the GeassCluster that owns this
                   project.
