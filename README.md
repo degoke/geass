@@ -19,6 +19,7 @@ Geass bridges that gap: a unified control plane for your services, with the deve
 
 - **Horizontal scaling** — distribute workloads across multiple machines without hand-configuring load balancers
 - **Unified service management** — deploy and monitor applications, databases, and storage from one place
+- **Backups and restore** — Postgres, MySQL and SQLite databases are backed up to a bucket in your own AWS account (Postgres continuously, so it can be restored to any recent moment; MySQL and SQLite daily); restore as a new database, and keep deleted databases restorable for 7 days
 - **Lightweight orchestration** — Kubernetes-native, built on K3s, without the overhead of a full cluster install
 
 Geass is aimed at teams that need sovereign or on-premise deployments, self-hosted infrastructure, or cost-effective microservices on a fleet of VPS instances.

@@ -433,6 +433,7 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 				Version: resource.Version, Resources: defaultResourcesForEngine(engine),
 			},
 		}
+		db.Spec.Backup = defaultBackups(db)
 		db.Spec.Deploy.Enabled = false
 		platform.InitializePendingCreated(&db.ObjectMeta)
 		if err = s.createNamed(ctx, db, resource.Name); err != nil {

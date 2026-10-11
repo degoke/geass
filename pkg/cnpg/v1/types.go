@@ -25,6 +25,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&Cluster{},
 		&ClusterList{},
+		&Backup{},
+		&BackupList{},
+		&ScheduledBackup{},
+		&ScheduledBackupList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
@@ -54,6 +58,10 @@ type ClusterSpec struct {
 	Storage   StorageConfiguration        `json:"storage,omitempty"`
 	Bootstrap BootstrapConfiguration      `json:"bootstrap,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	// Backup configures continuous archiving and base backups. Nil leaves the cluster unprotected.
+	Backup *BackupConfiguration `json:"backup,omitempty"`
+	// ExternalClusters lists clusters whose backups a recovery bootstrap can read.
+	ExternalClusters []ExternalCluster `json:"externalClusters,omitempty"`
 }
 
 // StorageConfiguration defines PVC settings.
@@ -61,9 +69,11 @@ type StorageConfiguration struct {
 	Size string `json:"size,omitempty"`
 }
 
-// BootstrapConfiguration defines initial database bootstrap.
+// BootstrapConfiguration defines initial database bootstrap. Exactly one method may be set, so
+// both are pointers: a struct value would always serialize and CNPG would reject the pair.
 type BootstrapConfiguration struct {
-	InitDB InitDBConfiguration `json:"initdb,omitempty"`
+	InitDB   *InitDBConfiguration   `json:"initdb,omitempty"`
+	Recovery *RecoveryConfiguration `json:"recovery,omitempty"`
 }
 
 // InitDBConfiguration defines initdb settings.
@@ -78,6 +88,13 @@ type ClusterStatus struct {
 	Phase          string `json:"phase,omitempty"`
 	ReadyInstances int32  `json:"readyInstances,omitempty"`
 	CurrentPrimary string `json:"currentPrimary,omitempty"`
+	// FirstRecoverabilityPoint is the earliest time (RFC 3339) the cluster can be restored to.
+	FirstRecoverabilityPoint string `json:"firstRecoverabilityPoint,omitempty"`
+	// LastSuccessfulBackup is when the latest base backup finished (RFC 3339).
+	LastSuccessfulBackup string `json:"lastSuccessfulBackup,omitempty"`
+	LastFailedBackup     string `json:"lastFailedBackup,omitempty"`
+	// Conditions include ContinuousArchiving and LastBackupSucceeded.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // DefaultStorageSize returns a default 10Gi quantity string.

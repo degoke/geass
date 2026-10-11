@@ -307,6 +307,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectPREnvironments(w, r, name, parts[2])
 		case len(parts) == 3 && parts[1] == "webhooks":
 			s.handleProjectWebhooks(w, r, name, parts[2])
+		case len(parts) == 2 && parts[1] == "backup-storage":
+			s.handleProjectBackupStorage(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "install":
 			s.handleProjectGitHubInstall(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "disconnect":
@@ -2157,6 +2159,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		instances := int32(3)
 		db.Spec.Instances = &instances
 	}
+	db.Spec.Backup = defaultBackups(db)
 	db.Spec.Deploy.Enabled = false
 	platform.InitializePendingCreated(&db.ObjectMeta)
 	if err := s.Client.Create(r.Context(), db); err != nil {
@@ -2324,6 +2327,10 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 			return
 		}
 		db.Spec.Resources = res
+	}
+	if err := applyBackupForm(r, &db); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	platform.MarkPendingChange(&db.ObjectMeta, platform.PendingChangeSettings)
 	if err := s.Client.Update(r.Context(), &db); err != nil {

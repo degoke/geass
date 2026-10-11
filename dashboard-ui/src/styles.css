@@ -4945,3 +4945,67 @@ code,
   align-items: center;
   gap: 12px;
 }
+
+/* Database backups */
+.rw-backup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rw-backup-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rw-backup-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.rw-backup-line {
+  margin: 10px 0 0;
+  color: var(--geass-text-secondary);
+  font-size: 13px;
+}
+
+.rw-backup-restore {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rw-backup-time-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rw-backup-time {
+  color-scheme: dark;
+}
+
+.rw-backup-subtitle {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rw-backup-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--geass-text-muted);
+  font-size: 12px;
+}
+
+.rw-backup-node-warning {
+  margin-top: 6px;
+  color: #e8a84a;
+  font-size: 11px;
+}

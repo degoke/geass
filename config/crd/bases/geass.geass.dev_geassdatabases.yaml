@@ -49,6 +49,27 @@ spec:
           spec:
             description: GeassDatabaseSpec defines the desired state of GeassDatabase.
             properties:
+              backup:
+                description: |-
+                  Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
+                  moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+                  recovery path beyond its own disks.
+                properties:
+                  enabled:
+                    description: Enabled turns continuous backups on. They are stored
+                      in the project's backup storage.
+                    type: boolean
+                  retentionDays:
+                    default: 7
+                    description: RetentionDays is how many days back the database
+                      can be restored.
+                    format: int32
+                    maximum: 365
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               connectionRef:
                 description: ConnectionRef identifies a GeassCloudConnection used
                   for PlanetScale or AWS.
@@ -220,6 +241,31 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              restoreFrom:
+                description: |-
+                  RestoreFrom creates this database from another database's backups instead of an empty one.
+                  It is only read while the database is first provisioned; changing it afterwards has no effect.
+                properties:
+                  archive:
+                    description: Archive is the GeassBackupArchive to restore from.
+                    minLength: 1
+                    type: string
+                  restorePoint:
+                    description: RestorePoint is the ID of a restore point listed
+                      on the archive.
+                    type: string
+                  time:
+                    description: |-
+                      Time restores the database as it was at this moment, which must be inside the archive's
+                      recovery window.
+                    format: date-time
+                    type: string
+                required:
+                - archive
+                type: object
+                x-kubernetes-validations:
+                - message: set either restorePoint or time, not both
+                  rule: '!(has(self.restorePoint) && has(self.time))'
               storageSize:
                 anyOf:
                 - type: integer
@@ -244,6 +290,37 @@ spec:
           status:
             description: GeassDatabaseStatus defines the observed state of GeassDatabase.
             properties:
+              backup:
+                description: Backup summarises backup protection. It is absent while
+                  backups are off.
+                properties:
+                  archive:
+                    description: Archive is the GeassBackupArchive holding this database's
+                      backups.
+                    type: string
+                  lastBackupTime:
+                    description: LastBackupTime is when the most recent backup finished.
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message explains the state in plain language.
+                    type: string
+                  recoveryWindowStart:
+                    description: RecoveryWindowStart is the earliest moment the database
+                      can be restored to.
+                    format: date-time
+                    type: string
+                  state:
+                    description: State is how well the database is protected.
+                    enum:
+                    - NeedsStorage
+                    - Starting
+                    - Protected
+                    - AtRisk
+                    type: string
+                required:
+                - state
+                type: object
               conditions:
                 description: conditions represent the current state of the GeassDatabase
                   resource.
@@ -411,6 +488,13 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              restoredAt:
+                description: |-
+                  RestoredAt is when the backups named by spec.restoreFrom were loaded into this database.
+                  It is only used by engines that restore by loading a snapshot; it stops the restore from
+                  running a second time and overwriting newer data.
+                format: date-time
+                type: string
               targetNamespace:
                 description: TargetNamespace is the namespace workloads were created
                   in.

@@ -4,6 +4,7 @@ import { projectResources } from "@/lib/project-resources";
 import { resourceDisplayName, resourceName } from "@/lib/api";
 import { resourceHref } from "@/lib/resource-links";
 import { functionSourceLabel } from "@/lib/functions";
+import { backupWarning } from "@/lib/backups";
 import { isResourceDeleting, pendingChangeCount, pendingChangeKinds, pendingKindsSummary, resourceStatus, usesDeployWorkflow } from "@/lib/services";
 import { ProjectCanvas } from "@/components/ProjectCanvas";
 import { ProjectPendingBanner } from "@/components/ProjectPendingBanner";
@@ -46,6 +47,7 @@ export function WorkspacePage({ project, data, environment, reload }) {
       kind: item.spec?.engine || "Database",
       source: item.spec?.engine || "Managed",
       volume: item.spec?.placement !== "External" && item.spec?.storageSize ? `${item.metadata?.name}-volume · ${item.spec.storageSize}` : "",
+      warning: isResourceDeleting(item) ? "" : backupWarning(item),
     })),
     ...resources.logical.map((item) => ({
       item,
@@ -54,7 +56,7 @@ export function WorkspacePage({ project, data, environment, reload }) {
       linkTo: item.spec?.serverRef ? [item.spec.serverRef] : [],
     })),
     ...resources.stores.map((item) => ({ item, kind: "Bucket", source: item.spec?.engine || "Object storage" })),
-  ].map(({ item, kind, source, sourceKind, linkTo, volume }) => {
+  ].map(({ item, kind, source, sourceKind, linkTo, volume, warning }) => {
     const kinds = usesDeployWorkflow(item) ? pendingChangeKinds(item) : [];
     return {
       key: `${kind}-${resourceName(item)}`,
@@ -66,6 +68,7 @@ export function WorkspacePage({ project, data, environment, reload }) {
       source: typeof source === "string" ? source : "Managed",
       sourceKind: sourceKind || "",
       volume: volume || "",
+      warning: warning || "",
       status: resourceStatus(item),
       pendingKinds: kinds,
       pendingCount: kinds.length ? pendingChangeCount(item) : 0,

@@ -137,6 +137,79 @@ type GeassDatabaseSpec struct {
 	// Deploy gates database provisioning until the user deploys from the dashboard.
 	// +optional
 	Deploy GeassDeploySpec `json:"deploy,omitempty"`
+
+	// Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
+	// moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+	// recovery path beyond its own disks.
+	// +optional
+	Backup *GeassDatabaseBackupSpec `json:"backup,omitempty"`
+
+	// RestoreFrom creates this database from another database's backups instead of an empty one.
+	// It is only read while the database is first provisioned; changing it afterwards has no effect.
+	// +optional
+	RestoreFrom *GeassDatabaseRestoreSpec `json:"restoreFrom,omitempty"`
+}
+
+// GeassDatabaseBackupSpec configures backups for one database.
+type GeassDatabaseBackupSpec struct {
+	// Enabled turns continuous backups on. They are stored in the project's backup storage.
+	Enabled bool `json:"enabled"`
+	// RetentionDays is how many days back the database can be restored.
+	// +kubebuilder:default=7
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=365
+	// +optional
+	RetentionDays int32 `json:"retentionDays,omitempty"`
+}
+
+// GeassDatabaseRestoreSpec selects the backups a new database starts from. Set at most one of
+// RestorePoint and Time; with neither, the database is restored to the latest recoverable moment.
+// +kubebuilder:validation:XValidation:rule="!(has(self.restorePoint) && has(self.time))",message="set either restorePoint or time, not both"
+type GeassDatabaseRestoreSpec struct {
+	// Archive is the GeassBackupArchive to restore from.
+	// +kubebuilder:validation:MinLength=1
+	Archive string `json:"archive"`
+	// RestorePoint is the ID of a restore point listed on the archive.
+	// +optional
+	RestorePoint string `json:"restorePoint,omitempty"`
+	// Time restores the database as it was at this moment, which must be inside the archive's
+	// recovery window.
+	// +optional
+	Time *metav1.Time `json:"time,omitempty"`
+}
+
+// GeassDatabaseBackupState summarises how well a database is protected.
+// +kubebuilder:validation:Enum=NeedsStorage;Starting;Protected;AtRisk
+type GeassDatabaseBackupState string
+
+const (
+	// BackupStateNeedsStorage means backups are on but the project has nowhere to put them yet.
+	BackupStateNeedsStorage GeassDatabaseBackupState = "NeedsStorage"
+	// BackupStateStarting means backups are set up and the first one has not finished.
+	BackupStateStarting GeassDatabaseBackupState = "Starting"
+	// BackupStateProtected means backups are running and the database can be restored.
+	BackupStateProtected GeassDatabaseBackupState = "Protected"
+	// BackupStateAtRisk means backups are failing, so recent changes may not be recoverable.
+	BackupStateAtRisk GeassDatabaseBackupState = "AtRisk"
+)
+
+// GeassDatabaseBackupStatus is the dashboard-facing summary of backup protection. It is absent
+// while backups are off.
+type GeassDatabaseBackupStatus struct {
+	// State is how well the database is protected.
+	State GeassDatabaseBackupState `json:"state"`
+	// Message explains the state in plain language.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// Archive is the GeassBackupArchive holding this database's backups.
+	// +optional
+	Archive string `json:"archive,omitempty"`
+	// LastBackupTime is when the most recent backup finished.
+	// +optional
+	LastBackupTime *metav1.Time `json:"lastBackupTime,omitempty"`
+	// RecoveryWindowStart is the earliest moment the database can be restored to.
+	// +optional
+	RecoveryWindowStart *metav1.Time `json:"recoveryWindowStart,omitempty"`
 }
 
 // GeassDatabaseStatus defines the observed state of GeassDatabase.
@@ -160,6 +233,16 @@ type GeassDatabaseStatus struct {
 	// Provision tracks deploy attempts and errors for this resource.
 	// +optional
 	Provision GeassProvisionStatus `json:"provision,omitempty"`
+
+	// RestoredAt is when the backups named by spec.restoreFrom were loaded into this database.
+	// It is only used by engines that restore by loading a snapshot; it stops the restore from
+	// running a second time and overwriting newer data.
+	// +optional
+	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`
+
+	// Backup summarises backup protection. It is absent while backups are off.
+	// +optional
+	Backup *GeassDatabaseBackupStatus `json:"backup,omitempty"`
 
 	// conditions represent the current state of the GeassDatabase resource.
 	// +listType=map

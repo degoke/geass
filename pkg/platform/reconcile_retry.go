@@ -100,6 +100,9 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "postgres database is starting") {
 		return false
 	}
+	if strings.Contains(msg, "restoring database from backup") {
+		return false
+	}
 	if strings.Contains(msg, "creating logical database") {
 		return false
 	}

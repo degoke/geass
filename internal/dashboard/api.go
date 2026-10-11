@@ -23,6 +23,7 @@ type dashboardBootstrap struct {
 	Deployments      geassv1alpha1.GeassDeploymentList      `json:"deployments"`
 	Builds           geassv1alpha1.GeassBuildList           `json:"builds"`
 	HAReadiness      geassv1alpha1.GeassHAReadinessList     `json:"haReadiness"`
+	BackupArchives   geassv1alpha1.GeassBackupArchiveList   `json:"backupArchives"`
 	Platform         dashboardPlatform                      `json:"platform"`
 	Metrics          []dashboardMetric                      `json:"metrics"`
 }
@@ -97,6 +98,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAppRoutes(w, mutation)
 	case mutation.URL.Path == "/databases/create":
 		s.handleDatabaseCreate(w, mutation)
+	case mutation.URL.Path == "/databases/restore":
+		s.handleDatabaseRestore(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/databases/"):
 		s.handleDatabaseRoutes(w, mutation)
 	case mutation.URL.Path == "/logical-databases/create":
@@ -181,6 +184,11 @@ func apiMutationPath(path string) string {
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
+		return
+	}
+	// Files at the root of the bundle, such as the logo, are served as themselves; any other path
+	// is a page of the app.
+	if serveFrontendFile(w, r) {
 		return
 	}
 	serveFrontend(w)

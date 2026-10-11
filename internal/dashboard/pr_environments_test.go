@@ -505,3 +505,39 @@ func TestClosingAPullRequestStillCleansUpAfterTheFeatureIsTurnedOff(t *testing.T
 	_, ok := getApp(t, c, "little-frost-pr7")
 	require.False(t, ok, "the environment's services are removed even though the feature is off")
 }
+
+// A review environment is throwaway. Copying the base database's backups would give every pull
+// request its own continuously archived folder in the project's bucket, and copying a restore
+// source would try to rebuild the base database's data inside each review environment.
+func TestPullRequestDatabasesDoNotInheritBackupsOrRestores(t *testing.T) {
+	ctx := context.Background()
+	protected := &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "protected-db", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassDatabaseSpec{
+			Project: testProjectName, Environment: "production", Engine: geassv1alpha1.DatabaseEnginePostgres,
+			Placement: geassv1alpha1.DatabasePlacementInCluster, Version: "16",
+			Backup:      &geassv1alpha1.GeassDatabaseBackupSpec{Enabled: true, RetentionDays: 30},
+			RestoreFrom: &geassv1alpha1.GeassDatabaseRestoreSpec{Archive: "old-archive-1a2b3c4d", RestorePoint: "20260301T020000"},
+		},
+	}
+	srv, c := prFixture(t, enabledPR(), protected)
+
+	_, err := srv.handlePullRequestEvent(ctx, prPayload("opened", 7, "feature-x"))
+	require.NoError(t, err)
+
+	clone, ok := getDatabase(t, c, "protected-db-pr7")
+	require.True(t, ok, "the database itself is still cloned")
+	require.Nil(t, clone.Spec.Backup, "review environments are not backed up")
+	require.Nil(t, clone.Spec.RestoreFrom, "a review database starts empty rather than restoring the base database's data")
+	require.Equal(t, "16", clone.Spec.Version)
+
+	snapshot, ok := platform.UnmarshalLastDeployed[geassv1alpha1.GeassDatabaseSpec](clone.Annotations)
+	require.True(t, ok)
+	require.Nil(t, snapshot.Backup, "the deployed snapshot is what the controller actually runs, so it must be clean too")
+	require.Nil(t, snapshot.RestoreFrom)
+
+	base, _ := getDatabase(t, c, "protected-db")
+	require.NotNil(t, base.Spec.Backup, "the base database keeps its backups")
+	require.Equal(t, int32(30), base.Spec.Backup.RetentionDays)
+	require.NotNil(t, base.Spec.RestoreFrom)
+}

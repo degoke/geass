@@ -81,3 +81,17 @@ func TestReconcileProvisionPaused(t *testing.T) {
 		t.Fatal("expected not paused after spec change")
 	}
 }
+
+// Restoring a database from backups takes as long as the data is big. It is progress, not a failure,
+// and must not use up the retry budget that gives up on a database after three minutes of errors.
+func TestRestoringADatabaseIsNotCountedAsAFailure(t *testing.T) {
+	if ReconcileFailureShouldCount("Restoring database from backup") {
+		t.Fatal("a restore in progress was counted as a failure")
+	}
+	started := metav1.NewTime(time.Now().Add(-ReconcileFailureMaxDuration - time.Minute))
+	state := ReconcileRetryState{Failures: 3, FailureStarted: &started, FailureGeneration: 1}
+	outcome := ApplyNotReady(nil, state, 1, "Restoring database from backup")
+	if reason := ReadyConditionReason(outcome.Conditions); reason == ConditionReasonProvisionFailed {
+		t.Fatalf("a restore running longer than the retry window was marked failed (reason %q)", reason)
+	}
+}

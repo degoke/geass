@@ -39,8 +39,129 @@ spec:
           spec:
             description: ClusterSpec defines a CNPG cluster.
             properties:
+              backup:
+                description: Backup configures continuous archiving and base backups.
+                  Nil leaves the cluster unprotected.
+                properties:
+                  barmanObjectStore:
+                    description: BarmanObjectStoreConfiguration points at an S3-compatible
+                      object store.
+                    properties:
+                      data:
+                        description: DataBackupConfiguration tunes base backups.
+                        properties:
+                          compression:
+                            type: string
+                          jobs:
+                            format: int32
+                            type: integer
+                        type: object
+                      destinationPath:
+                        type: string
+                      endpointURL:
+                        type: string
+                      s3Credentials:
+                        description: |-
+                          S3Credentials references the Secret keys holding S3 credentials. The Secret must live in the
+                          same namespace as the Cluster.
+                        properties:
+                          accessKeyId:
+                            description: SecretKeySelector selects a key of a Secret.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          region:
+                            description: SecretKeySelector selects a key of a Secret.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          secretAccessKey:
+                            description: SecretKeySelector selects a key of a Secret.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      serverName:
+                        type: string
+                      wal:
+                        description: WalBackupConfiguration tunes continuous archiving
+                          of write-ahead log files.
+                        properties:
+                          compression:
+                            type: string
+                          maxParallel:
+                            format: int32
+                            type: integer
+                        type: object
+                    required:
+                    - destinationPath
+                    type: object
+                  retentionPolicy:
+                    description: RetentionPolicy is how long backups are kept, for
+                      example "7d".
+                    type: string
+                type: object
               bootstrap:
-                description: BootstrapConfiguration defines initial database bootstrap.
+                description: |-
+                  BootstrapConfiguration defines initial database bootstrap. Exactly one method may be set, so
+                  both are pointers: a struct value would always serialize and CNPG would reject the pair.
                 properties:
                   initdb:
                     description: InitDBConfiguration defines initdb settings.
@@ -66,7 +187,175 @@ spec:
                         type: object
                         x-kubernetes-map-type: atomic
                     type: object
+                  recovery:
+                    description: RecoveryConfiguration bootstraps a new cluster from
+                      another cluster's backups.
+                    properties:
+                      database:
+                        type: string
+                      owner:
+                        type: string
+                      recoveryTarget:
+                        description: |-
+                          RecoveryTarget selects the point a recovery stops at. Set at most one of TargetTime and
+                          TargetImmediate; with neither, recovery replays every archived change.
+                        properties:
+                          backupID:
+                            type: string
+                          targetImmediate:
+                            description: |-
+                              TargetImmediate stops at the first consistent state, which for an online backup is the
+                              point where the backup ended.
+                            type: boolean
+                          targetTime:
+                            description: TargetTime is an RFC 3339 timestamp with
+                              an explicit zone.
+                            type: string
+                        type: object
+                      secret:
+                        description: |-
+                          LocalObjectReference contains enough information to let you locate the
+                          referenced object inside the same namespace.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      source:
+                        description: Source names an entry of ClusterSpec.ExternalClusters.
+                        type: string
+                    type: object
                 type: object
+              externalClusters:
+                description: ExternalClusters lists clusters whose backups a recovery
+                  bootstrap can read.
+                items:
+                  description: ExternalCluster describes a source cluster that recovery
+                    reads from.
+                  properties:
+                    barmanObjectStore:
+                      description: BarmanObjectStoreConfiguration points at an S3-compatible
+                        object store.
+                      properties:
+                        data:
+                          description: DataBackupConfiguration tunes base backups.
+                          properties:
+                            compression:
+                              type: string
+                            jobs:
+                              format: int32
+                              type: integer
+                          type: object
+                        destinationPath:
+                          type: string
+                        endpointURL:
+                          type: string
+                        s3Credentials:
+                          description: |-
+                            S3Credentials references the Secret keys holding S3 credentials. The Secret must live in the
+                            same namespace as the Cluster.
+                          properties:
+                            accessKeyId:
+                              description: SecretKeySelector selects a key of a Secret.
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            region:
+                              description: SecretKeySelector selects a key of a Secret.
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            secretAccessKey:
+                              description: SecretKeySelector selects a key of a Secret.
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                        serverName:
+                          type: string
+                        wal:
+                          description: WalBackupConfiguration tunes continuous archiving
+                            of write-ahead log files.
+                          properties:
+                            compression:
+                              type: string
+                            maxParallel:
+                              format: int32
+                              type: integer
+                          type: object
+                      required:
+                      - destinationPath
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               imageName:
                 type: string
               instances:
@@ -141,7 +430,74 @@ spec:
           status:
             description: ClusterStatus defines observed CNPG cluster state.
             properties:
+              conditions:
+                description: Conditions include ContinuousArchiving and LastBackupSucceeded.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
               currentPrimary:
+                type: string
+              firstRecoverabilityPoint:
+                description: FirstRecoverabilityPoint is the earliest time (RFC 3339)
+                  the cluster can be restored to.
+                type: string
+              lastFailedBackup:
+                type: string
+              lastSuccessfulBackup:
+                description: LastSuccessfulBackup is when the latest base backup finished
+                  (RFC 3339).
                 type: string
               phase:
                 type: string

@@ -15,6 +15,7 @@ import {
   Layers,
   Plug,
   Settings,
+  ShieldCheck,
   Variable,
   Webhook,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import { projectResources } from "@/lib/project-resources";
 import { RailCopyField } from "@/components/rail-controls";
 import { ApiTokens } from "@/components/ApiTokens";
 import { PREnvironments } from "@/components/PREnvironments";
+import { ProjectBackups } from "@/components/ProjectBackups";
 import { ProjectWebhooks } from "@/components/ProjectWebhooks";
 import { ServiceMetrics } from "@/components/ServiceMetrics";
 import { Button, Field, Input, Select, Switch, Textarea } from "@/components/geass-ui";
@@ -44,6 +46,7 @@ const SECTIONS = [
   { id: "environments", label: "Environments", icon: Layers },
   { id: "variables", label: "Shared Variables", icon: Variable },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
+  { id: "backups", label: "Backups", icon: ShieldCheck },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "danger", label: "Danger", icon: AlertTriangle, danger: true },
@@ -401,6 +404,12 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       {section === "webhooks" && (
         <SettingsSection title="Webhooks" flat>
           <ProjectWebhooks project={project} mutable={mutable} reload={reload} />
+        </SettingsSection>
+      )}
+
+      {section === "backups" && (
+        <SettingsSection title="Backups" flat>
+          <ProjectBackups project={project} data={data} mutable={mutable} reload={reload} />
         </SettingsSection>
       )}
 

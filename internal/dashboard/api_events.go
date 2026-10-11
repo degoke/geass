@@ -126,6 +126,7 @@ func (s *Server) runDashboardWatch(ctx context.Context) {
 		{obj: &geassv1alpha1.GeassCluster{}, kind: "clusters"},
 		{obj: &geassv1alpha1.GeassPlatformConfig{}, kind: "platform-config"},
 		{obj: &geassv1alpha1.GeassHAReadiness{}, kind: "ha-readiness"},
+		{obj: &geassv1alpha1.GeassBackupArchive{}, kind: "backup-archives"},
 	}
 	for _, watch := range watches {
 		if err := s.watchDashboardResource(ctx, watch.obj, watch.kind); err != nil {

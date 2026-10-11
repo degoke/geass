@@ -68,6 +68,8 @@ func TestDeployingATemplateCreatesWiredDrafts(t *testing.T) {
 	require.Equal(t, geassv1alpha1.DatabaseEnginePostgres, db.Spec.Engine)
 	require.False(t, db.Spec.Deploy.Enabled, "templates create drafts; nothing runs until changes are applied")
 	require.False(t, app.Spec.Deploy.Enabled)
+	require.NotNil(t, db.Spec.Backup, "a Postgres database from a template is backed up like any other")
+	require.True(t, db.Spec.Backup.Enabled)
 	require.NotEmpty(t, app.Annotations[platform.AppPendingChangesAnnotation], "drafts appear in the Apply changes list")
 	require.Equal(t, "postgres", db.Annotations[platform.DisplayNameAnnotation])
 	require.Equal(t, "adminer", app.Annotations[platform.DisplayNameAnnotation])

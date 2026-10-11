@@ -144,10 +144,75 @@ func (c *AWSClient) DeleteBucket(bucket string) error {
 	return nil
 }
 
-func (c *AWSClient) emptyBucket(bucket string) error {
+// DeletePrefix removes every object, object version and incomplete multipart upload whose key
+// starts with prefix, leaving the bucket and everything outside the prefix untouched. A trailing
+// slash is enforced so "orders-1" cannot also match "orders-10". An empty prefix is rejected
+// because it would empty the whole bucket. A missing bucket is treated as already purged.
+func (c *AWSClient) DeletePrefix(bucket, prefix string) error {
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	if strings.TrimSpace(bucket) == "" || prefix == "" {
+		return fmt.Errorf("bucket and a non-empty prefix are required to delete a prefix")
+	}
+	if err := c.emptyPrefix(bucket, prefix+"/"); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	return nil
+}
+
+// DeleteObject removes one object. An object that is already gone counts as removed. An empty key is
+// refused because it would address the bucket itself. In a versioned bucket a plain delete only adds
+// a delete marker and keeps every older version, so the versions of exactly this key go too.
+func (c *AWSClient) DeleteObject(bucket, key string) error {
+	if strings.TrimSpace(bucket) == "" || strings.Trim(key, "/") == "" {
+		return fmt.Errorf("bucket and key are required to delete an object")
+	}
+	if err := c.deleteObject(bucket, key, ""); err != nil {
+		return err
+	}
+	if err := c.emptyBucketVersions(bucket, key, key); err != nil && !isS3NoSuchBucket(err) {
+		return err
+	}
+	return nil
+}
+
+// ListKeys returns every object key under prefix, across pages. A trailing slash is enforced so
+// one folder never lists a sibling that shares its name. An empty prefix is rejected because no
+// caller wants the whole bucket. A failure is an error, never an empty list, so a listing that could
+// not be read is not mistaken for a folder with nothing in it.
+func (c *AWSClient) ListKeys(bucket, prefix string) ([]string, error) {
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	if strings.TrimSpace(bucket) == "" || prefix == "" {
+		return nil, fmt.Errorf("bucket and a non-empty prefix are required to list keys")
+	}
+	prefix += "/"
+	var all []string
 	token := ""
 	for page := 0; page < s3EmptyMaxPages; page++ {
-		keys, next, err := c.listBucketKeys(bucket, token)
+		keys, next, err := c.listBucketKeys(bucket, prefix, token)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, keys...)
+		if next == "" {
+			return all, nil
+		}
+		if next == token {
+			return nil, fmt.Errorf("bucket %s listing did not advance", bucket)
+		}
+		token = next
+	}
+	return nil, fmt.Errorf("bucket %s listing exceeded %d pages", bucket, s3EmptyMaxPages)
+}
+
+func (c *AWSClient) emptyBucket(bucket string) error {
+	return c.emptyPrefix(bucket, "")
+}
+
+// emptyPrefix deletes everything under prefix; an empty prefix means the whole bucket.
+func (c *AWSClient) emptyPrefix(bucket, prefix string) error {
+	token := ""
+	for page := 0; page < s3EmptyMaxPages; page++ {
+		keys, next, err := c.listBucketKeys(bucket, prefix, token)
 		if err != nil {
 			return err
 		}
@@ -167,10 +232,10 @@ func (c *AWSClient) emptyBucket(bucket string) error {
 			return fmt.Errorf("bucket %s listing exceeded %d pages", bucket, s3EmptyMaxPages)
 		}
 	}
-	if err := c.emptyBucketVersions(bucket); err != nil && !isS3NoSuchBucket(err) {
+	if err := c.emptyBucketVersions(bucket, prefix, ""); err != nil && !isS3NoSuchBucket(err) {
 		return err
 	}
-	if err := c.abortMultipartUploads(bucket); err != nil && !isS3NoSuchBucket(err) {
+	if err := c.abortMultipartUploads(bucket, prefix); err != nil && !isS3NoSuchBucket(err) {
 		return err
 	}
 	return nil
@@ -195,8 +260,11 @@ func readS3ListBody(r io.Reader) ([]byte, error) {
 	return readHTTPBody(r, s3ListResponseLimit)
 }
 
-func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, string, error) {
+func (c *AWSClient) listBucketKeys(bucket, prefix, continuation string) ([]string, string, error) {
 	query := url.Values{"list-type": {"2"}}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
 	if continuation != "" {
 		query.Set("continuation-token", continuation)
 	}
@@ -247,14 +315,19 @@ func (c *AWSClient) listBucketKeys(bucket, continuation string) ([]string, strin
 	return keys, "", nil
 }
 
-func (c *AWSClient) emptyBucketVersions(bucket string) error {
+// emptyBucketVersions deletes every version and delete marker under prefix. When onlyKey is set,
+// only the versions of exactly that key go, not those of keys that merely start with it.
+func (c *AWSClient) emptyBucketVersions(bucket, prefix, onlyKey string) error {
 	return c.runS3MarkerPages(bucket, "version listing did not advance", "version listing exceeded",
 		func(keyMarker, versionMarker string) (int, string, string, bool, error) {
-			versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, keyMarker, versionMarker)
+			versions, nextKey, nextVersion, truncated, err := c.listBucketVersions(bucket, prefix, keyMarker, versionMarker)
 			if err != nil {
 				return 0, "", "", false, err
 			}
 			for _, version := range versions {
+				if onlyKey != "" && version.key != onlyKey {
+					continue
+				}
 				if err := c.deleteObject(bucket, version.key, version.versionID); err != nil && !isS3NoSuchBucket(err) {
 					return 0, "", "", false, err
 				}
@@ -268,8 +341,11 @@ type objectVersion struct {
 	versionID string
 }
 
-func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) ([]objectVersion, string, string, bool, error) {
+func (c *AWSClient) listBucketVersions(bucket, prefix, keyMarker, versionMarker string) ([]objectVersion, string, string, bool, error) {
 	query := url.Values{"versions": {""}}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
 	if keyMarker != "" {
 		query.Set("key-marker", keyMarker)
 	}
@@ -328,10 +404,10 @@ func (c *AWSClient) listBucketVersions(bucket, keyMarker, versionMarker string) 
 	return versions, parsed.NextKeyMarker, parsed.NextVersionIdMarker, parsed.IsTruncated, nil
 }
 
-func (c *AWSClient) abortMultipartUploads(bucket string) error {
+func (c *AWSClient) abortMultipartUploads(bucket, prefix string) error {
 	return c.runS3MarkerPages(bucket, "multipart listing did not advance", "multipart listing exceeded",
 		func(keyMarker, uploadMarker string) (int, string, string, bool, error) {
-			uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, keyMarker, uploadMarker)
+			uploads, nextKey, nextUpload, truncated, err := c.listMultipartUploads(bucket, prefix, keyMarker, uploadMarker)
 			if err != nil {
 				return 0, "", "", false, err
 			}
@@ -381,8 +457,11 @@ type multipartUpload struct {
 	uploadID string
 }
 
-func (c *AWSClient) listMultipartUploads(bucket, keyMarker, uploadMarker string) ([]multipartUpload, string, string, bool, error) {
+func (c *AWSClient) listMultipartUploads(bucket, prefix, keyMarker, uploadMarker string) ([]multipartUpload, string, string, bool, error) {
 	query := url.Values{"uploads": {""}}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
 	if keyMarker != "" {
 		query.Set("key-marker", keyMarker)
 	}
@@ -609,12 +688,12 @@ func (c *AWSClient) iamPutUserPolicy(userName string, buckets []string) error {
 		policy.Statement = append(policy.Statement,
 			statement{
 				Effect:   "Allow",
-				Action:   []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads"},
+				Action:   []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads", "s3:ListBucketVersions"},
 				Resource: []string{"arn:aws:s3:::" + bucket},
 			},
 			statement{
 				Effect:   "Allow",
-				Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
+				Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
 				Resource: []string{"arn:aws:s3:::" + bucket + "/*"},
 			},
 		)

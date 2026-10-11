@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -23,9 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/cloud"
@@ -46,6 +51,11 @@ type GeassDatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	HTTP   *http.Client
+
+	// newBackupStorage builds the AWS client used for backup storage; tests replace it.
+	newBackupStorage backupStorageFactory
+	// clock returns the current time; tests replace it. Nil means time.Now.
+	clock func() time.Time
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch;create;update;patch;delete
@@ -53,8 +63,15 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases/finalizers,verbs=update
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasshareadinesses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassbackuparchives,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassbackuparchives/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=scheduledbackups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
@@ -95,6 +112,15 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !db.DeletionTimestamp.IsZero() {
+		// The last backup is taken before anything is removed, so the data is never touched
+		// while it is still being saved.
+		requeue, err := r.finalizeBackups(ctx, &db, wsNS)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if requeue > 0 {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
 		r.deleteTargetResources(ctx, &db, wsNS)
 		controllerutil.RemoveFinalizer(&db, databaseFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &db)
@@ -102,11 +128,18 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if prevNS, moved := previousTargetNamespace(db.Status.TargetNamespace, wsNS); moved {
 		r.deleteTargetResources(ctx, &db, prevNS)
+		// The old cluster is gone, so its backup folder must not be reused by the new one.
+		if err := r.retireLiveArchive(ctx, &db); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if err := applyDatabaseDeployedSpec(&db); err != nil {
 		if errors.Is(err, ErrAwaitingDeploy) {
 			r.deleteTargetResources(ctx, &db, wsNS)
+			if retireErr := r.retireLiveArchive(ctx, &db); retireErr != nil {
+				return ctrl.Result{}, retireErr
+			}
 			return r.setNotReady(ctx, &db, waitingForDeployMessage)
 		}
 		return r.setNotReady(ctx, &db, err.Error())
@@ -192,7 +225,19 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	if err := r.reconcileCNPGCluster(ctx, db, wsNS); err != nil {
+	plan, err := r.planBackups(ctx, db, wsNS)
+	backupsFailed := err != nil
+	if backupsFailed {
+		// Backups are an add-on: a problem working them out must not take a database out of service.
+		// The degraded plan keeps whatever archiving is already configured on the cluster.
+		backupProblem(ctx, db, err)
+		plan = &backupPlan{degraded: true}
+	}
+	recovery, err := r.recoveryForNewCluster(ctx, db, wsNS)
+	if err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
+	if err := r.reconcileCNPGCluster(ctx, db, wsNS, plan, recovery); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	cluster := &cnpgv1.Cluster{}
@@ -200,13 +245,45 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 		return r.setNotReady(ctx, db, "CNPG cluster was not created")
 	}
 	if !cnpgClusterReady(cluster) {
+		if db.Spec.RestoreFrom != nil && conditionStatus(db.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
+			return r.setNotReady(ctx, db, messageRestoringDatabase)
+		}
 		return r.setNotReady(ctx, db, "Postgres database is starting")
+	}
+	if err := r.reconcileBackupLifecycle(ctx, db, wsNS, cluster, plan); err != nil {
+		backupProblem(ctx, db, err)
+		backupsFailed = true
 	}
 	host := fmt.Sprintf("%s-rw.%s.svc", db.Name, wsNS)
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, platform.PostgresDefaultPort, "postgresql"); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	return r.setReady(ctx, db, wsNS, host, "Postgres database is ready")
+	result, err := r.setReady(ctx, db, wsNS, host, "Postgres database is ready")
+	switch {
+	case err != nil:
+	case backupsFailed:
+		result.RequeueAfter = backupRetryInterval
+	case plan != nil:
+		// Backup progress is read from the cluster's status, which this controller does not watch.
+		result.RequeueAfter = platform.BackupStatusRefreshInterval
+	}
+	return result, err
+}
+
+// recoveryForNewCluster plans a restore, but only while the cluster does not exist yet: recovery is
+// how a cluster is created, and once it runs the backups it came from are no longer needed.
+func (r *GeassDatabaseReconciler) recoveryForNewCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (*recoveryPlan, error) {
+	if db.Spec.RestoreFrom == nil {
+		return nil, nil
+	}
+	err := r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, &cnpgv1.Cluster{})
+	if err == nil {
+		return nil, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	return r.planRecovery(ctx, db, wsNS)
 }
 
 func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, chartName, chart, repo, version, values, host, port, scheme string) (ctrl.Result, error) {
@@ -251,7 +328,31 @@ func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db 
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, port, scheme); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	return r.setReady(ctx, db, wsNS, host, string(db.Spec.Engine)+" database is ready")
+	var backups dumpOutcome
+	if databaseBackupKind(db) == platform.BackupKindSnapshot {
+		var err error
+		if backups, err = r.reconcileDumpBackups(ctx, db, wsNS); err != nil {
+			return r.setNotReady(ctx, db, err.Error())
+		}
+		if backups.waiting != "" {
+			return r.setNotReady(ctx, db, backups.waiting)
+		}
+	}
+	return r.setReadyWithBackups(ctx, db, wsNS, host, string(db.Spec.Engine)+" database is ready", backups)
+}
+
+// setReadyWithBackups marks the database ready. While it has backups it is looked at again, because
+// how they are doing is read from Jobs and from the bucket, which change without the database changing.
+func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, host, message string, backups dumpOutcome) (ctrl.Result, error) {
+	result, err := r.setReady(ctx, db, wsNS, host, message)
+	switch {
+	case err != nil:
+	case backups.failed:
+		result.RequeueAfter = backupRetryInterval
+	case backups.backups:
+		result.RequeueAfter = platform.BackupStatusRefreshInterval
+	}
+	return result, err
 }
 
 func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (ctrl.Result, error) {
@@ -264,7 +365,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	storageSize := "1Gi"
+	storageSize := defaultSQLiteStorage
 	if db.Spec.StorageSize != nil {
 		storageSize = db.Spec.StorageSize.String()
 	}
@@ -322,7 +423,14 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, platform.SQLiteDefaultPort, "http"); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	return r.setReady(ctx, db, wsNS, host, "SQLite database is ready")
+	backups, err := r.reconcileDumpBackups(ctx, db, wsNS)
+	if err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
+	if backups.waiting != "" {
+		return r.setNotReady(ctx, db, backups.waiting)
+	}
+	return r.setReadyWithBackups(ctx, db, wsNS, host, "SQLite database is ready", backups)
 }
 
 func (r *GeassDatabaseReconciler) reconcileExternal(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (ctrl.Result, error) {
@@ -462,6 +570,10 @@ func (r *GeassDatabaseReconciler) haReady(ctx context.Context) (bool, error) {
 }
 
 func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
+	_ = client.IgnoreNotFound(r.Delete(ctx, &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: dumpCronJobName(db), Namespace: wsNS}}))
+	_ = r.DeleteAllOf(ctx, &batchv1.Job{}, client.InNamespace(wsNS), client.MatchingLabels{labelBackupFor: db.Name}, client.PropagationPolicy(metav1.DeletePropagationBackground))
+	_ = client.IgnoreNotFound(r.Delete(ctx, &cnpgv1.ScheduledBackup{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
+	_ = client.IgnoreNotFound(r.Delete(ctx, &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{Name: db.Name + finalBackupSuffix, Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}))
@@ -470,6 +582,8 @@ func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db 
 	_ = helmchart.Delete(ctx, r.Client, redisDatabaseChartName(db.Name))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
+	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + backupCredentialsSuffix, Namespace: wsNS}}))
+	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + restoreCredentialsSuffix, Namespace: wsNS}}))
 }
 
 func (r *GeassDatabaseReconciler) ensureCNPGOperator(ctx context.Context) error {
@@ -522,35 +636,27 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 	return err
 }
 
-func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
-	instances := databaseInstances(db)
-	version := db.Spec.Version
-	if version == "" {
-		version = "16"
-	}
-	storageSize := "10Gi"
-	if db.Spec.StorageSize != nil {
-		storageSize = db.Spec.StorageSize.String()
-	}
-
+// reconcileCNPGCluster creates the Postgres cluster or brings an existing one in line. How a
+// cluster is bootstrapped is fixed when it is created and the operator rejects changes to it, so
+// an existing cluster keeps its bootstrap, and the source it recovered from, exactly as they are.
+func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, plan *backupPlan, recovery *recoveryPlan) error {
 	cluster := &cnpgv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cluster, func() error {
 		applyGeassLabels(cluster, db, "GeassDatabase")
-		cluster.Spec = cnpgv1.ClusterSpec{
-			Instances: instances,
-			ImageName: fmt.Sprintf("ghcr.io/cloudnative-pg/postgresql:%s", version),
-			Storage:   cnpgv1.StorageConfiguration{Size: storageSize},
-			Resources: databaseInstanceResources(db),
-			Bootstrap: cnpgv1.BootstrapConfiguration{
-				InitDB: cnpgv1.InitDBConfiguration{
-					Database: databaseName(db),
-					Owner:    appContainerName,
-					Secret:   corev1.LocalObjectReference{Name: db.Name + "-bootstrap"},
-				},
-			},
+		live := cluster.Spec
+		desired := desiredClusterSpec(db, plan, recovery)
+		if cluster.ResourceVersion != "" {
+			desired.Bootstrap = live.Bootstrap
+			desired.ExternalClusters = live.ExternalClusters
+			if plan != nil && plan.archive == nil {
+				// Backups are wanted but could not be verified this time. Keep archiving as it is
+				// rather than stopping it because of a passing storage problem.
+				desired.Backup = live.Backup
+			}
 		}
+		cluster.Spec = desired
 		return setSameNamespaceOwner(db, cluster, r.Scheme)
 	})
 	return err
@@ -730,7 +836,7 @@ func storageSize(db *geassv1alpha1.GeassDatabase) string {
 	if db.Spec.StorageSize != nil {
 		return db.Spec.StorageSize.String()
 	}
-	return "10Gi"
+	return defaultDatabaseStorage
 }
 
 func defaultPortForEngine(engine geassv1alpha1.GeassDatabaseEngine) string {
@@ -787,6 +893,11 @@ func firstNonEmpty(values ...string) string {
 func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassDatabase{}).
+		// A project choosing or changing its backup storage must reach the databases waiting for it.
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject)).
+		// A restore or final backup finishing should be noticed at once, not at the next poll.
+		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(databaseForBackupJob),
+			builder.WithPredicates(predicate.NewPredicateFuncs(isBackupJob))).
 		Named("geassdatabase").
 		Complete(r)
 }

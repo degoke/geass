@@ -76,6 +76,7 @@ rules:
 - apiGroups:
   - batch
   resources:
+  - cronjobs
   - jobs
   verbs:
   - create
@@ -89,6 +90,7 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps
+  - geassbackuparchives
   - geassbuilds
   - geasscloudconnections
   - geassclusters
@@ -125,6 +127,7 @@ rules:
   - geass.geass.dev
   resources:
   - geassapps/status
+  - geassbackuparchives/status
   - geassbuilds/status
   - geasscloudconnections/status
   - geassclusters/status
@@ -191,7 +194,9 @@ rules:
 - apiGroups:
   - postgresql.cnpg.io
   resources:
+  - backups
   - clusters
+  - scheduledbackups
   verbs:
   - create
   - delete
