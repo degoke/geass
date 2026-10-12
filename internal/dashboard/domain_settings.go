@@ -117,7 +117,9 @@ func (s *Server) verifyDashboardDomain(ctx context.Context) domainVerifyResult {
 		return domainVerifyResult{State: dashboardLiteralError, Message: "save your domain first"}
 	}
 
-	message, result := s.verifyDashboardURL(ctx, readiness.DashboardURL)
+	// A dashboard published through a Cloudflare tunnel gets its certificate from Cloudflare, not cert-manager.
+	explainCertificates := platform.DashboardExposureFromConfig(readiness.Config) == geassv1alpha1.DashboardExposureIngress
+	message, result := s.verifyDashboardURL(ctx, readiness.DashboardURL, explainCertificates)
 	if result != "success" {
 		if message == "" {
 			message = "Dashboard HTTPS endpoint is not reachable yet"
@@ -153,7 +155,7 @@ func (s *Server) ensureDashboardDomainVerified(ctx context.Context, readiness pl
 	if readiness.DashboardURL == "" {
 		return false
 	}
-	if _, result := s.verifyDashboardURL(ctx, readiness.DashboardURL); result != "success" {
+	if _, result := s.verifyDashboardURL(ctx, readiness.DashboardURL, false); result != "success" {
 		return false
 	}
 

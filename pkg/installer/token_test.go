@@ -11,7 +11,7 @@ import (
 )
 
 func TestTheJoinTokenIsStoredWhereTheClusterObjectPointsAndNowhereElse(t *testing.T) {
-	require.Contains(t, geassClusterManifest("default", "v1", "https://127.0.0.1:6443", Network{}), "name: "+joinTokenSecretName,
+	require.Contains(t, geassClusterManifest("default", "v1", "https://127.0.0.1:6443", Network{}, ""), "name: "+joinTokenSecretName,
 		"the Secret the installer creates must be the one the GeassCluster names")
 
 	raw, err := joinTokenManifest("K10abc::server:def")

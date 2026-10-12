@@ -452,7 +452,7 @@ func (s *Server) handleAPITokensList(w http.ResponseWriter, r *http.Request) {
 		return cmp.Compare(a.ID, b.ID)
 	})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{jsonItems: items})
 }
 
 func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {

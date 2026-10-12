@@ -134,7 +134,7 @@ func TestLoggingNeverHoldsTheClusterBack(t *testing.T) {
 	cluster := loggingCluster(true, 7)
 	cluster.Spec.Addons.CertManager.Enabled = &off
 	cluster.Spec.Addons.Monitoring.Enabled = &off
-	ready, err := r.reconcileAddons(context.Background(), cluster)
+	ready, _, err := r.reconcileAddons(context.Background(), cluster)
 	require.NoError(t, err)
 	require.True(t, ready, "waiting for the log store to start must not make the cluster not ready")
 }

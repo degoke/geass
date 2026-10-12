@@ -53,6 +53,16 @@ spec:
                   certManager:
                     description: CertManager controls cert-manager installation.
                     properties:
+                      acmeEmail:
+                        description: |-
+                          ACMEEmail is the contact address Let's Encrypt knows the cluster's ACME account by, and where it
+                          sends expiry notices. When it is set, Geass keeps the letsencrypt-prod ClusterIssuer that every
+                          ingress asks for in place; when it is empty, no issuer is created and no HTTPS certificate can be
+                          issued, which the ClusterIssuerReady condition reports. The installer sets it from GEASS_ACME_EMAIL.
+                          Let's Encrypt refuses placeholder domains such as example.com.
+                        maxLength: 254
+                        pattern: ^([^@\s]+@[^@\s]+\.[^@\s]+)?$
+                        type: string
                       enabled:
                         default: true
                         description: Enabled installs cert-manager when true.

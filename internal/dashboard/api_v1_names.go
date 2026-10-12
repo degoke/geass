@@ -25,6 +25,8 @@ const (
 	jsonString  = "string"
 	jsonInteger = "integer"
 	jsonArray   = "array"
+	// jsonItems is the key a list is answered under.
+	jsonItems = "items"
 
 	// formDeploy is the form field that asks for a deploy straight away, and jsonKeyAvailable the key several
 	// responses share.

@@ -181,7 +181,7 @@ func (s *Server) v1List(kind string) http.HandlerFunc {
 				items = append(items, view)
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		writeJSON(w, http.StatusOK, map[string]any{jsonItems: items})
 	}
 }
 
@@ -487,7 +487,7 @@ func (s *Server) v1AppDeployments(w http.ResponseWriter, r *http.Request) {
 			"startedAt": deployment.Status.StartedAt, "completedAt": deployment.Status.CompletedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{jsonItems: items})
 }
 
 // v1AppForCaller finds the service a request is about and answers the request itself when the caller may
@@ -641,5 +641,5 @@ func (s *Server) v1Nodes(w http.ResponseWriter, r *http.Request) {
 		items = append(items, view)
 	}
 	slices.SortFunc(items, func(a, b v1Node) int { return strings.Compare(a.Name, b.Name) })
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{jsonItems: items})
 }

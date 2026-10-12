@@ -150,6 +150,7 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 		spec.Username = ""
 		spec.PasswordSecretRef = nil
 		spec.DatabaseName = ""
+		spec.ClusterSize = ""
 		spec.Provider = ""
 		spec.Mode = ""
 		spec.Placement = ""

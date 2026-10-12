@@ -39,6 +39,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIGitHubSettings(w, r)
 	case r.URL.Path == "/api/settings/cloudflare":
 		s.handleAPICloudflareSettings(w, r)
+	case r.URL.Path == "/api/planetscale/cluster-sizes":
+		s.handleAPIPlanetScaleClusterSizes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
 	case strings.Contains(r.URL.Path, "/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -196,7 +198,7 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 	project := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/github/repos")
 	connection, err := s.projectGitHubConnection(r.Context(), project)
 	if err != nil || connection == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"items": []githubRepository{}})
+		writeJSON(w, http.StatusOK, map[string]any{jsonItems: []githubRepository{}})
 		return
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
@@ -209,7 +211,7 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": repos})
+	writeJSON(w, http.StatusOK, map[string]any{jsonItems: repos})
 }
 
 func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {

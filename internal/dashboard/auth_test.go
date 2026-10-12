@@ -350,6 +350,13 @@ func TestDashboardViewerCannotReadLogs(t *testing.T) {
 	mux.ServeHTTP(reposRec, repos)
 	require.Equal(t, http.StatusForbidden, reposRec.Code)
 
+	// Listing PlanetScale sizes calls PlanetScale with the stored token, which is not for viewers.
+	sizes := httptest.NewRequest(http.MethodGet, "/api/planetscale/cluster-sizes?project=payments&connection=ps&engine=MySQL", nil).WithContext(ctx)
+	sizes.AddCookie(cookie)
+	sizesRec := httptest.NewRecorder()
+	mux.ServeHTTP(sizesRec, sizes)
+	require.Equal(t, http.StatusForbidden, sizesRec.Code)
+
 	runtime := httptest.NewRequest(http.MethodGet, "/api/apps/demo/runtime", nil).WithContext(ctx)
 	runtime.AddCookie(cookie)
 	runtimeRec := httptest.NewRecorder()
@@ -669,6 +676,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 			ExternalPort:      3306,
 			Username:          "orders-user",
 			DatabaseName:      "orders_prod",
+			ClusterSize:       "PS_10",
 			ConnectionRef:     &corev1.LocalObjectReference{Name: "payments-ps"},
 			PasswordSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-external"}, Key: "password"},
 		},
@@ -733,6 +741,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.NotContains(t, body, "orders-rw")
 	require.NotContains(t, body, "orders-connection")
 	require.NotContains(t, body, "db.example.internal")
+	require.NotContains(t, body, "PS_10")
 	require.NotContains(t, body, "orders-user")
 	require.NotContains(t, body, "orders_prod")
 	require.NotContains(t, body, "payments-ps")

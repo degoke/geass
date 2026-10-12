@@ -8,7 +8,8 @@ import (
 )
 
 type SystemChecks struct {
-	Network Network
+	Network   Network
+	ACMEEmail string
 }
 
 func (s *SystemChecks) Name() string { return "system checks" }
@@ -41,6 +42,9 @@ func (s *SystemChecks) Run() error {
 	}
 
 	if err := s.Network.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateACMEEmail(s.ACMEEmail); err != nil {
 		return err
 	}
 	if s.Network.MultiSite {

@@ -240,7 +240,7 @@ func TestReconcileAddonsInstallsLonghornOnlyWhenEnabled(t *testing.T) {
 		r, c := longhornTestReconciler(t, testNode("n1"))
 		cluster := &geassv1alpha1.GeassCluster{Spec: geassv1alpha1.GeassClusterSpec{Addons: tc.addons}}
 
-		_, err := r.reconcileAddons(context.Background(), cluster)
+		_, _, err := r.reconcileAddons(context.Background(), cluster)
 		require.NoError(t, err, name)
 
 		_, err = getLonghornChart(context.Background(), c)
@@ -256,7 +256,7 @@ func TestReconcileAddonsNeverUninstallsLonghornWhenDisabled(t *testing.T) {
 	// Other add-ons are removed when switched off. A storage engine holds user
 	// data, so flipping a flag must never be what tears it out.
 	cluster := &geassv1alpha1.GeassCluster{}
-	_, err = r.reconcileAddons(context.Background(), cluster)
+	_, _, err = r.reconcileAddons(context.Background(), cluster)
 	require.NoError(t, err)
 	_, err = getLonghornChart(context.Background(), c)
 	require.NoError(t, err)

@@ -104,7 +104,7 @@ export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
             description={
               planetScaleStatus === "disconnected"
                 ? "Add PlanetScale credentials for external MySQL databases."
-                : "PlanetScale databases are available in the resource picker."
+                : "PlanetScale databases are coming soon."
             }
             actionLabel={planetScaleStatus === "disconnected" ? "Configure" : "Manage"}
             onConfigure={() => setActive("planetscale")}

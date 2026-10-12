@@ -218,8 +218,8 @@ func (r *GeassCloudConnectionReconciler) cloudConnectionState(ctx context.Contex
 			reason, message = "CredentialsMissing", "AWS access key and secret key are required"
 		}
 	case geassv1alpha1.CloudProviderPlanetScale:
-		org := firstNonEmpty(connection.Spec.Organization, secretValue(secret, platform.SecretKeyOrganization))
-		ready = secretValue(secret, platform.SecretKeyToken) != "" && org != ""
+		token, org := platform.PlanetScaleAccess(*connection, secret)
+		ready = token != "" && org != ""
 		if !ready {
 			reason, message = "CredentialsMissing", "PlanetScale token and organization are required"
 		}

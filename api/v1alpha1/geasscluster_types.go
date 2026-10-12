@@ -20,6 +20,16 @@ type GeassClusterCertManagerAddon struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// ACMEEmail is the contact address Let's Encrypt knows the cluster's ACME account by, and where it
+	// sends expiry notices. When it is set, Geass keeps the letsencrypt-prod ClusterIssuer that every
+	// ingress asks for in place; when it is empty, no issuer is created and no HTTPS certificate can be
+	// issued, which the ClusterIssuerReady condition reports. The installer sets it from GEASS_ACME_EMAIL.
+	// Let's Encrypt refuses placeholder domains such as example.com.
+	// +kubebuilder:validation:MaxLength=254
+	// +kubebuilder:validation:Pattern=`^([^@\s]+@[^@\s]+\.[^@\s]+)?$`
+	// +optional
+	ACMEEmail string `json:"acmeEmail,omitempty"`
 }
 
 // GeassClusterMonitoringAddon controls kube-prometheus-stack installation.

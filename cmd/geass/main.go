@@ -28,18 +28,24 @@ func main() {
 	// different providers: an encrypted WireGuard overlay instead of VXLAN, and the public IP advertised.
 	network := installer.NetworkFromEnv()
 
+	// GEASS_ACME_EMAIL is the contact address for the cluster's Let's Encrypt account. Without it the
+	// cluster installs with no certificate issuer, so no ingress gets an HTTPS certificate.
+	acmeEmail := installer.ACMEEmailFromEnv()
+	checks := &installer.SystemChecks{Network: network, ACMEEmail: acmeEmail}
+	applyCluster := &installer.ClusterCRApply{Network: network, ACMEEmail: acmeEmail}
+
 	steps := []installer.Step{
-		&installer.SystemChecks{Network: network},   // OS, memory, disk, arch, and WireGuard for multi-site
-		&installer.FirewallSetup{Network: network},  // open 6443, 10250 and the overlay port when a host firewall is active
-		&installer.RemoveExistingInstall{},          // uninstall k3s if already present
-		&installer.NodePrerequisites{},              // iSCSI initiator, which Longhorn needs on every node
-		&installer.K3sInstall{Network: network},     // download get.k3s.io installer and run server mode
-		&installer.WaitForK3s{},                     // poll until /etc/rancher/k3s/k3s.yaml exists
-		&installer.ImageImport{},                    // load embedded operator image into k3s containerd
-		&installer.OperatorDeploy{},                 // apply embedded operator manifests
-		&installer.WaitForOperator{},                // poll until operator pod Running
-		&installer.JoinTokenSecret{},                // store the join token the operator needs to add workers
-		&installer.ClusterCRApply{Network: network}, // apply initial GeassCluster CR
+		checks, // OS, memory, disk, arch, the ACME email, and WireGuard for multi-site
+		&installer.FirewallSetup{Network: network}, // open 6443, 10250 and the overlay port when a host firewall is active
+		&installer.RemoveExistingInstall{},         // uninstall k3s if already present
+		&installer.NodePrerequisites{},             // iSCSI initiator, which Longhorn needs on every node
+		&installer.K3sInstall{Network: network},    // download get.k3s.io installer and run server mode
+		&installer.WaitForK3s{},                    // poll until /etc/rancher/k3s/k3s.yaml exists
+		&installer.ImageImport{},                   // load embedded operator image into k3s containerd
+		&installer.OperatorDeploy{},                // apply embedded operator manifests
+		&installer.WaitForOperator{},               // poll until operator pod Running
+		&installer.JoinTokenSecret{},               // store the join token the operator needs to add workers
+		applyCluster,                               // apply initial GeassCluster CR
 	}
 
 	installer.Logf("installer", "Starting installation with %d steps", len(steps))
