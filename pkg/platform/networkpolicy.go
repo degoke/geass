@@ -44,8 +44,9 @@ const (
 //   - geass-system: the operator and dashboard (and the Cloudflare tunnel, which reaches services by name).
 //   - monitoring: Prometheus scraping service metrics.
 //   - cnpg-system: the Postgres operator, which talks to the instance manager inside every database pod.
+//   - keda: the scale-to-zero add-on's proxy, which passes requests on to services it has woken.
 func platformNamespacesReachingProjects() []string {
-	return []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS}
+	return []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS, ServerlessTargetNS}
 }
 
 // ManagedNetworkPolicyNames lists the policies the operator owns, so a watch can ignore the rest.

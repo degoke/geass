@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -171,6 +173,10 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.reconcileSecret(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
+	plan, err := r.planScaleToZero(ctx, &app)
+	if err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
 	est := platform.EstimateFromResources("service", appContainerResources(&app), deploymentReplicas(&app))
 	placement, err := platform.ResolvePlacement(ctx, r.Client, app.Spec.Project, app.Spec.RunOn.Tags)
 	if err != nil {
@@ -179,7 +185,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
-	if err := r.reconcileDeployment(ctx, &app, wsNS); err != nil {
+	if err := r.reconcileDeployment(ctx, &app, wsNS, withScaleToZero(plan)); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := r.reconcileAutoscaler(ctx, &app, wsNS); err != nil {
@@ -188,53 +194,63 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.reconcileService(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
-	if err := r.reconcileIngress(ctx, &app, wsNS); err != nil {
+	if err := r.reconcileScaleToZero(ctx, &app, wsNS, &plan); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if err := r.reconcileIngress(ctx, &app, wsNS, withScaleToZero(plan)); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if err := r.reconcileFunctionTriggers(ctx, &app, wsNS, plan); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := r.reconcileServiceMonitor(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
-	replicas := int32(1)
-	if app.Spec.Replicas != nil {
-		replicas = *app.Spec.Replicas
-	}
 	deploy := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Name: app.Name, Namespace: wsNS}, deploy); err != nil {
 		return r.setNotReady(ctx, &app, "Deployment was not created")
 	}
-	if err := r.reconcileOperationalDeployment(ctx, &app, deploy); err != nil {
+	// A service that sleeps when idle is at zero copies when nobody is using it, which is ready and not starting.
+	replicas := effectiveReplicas(&app, deploy, plan)
+	if err := r.reconcileOperationalDeployment(ctx, &app, deploy, replicas); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if settled, result, err := r.startGate(ctx, &app, wsNS, deploy, plan, replicas); settled || err != nil {
+		return result, err
 	}
 	if !deploymentReady(deploy, replicas) {
 		if app.Spec.Deploy.FailureThreshold > 0 {
-			latest := app.DeepCopy()
+			latest := &geassv1alpha1.GeassApp{}
 			if err := r.Get(ctx, client.ObjectKeyFromObject(&app), latest); err == nil {
-				latest.Status.HealthCheckFailures++
-				if latest.Status.HealthCheckFailures >= app.Spec.Deploy.FailureThreshold {
-					latest.Status.RolloutPaused = app.Spec.Deploy.PauseOnFailure
-					latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "RolloutFailed", "Deployment failed the configured health-check threshold")
-					if app.Spec.Deploy.RollbackOnFailure {
-						latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, "RollbackReady", metav1.ConditionTrue, "RollbackRequested", "Rollback was requested after rollout failure")
+				failed := false
+				if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+					latest.Status.HealthCheckFailures++
+					if latest.Status.HealthCheckFailures >= app.Spec.Deploy.FailureThreshold {
+						failed = true
+						latest.Status.RolloutPaused = app.Spec.Deploy.PauseOnFailure
+						latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "RolloutFailed", "Deployment failed the configured health-check threshold")
+						if app.Spec.Deploy.RollbackOnFailure {
+							latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, "RollbackReady", metav1.ConditionTrue, "RollbackRequested", "Rollback was requested after rollout failure")
+						}
 					}
-					if err := r.Status().Update(ctx, latest); err != nil {
-						return ctrl.Result{}, err
-					}
-					return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
-				}
-				if err := r.Status().Update(ctx, latest); err != nil {
+				}); err != nil {
 					return ctrl.Result{}, err
+				}
+				if failed {
+					return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
 				}
 			}
 		}
 		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}
 	if app.Status.HealthCheckFailures != 0 {
-		latest := app.DeepCopy()
+		latest := &geassv1alpha1.GeassApp{}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(&app), latest); err == nil {
-			latest.Status.HealthCheckFailures = 0
-			latest.Status.RolloutPaused = false
-			_ = r.Status().Update(ctx, latest)
+			_, _ = platform.PatchStatus(ctx, r.Client, latest, func() {
+				latest.Status.HealthCheckFailures = 0
+				latest.Status.RolloutPaused = false
+			})
 		}
 	}
 
@@ -251,42 +267,49 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		url = fmt.Sprintf("%s://%s%s", scheme, app.Spec.Ingress.Host, path)
 	}
 
-	latest := app.DeepCopy()
+	latest := &geassv1alpha1.GeassApp{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&app), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.TargetNamespace = wsNS
-	latest.Status.URL = url
-	latest.Status.DNSName = app.Spec.Ingress.Host
+	// Work out what the status should say first, so the DNS lookup and the ingress read happen once and
+	// the write is skipped when it would say what it already says.
+	traefikTarget := latest.Status.TraefikTarget
 	if ingress := new(networkingv1.Ingress); r.Get(ctx, client.ObjectKey{Name: app.Name, Namespace: wsNS}, ingress) == nil && len(ingress.Status.LoadBalancer.Ingress) > 0 {
-		latest.Status.TraefikTarget = ingress.Status.LoadBalancer.Ingress[0].Hostname
-		if latest.Status.TraefikTarget == "" {
-			latest.Status.TraefikTarget = ingress.Status.LoadBalancer.Ingress[0].IP
+		traefikTarget = ingress.Status.LoadBalancer.Ingress[0].Hostname
+		if traefikTarget == "" {
+			traefikTarget = ingress.Status.LoadBalancer.Ingress[0].IP
 		}
 	}
-	latest.Status.DNSVerified = true
+	dnsVerified := true
 	if app.Spec.Ingress.DNSVerification {
-		latest.Status.DNSVerified = app.Spec.Ingress.Host != ""
-		if latest.Status.DNSVerified {
+		dnsVerified = app.Spec.Ingress.Host != ""
+		if dnsVerified {
 			lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_, lookupErr := net.DefaultResolver.LookupHost(lookupCtx, app.Spec.Ingress.Host)
 			cancel()
-			latest.Status.DNSVerified = lookupErr == nil
+			dnsVerified = lookupErr == nil
 		}
 	}
-	if app.Spec.Ingress.DNSVerification {
-		if latest.Status.DNSVerified {
-			latest.Status.DNSMessage = "DNS hostname is configured for verification"
-		} else {
-			latest.Status.DNSMessage = "DNS hostname is required"
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.TargetNamespace = wsNS
+		latest.Status.URL = url
+		latest.Status.DNSName = app.Spec.Ingress.Host
+		latest.Status.TraefikTarget = traefikTarget
+		latest.Status.DNSVerified = dnsVerified
+		if app.Spec.Ingress.DNSVerification {
+			if dnsVerified {
+				latest.Status.DNSMessage = "DNS hostname is configured for verification"
+			} else {
+				latest.Status.DNSMessage = "DNS hostname is required"
+			}
 		}
-	}
-	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-	platform.ClearReconcileRetry(&retryState)
-	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-	completeProvisionSuccess(&latest.Status.Provision)
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
-	if err := r.Status().Update(ctx, latest); err != nil {
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+		completeProvisionSuccess(&latest.Status.Provision)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
+		latest.Status.Conditions = scaleToZeroCondition(plan, latest.Status.Conditions)
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	app.Status = latest.Status
@@ -313,20 +336,26 @@ func (r *GeassAppReconciler) appLabels(app *geassv1alpha1.GeassApp) map[string]s
 	}
 }
 
-func (r *GeassAppReconciler) reconcileOperationalDeployment(ctx context.Context, app *geassv1alpha1.GeassApp, deploy *appsv1.Deployment) error {
+func (r *GeassAppReconciler) reconcileOperationalDeployment(ctx context.Context, app *geassv1alpha1.GeassApp, deploy *appsv1.Deployment, replicas int32) error {
 	name := app.Name + "-active"
 	operation := &geassv1alpha1.GeassDeployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: app.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, operation, func() error {
+	phase := "RollingOut"
+	if deploymentReady(deploy, replicas) {
+		phase = "Available"
+	}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, operation, func() error {
 		applyGeassLabels(operation, app, "GeassDeployment")
-		phase := "RollingOut"
-		if deploymentReady(deploy, deploymentReplicas(app)) {
-			phase = "Available"
-		}
 		operation.Spec = geassv1alpha1.GeassDeploymentSpec{App: app.Name, Project: app.Spec.Project, Environment: app.Spec.Environment, Image: appImage(app), ImageDigest: app.Status.ResolvedImage, Replicas: app.Spec.Replicas, BuildRef: app.Status.ActiveBuild, Commit: appSourceCommit(app), Trigger: "Reconciliation", Source: "GeassApp controller"}
+		return setSameNamespaceOwner(app, operation, r.Scheme)
+	}); err != nil {
+		return err
+	}
+	// The status has its own endpoint, so setting it inside the function above never saved it. It is
+	// written here, and only when it changed.
+	_, err := platform.PatchStatus(ctx, r.Client, operation, func() {
 		operation.Status.Phase = phase
 		operation.Status.AvailableReplicas = deploy.Status.AvailableReplicas
 		operation.Status.HealthCheck = phase
-		return setSameNamespaceOwner(app, operation, r.Scheme)
 	})
 	return err
 }
@@ -373,21 +402,36 @@ func functionConfigMapName(app *geassv1alpha1.GeassApp) string {
 	return app.Name + "-function"
 }
 
+// deleteIfPresent deletes an object that exists. The read is served from the cache, so a service that never had
+// the object costs no request to the API server on each reconcile.
+func (r *GeassAppReconciler) deleteIfPresent(ctx context.Context, obj client.Object) error {
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, obj))
+}
+
 // reconcileFunctionCode publishes a function's code as a ConfigMap, or removes the ConfigMap
 // when the service is not a function.
 func (r *GeassAppReconciler) reconcileFunctionCode(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: functionConfigMapName(app), Namespace: wsNS}}
 	fn := app.Spec.Source.Function
 	if fn == nil {
-		return client.IgnoreNotFound(r.Delete(ctx, cm))
+		if err := r.reconcileTriggerSecret(ctx, app, wsNS); err != nil {
+			return err
+		}
+		return r.deleteIfPresent(ctx, cm)
 	}
-	fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime)
-	if !ok {
-		return fmt.Errorf("unsupported function runtime %q", fn.Runtime)
+	files, err := platform.FunctionFiles(fn)
+	if err != nil {
+		return err
 	}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+	if err := r.reconcileTriggerSecret(ctx, app, wsNS); err != nil {
+		return err
+	}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		applyGeassLabels(cm, app, "GeassApp")
-		cm.Data = map[string]string{fnRuntime.File: fn.Code}
+		cm.Data = files
 		return setSameNamespaceOwner(app, cm, r.Scheme)
 	})
 	return err
@@ -413,14 +457,33 @@ func (r *GeassAppReconciler) reconcileSecret(ctx context.Context, app *geassv1al
 	}
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, app, "GeassApp")
-		secret.StringData = secretData
+		setSecretStrings(secret, secretData)
 		return setSameNamespaceOwner(app, secret, r.Scheme)
 	})
 	_ = op
 	return err
 }
 
-func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
+// workloadOption changes how a service's Deployment and Ingress are made.
+type workloadOption func(*workloadOptions)
+
+type workloadOptions struct{ scaleToZero scaleToZeroPlan }
+
+// withScaleToZero carries a service's scale-to-zero plan to the pieces that depend on it.
+func withScaleToZero(plan scaleToZeroPlan) workloadOption {
+	return func(o *workloadOptions) { o.scaleToZero = plan }
+}
+
+func newWorkloadOptions(opts []workloadOption) workloadOptions {
+	var o workloadOptions
+	for _, apply := range opts {
+		apply(&o)
+	}
+	return o
+}
+
+func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string, opts ...workloadOption) error {
+	options := newWorkloadOptions(opts)
 	placement, err := platform.ResolvePlacement(ctx, r.Client, app.Spec.Project, app.Spec.RunOn.Tags)
 	if err != nil {
 		return err
@@ -440,7 +503,11 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		applyGeassLabels(deploy, app, "GeassApp")
 		selector := geassResourceLabels(app, "GeassApp")
-		deploy.Spec.Replicas = &replicas
+		// A service that sleeps when idle has its copies counted by the scale-to-zero add-on, which stops it and
+		// starts it again. Setting them here too would wake it on every reconcile.
+		if !options.scaleToZero.active {
+			deploy.Spec.Replicas = &replicas
+		}
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selector}
 		podLabels := r.appLabels(app)
 		maps.Copy(podLabels, selector)
@@ -550,23 +617,35 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		}
 		var automountToken *bool
 		if fn := app.Spec.Source.Function; fn != nil {
-			if fnRuntime, ok := platform.FunctionRuntimeFor(fn.Runtime); ok {
+			if files, err := platform.FunctionFiles(fn); err == nil {
 				if len(command) == 0 {
-					command = fnRuntime.Command
+					command = platform.FunctionCommand(fn)
+				}
+				var items []corev1.KeyToPath
+				for _, name := range slices.Sorted(maps.Keys(files)) {
+					items = append(items, corev1.KeyToPath{Key: name, Path: name})
 				}
 				volumes = append(volumes, corev1.Volume{
 					Name: "function",
 					VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 						LocalObjectReference: corev1.LocalObjectReference{Name: functionConfigMapName(app)},
-						Items:                []corev1.KeyToPath{{Key: fnRuntime.File, Path: fnRuntime.File}},
+						Items:                items,
 					}},
 				})
 				volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "function", MountPath: platform.FunctionMountPath, ReadOnly: true})
 				if !hasEnvVar(env, "PORT") {
 					env = append(env, corev1.EnvVar{Name: "PORT", Value: strconv.Itoa(int(port))})
 				}
+				if functionHasTriggerToken(fn) && !hasEnvVar(env, platform.TriggerTokenEnv) {
+					env = append(env, triggerTokenEnv(app))
+					// The pods read the token once, when they start. Its fingerprint is in the pod template so a
+					// token that is made again rolls them, and they and the schedules go on agreeing on it.
+					if fingerprint := r.triggerTokenFingerprint(ctx, app, wsNS); fingerprint != "" {
+						podAnnotations[annotationTriggerTokenFingerprint] = fingerprint
+					}
+				}
 				// The pod template changes with the code, so a code edit rolls the pods.
-				podAnnotations[platform.AnnotationFunctionHash] = platform.FunctionCodeHash(fn.Runtime, fn.Code)
+				podAnnotations[platform.AnnotationFunctionHash] = platform.FunctionPodHash(fn)
 				// User code does not need Kubernetes API credentials.
 				noToken := false
 				automountToken = &noToken
@@ -599,6 +678,13 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 			deploy.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{*pullSecret}
 		}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
+		if options.scaleToZero.active {
+			// What the pods are made from, so a service that sleeps is known to need checking again when it changes.
+			if deploy.Annotations == nil {
+				deploy.Annotations = map[string]string{}
+			}
+			deploy.Annotations[annotationTemplateFingerprint] = fingerprintOf(&deploy.Spec.Template)
+		}
 		return setSameNamespaceOwner(app, deploy, r.Scheme)
 	})
 	return err
@@ -632,7 +718,7 @@ func validateAppSource(app *geassv1alpha1.GeassApp) error {
 		}
 	}
 	if functionSource {
-		if err := platform.ValidateFunction(app.Spec.Source.Function.Runtime, app.Spec.Source.Function.Code); err != nil {
+		if err := platform.ValidateFunctionSource(app.Spec.Source.Function); err != nil {
 			return fmt.Errorf("source.function: %w", err)
 		}
 	}
@@ -773,7 +859,8 @@ func (r *GeassAppReconciler) reconcileService(ctx context.Context, app *geassv1a
 	return err
 }
 
-func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
+func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string, opts ...workloadOption) error {
+	options := newWorkloadOptions(opts)
 	if app.Spec.Ingress.Host == "" {
 		ing := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(ing), ing); apierrors.IsNotFound(err) {
@@ -794,6 +881,12 @@ func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1a
 		port = 8080
 	}
 
+	// Traffic to a service that sleeps when idle goes through the add-on's proxy, which is what holds a request
+	// while the service wakes.
+	backendName, backendPort := app.Name, port
+	if options.scaleToZero.active {
+		backendName, backendPort = wakeServiceName(app), platform.ServerlessInterceptorPort
+	}
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS},
 	}
@@ -822,7 +915,7 @@ func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1a
 					HTTP: &networkingv1.HTTPIngressRuleValue{
 						Paths: []networkingv1.HTTPIngressPath{{
 							Path: rulePath, PathType: &pathType,
-							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: app.Name, Port: networkingv1.ServiceBackendPort{Number: port}}},
+							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: backendName, Port: networkingv1.ServiceBackendPort{Number: backendPort}}},
 						}},
 					},
 				},
@@ -926,7 +1019,9 @@ func appDeletionNamespaces(app *geassv1alpha1.GeassApp) []string {
 }
 
 func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
-	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics", functionConfigMapName(app)}
+	_ = r.deleteScaleToZero(ctx, app, wsNS)
+	_ = r.deleteFunctionTriggers(ctx, app, wsNS, nil)
+	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics", functionConfigMapName(app), triggerSecretName(app)}
 	for _, name := range names {
 		_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
 		_ = r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
@@ -945,17 +1040,20 @@ func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *gea
 }
 
 func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1.GeassApp, message string) (ctrl.Result, error) {
-	latest := app.DeepCopy()
+	latest := &geassv1alpha1.GeassApp{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
-	latest.Status.Conditions = conditions
-	if app.Status.ResolvedImage != "" {
-		latest.Status.ResolvedImage = app.Status.ResolvedImage
-		latest.Status.ActiveBuild = app.Status.ActiveBuild
-	}
-	if err := r.Status().Update(ctx, latest); err != nil {
+	var result ctrl.Result
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		var conditions []metav1.Condition
+		result, conditions = finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+		latest.Status.Conditions = conditions
+		if app.Status.ResolvedImage != "" {
+			latest.Status.ResolvedImage = app.Status.ResolvedImage
+			latest.Status.ActiveBuild = app.Status.ActiveBuild
+		}
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	if platform.ReadyConditionReason(latest.Status.Conditions) == platform.ConditionReasonProvisionFailed {
@@ -1000,6 +1098,9 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&geassv1alpha1.GeassApp{}).
 		Owns(&geassv1alpha1.GeassBuild{}).
 		Owns(&geassv1alpha1.GeassDeployment{}).
+		// A service's Deployment is in the project's namespace, so it cannot be owned by the service. Its copies
+		// are started and stopped by the scale-to-zero add-on, and the service's state follows them.
+		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(deploymentScaleChanged())).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
 			var apps geassv1alpha1.GeassAppList
 			if err := r.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)); err != nil {
@@ -1012,7 +1113,7 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 			}
 			return requests
-		})).
+		}), builder.WithPredicates(readyOrSpecChanged())).
 		Named("geassapp").
 		Complete(r)
 }

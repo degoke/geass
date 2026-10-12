@@ -112,6 +112,18 @@ spec:
                         - full
                         type: string
                     type: object
+                  serverless:
+                    description: Serverless controls scale to zero.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs KEDA and the HTTP add-on. It is opt-in: it adds a few small pods, and changes the
+                          ingress controller's settings so it can route to the add-on. Services can then ask to scale to zero.
+                          Turning it off stops services from scaling to zero but never uninstalls KEDA: services that were asleep are
+                          woken and run normally.
+                        type: boolean
+                    type: object
                 type: object
               defaultRegion:
                 description: |-

@@ -102,6 +102,7 @@ spec:
                   maxLength: 63
                   pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                   type: string
+                maxItems: 100
                 minItems: 1
                 type: array
               githubConnectionRef:
@@ -173,6 +174,18 @@ spec:
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              requiredTags:
+                description: |-
+                  RequiredTags are node tags every workload of this project must run on, such as "hipaa". A node
+                  needs all of them. Unlike a service's own runOn tags, these apply to everything the project
+                  runs: services, databases, buckets, builds, and the jobs that back up and restore them.
+                items:
+                  maxLength: 40
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: set
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.
@@ -340,6 +353,7 @@ spec:
                   - name
                   - namespace
                   type: object
+                maxItems: 100
                 type: array
               pullRequests:
                 description: PullRequests are the open pull request environments.

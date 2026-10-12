@@ -185,6 +185,8 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 		metrics = databaseMetricScope(&db, namespace)
 	case "cluster":
 		metrics = metricScope{all: true}
+	case "operator":
+		metrics = metricScope{operator: true}
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 		return

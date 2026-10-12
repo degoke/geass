@@ -93,7 +93,10 @@ type GeassNodeStatus struct {
 	// Message is a human-readable status message.
 	Message string `json:"message,omitempty"`
 
-	// LastHeartbeatTime is the last time the node was observed healthy.
+	// LastHeartbeatTime is no longer updated. Kubelet keeps a heartbeat on the Kubernetes node (its Ready
+	// condition and node lease), and rewriting one here once a minute for every node cost a write and an
+	// event for nothing that read it.
+	// +optional
 	LastHeartbeatTime metav1.Time `json:"lastHeartbeatTime,omitempty"`
 
 	// NodeName is the name of the Kubernetes node.

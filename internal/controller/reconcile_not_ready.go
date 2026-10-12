@@ -57,6 +57,7 @@ func finishNotReady(
 	outcome := platform.ApplyNotReady(conditions, state, generation, message)
 	writeReconcileRetryToAPI(retry, outcome.Retry)
 	recordProvisionOnNotReady(provision, message, outcome)
+	platform.CountNotReady(platform.ReadyConditionReason(outcome.Conditions))
 	result := ctrl.Result{}
 	if outcome.RequeueAfter > 0 {
 		result.RequeueAfter = outcome.RequeueAfter

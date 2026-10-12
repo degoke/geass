@@ -74,9 +74,10 @@ func pinnedNodePlacement(db *geassv1alpha1.GeassDatabase) platform.Placement {
 
 // jobPlacement is where the short-lived jobs of a database (backups, restores, creating logical
 // databases) run: in its region, near it, but never pinned to the tags it asked for, so they do not
-// take room on nodes reserved for the database itself.
+// take room on nodes reserved for the database itself. They do keep the tags its project requires:
+// a dump of the data is as sensitive as the data, so it stays on the nodes the data is allowed on.
 func jobPlacement(p platform.Placement) platform.Placement {
-	return platform.NewPlacement(p.Region, nil)
+	return p.Jobs()
 }
 
 // cnpgAffinity restricts a Postgres cluster's instances to the placement. Nil leaves CNPG's defaults.

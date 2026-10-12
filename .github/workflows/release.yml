@@ -38,11 +38,20 @@ jobs:
       - name: Rename arm64 binary
         run: mv bin/geass bin/geass-linux-arm64
 
+      # The command line embeds nothing and needs no Docker, so it is built for every platform people use.
+      - name: Build geass command line
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            make build-cli CLI_GOOS="${target%/*}" CLI_GOARCH="${target#*/}" CLI_VERSION="${GITHUB_REF_NAME}"
+          done
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@a149427bb2130fa9360a5693a74a8750d6590fcf # v2.2.0
         with:
           files: |
             bin/geass-linux-amd64
             bin/geass-linux-arm64
+            bin/geass-cli-*
             scripts/install.sh
+            scripts/install-cli.sh
           generate_release_notes: true

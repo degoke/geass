@@ -68,6 +68,18 @@ vet: stub-installer-assets ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: k3s-up
+k3s-up: ## Start a throwaway k3s in Docker with Geass's CRDs, for the k3s integration tests. Use: eval "$$(make -s k3s-up)"
+	@hack/k3s-up.sh
+
+.PHONY: k3s-down
+k3s-down: ## Remove the k3s that k3s-up started.
+	@hack/k3s-down.sh
+
+.PHONY: test-k3s-serverless
+test-k3s-serverless: ## Run the scale-to-zero and function schedule test against the k3s that k3s-up started (takes about 15 minutes the first time).
+	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestServerlessFunctionsOnK3s -v -timeout 40m
+
 .PHONY: test-k3s-integration
 test-k3s-integration: ## Run K3s HelmChart integration tests (requires K3S_INTEGRATION=true and kubeconfig).
 	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/...
@@ -211,6 +223,15 @@ prepare-installer-assets: require-docker manifests generate kustomize ## Build o
 .PHONY: build-geass
 build-geass: prepare-installer-assets ## Build geass installer with embedded operator image and manifests.
 	GOOS=$(GEASS_GOOS) GOARCH=$(GEASS_GOARCH) go build -o bin/geass ./cmd/geass/
+
+CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+CLI_GOOS ?= $(shell go env GOOS)
+CLI_GOARCH ?= $(shell go env GOARCH)
+
+.PHONY: build-cli
+build-cli: ## Build the geass command line (cmd/geass-cli) for CLI_GOOS/CLI_GOARCH into bin/geass-cli-<os>-<arch>.
+	CGO_ENABLED=0 GOOS=$(CLI_GOOS) GOARCH=$(CLI_GOARCH) go build -trimpath -ldflags "-s -w -X main.version=$(CLI_VERSION)" \
+		-o bin/geass-cli-$(CLI_GOOS)-$(CLI_GOARCH)$(if $(filter windows,$(CLI_GOOS)),.exe,) ./cmd/geass-cli/
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

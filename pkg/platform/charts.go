@@ -30,6 +30,22 @@ const (
 	LonghornTargetNS     = "longhorn-system"
 	LonghornReleaseChart = "longhorn"
 
+	// KEDA and its HTTP add-on make scale to zero. They install into one namespace, and the add-on's chart
+	// names its proxy Service after the chart (not the release), which is what ServerlessInterceptorHost
+	// relies on. 0.16 is the add-on line current when this was written; its HTTPScaledObject is v1alpha1.
+	ServerlessKEDAChartName    = "geass-keda"
+	ServerlessKEDAChartRepo    = "https://kedacore.github.io/charts"
+	ServerlessKEDAChartVersion = "2.21.0"
+	ServerlessKEDAReleaseChart = "keda"
+	ServerlessHTTPChartName    = "geass-keda-http"
+	ServerlessHTTPChartVersion = "0.16.0"
+	ServerlessHTTPReleaseChart = "keda-add-ons-http"
+	ServerlessTargetNS         = "keda"
+	// ServerlessInterceptorHost is where requests for a service that may be asleep are sent: the add-on's
+	// proxy, which wakes the service and passes the request on.
+	ServerlessInterceptorHost = "keda-add-ons-http-interceptor-proxy." + ServerlessTargetNS + ".svc.cluster.local"
+	ServerlessInterceptorPort = 8080
+
 	CNPGChartName    = "geass-cloudnative-pg"
 	CNPGChartRepo    = "https://cloudnative-pg.github.io/charts"
 	CNPGChartVersion = "0.23.2"

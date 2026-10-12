@@ -21,6 +21,7 @@ import (
 type AppLiveSettings struct {
 	Replicas          *int32
 	Autoscaling       *geassv1alpha1.GeassAppAutoscalingSpec
+	ScaleToZero       *geassv1alpha1.GeassAppScaleToZeroSpec
 	Ingress           geassv1alpha1.GeassAppIngressSpec
 	Metrics           geassv1alpha1.GeassAppMetricsSpec
 	LogRetentionHours int32
@@ -37,6 +38,7 @@ func LiveAppSettings(spec *geassv1alpha1.GeassAppSpec) AppLiveSettings {
 	live := AppLiveSettings{
 		Replicas:          copied.Replicas,
 		Autoscaling:       copied.Autoscaling,
+		ScaleToZero:       copied.ScaleToZero,
 		Ingress:           copied.Ingress,
 		Metrics:           copied.Metrics,
 		LogRetentionHours: copied.Logs.RetentionHours,
@@ -55,6 +57,7 @@ func LiveAppSettings(spec *geassv1alpha1.GeassAppSpec) AppLiveSettings {
 func ApplyLiveAppSettings(spec *geassv1alpha1.GeassAppSpec, live AppLiveSettings) {
 	spec.Replicas = live.Replicas
 	spec.Autoscaling = live.Autoscaling
+	spec.ScaleToZero = live.ScaleToZero
 	spec.Ingress = live.Ingress
 	spec.Metrics = live.Metrics
 	spec.Logs.RetentionHours = live.LogRetentionHours

@@ -83,6 +83,39 @@ type GeassAppFunctionSource struct {
 	// Code is the program. It must serve HTTP on the port in the PORT environment variable.
 	// +kubebuilder:validation:MaxLength=262144
 	Code string `json:"code"`
+	// Mode says what Code is. "http" (the default) is a program that serves HTTP itself. "event" is a
+	// handler, a function that is given an event for each request and returns the response, with Geass
+	// serving HTTP for it.
+	// +kubebuilder:validation:Enum=http;event
+	// +kubebuilder:default=http
+	// +optional
+	Mode string `json:"mode,omitempty"`
+	// Triggers call the function on a schedule. Each run is an HTTP request to the function, which wakes
+	// it first when it is asleep.
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Triggers []GeassFunctionTrigger `json:"triggers,omitempty"`
+}
+
+// GeassFunctionTrigger calls a function on a schedule.
+type GeassFunctionTrigger struct {
+	// Name identifies the trigger and names its CronJob.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$`
+	Name string `json:"name"`
+	// Schedule is a cron expression in UTC, such as "*/15 * * * *" or "@daily".
+	// +kubebuilder:validation:MaxLength=100
+	Schedule string `json:"schedule"`
+	// Path is the path that is called. It defaults to /.
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^/.*$`
+	// +optional
+	Path string `json:"path,omitempty"`
+	// Payload is the JSON body of the request. It defaults to {"trigger":"cron","name":"<name>"}.
+	// +kubebuilder:validation:MaxLength=4096
+	// +optional
+	Payload string `json:"payload,omitempty"`
 }
 
 // GeassAppSource is a mutually exclusive image, Git, or function source.
@@ -198,6 +231,27 @@ type GeassAppAutoscalingSpec struct {
 	TargetCPUUtilization *int32 `json:"targetCPUUtilization,omitempty"`
 }
 
+// GeassAppScaleToZeroSpec lets a service sleep while nothing uses it. When it has had no requests for IdleSeconds
+// it is stopped, and the next request wakes it: the request is held for the few seconds it takes to start, and
+// then answered. It needs the cluster's serverless add-on and a public host for the service, because it is the
+// traffic from that host that wakes it.
+type GeassAppScaleToZeroSpec struct {
+	// Enabled turns scale to zero on.
+	Enabled bool `json:"enabled"`
+	// IdleSeconds is how long without a request before the service is stopped.
+	// +kubebuilder:validation:Minimum=30
+	// +kubebuilder:validation:Maximum=86400
+	// +kubebuilder:default=300
+	// +optional
+	IdleSeconds int32 `json:"idleSeconds,omitempty"`
+	// MaxReplicas is how many copies it may scale up to under load.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=3
+	// +optional
+	MaxReplicas int32 `json:"maxReplicas,omitempty"`
+}
+
 // GeassAppSpec defines the desired state of GeassApp.
 type GeassAppSpec struct {
 	// Project is the owning project.
@@ -290,6 +344,11 @@ type GeassAppSpec struct {
 	// RunOn asks for nodes with particular tags, on top of the project's region.
 	// +optional
 	RunOn GeassWorkloadPlacement `json:"runOn,omitempty"`
+
+	// ScaleToZero lets the service sleep when it is idle and wakes it on the next request. It replaces
+	// Replicas and Autoscaling as what decides how many copies run.
+	// +optional
+	ScaleToZero *GeassAppScaleToZeroSpec `json:"scaleToZero,omitempty"`
 }
 
 // GeassAppStatus defines the observed state of GeassApp.

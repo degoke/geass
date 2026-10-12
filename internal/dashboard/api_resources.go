@@ -19,6 +19,8 @@ import (
 
 func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case strings.HasPrefix(r.URL.Path, v1Prefix):
+		s.v1Router().ServeHTTP(w, r)
 	case r.URL.Path == "/api/session":
 		s.handleDashboardSession(w, r)
 	case r.URL.Path == "/api/bootstrap":
@@ -55,6 +57,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAppConsoleWS(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/console/ws"))
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "apps", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/metrics"))
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/compliance"):
+		s.handleAPIProjectCompliance(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/compliance"))
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/logs/history"):
 		s.handleAPIProjectLogHistory(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs/history"))
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/logs/stream"):
@@ -65,6 +69,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIMetrics(w, r, "databases", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/databases/"), "/metrics"))
 	case r.URL.Path == "/api/cluster/metrics":
 		s.handleAPIMetrics(w, r, "cluster", "cluster")
+	case r.URL.Path == "/api/operator/metrics":
+		s.handleAPIMetrics(w, r, "operator", "operator")
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "projects", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/metrics"))
 	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -192,7 +198,7 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 	project := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/github/repos")
 	connection, err := s.projectGitHubConnection(r.Context(), project)
 	if err != nil || connection == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"items": []githubRepository{}})
+		writeJSON(w, http.StatusOK, map[string]any{jsonItems: []githubRepository{}})
 		return
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
@@ -205,7 +211,7 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": repos})
+	writeJSON(w, http.StatusOK, map[string]any{jsonItems: repos})
 }
 
 func (s *Server) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {

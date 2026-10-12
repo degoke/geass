@@ -394,6 +394,16 @@ func (s *Server) cloneEnvironmentResources(ctx context.Context, project *geassv1
 		one := int32(1)
 		clone.Spec.Replicas = &one
 		clone.Spec.Autoscaling = nil
+		// A schedule belongs to the environment it was made for: a copy in every pull request would repeat
+		// whatever it does (mail, writes to a shared store) once per open pull request.
+		if clone.Spec.Source.Function != nil {
+			clone.Spec.Source.Function.Triggers = nil
+		}
+		// Most open pull requests are idle most of the time, so they sleep unless the service said otherwise.
+		// A service without a public host, or a cluster without the add-on, runs awake as before.
+		if clone.Spec.ScaleToZero == nil {
+			clone.Spec.ScaleToZero = &geassv1alpha1.GeassAppScaleToZeroSpec{Enabled: true}
+		}
 		if git := clone.Spec.Source.Git; git != nil {
 			git.Commit = ""
 			if git.Repository == repo {

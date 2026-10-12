@@ -11,8 +11,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -25,6 +28,9 @@ type GeassPlatformConfigReconciler struct {
 
 	// now overrides the wall clock in tests; nil means time.Now.
 	now func() time.Time
+
+	// tunnel remembers what was last sent to Cloudflare, so a pass that would send the same thing is skipped.
+	tunnel tunnelSync
 }
 
 func (r *GeassPlatformConfigReconciler) clock() time.Time {
@@ -147,7 +153,26 @@ func domainConditionUnchanged(before, after *metav1.Condition) bool {
 }
 
 func (r *GeassPlatformConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).For(&geassv1alpha1.GeassPlatformConfig{}).Named("geassplatformconfig").Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&geassv1alpha1.GeassPlatformConfig{}).
+		// The tunnel's routes are built from the apps' hosts, so a service getting, changing or losing a host
+		// has to reach it. Only spec changes matter, and they are what advances an app's generation.
+		Watches(&geassv1alpha1.GeassApp{}, handler.EnqueueRequestsFromMapFunc(r.configsForApp), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Named("geassplatformconfig").
+		Complete(r)
+}
+
+// configsForApp maps an app to the platform config, whose tunnel carries the app's routes.
+func (r *GeassPlatformConfigReconciler) configsForApp(ctx context.Context, _ client.Object) []ctrl.Request {
+	var configs geassv1alpha1.GeassPlatformConfigList
+	if err := r.List(ctx, &configs, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(configs.Items))
+	for i := range configs.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&configs.Items[i])})
+	}
+	return requests
 }
 
 type GeassCloudConnectionReconciler struct {
@@ -164,23 +189,28 @@ func (r *GeassCloudConnectionReconciler) Reconcile(ctx context.Context, req ctrl
 	if err := r.Get(ctx, req.NamespacedName, &connection); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	latest := connection.DeepCopy()
+	ready, status, reason, message := r.cloudConnectionState(ctx, &connection)
+	latest := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&connection), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.Available = ready
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, status, reason, message)
+	})
+	return ctrl.Result{}, err
+}
+
+// cloudConnectionState works out whether a cloud connection's credentials are usable and says why not.
+func (r *GeassCloudConnectionReconciler) cloudConnectionState(ctx context.Context, connection *geassv1alpha1.GeassCloudConnection) (ready bool, status metav1.ConditionStatus, reason, message string) {
 	if connection.Spec.SecretRef.Name == "" {
-		latest.Status.Available = false
-		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "CredentialsMissing", "A credentials secret is required")
-		return ctrl.Result{}, r.Status().Update(ctx, latest)
+		return false, metav1.ConditionFalse, "CredentialsMissing", "A credentials secret is required"
 	}
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: connection.Namespace}, secret); err != nil {
-		latest.Status.Available = false
-		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionFalse, "CredentialsMissing", "Connection credentials are unavailable")
-		return ctrl.Result{}, r.Status().Update(ctx, latest)
+		return false, metav1.ConditionFalse, "CredentialsMissing", "Connection credentials are unavailable"
 	}
-	ready := false
-	reason, message := "CredentialsReady", "Cloud connection is ready"
+	reason, message = "CredentialsReady", "Cloud connection is ready"
 	switch connection.Spec.Provider {
 	case geassv1alpha1.CloudProviderAWS:
 		ready = secretValue(secret, platform.SecretKeyAccessKeyID) != "" && secretValue(secret, platform.SecretKeySecretAccessKey) != ""
@@ -188,7 +218,7 @@ func (r *GeassCloudConnectionReconciler) Reconcile(ctx context.Context, req ctrl
 			reason, message = "CredentialsMissing", "AWS access key and secret key are required"
 		}
 	case geassv1alpha1.CloudProviderPlanetScale:
-		token, org := platform.PlanetScaleAccess(connection, secret)
+		token, org := platform.PlanetScaleAccess(*connection, secret)
 		ready = token != "" && org != ""
 		if !ready {
 			reason, message = "CredentialsMissing", "PlanetScale token and organization are required"
@@ -196,13 +226,11 @@ func (r *GeassCloudConnectionReconciler) Reconcile(ctx context.Context, req ctrl
 	default:
 		reason, message = "UnsupportedProvider", fmt.Sprintf("unsupported provider %q", connection.Spec.Provider)
 	}
-	status := metav1.ConditionFalse
+	status = metav1.ConditionFalse
 	if ready {
 		status = metav1.ConditionTrue
 	}
-	latest.Status.Available = ready
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, status, reason, message)
-	return ctrl.Result{}, r.Status().Update(ctx, latest)
+	return ready, status, reason, message
 }
 
 func (r *GeassCloudConnectionReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -33,6 +33,20 @@ function formatRequests(value) {
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(2)} req/s`;
 }
 
+function formatSeconds(value) {
+  if (value >= 10) return `${value.toFixed(0)} s`;
+  if (value >= 1) return `${value.toFixed(1)} s`;
+  return `${(value * 1000).toFixed(value >= 0.1 ? 0 : 1)} ms`;
+}
+
+function formatPerSecond(value) {
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(2)} /s`;
+}
+
+function formatCount(value) {
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}`;
+}
+
 function formatFraction(value) {
   return `${(Math.max(0, value) * 100).toFixed(value >= 0.1 ? 0 : 1)}%`;
 }
@@ -96,6 +110,11 @@ export function LineChart({ points, format }) {
   );
 }
 
+/** Whole-cluster scopes ("cluster", "operator") have no name in the path: /api/cluster/metrics. */
+function metricsPath(scope, name) {
+  return scope === name ? `/api/${scope}/metrics` : `/api/${scope}/${name}/metrics`;
+}
+
 /**
  * Time-series metrics for a service (scope="apps") or a whole project (scope="projects").
  * Data comes from Prometheus through the dashboard API.
@@ -104,7 +123,7 @@ export function ServiceMetrics({ scope, name, environment, charts = CHARTS }) {
   const [range, setRange] = useState("15m");
   const query = useQuery({
     queryKey: ["metrics", scope, name, environment || "", range],
-    queryFn: () => api(`/api/${scope}/${name}/metrics?window=${range}${environment ? `&environment=${encodeURIComponent(environment)}` : ""}`),
+    queryFn: () => api(`${metricsPath(scope, name)}?window=${range}${environment ? `&environment=${encodeURIComponent(environment)}` : ""}`),
     refetchInterval: 15000,
   });
   const available = query.data?.available;
@@ -157,6 +176,21 @@ export const CLUSTER_CHARTS = [
   { key: "nodeMemory", title: "Machines memory in use", format: formatFraction },
   { key: "network", title: "Network out", format: formatRate },
   { key: "networkIn", title: "Network in", format: formatRate },
+];
+
+/**
+ * Charts for Geass itself: how the operator is doing. Failing reconciles and a deep queue mean it is behind;
+ * slow API answers mean the Kubernetes API server is the problem and not the operator; the two status-write
+ * lines show how much of what it would write it no longer has to.
+ */
+export const OPERATOR_CHARTS = [
+  { key: "reconcileErrors", title: "Failed reconciles", format: formatPerSecond },
+  { key: "reconcileTime", title: "Reconcile time (slowest 1%)", format: formatSeconds },
+  { key: "apiLatency", title: "API server answer time (slowest 1%)", format: formatSeconds },
+  { key: "apiRequests", title: "Requests to the API server", format: formatPerSecond },
+  { key: "queueDepth", title: "Work waiting", format: formatCount },
+  { key: "statusWrites", title: "Status writes", format: formatPerSecond },
+  { key: "statusSkipped", title: "Status writes avoided", format: formatPerSecond },
 ];
 
 export { CHARTS as METRIC_CHARTS };

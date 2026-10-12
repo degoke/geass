@@ -25,6 +25,10 @@ const (
 	DashboardIngressName          = "geass-dashboard"
 	GeassDashboardProbePath       = "/geass-probe"
 	RequeueAfterDomainVerify      = 5 * time.Second
+	// RequeueAfterCloudflareResync is how often a tunnel that is in sync is checked again. Changes the
+	// operator makes itself (an app getting a host) are noticed at once, so this only catches drift on
+	// Cloudflare's side, such as a route or DNS record deleted by hand.
+	RequeueAfterCloudflareResync = 5 * time.Minute
 
 	// DomainVerifyTimeout is how long the controller polls at RequeueAfterDomainVerify
 	// before reporting the dashboard domain as timed out. DNS propagation and

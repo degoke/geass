@@ -271,6 +271,13 @@ func (s *Server) handleAPIProjectLogHistory(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "project not found"})
 		return
 	}
+	if len(project.Spec.RequiredTags) > 0 {
+		// The shared log store may sit on any node, so logs of a project limited to tagged nodes are never
+		// sent to it. The live logs are read from the nodes themselves and are not affected.
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": []string{},
+			"message": "Log history is not kept for projects that require node tags, so their logs never leave the nodes they run on. Live logs are still available."})
+		return
+	}
 	namespaces, err := projectMetricNamespaces(&project, params.environment)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "That environment is not part of this project"})

@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"strings"
 
@@ -98,6 +100,68 @@ func LonghornRegionalStorageClassParameters(replicas int, region string) map[str
 	params := LonghornStorageClassParameters(replicas)
 	params["nodeSelector"] = LonghornRegionTag(region)
 	return params
+}
+
+// LonghornTagPrefix identifies the tags Geass owns on a Longhorn node that mirror a node's Geass tags.
+const LonghornTagPrefix = "geass-tag-"
+
+// LonghornTag is the tag Geass puts on the Longhorn nodes that carry a Geass node tag, so a storage class
+// can keep a volume's copies on the nodes a project requires.
+func LonghornTag(tag string) string { return LonghornTagPrefix + tag }
+
+// LonghornGeneralTag is put on the Longhorn nodes that are open to everyone's volumes, once any node is a
+// compliance node. A node reserved for a compliance tag must not hold another project's replicas, and
+// Longhorn only includes (it cannot exclude), so the general classes name this tag instead.
+const LonghornGeneralTag = "geass-general"
+
+// TaggedReplicatedClassPrefix starts the name of a replicated class restricted to nodes with required
+// tags. It deliberately does not start with the regional prefix, so a class is never mistaken for a
+// region's.
+const TaggedReplicatedClassPrefix = "geass-tagged-"
+
+// TaggedReplicatedClass is the replicated class that keeps a volume's copies on the nodes a project
+// requires: those in the region (when there is one) that carry every tag. The name is a short hash of
+// the scope, so two projects with the same requirements share a class.
+func TaggedReplicatedClass(region string, tags []string) string {
+	sum := sha256.Sum256([]byte(region + "\x00" + strings.Join(NewPlacement("", tags).Tags, ",")))
+	return TaggedReplicatedClassPrefix + hex.EncodeToString(sum[:])[:10]
+}
+
+// LonghornNodeSelector is the nodeSelector value that limits a class to a region and to nodes with all
+// of the tags. Longhorn only places a replica on a node that has every tag listed.
+func LonghornNodeSelector(region string, tags []string) string {
+	var selectors []string
+	if region != "" {
+		selectors = append(selectors, LonghornRegionTag(region))
+	}
+	for _, tag := range NewPlacement("", tags).Tags {
+		selectors = append(selectors, LonghornTag(tag))
+	}
+	return strings.Join(selectors, ",")
+}
+
+// LonghornTaggedStorageClassParameters are the parameters of a tagged replicated class.
+func LonghornTaggedStorageClassParameters(replicas int, region string, tags []string) map[string]string {
+	params := LonghornStorageClassParameters(replicas)
+	params["nodeSelector"] = LonghornNodeSelector(region, tags)
+	return params
+}
+
+// IsScopedReplicatedClass reports whether a class is one of the replicated classes made for a region or
+// for required tags, as opposed to the global one. They are made by the cluster controller once the
+// nodes they cover are ready.
+func IsScopedReplicatedClass(class string) bool {
+	return strings.HasPrefix(class, RegionalReplicatedClassPrefix) || strings.HasPrefix(class, TaggedReplicatedClassPrefix)
+}
+
+// DatabaseStorageClassFor is DatabaseStorageClassIn for a database placed with required tags: the
+// replicated class keeps the copies on the nodes the project requires, and not just in its region.
+func DatabaseStorageClassFor(engine geassv1alpha1.GeassDatabaseEngine, highAvailability bool, placement Placement) string {
+	class := DatabaseStorageClass(engine, highAvailability)
+	if class == StorageClassReplicated && len(placement.Required) > 0 {
+		return TaggedReplicatedClass(placement.Region, placement.Required)
+	}
+	return DatabaseStorageClassIn(engine, highAvailability, placement.Region)
 }
 
 // DatabaseStorageClassIn is DatabaseStorageClass for a database pinned to a region: the replicated

@@ -19,6 +19,9 @@ type metricScope struct {
 	volumePattern string
 	// all makes the scope the whole cluster instead of a set of namespaces. Only the cluster page uses it.
 	all bool
+	// operator makes the scope Geass itself: the operator's own metrics, not any workload's. It holds
+	// nothing of any project, and only the cluster page uses it.
+	operator bool
 }
 
 // matchNothing is a namespace no workload can have (namespaces are lowercase DNS labels), so an empty
@@ -62,6 +65,9 @@ type metricSeriesQuery struct {
 // queries returns the PromQL for each chart. Network series count every byte the pods send or receive,
 // including traffic to other services in the cluster, not only what leaves through the public ingress.
 func (m metricScope) queries() []metricSeriesQuery {
+	if m.operator {
+		return operatorQueries()
+	}
 	selector := m.selector()
 	queries := []metricSeriesQuery{
 		{"cpu", `sum(rate(container_cpu_usage_seconds_total{` + selector + `,container!=""}[2m]))`},
@@ -83,4 +89,19 @@ func (m metricScope) queries() []metricSeriesQuery {
 		)
 	}
 	return queries
+}
+
+// operatorQueries are the charts of the operator's health: how much it fails and how long it takes, how deep
+// its queues are, how the API server is treating it, and how many status writes it makes. The first four are
+// what to look at when the platform feels slow; the last shows what the status-write guard saves.
+func operatorQueries() []metricSeriesQuery {
+	return []metricSeriesQuery{
+		{"reconcileErrors", `sum(rate(controller_runtime_reconcile_errors_total[2m]))`},
+		{"reconcileTime", `histogram_quantile(0.99, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket[5m])))`},
+		{"apiLatency", `histogram_quantile(0.99, sum by (le) (rate(geass_apiserver_client_request_duration_seconds_bucket{verb!="WATCH"}[5m])))`},
+		{"apiRequests", `sum(rate(rest_client_requests_total[2m]))`},
+		{"queueDepth", `sum(workqueue_depth{name=~"geass.*"})`},
+		{"statusWrites", `sum(rate(geass_status_writes_total{result="written"}[5m]))`},
+		{"statusSkipped", `sum(rate(geass_status_writes_total{result="skipped"}[5m]))`},
+	}
 }

@@ -37,6 +37,9 @@ func TestAppRolloutChangedIgnoresLiveSettings(t *testing.T) {
 		"autoscaling": func(s *geassv1alpha1.GeassAppSpec) {
 			s.Autoscaling = &geassv1alpha1.GeassAppAutoscalingSpec{MaxReplicas: 4}
 		},
+		"scaleToZero": func(s *geassv1alpha1.GeassAppSpec) {
+			s.ScaleToZero = &geassv1alpha1.GeassAppScaleToZeroSpec{Enabled: true, IdleSeconds: 60}
+		},
 		"domain":       func(s *geassv1alpha1.GeassAppSpec) { s.Ingress.Host = "other.example.com" },
 		"tls":          func(s *geassv1alpha1.GeassAppSpec) { s.Ingress.TLSEnabled = false },
 		"metrics":      func(s *geassv1alpha1.GeassAppSpec) { s.Metrics.Enabled = true },

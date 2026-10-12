@@ -1019,6 +1019,33 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              scaleToZero:
+                description: |-
+                  ScaleToZero lets the service sleep when it is idle and wakes it on the next request. It replaces
+                  Replicas and Autoscaling as what decides how many copies run.
+                properties:
+                  enabled:
+                    description: Enabled turns scale to zero on.
+                    type: boolean
+                  idleSeconds:
+                    default: 300
+                    description: IdleSeconds is how long without a request before
+                      the service is stopped.
+                    format: int32
+                    maximum: 86400
+                    minimum: 30
+                    type: integer
+                  maxReplicas:
+                    default: 3
+                    description: MaxReplicas is how many copies it may scale up to
+                      under load.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               secretData:
                 additionalProperties:
                   type: string
@@ -1079,6 +1106,16 @@ spec:
                           port in the PORT environment variable.
                         maxLength: 262144
                         type: string
+                      mode:
+                        default: http
+                        description: |-
+                          Mode says what Code is. "http" (the default) is a program that serves HTTP itself. "event" is a
+                          handler, a function that is given an event for each request and returns the response, with Geass
+                          serving HTTP for it.
+                        enum:
+                        - http
+                        - event
+                        type: string
                       runtime:
                         description: Runtime selects the language runtime that executes
                           Code.
@@ -1087,6 +1124,44 @@ spec:
                         - node
                         - python
                         type: string
+                      triggers:
+                        description: |-
+                          Triggers call the function on a schedule. Each run is an HTTP request to the function, which wakes
+                          it first when it is asleep.
+                        items:
+                          description: GeassFunctionTrigger calls a function on a
+                            schedule.
+                          properties:
+                            name:
+                              description: Name identifies the trigger and names its
+                                CronJob.
+                              pattern: ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$
+                              type: string
+                            path:
+                              description: Path is the path that is called. It defaults
+                                to /.
+                              maxLength: 256
+                              pattern: ^/.*$
+                              type: string
+                            payload:
+                              description: Payload is the JSON body of the request.
+                                It defaults to {"trigger":"cron","name":"<name>"}.
+                              maxLength: 4096
+                              type: string
+                            schedule:
+                              description: Schedule is a cron expression in UTC, such
+                                as "*/15 * * * *" or "@daily".
+                              maxLength: 100
+                              type: string
+                          required:
+                          - name
+                          - schedule
+                          type: object
+                        maxItems: 8
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
                     required:
                     - code
                     - runtime

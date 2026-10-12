@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,13 @@ type Server struct {
 	tokenUsed     sync.Map // API token id -> time its last use was stored
 	loginFailures map[string]loginAttempt
 	eventHub      *dashboardEventHub
+
+	// devices are the command-line sign-ins waiting to be approved.
+	devices deviceFlows
+
+	// v1Mux serves the reads that exist only in the v1 API; it is built on first use.
+	v1Once sync.Once
+	v1Mux  *http.ServeMux
 }
 
 // Start implements manager.Runnable.
@@ -171,7 +179,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
 	inner.HandleFunc("/github/callback", s.handleGitHubCallback)
 	inner.HandleFunc("/", s.handleSPA)
-	mux.Handle("/", securityHeaders(s.withAuth(inner)))
+	mux.Handle("/", securityHeaders(s.v1Adapter(s.withAuth(inner))))
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -330,6 +338,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectBackupStorage(w, r, name)
 		case len(parts) == 2 && parts[1] == "network":
 			s.handleProjectNetwork(w, r, name)
+		case len(parts) == 2 && parts[1] == "compliance":
+			s.handleProjectCompliance(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "install":
 			s.handleProjectGitHubInstall(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "disconnect":
@@ -1000,6 +1010,10 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
+	if err := applyScaleToZeroFromForm(r, app); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
 	if source == "git" {
 		if !draft {
 			if err := s.platformGitHubReadyError(r.Context()); err != nil {
@@ -1037,15 +1051,22 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		if runtime == "" {
 			runtime = "bun"
 		}
+		mode := strings.TrimSpace(r.FormValue("mode"))
 		code := r.FormValue("code")
 		if code == "" {
-			code = platform.FunctionStarterCode(runtime)
+			code = platform.FunctionStarterCodeFor(runtime, mode)
 		}
-		if err := platform.ValidateFunction(runtime, code); err != nil {
+		triggers, err := functionTriggersFromForm(r)
+		if err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
-		app.Spec.Source = geassv1alpha1.GeassAppSource{Function: &geassv1alpha1.GeassAppFunctionSource{Runtime: runtime, Code: code}}
+		function := &geassv1alpha1.GeassAppFunctionSource{Runtime: runtime, Code: code, Mode: mode, Triggers: triggers}
+		if err := platform.ValidateFunctionSource(function); err != nil {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
+		app.Spec.Source = geassv1alpha1.GeassAppSource{Function: function}
 	}
 	app.Spec.Deploy.Enabled = false
 	initializeAppPendingChanges(app)
@@ -1095,10 +1116,15 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 			Image:       image, ImageDigest: app.Status.ResolvedImage, Replicas: app.Spec.Replicas,
 			ChangeTitle: changeTitle, Source: source, Actor: "Dashboard",
 		},
-		Status: geassv1alpha1.GeassDeploymentStatus{Phase: "Recorded", StartedAt: &now, CompletedAt: &now},
 	}
 	if err := s.Client.Create(ctx, deployment); err != nil {
 		return "", err
+	}
+	// Status is ignored when an object is created (it has its own endpoint), so it is written after.
+	if _, err := platform.PatchStatus(ctx, s.Client, deployment, func() {
+		deployment.Status = geassv1alpha1.GeassDeploymentStatus{Phase: "Recorded", StartedAt: &now, CompletedAt: &now}
+	}); err != nil {
+		return deployment.Name, err
 	}
 	var history geassv1alpha1.GeassDeploymentList
 	if err := s.Client.List(ctx, &history, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil {
@@ -1746,6 +1772,55 @@ func applyAutoscalingFromForm(r *http.Request, app *geassv1alpha1.GeassApp) erro
 	return nil
 }
 
+// applyScalingFromForm applies the scaling settings an update form carries, and none it does not.
+func applyScalingFromForm(r *http.Request, app *geassv1alpha1.GeassApp) error {
+	if formHasValue(r, "autoscaling", "maxReplicas", "minReplicas", "targetCPU") {
+		if err := applyAutoscalingFromForm(r, app); err != nil {
+			return err
+		}
+	}
+	if formHasValue(r, "scaleToZero", "idleSeconds", "scaleToZeroMax") {
+		return applyScaleToZeroFromForm(r, app)
+	}
+	return nil
+}
+
+// applyScaleToZeroFromForm sets whether a service sleeps when idle, and after how long. A service that sleeps
+// has its copies counted by the add-on that wakes it, so it cannot also be autoscaled on CPU. Settings that
+// are left out of the form keep their value, so a form that only sets the idle time does not switch it on or off.
+func applyScaleToZeroFromForm(r *http.Request, app *geassv1alpha1.GeassApp) error {
+	spec := app.Spec.ScaleToZero
+	if spec == nil {
+		spec = &geassv1alpha1.GeassAppScaleToZeroSpec{}
+	}
+	spec = spec.DeepCopy()
+	if value := strings.TrimSpace(r.FormValue("scaleToZero")); value != "" {
+		spec.Enabled = value == "on" || value == boolTrue || value == "1"
+	}
+	if value := strings.TrimSpace(r.FormValue("idleSeconds")); value != "" {
+		idle := intFromForm(r, "idleSeconds", 0)
+		if idle < 30 || idle > 86400 {
+			return platform.Userf("Idle time must be between 30 seconds and 24 hours")
+		}
+		spec.IdleSeconds = int32(idle)
+	}
+	if value := strings.TrimSpace(r.FormValue("scaleToZeroMax")); value != "" {
+		most := intFromForm(r, "scaleToZeroMax", 0)
+		if most < 1 || most > 100 {
+			return platform.Userf("A service that sleeps when idle can run at most 1 to 100 copies when awake")
+		}
+		spec.MaxReplicas = int32(most)
+	}
+	if !spec.Enabled && app.Spec.ScaleToZero == nil {
+		return nil
+	}
+	if spec.Enabled && app.Spec.Autoscaling != nil {
+		return platform.Userf("Scale to zero decides how many copies run, so turn CPU autoscaling off to use it")
+	}
+	app.Spec.ScaleToZero = spec
+	return nil
+}
+
 func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -1862,11 +1937,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 		}
 		app.Spec.Resources = res
 	}
-	if formHasValue(r, "autoscaling", "maxReplicas", "minReplicas", "targetCPU") {
-		if err := applyAutoscalingFromForm(r, &app); err != nil {
-			redirectFormUserError(w, r, fallback, err)
-			return
-		}
+	if err := applyScalingFromForm(r, &app); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	if formHasValue(r, "host") {
 		app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
@@ -2002,24 +2075,60 @@ func parseReplicas(value string) (int32, error) {
 	return int32(parsed), nil
 }
 
-// applyFunctionSourceForm updates a function's runtime and code from the form. Nothing changes when the
-// service is not a function, the form has neither field, or the new source is invalid.
+// applyFunctionSourceForm updates a function's runtime, code, mode and triggers from the form. Nothing changes
+// when the service is not a function, the form has none of these fields, or the new source is invalid.
 func applyFunctionSourceForm(r *http.Request, function *geassv1alpha1.GeassAppFunctionSource) error {
-	if function == nil || !formHasValue(r, "functionCode", "functionRuntime") {
+	if function == nil || !formHasValue(r, "functionCode", "functionRuntime", "functionMode", "functionTriggers") {
 		return nil
 	}
-	runtime, code := function.Runtime, function.Code
+	updated := function.DeepCopy()
 	if formHasValue(r, "functionRuntime") {
-		runtime = strings.TrimSpace(r.FormValue("functionRuntime"))
+		updated.Runtime = strings.TrimSpace(r.FormValue("functionRuntime"))
 	}
 	if formHasValue(r, "functionCode") {
-		code = r.FormValue("functionCode")
+		updated.Code = r.FormValue("functionCode")
 	}
-	if err := platform.ValidateFunction(runtime, code); err != nil {
+	if formHasValue(r, "functionMode") {
+		updated.Mode = strings.TrimSpace(r.FormValue("functionMode"))
+	}
+	if formHasValue(r, "functionTriggers") {
+		triggers, err := functionTriggersFromForm(r)
+		if err != nil {
+			return err
+		}
+		updated.Triggers = triggers
+	}
+	if err := platform.ValidateFunctionSource(updated); err != nil {
 		return err
 	}
-	function.Runtime, function.Code = runtime, code
+	*function = *updated
 	return nil
+}
+
+// functionTriggersFromForm reads a function's schedules. Each value of the field is a JSON object for one
+// trigger or a JSON array of them, so a form can send the whole list as one value and a JSON body can send
+// it as a list. A field that is empty clears them.
+func functionTriggersFromForm(r *http.Request) ([]geassv1alpha1.GeassFunctionTrigger, error) {
+	var triggers []geassv1alpha1.GeassFunctionTrigger
+	for _, value := range r.Form["functionTriggers"] {
+		value = strings.TrimSpace(value)
+		switch {
+		case value == "":
+		case strings.HasPrefix(value, "["):
+			var list []geassv1alpha1.GeassFunctionTrigger
+			if err := json.Unmarshal([]byte(value), &list); err != nil {
+				return nil, platform.Userf("The triggers are not valid: %v", err)
+			}
+			triggers = append(triggers, list...)
+		default:
+			var one geassv1alpha1.GeassFunctionTrigger
+			if err := json.Unmarshal([]byte(value), &one); err != nil {
+				return nil, platform.Userf("The trigger is not valid: %v", err)
+			}
+			triggers = append(triggers, one)
+		}
+	}
+	return triggers, nil
 }
 
 func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name string) {
@@ -2107,6 +2216,9 @@ func (s *Server) handleAppBuildAction(w http.ResponseWriter, r *http.Request, na
 		build.Status.CancelRequested = false
 		build.Status.Phase = geassv1alpha1.GeassBuildPending
 		build.Status.FailureReason = ""
+		// Starting over: see retriggerBuild.
+		build.Status.StartedAt = nil
+		build.Status.CompletedAt = nil
 	}
 	if err := s.Client.Status().Update(r.Context(), build); err != nil {
 		redirectFormInternalError(w, r, fallback)

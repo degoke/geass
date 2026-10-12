@@ -3,9 +3,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -43,15 +45,20 @@ func logStoreValues(retentionDays int32) string {
 `, platform.LogStoreServiceName, retentionDays)
 }
 
-// logShipperValues are the Fluent Bit chart values. The shipper runs on every node, reserved ones included
+// logShipperValues are the Fluent Bit chart values. complianceNamespaces are the namespaces of projects
+// that require node tags: one store holds every project's logs on whatever node it runs on, so their
+// logs are never sent to it and stay on the nodes the project is limited to.
+//
+// The shipper runs on every node, reserved ones included
 // (its toleration matches everything), and is kept small: logs are not worth starving a workload for.
 //
 // It reads each file from its start the first time, so logs appear as soon as the add-on is installed
 // instead of only what is written afterwards, and remembers how far it got in a database on the node, so a
 // restart neither sends everything again nor loses what was written while it was down.
-func logShipperValues() string {
-	paths := make([]string, len(logShipperExcludedNamespaces))
-	for i, namespace := range logShipperExcludedNamespaces {
+func logShipperValues(complianceNamespaces []string) string {
+	excluded := slices.Concat(logShipperExcludedNamespaces, complianceNamespaces)
+	paths := make([]string, len(excluded))
+	for i, namespace := range excluded {
 		paths[i] = "/var/log/containers/*_" + namespace + "_*.log"
 	}
 	exclude := strings.Join(paths, ",")
@@ -144,6 +151,13 @@ func (r *GeassClusterReconciler) reconcileLogging(ctx context.Context, cluster *
 		log.Error(err, "Failed to install the log store")
 		return
 	}
+	// Logs of projects that require node tags must not be shipped to a store that may sit anywhere. If the
+	// projects cannot be read the shipper is left as it is, rather than risk sending them.
+	complianceNamespaces, err := r.complianceNamespaces(ctx)
+	if err != nil {
+		log.Error(err, "Failed to read the projects that require node tags, so the log shipper was not updated")
+		return
+	}
 	shipper := helmv1.HelmChartSpec{
 		Chart:           platform.LogShipperReleaseChart,
 		Repo:            platform.LogShipperChartRepo,
@@ -151,9 +165,32 @@ func (r *GeassClusterReconciler) reconcileLogging(ctx context.Context, cluster *
 		TargetNamespace: platform.LoggingTargetNS,
 		// The store's chart creates the namespace; both install into it.
 		CreateNamespace: true,
-		ValuesContent:   logShipperValues(),
+		ValuesContent:   logShipperValues(complianceNamespaces),
 	}
 	if err := helmchart.Ensure(ctx, r.Client, platform.LogShipperChartName, shipper); err != nil {
 		log.Error(err, "Failed to install the log shipper")
 	}
+}
+
+// complianceNamespaces are the namespaces of every environment of every project that requires node tags,
+// sorted so the shipper's values do not change from one pass to the next.
+func (r *GeassClusterReconciler) complianceNamespaces(ctx context.Context) ([]string, error) {
+	var projects geassv1alpha1.GeassProjectList
+	if err := r.List(ctx, &projects, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil, err
+	}
+	var namespaces []string
+	for i := range projects.Items {
+		project := &projects.Items[i]
+		if len(project.Spec.RequiredTags) == 0 {
+			continue
+		}
+		for _, environment := range project.Spec.Environments {
+			if namespace, err := platform.ProjectNamespace(project.Name, environment); err == nil {
+				namespaces = append(namespaces, namespace)
+			}
+		}
+	}
+	slices.Sort(namespaces)
+	return slices.Compact(namespaces), nil
 }

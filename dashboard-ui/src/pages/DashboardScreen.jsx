@@ -6,6 +6,7 @@ import { useDashboardLiveSync } from "@/lib/dashboard-events";
 import { AppLayout } from "@/layout/AppLayout";
 import { Empty } from "@/components/geass-ui";
 import { LoginPage } from "@/pages/LoginPage";
+import { DeviceApprovePage } from "@/pages/DeviceApprovePage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { TemplatesPage } from "@/pages/TemplatesPage";
 import { ProjectWorkspaceShell } from "@/pages/ProjectWorkspaceShell";
@@ -57,6 +58,7 @@ export function DashboardScreen({ mode }) {
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   if (mode === "projects") { content = <ProjectsPage data={data} />; }
   else if (mode === "templates") { content = <TemplatesPage data={data} />; }
+  else if (mode === "device") { content = <DeviceApprovePage data={data} code={search.code} />; }
   else if (mode === "workspace" && project) {
     content = (
       <ProjectWorkspaceShell

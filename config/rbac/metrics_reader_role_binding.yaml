@@ -1,0 +1,16 @@
+# Lets the monitoring add-on's Prometheus read the operator's metrics. The endpoint is served over HTTPS and
+# checks who is asking, so without this Prometheus is refused. The service account is the one the monitoring
+# chart makes for its Prometheus (see platform.MonitoringPrometheusService); a cluster that does not run the
+# add-on never has it, which leaves the binding with nobody to bind.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metrics-reader-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: geass-kube-prometheus-stac-prometheus
+  namespace: monitoring

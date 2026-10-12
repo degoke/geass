@@ -345,11 +345,10 @@ func TestPlanetScaleReconcileCorrectsAStalePortInTheConnectionSecret(t *testing.
 	env := newPlanetScaleEnv(t, geassv1alpha1.DatabaseEngineMySQL, []client.Object{existing})
 	require.Empty(t, env.reconcile(t), "the database should be ready")
 
-	// The controller writes StringData, which a real API server folds over Data; the fake client keeps
-	// both, so the stale seed in Data is still there and only what the controller wrote is checked.
+	// The controller writes Data, over the stale seed, which is what it must correct.
 	secret := env.connectionSecret(t)
-	require.Equal(t, platform.MySQLDefaultPort, secret.StringData[platform.ConnectionKeyPort])
-	require.Equal(t, testPlanetScalePassword, secret.StringData[platform.ConnectionKeyPassword], "the login is kept, PlanetScale will not show it again")
+	require.Equal(t, platform.MySQLDefaultPort, string(secret.Data[platform.ConnectionKeyPort]))
+	require.Equal(t, testPlanetScalePassword, string(secret.Data[platform.ConnectionKeyPassword]), "the login is kept, PlanetScale will not show it again")
 	require.Empty(t, env.transport.seen(), "an existing login is never issued again")
 }
 
@@ -381,7 +380,7 @@ func TestPlanetScaleRevokesALoginItCouldNotStore(t *testing.T) {
 	require.Empty(t, env.reconcile(t), "the next pass stores a fresh login")
 	require.Equal(t, 2, env.transport.count("POST "+branch+"passwords"))
 	require.Equal(t, 1, env.transport.count("DELETE "), "the login that was stored is not revoked")
-	require.Equal(t, testPlanetScalePassword, env.connectionSecret(t).StringData[platform.ConnectionKeyPassword])
+	require.Equal(t, testPlanetScalePassword, string(env.connectionSecret(t).Data[platform.ConnectionKeyPassword]))
 }
 
 // A database PlanetScale never finishes must not read "starting" for ever: after the timeout it counts as a failure
@@ -422,8 +421,8 @@ func TestPlanetScaleMySQLConnectionFollowsTheSpecDatabaseName(t *testing.T) {
 	require.Empty(t, env.reconcile(t))
 
 	secret := env.connectionSecret(t)
-	require.Equal(t, testPlanetScaleDatabase, secret.StringData[platform.ConnectionKeyDatabase])
-	require.True(t, strings.HasSuffix(secret.StringData[platform.ConnectionKeyURI], "/"+testPlanetScaleDatabase), secret.StringData[platform.ConnectionKeyURI])
+	require.Equal(t, testPlanetScaleDatabase, string(secret.Data[platform.ConnectionKeyDatabase]))
+	require.True(t, strings.HasSuffix(string(secret.Data[platform.ConnectionKeyURI]), "/"+testPlanetScaleDatabase), string(secret.Data[platform.ConnectionKeyURI]))
 }
 
 // The database a Postgres login connects to is only known when the login is issued, so later passes must keep
@@ -437,8 +436,8 @@ func TestPlanetScalePostgresDatabaseNameSurvivesLaterReconciles(t *testing.T) {
 	require.Empty(t, env.reconcile(t))
 
 	secret := env.connectionSecret(t)
-	require.Equal(t, testPlanetScalePostgresDatabase, secret.StringData[platform.ConnectionKeyDatabase])
-	require.True(t, strings.HasSuffix(secret.StringData[platform.ConnectionKeyURI], "/"+testPlanetScalePostgresDatabase), secret.StringData[platform.ConnectionKeyURI])
+	require.Equal(t, testPlanetScalePostgresDatabase, string(secret.Data[platform.ConnectionKeyDatabase]))
+	require.True(t, strings.HasSuffix(string(secret.Data[platform.ConnectionKeyURI]), "/"+testPlanetScalePostgresDatabase), string(secret.Data[platform.ConnectionKeyURI]))
 	require.Len(t, env.transport.seen(), calls, "a database with a connection secret is not asked about again")
 }
 

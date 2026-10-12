@@ -13,6 +13,7 @@ import {
   HardDrive,
   KeyRound,
   Layers,
+  Lock,
   Network,
   Plug,
   Settings,
@@ -30,6 +31,7 @@ import { RailCopyField } from "@/components/rail-controls";
 import { ApiTokens } from "@/components/ApiTokens";
 import { PREnvironments } from "@/components/PREnvironments";
 import { ProjectBackups } from "@/components/ProjectBackups";
+import { ProjectCompliance } from "@/components/ProjectCompliance";
 import { ProjectNetwork } from "@/components/ProjectNetwork";
 import { ProjectWebhooks } from "@/components/ProjectWebhooks";
 import { ServiceMetrics } from "@/components/ServiceMetrics";
@@ -52,6 +54,7 @@ const SECTIONS = [
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "backups", label: "Backups", icon: ShieldCheck },
   { id: "network", label: "Network", icon: Network },
+  { id: "compliance", label: "Compliance", icon: Lock },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "danger", label: "Danger", icon: AlertTriangle, danger: true },
@@ -441,6 +444,12 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       {section === "network" && (
         <SettingsSection title="Network" flat>
           <ProjectNetwork project={project} data={data} mutable={mutable} reload={reload} />
+        </SettingsSection>
+      )}
+
+      {section === "compliance" && (
+        <SettingsSection title="Compliance" flat>
+          <ProjectCompliance project={project} data={data} mutable={mutable} reload={reload} />
         </SettingsSection>
       )}
 

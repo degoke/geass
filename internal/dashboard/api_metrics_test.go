@@ -294,3 +294,30 @@ func TestOnlyTheClusterScopeEverReadsEveryNamespace(t *testing.T) {
 		require.NotContains(t, query.query, `.+`, "and an empty scope matches nothing, not everything")
 	}
 }
+
+func TestOperatorMetricsReadTheOperatorsOwnSeriesAndNoWorkloads(t *testing.T) {
+	var queries []string
+	prom := fakePrometheus(t, &queries)
+	config := testPlatformConfig("https://geass.test")
+	config.Spec.PrometheusURL = prom.URL
+	srv := &Server{Client: newFakeClient(config)}
+
+	rec := getMetrics(t, srv, "/api/operator/metrics")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	joined := strings.Join(queries, "\n")
+	require.Contains(t, joined, "controller_runtime_reconcile_errors_total")
+	require.Contains(t, joined, "geass_apiserver_client_request_duration_seconds_bucket", "how long the API server takes to answer")
+	require.Contains(t, joined, `verb!="WATCH"`, "a watch is open for minutes and would swamp the latency")
+	require.Contains(t, joined, "geass_status_writes_total")
+	require.NotContains(t, joined, "namespace=", "the operator's metrics are about no project's namespace")
+	var payload struct {
+		Available bool                     `json:"available"`
+		Series    map[string][]metricPoint `json:"series"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.True(t, payload.Available)
+	for _, key := range []string{"reconcileErrors", "reconcileTime", "apiLatency", "apiRequests", "queueDepth", "statusWrites", "statusSkipped"} {
+		require.Contains(t, payload.Series, key)
+	}
+}

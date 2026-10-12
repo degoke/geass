@@ -77,8 +77,10 @@ func TestParseRejectsMalformedTokens(t *testing.T) {
 		"short id":      "gsw_ab_" + parts[2],
 		"short secret":  "gsw_" + parts[1] + "_abcd",
 		"not hex":       "gsw_" + parts[1] + "_" + strings.Repeat("z", 40),
-		"upper case":    "gsw_" + strings.ToUpper(parts[1]) + "_" + parts[2],
-		"extra part":    token + "_more",
+		// A fixed id with letters in it: upper-casing a random one that happens to be all digits changes nothing,
+		// which made this case pass or fail by chance.
+		"upper case": "gsw_ABCDEF01_" + parts[2],
+		"extra part": token + "_more",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, _, ok := Parse(bad)
@@ -106,4 +108,19 @@ func TestTokensAreUnique(t *testing.T) {
 		require.False(t, seen[token])
 		seen[token] = true
 	}
+}
+
+func TestAnObserverTokenCanBeCreatedForAWorkspace(t *testing.T) {
+	token, record, err := New(Request{Name: "monitor", Scope: ScopeWorkspace, Role: RoleObserver, CreatedBy: "admin"}, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, RoleObserver, record.Role)
+	require.True(t, strings.HasPrefix(token, "gsw_"))
+}
+
+func TestAProjectTokenIsNeverAnObserver(t *testing.T) {
+	_, record, err := New(Request{Name: "ci", Scope: ScopeProject, Project: "p", Environment: "production", Role: RoleObserver}, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, RoleAdmin, record.Role, "a project token's limits are its route list, whatever role is asked for")
 }

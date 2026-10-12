@@ -11,6 +11,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,9 +20,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -57,7 +62,7 @@ func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	if node.DeletionTimestamp.IsZero() {
 		// A failure here must not stop the node from being provisioned or health-checked; it is retried
-		// on the next pass, which every ready node gets every minute.
+		// on the next pass: the next change to the node, or at the latest the resync.
 		if err := r.syncPlacement(ctx, &node); err != nil {
 			log.Error(err, "Could not apply node placement", "node", node.Name)
 		}
@@ -143,19 +148,40 @@ func (r *GeassNodeReconciler) reconcileDefaultControlPlane(
 		return ctrl.Result{}, err
 	}
 
-	for _, cond := range k8sNode.Status.Conditions {
-		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-			now := metav1.Now()
-			node.Status.Phase = geassv1alpha1.NodePhaseReady
-			node.Status.NodeName = k8sNode.Name
-			node.Status.LastHeartbeatTime = now
-			node.Status.Message = ""
-			return ctrl.Result{RequeueAfter: 60 * time.Second},
-				r.Status().Update(ctx, node)
-		}
+	if nodeReady(&k8sNode) {
+		return ctrl.Result{RequeueAfter: nodeResync}, r.markNodeReady(ctx, node, k8sNode.Name)
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// nodeResync is how often a node that is doing fine is looked at again. Changes to the Kubernetes node
+// (it going NotReady, its labels or taints being edited) reach the controller as events, so this only
+// backs those up.
+const nodeResync = 10 * time.Minute
+
+// nodeNotReadyGracePeriod is how long a node may stay NotReady before it is provisioned again.
+const nodeNotReadyGracePeriod = 5 * time.Minute
+
+func nodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// markNodeReady records that the node is ready. It writes only when that is news: kubelet already keeps
+// a heartbeat on the Kubernetes node (its Ready condition and a lease), so repeating it here once a
+// minute for every node only made a write, and an event, that nothing used.
+func (r *GeassNodeReconciler) markNodeReady(ctx context.Context, node *geassv1alpha1.GeassNode, k8sNodeName string) error {
+	_, err := platform.PatchStatus(ctx, r.Client, node, func() {
+		node.Status.Phase = geassv1alpha1.NodePhaseReady
+		node.Status.NodeName = k8sNodeName
+		node.Status.Message = ""
+	})
+	return err
 }
 
 func (r *GeassNodeReconciler) reconcileWorker(
@@ -295,16 +321,8 @@ func (r *GeassNodeReconciler) checkJoined(
 		return ctrl.Result{}, err
 	}
 
-	for _, cond := range k8sNode.Status.Conditions {
-		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-			now := metav1.Now()
-			node.Status.Phase = geassv1alpha1.NodePhaseReady
-			node.Status.NodeName = k8sNode.Name
-			node.Status.LastHeartbeatTime = now
-			node.Status.Message = ""
-			return ctrl.Result{RequeueAfter: 60 * time.Second},
-				r.Status().Update(ctx, node)
-		}
+	if nodeReady(&k8sNode) {
+		return ctrl.Result{RequeueAfter: nodeResync}, r.markNodeReady(ctx, node, k8sNode.Name)
 	}
 
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
@@ -319,7 +337,7 @@ func (r *GeassNodeReconciler) healthCheck(
 	err := r.Get(ctx, types.NamespacedName{Name: node.Name}, &k8sNode)
 	if apierrors.IsNotFound(err) {
 		if !reprovision {
-			return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: nodeResync}, nil
 		}
 		logf.FromContext(ctx).Info("Node gone, re-provisioning", "node", node.Name)
 		node.Status.Phase = geassv1alpha1.NodePhasePending
@@ -331,23 +349,21 @@ func (r *GeassNodeReconciler) healthCheck(
 	}
 
 	for _, cond := range k8sNode.Status.Conditions {
-		if cond.Type == corev1.NodeReady {
-			now := metav1.Now()
-			if cond.Status != corev1.ConditionTrue {
-				if reprovision && time.Since(cond.LastTransitionTime.Time) > 5*time.Minute {
-					node.Status.Phase = geassv1alpha1.NodePhasePending
-					node.Status.Message = "node NotReady, re-provisioning"
-					_ = r.Status().Update(ctx, node)
-					return ctrl.Result{Requeue: true}, nil
-				}
-			} else {
-				node.Status.LastHeartbeatTime = now
-				_ = r.Status().Update(ctx, node)
-			}
+		if cond.Type != corev1.NodeReady || cond.Status == corev1.ConditionTrue {
+			continue
 		}
+		// NotReady. Nothing changes when the grace period ends, so the controller asks to be woken then.
+		elapsed := time.Since(cond.LastTransitionTime.Time)
+		if reprovision && elapsed > nodeNotReadyGracePeriod {
+			node.Status.Phase = geassv1alpha1.NodePhasePending
+			node.Status.Message = "node NotReady, re-provisioning"
+			_ = r.Status().Update(ctx, node)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{RequeueAfter: max(nodeNotReadyGracePeriod-elapsed, time.Second)}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: nodeResync}, nil
 }
 
 func (r *GeassNodeReconciler) handleDeletion(
@@ -452,6 +468,47 @@ func (r *GeassNodeReconciler) resolveToken(
 func (r *GeassNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassNode{}).
+		// A Kubernetes node going NotReady or Ready, or having its placement edited by hand, is what this
+		// controller reacts to. Without the watch it would have to look at every node every minute.
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.geassNodesForNode), builder.WithPredicates(nodeHealthOrPlacementChanged())).
 		Named("geassnode").
 		Complete(r)
+}
+
+// geassNodesForNode maps a Kubernetes node to the GeassNode that manages it.
+func (r *GeassNodeReconciler) geassNodesForNode(ctx context.Context, obj client.Object) []ctrl.Request {
+	var nodes geassv1alpha1.GeassNodeList
+	if err := r.List(ctx, &nodes); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for i := range nodes.Items {
+		if nodes.Items[i].Name == obj.GetName() || nodes.Items[i].Status.NodeName == obj.GetName() {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&nodes.Items[i])})
+		}
+	}
+	return requests
+}
+
+// nodeHealthOrPlacementChanged lets through the node events this controller acts on: a node appearing or
+// going away, its Ready condition flipping, and its region, zone, tag labels or taints changing. A
+// kubelet's heartbeat, which updates the node every few seconds, is none of them.
+func nodeHealthOrPlacementChanged() predicate.Predicate {
+	return predicate.Funcs{
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldNode, okOld := e.ObjectOld.(*corev1.Node)
+			newNode, okNew := e.ObjectNew.(*corev1.Node)
+			if !okOld || !okNew {
+				return false
+			}
+			return nodeReady(oldNode) != nodeReady(newNode) ||
+				oldNode.Labels[platform.LabelRegion] != newNode.Labels[platform.LabelRegion] ||
+				oldNode.Labels[platform.LabelZone] != newNode.Labels[platform.LabelZone] ||
+				!slices.Equal(geassTagLabels(oldNode), geassTagLabels(newNode)) ||
+				!slices.EqualFunc(oldNode.Spec.Taints, newNode.Spec.Taints, func(a, b corev1.Taint) bool {
+					return a.Key == b.Key && a.Value == b.Value && a.Effect == b.Effect
+				})
+		},
+	}
 }

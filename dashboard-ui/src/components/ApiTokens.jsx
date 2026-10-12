@@ -16,15 +16,18 @@ const EXPIRY_OPTIONS = [
 
 const ROLE_OPTIONS = [
   { value: "viewer", label: "Read only" },
+  { value: "observer", label: "Read only, with logs" },
   { value: "admin", label: "Full access" },
 ];
+
+const ROLE_LABELS = { admin: "Full access", observer: "Read only, with logs", viewer: "Read only" };
 
 function describeToken(token, projects) {
   if (token.scope === "project") {
     const project = projects.find((item) => resourceName(item) === token.project);
     return `Project ${project ? project.spec?.displayName || resourceDisplayName(project) : token.project} · ${token.environment}`;
   }
-  return `Workspace · ${token.role === "admin" ? "Full access" : "Read only"}`;
+  return `Workspace · ${ROLE_LABELS[token.role] || "Read only"}`;
 }
 
 function expiryLabel(token) {
@@ -185,7 +188,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
                   </Select>
                 </Field>
               ) : (
-                <Field label="Access" description="Read only can view everything but change nothing.">
+                <Field label="Access" description="Read only can view resources but change nothing. With logs, it can also read logs and the names of variables.">
                   <Select
                     value={editing.role}
                     aria-label="Token access"

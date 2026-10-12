@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"maps"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -76,11 +77,11 @@ func (r *GeassClusterReconciler) reconcileLonghorn(ctx context.Context) (bool, e
 	if err != nil || !installed {
 		return false, err
 	}
-	replicas, hosted, err := r.longhornReplicaTarget(ctx)
+	replicas, hosted, general, err := r.longhornTarget(ctx)
 	if err != nil || !hosted {
 		return false, err
 	}
-	if err := r.ensureLonghornStorageClasses(ctx, replicas); err != nil {
+	if err := r.ensureLonghornStorageClasses(ctx, replicas, general); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -95,15 +96,55 @@ func (r *GeassClusterReconciler) reconcileLonghorn(ctx context.Context) (bool, e
 // per node is asked for, so hosted is false until every node has a ready manager;
 // otherwise the first volumes start out degraded.
 func (r *GeassClusterReconciler) longhornReplicaTarget(ctx context.Context) (replicas int, hosted bool, err error) {
+	replicas, hosted, _, err = r.longhornTarget(ctx)
+	return replicas, hosted, err
+}
+
+// longhornTarget is longhornReplicaTarget, and also says whether general volumes are to stay off compliance
+// nodes (see generalOnly), in which case those nodes are not counted: no replica of a general volume will
+// be placed there.
+func (r *GeassClusterReconciler) longhornTarget(ctx context.Context) (replicas int, hosted, general bool, err error) {
+	general, err = r.generalOnly(ctx)
+	if err != nil {
+		return 0, false, false, err
+	}
+	if general {
+		replicas, hosted, err = r.generalReplicaTarget(ctx)
+		return replicas, hosted, general, err
+	}
 	nodes, err := r.schedulableNodeCount(ctx)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 	managers, err := r.longhornManagersReady(ctx)
 	if err != nil {
+		return 0, false, false, err
+	}
+	return platform.LonghornReplicaCount(nodes), managers >= max(nodes, 1), false, nil
+}
+
+// generalReplicaTarget is the replica count for general volumes when compliance nodes are left out: one
+// per general node, and hosted once each of them has a ready manager.
+func (r *GeassClusterReconciler) generalReplicaTarget(ctx context.Context) (int, bool, error) {
+	var nodes corev1.NodeList
+	if err := r.List(ctx, &nodes); err != nil {
 		return 0, false, err
 	}
-	return platform.LonghornReplicaCount(nodes), managers >= max(nodes, 1), nil
+	ready, err := r.readyLonghornManagerNodes(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	count, managed := 0, 0
+	for i := range nodes.Items {
+		if !nodeSchedulable(&nodes.Items[i]) || platform.IsComplianceNode(&nodes.Items[i]) {
+			continue
+		}
+		count++
+		if ready[nodes.Items[i].Name] {
+			managed++
+		}
+	}
+	return platform.LonghornReplicaCount(count), managed >= max(count, 1), nil
 }
 
 // longhornManagersReady counts ready longhorn-manager pods, one per usable node.
@@ -186,9 +227,9 @@ func nodeSchedulable(node *corev1.Node) bool {
 	return true
 }
 
-func (r *GeassClusterReconciler) ensureLonghornStorageClasses(ctx context.Context, replicas int) error {
+func (r *GeassClusterReconciler) ensureLonghornStorageClasses(ctx context.Context, replicas int, general bool) error {
 	for _, desired := range []*storagev1.StorageClass{
-		longhornStorageClass(platform.StorageClassReplicated, platform.LonghornStorageClassParameters(replicas), storagev1.VolumeBindingImmediate),
+		longhornStorageClass(platform.StorageClassReplicated, withGeneralSelector(platform.LonghornStorageClassParameters(replicas), general), storagev1.VolumeBindingImmediate),
 		// WaitForFirstConsumer so the volume is created after its pod is scheduled:
 		// strict-local keeps the replica on that pod's node.
 		longhornStorageClass(platform.StorageClassSingle, platform.LonghornSingleStorageClassParameters(), storagev1.VolumeBindingWaitForFirstConsumer),
@@ -262,6 +303,19 @@ func (r *GeassClusterReconciler) clustersForNodeChange(ctx context.Context, _ cl
 	return requests
 }
 
+// geassTagLabels are a node's Geass tags, sorted. A change to them changes which nodes a project's
+// storage class covers.
+func geassTagLabels(node *corev1.Node) []string {
+	var tags []string
+	for key := range node.Labels {
+		if tag, ok := strings.CutPrefix(key, platform.TagKeyPrefix); ok {
+			tags = append(tags, tag)
+		}
+	}
+	slices.Sort(tags)
+	return tags
+}
+
 // nodeSchedulingChanged lets through node creation and deletion and updates that
 // change whether the node can run workloads. Everything else a node does,
 // chiefly status heartbeats, is noise that would otherwise trigger a reconcile
@@ -275,7 +329,8 @@ func nodeSchedulingChanged() predicate.Predicate {
 			oldNode, okOld := e.ObjectOld.(*corev1.Node)
 			newNode, okNew := e.ObjectNew.(*corev1.Node)
 			return okOld && okNew && (nodeSchedulable(oldNode) != nodeSchedulable(newNode) ||
-				oldNode.Labels[platform.LabelRegion] != newNode.Labels[platform.LabelRegion])
+				oldNode.Labels[platform.LabelRegion] != newNode.Labels[platform.LabelRegion] ||
+				!slices.Equal(geassTagLabels(oldNode), geassTagLabels(newNode)))
 		},
 	}
 }

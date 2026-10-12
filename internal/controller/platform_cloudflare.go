@@ -2,8 +2,12 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -58,6 +62,18 @@ func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context,
 		return platform.RequeueAfterDomainVerify, nil
 	}
 
+	// What would be sent is worked out first: it needs nothing from Cloudflare. A pass that would send what
+	// the last one did is skipped, so a tunnel that is in sync costs no Cloudflare requests and no writes.
+	rules, dnsHosts, err := r.cloudflareIngressRules(ctx, config)
+	if err != nil {
+		return platform.RequeueAfterDomainVerify, err
+	}
+	fingerprint := tunnelFingerprint(creds, rules, dnsHosts)
+	if wait, inSync := r.tunnel.inSync(fingerprint, r.clock()); inSync {
+		return wait, nil
+	}
+	r.tunnel.forget()
+
 	cf := &cloudflare.Client{AccountID: creds.AccountID, APIToken: creds.APIToken, HTTP: r.HTTPClient}
 	if err := cf.Validate(ctx); err != nil {
 		_ = r.setCloudflareReady(ctx, config, metav1.ConditionFalse, "CredentialsInvalid", cloudflare.TokenValidationMessage(err))
@@ -83,17 +99,15 @@ func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context,
 		return platform.RequeueAfterDomainVerify, err
 	}
 
-	rules, dnsHosts, err := r.cloudflareIngressRules(ctx, config)
-	if err != nil {
-		return platform.RequeueAfterDomainVerify, err
-	}
 	if err := cf.PutIngressConfiguration(ctx, tunnel.ID, rules); err != nil {
 		_ = r.setCloudflareReady(ctx, config, metav1.ConditionFalse, "TunnelConfigError", "Could not update Cloudflare tunnel routes")
 		return platform.RequeueAfterDomainVerify, err
 	}
+	dnsComplete := true
 	for _, host := range dnsHosts {
 		if err := cf.EnsureCNAMERecord(ctx, creds.ZoneID, host, tunnelCNAME); err != nil {
 			logger.Info("Could not ensure Cloudflare DNS record", "host", host, "error", err)
+			dnsComplete = false
 		}
 	}
 
@@ -101,7 +115,58 @@ func (r *GeassPlatformConfigReconciler) reconcileCloudflare(ctx context.Context,
 		return platform.RequeueAfterDomainVerify, err
 	}
 	_ = r.setCloudflareReady(ctx, config, metav1.ConditionTrue, "Ready", "Cloudflare tunnel connector is running")
-	return platform.RequeueAfterDomainVerify, nil
+	if !dnsComplete {
+		// A record that could not be made is tried again soon, not at the next resync.
+		return platform.RequeueAfterDomainVerify, nil
+	}
+	r.tunnel.synced(fingerprint, r.clock())
+	return platform.RequeueAfterCloudflareResync, nil
+}
+
+// tunnelSync remembers the last tunnel configuration that was sent to Cloudflare in full.
+type tunnelSync struct {
+	mu          sync.Mutex
+	fingerprint string
+	at          time.Time
+}
+
+// inSync reports whether the configuration is the one last sent and still fresh, and how long until it
+// should be checked again.
+func (t *tunnelSync) inSync(fingerprint string, now time.Time) (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.fingerprint == "" || t.fingerprint != fingerprint {
+		return 0, false
+	}
+	remaining := platform.RequeueAfterCloudflareResync - now.Sub(t.at)
+	if remaining <= 0 {
+		return 0, false
+	}
+	return remaining, true
+}
+
+func (t *tunnelSync) synced(fingerprint string, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.fingerprint, t.at = fingerprint, now
+}
+
+func (t *tunnelSync) forget() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.fingerprint = ""
+}
+
+// tunnelFingerprint identifies everything a tunnel sync sends: whose account and zone it is for, the
+// token (hashed, so nothing secret is kept), and every route and DNS name.
+func tunnelFingerprint(creds platform.CloudflareCredentials, rules []cloudflare.IngressRule, dnsHosts []string) string {
+	hash := sha256.New()
+	_ = json.NewEncoder(hash).Encode(struct {
+		Account, Zone, Token string
+		Rules                []cloudflare.IngressRule
+		Hosts                []string
+	}{creds.AccountID, creds.ZoneID, creds.APIToken, rules, dnsHosts})
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (r *GeassPlatformConfigReconciler) ensureCloudflareDashboardIngressDNS(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig) error {
@@ -191,14 +256,32 @@ func (r *GeassPlatformConfigReconciler) cloudflareIngressRules(ctx context.Conte
 		if path == "" {
 			path = "/"
 		}
+		service := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", app.Name, wsNS, port)
+		// The tunnel reaches a service without going through Traefik, so one that sleeps when idle has to be
+		// sent to the proxy that wakes it. The proxy tells services apart by host, which the tunnel keeps.
+		if r.sleepsWhenIdle(ctx, &app) {
+			service = fmt.Sprintf("http://%s:%d", platform.ServerlessInterceptorHost, platform.ServerlessInterceptorPort)
+		}
 		rules = append(rules, cloudflare.IngressRule{
 			Hostname: host,
 			Path:     path,
-			Service:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", app.Name, wsNS, port),
+			Service:  service,
 		})
 		dnsHosts = append(dnsHosts, host)
 	}
 	return rules, dnsHosts, nil
+}
+
+// sleepsWhenIdle is whether the service is put behind the wake proxy. It is worked out from the service's own
+// settings and from the add-on being installed, as the service's reconcile does, and not from the proxy's
+// object for it: that is made a moment after the setting changes, and a route decided before it exists would
+// stay until the next resync, sending requests to a service with no copies.
+func (r *GeassPlatformConfigReconciler) sleepsWhenIdle(ctx context.Context, app *geassv1alpha1.GeassApp) bool {
+	if !scaleToZeroRequested(app) || app.Spec.Autoscaling != nil {
+		return false
+	}
+	installed, err := httpScaledObjectsServed(ctx, r.Client)
+	return err == nil && installed
 }
 
 func (r *GeassPlatformConfigReconciler) patchCloudflareTunnelSpec(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig, tunnelID, tunnelCNAME string) error {
@@ -206,12 +289,16 @@ func (r *GeassPlatformConfigReconciler) patchCloudflareTunnelSpec(ctx context.Co
 	if err := r.Get(ctx, client.ObjectKeyFromObject(config), latest); err != nil {
 		return err
 	}
-	latest.Spec.TunnelCNAMETarget = tunnelCNAME
-	if err := r.Update(ctx, latest); err != nil {
-		return err
+	if latest.Spec.TunnelCNAMETarget != tunnelCNAME {
+		latest.Spec.TunnelCNAMETarget = tunnelCNAME
+		if err := r.Update(ctx, latest); err != nil {
+			return err
+		}
 	}
-	latest.Status.CloudflareTunnelID = tunnelID
-	return r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.CloudflareTunnelID = tunnelID
+	})
+	return err
 }
 
 func (r *GeassPlatformConfigReconciler) setCloudflareReady(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig, status metav1.ConditionStatus, reason, message string) error {
@@ -219,15 +306,17 @@ func (r *GeassPlatformConfigReconciler) setCloudflareReady(ctx context.Context, 
 	if err := r.Get(ctx, client.ObjectKeyFromObject(config), latest); err != nil {
 		return err
 	}
-	latest.Status.Conditions = platform.SetConditionForGeneration(
-		latest.Status.Conditions,
-		platform.ConditionCloudflareReady,
-		status,
-		reason,
-		message,
-		latest.Generation,
-	)
-	return r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.Conditions = platform.SetConditionForGeneration(
+			latest.Status.Conditions,
+			platform.ConditionCloudflareReady,
+			status,
+			reason,
+			message,
+			latest.Generation,
+		)
+	})
+	return err
 }
 
 func (r *GeassPlatformConfigReconciler) ensureCloudflaredTokenSecret(ctx context.Context, token string) error {

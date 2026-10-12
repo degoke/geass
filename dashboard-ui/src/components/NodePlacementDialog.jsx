@@ -15,13 +15,15 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
   const [zone, setZone] = useState("");
   const [tagText, setTagText] = useState("");
   const [reserved, setReserved] = useState([]);
+  const [compliance, setCompliance] = useState([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setRegion(node?.region || "");
     setZone(node?.zone || "");
     setTagText((node?.tags || []).map((tag) => tag.name).join(", "));
-    setReserved((node?.tags || []).filter((tag) => tag.reserved).map((tag) => tag.name));
+    setReserved((node?.tags || []).filter((tag) => tag.reserved && !tag.compliance).map((tag) => tag.name));
+    setCompliance((node?.tags || []).filter((tag) => tag.compliance).map((tag) => tag.name));
   }, [node]);
 
   const tags = parseTagList(tagText);
@@ -30,6 +32,10 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
 
   const toggleReserved = (name, on) => {
     setReserved((current) => (on ? [...current.filter((tag) => tag !== name), name] : current.filter((tag) => tag !== name)));
+  };
+
+  const toggleCompliance = (name, on) => {
+    setCompliance((current) => (on ? [...current.filter((tag) => tag !== name), name] : current.filter((tag) => tag !== name)));
   };
 
   const submit = async (event) => {
@@ -41,6 +47,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
         zone: zone.trim(),
         tags: tags.join(","),
         reserved: reserved.filter((name) => tags.includes(name)).join(","),
+        compliance: compliance.filter((name) => tags.includes(name)).join(","),
       });
       await reload?.();
       (result?.warnings || []).forEach((warning) => alertUser(warning));
@@ -78,6 +85,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
             </Field>
             {knownTags.length ? <Muted size="xs">Tags in use elsewhere: {knownTags.join(", ")}</Muted> : null}
             {tags.length ? (
+              <>
               <Stack gap={6}>
                 <Text size="sm" fw={500}>Reserve for a tag</Text>
                 <Muted size="xs">
@@ -87,11 +95,28 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
                   <Switch
                     key={name}
                     label={`Reserve this node for ${name}`}
-                    checked={reserved.includes(name)}
+                    checked={reserved.includes(name) || compliance.includes(name)}
+                    disabled={compliance.includes(name)}
                     onChange={(event) => toggleReserved(name, event.currentTarget.checked)}
                   />
                 ))}
               </Stack>
+              <Stack gap={6}>
+                <Text size="sm" fw={500}>Compliance tags</Text>
+                <Muted size="xs">
+                  A compliance tag, such as hipaa, is always reserved. Projects that require it run only on nodes
+                  that carry it, and nothing else runs on those nodes. Tags a project already requires stay compliance tags.
+                </Muted>
+                {tags.map((name) => (
+                  <Switch
+                    key={name}
+                    label={`${name} is a compliance tag`}
+                    checked={compliance.includes(name)}
+                    onChange={(event) => toggleCompliance(name, event.currentTarget.checked)}
+                  />
+                ))}
+              </Stack>
+              </>
             ) : null}
             <Muted size="xs">
               Workloads that are running are not moved. One that restarts only returns to a node that matches.
