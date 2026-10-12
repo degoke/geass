@@ -93,7 +93,7 @@ func TestMultiSiteOpensTheWireGuardPortInsteadOfVXLAN(t *testing.T) {
 }
 
 func TestMultiSiteClusterIsRecordedForTheOperator(t *testing.T) {
-	multi := geassClusterManifest("default", "v1", "https://203.0.113.1:6443", Network{MultiSite: true, ExternalIP: "203.0.113.1"})
+	multi := geassClusterManifest("default", "v1", "https://203.0.113.1:6443", Network{MultiSite: true, ExternalIP: "203.0.113.1"}, "")
 	if !strings.Contains(multi, "  network:\n    multiSite: true\n") {
 		t.Fatalf("the operator joins workers to match, so it has to be told:\n%s", multi)
 	}
@@ -101,7 +101,7 @@ func TestMultiSiteClusterIsRecordedForTheOperator(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(multi), &parsed); err != nil {
 		t.Fatalf("the manifest must stay valid YAML: %v\n%s", err, multi)
 	}
-	single := geassClusterManifest("default", "v1", "https://127.0.0.1:6443", Network{})
+	single := geassClusterManifest("default", "v1", "https://127.0.0.1:6443", Network{}, "")
 	if strings.Contains(single, "network:") {
 		t.Fatalf("a single-site cluster says nothing about its network:\n%s", single)
 	}

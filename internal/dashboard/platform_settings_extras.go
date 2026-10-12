@@ -28,7 +28,11 @@ func (s *Server) handleGeassProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (string, string) {
+// verifyDashboardURL probes the dashboard's public URL. When it fails after DNS resolved and explainCertificates
+// is set, the message says what is wrong with the cluster's certificate issuer. Callers ask for that only when
+// the certificate comes from cert-manager and the message is shown: a dashboard published through a Cloudflare
+// tunnel has its certificate from Cloudflare, and a message that is thrown away is not worth the lookup.
+func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string, explainCertificates bool) (string, string) {
 	parsed, err := url.Parse(dashboardURL)
 	if err != nil || parsed.Host == "" {
 		return "dashboard URL is invalid", dashboardLiteralError
@@ -41,14 +45,33 @@ func (s *Server) verifyDashboardURL(ctx context.Context, dashboardURL string) (s
 	if _, ok := s.probeURL(ctx, probeURL); ok {
 		return "", "success"
 	}
+	explain := func(message string) string {
+		if explainCertificates {
+			return s.withClusterIssuerProblem(ctx, message)
+		}
+		return message
+	}
 	if _, ok := s.probeURL(ctx, s.internalProbeURL()+platform.GeassDashboardProbePath); ok {
-		return "Dashboard responds locally, but the public URL could not be reached. Check ingress, TLS, and DNS routing.", "warning"
+		return explain("Dashboard responds locally, but the public URL could not be reached. Check ingress, TLS, and DNS routing."), "warning"
 	}
 	publicMsg, _ := s.probeURL(ctx, probeURL)
 	if publicMsg != "" {
-		return publicMsg, dashboardLiteralError
+		return explain(publicMsg), dashboardLiteralError
 	}
-	return fmt.Sprintf("%s did not return a successful Geass probe response", dashboardURL), dashboardLiteralError
+	return explain(fmt.Sprintf("%s did not return a successful Geass probe response", dashboardURL)), dashboardLiteralError
+}
+
+// withClusterIssuerProblem adds what the cluster says is wrong with its certificate issuer to a message about
+// the dashboard's HTTPS endpoint not answering. Without an issuer, Traefik serves its own self-signed
+// certificate, which the probe refuses, and nothing else on the page would say why.
+func (s *Server) withClusterIssuerProblem(ctx context.Context, message string) string {
+	if s.Client == nil {
+		return message
+	}
+	if problem := platform.ClusterIssuerProblemFor(ctx, s.Client); problem != "" {
+		return strings.TrimSuffix(message, ".") + " (" + problem + ")"
+	}
+	return message
 }
 
 func (s *Server) internalProbeURL() string {

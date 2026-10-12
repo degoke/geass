@@ -10,16 +10,20 @@ package controller
 
 import (
 	"context"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/helmchart"
@@ -74,6 +78,12 @@ prometheusOperator:
 type GeassClusterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// watchClusterIssuers starts the watch on cert-manager's ClusterIssuers, which cannot be set up with the
+	// controller (see startClusterIssuerWatch). SetupWithManager sets it; without a manager it is nil.
+	watchClusterIssuers func() error
+	issuerWatchMu       sync.Mutex
+	issuerWatchStarted  bool
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch;create;update;patch;delete
@@ -94,7 +104,7 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return result, nil
 	}
 
-	addonsReady, err := r.reconcileAddons(ctx, &cluster)
+	addonsReady, certManagerReady, err := r.reconcileAddons(ctx, &cluster)
 	if err != nil {
 		return r.updateStatus(ctx, &cluster, false, err)
 	}
@@ -103,6 +113,11 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return result, err
 	}
+
+	// The issuer that every ingress's certificate is requested from comes first of the background work:
+	// HTTPS waits on it, it takes a moment, and the steps below can each spend their whole timeout on
+	// something it does not depend on.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileClusterIssuer(ctx, &cluster, certManagerReady))
 
 	// Growing existing volumes is background work, so it runs after the status is
 	// written and only ever shortens the requeue. It cannot affect readiness, and a
@@ -117,9 +132,9 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return result, nil
 }
 
-func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *geassv1alpha1.GeassCluster) (bool, error) {
+func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *geassv1alpha1.GeassCluster) (allReady, certManagerReady bool, err error) {
 	log := logf.FromContext(ctx)
-	allReady := true
+	allReady = true
 
 	if geassv1alpha1.AddonEnabled(cluster.Spec.Addons.CertManager.Enabled) {
 		spec := helmv1.HelmChartSpec{
@@ -131,22 +146,24 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 			ValuesContent:   certManagerValues,
 		}
 		if err := helmchart.Ensure(ctx, r.Client, platform.CertManagerChartName, spec); err != nil {
-			return false, err
+			return false, false, err
 		}
 		if ready, err := r.addonReady(ctx, platform.CertManagerChartName, platform.CertManagerTargetNS); err != nil {
-			return false, err
+			return false, false, err
 		} else if !ready {
 			allReady = false
 			log.Info("Waiting for cert-manager add-on")
+		} else {
+			certManagerReady = true
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.CertManagerChartName); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
+		return false, false, err
 	}
 
 	if geassv1alpha1.AddonEnabled(cluster.Spec.Addons.Monitoring.Enabled) {
 		values, err := monitoringChartValues(cluster)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		spec := helmv1.HelmChartSpec{
 			Chart:           platform.MonitoringReleaseChart,
@@ -157,16 +174,16 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 			ValuesContent:   values,
 		}
 		if err := helmchart.Ensure(ctx, r.Client, platform.MonitoringChartName, spec); err != nil {
-			return false, err
+			return false, false, err
 		}
 		if ready, err := r.addonReady(ctx, platform.MonitoringChartName, platform.MonitoringTargetNS); err != nil {
-			return false, err
+			return false, false, err
 		} else if !ready {
 			allReady = false
 			log.Info("Waiting for monitoring add-on")
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.MonitoringChartName); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
+		return false, false, err
 	}
 
 	// Unlike the add-ons above there is deliberately no "else: uninstall" branch.
@@ -174,7 +191,7 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 	// removes it; taking it out is an explicit, manual operation.
 	if geassv1alpha1.LonghornEnabled(cluster.Spec.Addons) {
 		if ready, err := r.reconcileLonghorn(ctx); err != nil {
-			return false, err
+			return false, false, err
 		} else if !ready {
 			allReady = false
 			log.Info("Waiting for Longhorn add-on")
@@ -184,7 +201,7 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 	// Logging is not needed to run workloads, so it is installed on the side and never holds the cluster back.
 	r.reconcileLogging(ctx, cluster)
 
-	return allReady, nil
+	return allReady, certManagerReady, nil
 }
 
 func (r *GeassClusterReconciler) addonReady(ctx context.Context, chartName, targetNamespace string) (bool, error) {
@@ -257,7 +274,7 @@ func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geas
 }
 
 func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassCluster{}).
 		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(nodeSchedulingChanged())).
 		// A replicated volume provisioned after the last pass would otherwise stay at
@@ -265,5 +282,23 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// cluster whatever object it is given.
 		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(replicatedVolumeBound())).
 		Named("geasscluster").
-		Complete(r)
+		Build(r)
+	if err != nil {
+		return err
+	}
+	// The issuer is watched too, so one that is deleted or edited is put back at once. Its kind belongs to
+	// cert-manager, which this controller installs, so the watch is added later: startClusterIssuerWatch.
+	r.watchClusterIssuers = func() error {
+		issuer := &unstructured.Unstructured{}
+		issuer.SetGroupVersionKind(platform.ClusterIssuerGVK)
+		return c.Watch(source.Kind(mgr.GetCache(), client.Object(issuer),
+			handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), predicate.NewPredicateFuncs(isGeassClusterIssuer)))
+	}
+	return nil
+}
+
+// isGeassClusterIssuer picks out the one issuer that the ingresses ask for: whoever made it, a change to it
+// matters, and no other issuer does.
+func isGeassClusterIssuer(obj client.Object) bool {
+	return obj.GetName() == platform.ClusterIssuerName
 }
