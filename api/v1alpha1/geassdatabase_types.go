@@ -98,6 +98,13 @@ type GeassDatabaseSpec struct {
 	// +optional
 	DatabaseName string `json:"databaseName,omitempty"`
 
+	// ClusterSize is the PlanetScale cluster size (for example PS_10) a created database is
+	// provisioned with. The sizes PlanetScale offers for an engine are listed by the dashboard API at
+	// /api/planetscale/cluster-sizes. It applies when the database is created; changing it
+	// afterwards does not resize the database.
+	// +optional
+	ClusterSize string `json:"clusterSize,omitempty"`
+
 	// ExternalHost is the hostname used when connecting to an existing server.
 	// +optional
 	ExternalHost string `json:"externalHost,omitempty"`

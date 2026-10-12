@@ -37,6 +37,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIGitHubSettings(w, r)
 	case r.URL.Path == "/api/settings/cloudflare":
 		s.handleAPICloudflareSettings(w, r)
+	case r.URL.Path == "/api/planetscale/cluster-sizes":
+		s.handleAPIPlanetScaleClusterSizes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
 	case strings.Contains(r.URL.Path, "/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):

@@ -280,8 +280,8 @@ export function ResourceDialog({ project, environment, data }) {
         { key: "sqlite", label: "SQLite", engine: "SQLite", placement: "InCluster" },
         {
           key: "planetscale", label: "PlanetScale", engine: "MySQL", placement: "External", provider: "PlanetScale",
-          description: planetConnections.length ? "Managed MySQL" : "Add a PlanetScale connection in platform settings",
-          disabled: planetConnections.length === 0,
+          description: "Coming soon",
+          disabled: true,
         },
         {
           key: "awsdb", label: "AWS RDS", engine: "Postgres", placement: "External", provider: "AWS",
