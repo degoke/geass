@@ -84,6 +84,11 @@ spec:
         # GEASS_DASHBOARD_PASSWORD / GEASS_DASHBOARD_USERS. Geass does not
         # generate a password.
         image: geass-operator:v0.0.1
+        env:
+        # Makes the Go runtime collect harder as it nears the container limit (512Mi) instead of being
+        # killed for it. Below the limit, so the runtime's own overhead still fits.
+        - name: GOMEMLIMIT
+          value: 400MiB
         name: manager
         ports:
         - containerPort: 8086

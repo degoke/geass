@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,7 +51,14 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.Get(ctx, req.NamespacedName, build); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if build.Spec.Repository != "" && !build.Status.CancelRequested {
+	// A build that has finished and has nothing left to do is not looked at again. Every build ever made
+	// would otherwise be reconciled on each operator restart and each event of its job, and each pass
+	// asked GitHub about it and copied its log again.
+	if buildSettled(build) {
+		return ctrl.Result{}, nil
+	}
+	started, jobRan := buildProgress(build)
+	if build.Spec.Repository != "" && !build.Status.CancelRequested && !started {
 		ready, err := r.refreshGitHubState(ctx, build)
 		if err != nil {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
@@ -59,7 +67,7 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildWaitingForCI, nil, nil)
 		}
 	}
-	if build.Spec.GitCredentialRef != nil {
+	if build.Spec.GitCredentialRef != nil && !jobRan {
 		if err := r.refreshGitCredentialToken(ctx, build); err != nil {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
 		}
@@ -74,17 +82,25 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildCancelled, nil, nil)
 	}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(job), job); apierrors.IsNotFound(err) {
+		if jobRan {
+			// The job ran and has since been removed (its time to live ran out). A finished build is not
+			// run again because its job is gone: building again takes a retrigger, which starts the build
+			// over.
+			return ctrl.Result{}, nil
+		}
 		if build.Spec.WaitForCI && !strings.EqualFold(build.Status.CIState, "success") {
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildWaitingForCI, ptr(metav1.Now()), nil)
 		}
 		job = r.jobFor(build)
 		// Builds run in the project's region so a project never spends another region's capacity, or
-		// pulls its source and pushes its image across regions. They never need the tags.
-		region, err := platform.ProjectRegion(ctx, r.Client, build.Spec.Project)
+		// pulls its source and pushes its image across regions. They never need the tags a single
+		// service asked for, but they check out its source and write its image layers to the node, so
+		// they stay on the nodes the project requires.
+		jobPlacement, err := platform.ProjectJobPlacement(ctx, r.Client, build.Spec.Project)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		platform.NewPlacement(region, nil).ApplyToPodSpec(&job.Spec.Template.Spec)
+		jobPlacement.ApplyToPodSpec(&job.Spec.Template.Spec)
 		if err := controllerutil.SetControllerReference(build, job, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -118,12 +134,97 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	log.Info("Reconciled GeassBuild", "job", job.Name, "phase", phase)
 	if completed != nil {
+		if phase == geassv1alpha1.GeassBuildSucceeded {
+			r.pruneSupersededBuilds(ctx, build)
+		}
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 func ptr(t metav1.Time) *metav1.Time { return &t }
+
+const (
+	// kanikoJobTTL is how long a finished build Job (and its pod, and so its log) is kept. By then the
+	// result is in the build's status and the log has been archived if the app asked for that.
+	kanikoJobTTL int32 = 3600
+	// keptBuildsPerApp is how many finished builds of one app are kept for its history. A build is one
+	// object per change to the app's source settings, so without a limit they only ever accumulate.
+	keptBuildsPerApp = 10
+)
+
+// buildProgress says how far a build got, from what it recorded. started means its job was created,
+// so GitHub no longer has anything to decide; jobRan means it finished, one way or the other. A
+// retrigger sets the phase back to Pending and clears the start time, which is what starts it over.
+func buildProgress(build *geassv1alpha1.GeassBuild) (started, jobRan bool) {
+	if build.Status.StartedAt == nil {
+		return false, false
+	}
+	switch build.Status.Phase {
+	case geassv1alpha1.GeassBuildRunning:
+		return true, false
+	case geassv1alpha1.GeassBuildSucceeded, geassv1alpha1.GeassBuildFailed:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// buildSettled reports whether a build is finished and needs nothing more from the controller: it
+// succeeded with an image digest, and its log is archived or was never going to be.
+func buildSettled(build *geassv1alpha1.GeassBuild) bool {
+	if build.Status.Phase != geassv1alpha1.GeassBuildSucceeded || build.Status.ImageDigest == "" || build.Status.CancelRequested {
+		return false
+	}
+	return build.Spec.LogStoreRef == nil || !strings.HasPrefix(build.Status.LogRef, "pod-log://")
+}
+
+// pruneSupersededBuilds deletes the oldest finished builds of an app beyond keptBuildsPerApp. The build
+// the app currently runs is never deleted, nor is one that is still going. A problem is logged and left
+// for the next build to try again.
+func (r *GeassBuildReconciler) pruneSupersededBuilds(ctx context.Context, build *geassv1alpha1.GeassBuild) {
+	log := logf.FromContext(ctx)
+	var builds geassv1alpha1.GeassBuildList
+	if err := r.List(ctx, &builds, client.InNamespace(build.Namespace), client.MatchingLabels{platform.LabelApp: build.Spec.App}); err != nil {
+		log.Error(err, "Failed to list builds to prune", "app", build.Spec.App)
+		return
+	}
+	active := ""
+	var app geassv1alpha1.GeassApp
+	if err := r.Get(ctx, client.ObjectKey{Name: build.Spec.App, Namespace: build.Namespace}, &app); err == nil {
+		active = app.Status.ActiveBuild
+	}
+	for _, name := range buildsToPrune(builds.Items, build.Name, active, keptBuildsPerApp) {
+		if err := r.Delete(ctx, &geassv1alpha1.GeassBuild{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: build.Namespace}}); client.IgnoreNotFound(err) != nil {
+			log.Error(err, "Failed to delete an old build", "build", name)
+			continue
+		}
+		log.Info("Deleted an old GeassBuild", "build", name, "app", build.Spec.App)
+	}
+}
+
+// buildsToPrune names the finished builds to delete: all but the newest keep, never the current build or
+// the one the app runs, and never one that has not finished.
+func buildsToPrune(builds []geassv1alpha1.GeassBuild, current, active string, keep int) []string {
+	finished := make([]geassv1alpha1.GeassBuild, 0, len(builds))
+	for i := range builds {
+		switch builds[i].Status.Phase {
+		case geassv1alpha1.GeassBuildSucceeded, geassv1alpha1.GeassBuildFailed, geassv1alpha1.GeassBuildCancelled:
+			finished = append(finished, builds[i])
+		}
+	}
+	slices.SortFunc(finished, func(a, b geassv1alpha1.GeassBuild) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
+	})
+	var doomed []string
+	for i, candidate := range finished {
+		if i < keep || candidate.Name == current || candidate.Name == active {
+			continue
+		}
+		doomed = append(doomed, candidate.Name)
+	}
+	return doomed
+}
 
 func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) *batchv1.Job {
 	image := build.Status.Image
@@ -154,7 +255,7 @@ func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) *batchv1.
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{Name: "registry-auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: build.Spec.CredentialRef.Name, Items: []corev1.KeyToPath{{Key: ".dockerconfigjson", Path: "config.json"}}}}})
 		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registry-auth", MountPath: "/kaniko/.docker", ReadOnly: true})
 	}
-	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: build.Name + "-kaniko", Namespace: build.Namespace, Labels: map[string]string{labelGeassName: build.Spec.App}}, Spec: batchv1.JobSpec{BackoffLimit: ptrInt32(2), Template: corev1.PodTemplateSpec{Spec: podSpec}}}
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: build.Name + "-kaniko", Namespace: build.Namespace, Labels: map[string]string{labelGeassName: build.Spec.App}}, Spec: batchv1.JobSpec{BackoffLimit: ptrInt32(2), TTLSecondsAfterFinished: ptrInt32(kanikoJobTTL), Template: corev1.PodTemplateSpec{Spec: podSpec}}}
 }
 
 func ptrInt32(v int32) *int32 { return &v }
@@ -164,46 +265,57 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 	if err := r.Get(ctx, client.ObjectKeyFromObject(build), latest); err != nil {
 		return err
 	}
-	latest.Status.Phase = phase
-	latest.Status.JobRef = build.Name + "-kaniko"
-	latest.Status.LogRef = build.Status.LogRef
-	if latest.Status.LogRef == "" {
-		latest.Status.LogRef = "pod-log://" + build.Name + "-kaniko/kaniko"
-	}
-	latest.Status.SourceRevision = build.Status.SourceRevision
-	latest.Status.CIState = build.Status.CIState
-	latest.Status.CIChecks = append([]string(nil), build.Status.CIChecks...)
-	if latest.Status.Image == "" {
-		latest.Status.Image = build.Spec.Registry
-		if latest.Status.Image == "" {
-			latest.Status.Image = "registry.geass.dev/" + build.Spec.Project + "/" + build.Spec.App + ":" + buildRevision(build)
-		}
-	}
-	if started != nil && latest.Status.StartedAt == nil {
-		latest.Status.StartedAt = started
-	}
-	if failure != nil {
-		latest.Status.FailureReason = failure.Error()
-	}
+	// Read what the job says before the status is built, so the write is a single patch of the result.
+	retryCount := int32(-1)
+	imageDigest := ""
 	job := &batchv1.Job{}
 	if err := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, job); err == nil {
-		latest.Status.RetryCount = job.Status.Failed
+		retryCount = job.Status.Failed
+		imageDigest = job.Annotations["geass.dev/image-digest"]
 	}
-	if phase == geassv1alpha1.GeassBuildSucceeded {
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, job); err == nil {
-			latest.Status.ImageDigest = job.Annotations["geass.dev/image-digest"]
-		}
-		if latest.Status.ImageDigest == "" {
-			latest.Status.ImageDigest = r.digestFromBuildPod(ctx, build)
-		}
-		if latest.Status.ImageDigest == "" {
-			latest.Status.Phase = geassv1alpha1.GeassBuildFailed
-			latest.Status.FailureReason = "Kaniko completed without an immutable image digest"
-		}
-		latest.Status.CompletedAt = ptr(metav1.Now())
+	if phase == geassv1alpha1.GeassBuildSucceeded && imageDigest == "" && latest.Status.ImageDigest == "" {
+		imageDigest = r.digestFromBuildPod(ctx, build)
 	}
-	return r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.Phase = phase
+		latest.Status.JobRef = build.Name + "-kaniko"
+		latest.Status.LogRef = build.Status.LogRef
+		if latest.Status.LogRef == "" {
+			latest.Status.LogRef = "pod-log://" + build.Name + "-kaniko/kaniko"
+		}
+		latest.Status.SourceRevision = build.Status.SourceRevision
+		latest.Status.CIState = build.Status.CIState
+		latest.Status.CIChecks = append([]string(nil), build.Status.CIChecks[:min(len(build.Status.CIChecks), geassv1alpha1.MaxCIChecks)]...)
+		if latest.Status.Image == "" {
+			latest.Status.Image = build.Spec.Registry
+			if latest.Status.Image == "" {
+				latest.Status.Image = "registry.geass.dev/" + build.Spec.Project + "/" + build.Spec.App + ":" + buildRevision(build)
+			}
+		}
+		if started != nil && latest.Status.StartedAt == nil {
+			latest.Status.StartedAt = started
+		}
+		if failure != nil {
+			latest.Status.FailureReason = failure.Error()
+		}
+		if retryCount >= 0 {
+			latest.Status.RetryCount = retryCount
+		}
+		if phase == geassv1alpha1.GeassBuildSucceeded {
+			if imageDigest != "" {
+				latest.Status.ImageDigest = imageDigest
+			}
+			if latest.Status.ImageDigest == "" {
+				latest.Status.Phase = geassv1alpha1.GeassBuildFailed
+				latest.Status.FailureReason = "Kaniko completed without an immutable image digest"
+			}
+			// Once: moving it on every pass made a finished build look different each time it was looked at.
+			if latest.Status.CompletedAt == nil {
+				latest.Status.CompletedAt = ptr(metav1.Now())
+			}
+		}
+	})
+	return err
 }
 
 func (r *GeassBuildReconciler) archiveBuildLog(ctx context.Context, build *geassv1alpha1.GeassBuild) string {

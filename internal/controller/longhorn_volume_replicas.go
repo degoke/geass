@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -99,7 +100,7 @@ func (r *GeassClusterReconciler) reconcileLonghornVolumeReplicas(ctx context.Con
 	if !installed {
 		return 0
 	}
-	replicas, hosted, err := r.longhornReplicaTarget(ctx)
+	replicas, hosted, general, err := r.longhornTarget(ctx)
 	if err != nil {
 		log.Error(err, "Failed to work out the Longhorn replica count")
 		return volumeReplicaRetryAfter
@@ -130,7 +131,7 @@ func (r *GeassClusterReconciler) reconcileLonghornVolumeReplicas(ctx context.Con
 		return volumeReplicaRetryAfter
 	}
 
-	failed, more := r.raiseVolumesTo(ctx, names, volumes, desired)
+	failed, more := r.raiseVolumesTo(ctx, names, volumes, desired, volumeSelector("", general))
 
 	switch {
 	case more:
@@ -148,7 +149,7 @@ func (r *GeassClusterReconciler) reconcileLonghornVolumeReplicas(ctx context.Con
 // raiseVolumesTo raises the named volumes that are below desired, at most volumeReplicaBatchSize of
 // them. failed says Longhorn refused at least one, and more that volumes are still waiting behind the
 // batch, which is what sets the pace of the next pass.
-func (r *GeassClusterReconciler) raiseVolumesTo(ctx context.Context, names []string, volumes map[string]*unstructured.Unstructured, desired int64) (failed, more bool) {
+func (r *GeassClusterReconciler) raiseVolumesTo(ctx context.Context, names []string, volumes map[string]*unstructured.Unstructured, desired int64, selector []string) (failed, more bool) {
 	log := logf.FromContext(ctx)
 	raised, failures := 0, 0
 	for _, name := range names {
@@ -166,7 +167,7 @@ func (r *GeassClusterReconciler) raiseVolumesTo(ctx context.Context, names []str
 		}
 		// A refusal does not count toward the batch. If it did, a volume Longhorn keeps
 		// refusing would sort first on every pass and starve the ones behind it.
-		if err := r.raiseVolumeReplicas(ctx, volume, desired); err != nil {
+		if err := r.raiseVolumeReplicas(ctx, volume, desired, selector); err != nil {
 			failed = true
 			failures++
 			log.Error(err, "Failed to raise Longhorn volume replica count", "volume", name, "replicas", desired)
@@ -271,13 +272,35 @@ func volumeReplicaCount(volume *unstructured.Unstructured) (int64, bool) {
 // from a stale copy. The patch carries the resourceVersion the volume was listed
 // at, so one that has changed since (an admin raising it further, say) is retried
 // on a later pass instead of being overwritten with a lower count.
-func (r *GeassClusterReconciler) raiseVolumeReplicas(ctx context.Context, volume *unstructured.Unstructured, replicas int64) error {
+//
+// A selector, when given, is set in the same patch so the new copies stay off compliance nodes. If Longhorn
+// refuses to change the selector of the volume, the count is raised without it: a volume left short of
+// copies is worse than one that may gain a copy on a node it should not use, and the next pass tries
+// the selector again.
+func (r *GeassClusterReconciler) raiseVolumeReplicas(ctx context.Context, volume *unstructured.Unstructured, replicas int64, selector []string) error {
 	volume.SetGroupVersionKind(longhornVolumeKind)
-	base := volume.DeepCopy()
-	if err := unstructured.SetNestedField(volume.Object, replicas, "spec", "numberOfReplicas"); err != nil {
-		return err
+	patch := func(withSelector bool) error {
+		target := volume.DeepCopy()
+		if err := unstructured.SetNestedField(target.Object, replicas, "spec", "numberOfReplicas"); err != nil {
+			return err
+		}
+		if withSelector {
+			if err := unstructured.SetNestedStringSlice(target.Object, selector, "spec", "nodeSelector"); err != nil {
+				return err
+			}
+		}
+		return r.Patch(ctx, target, client.MergeFromWithOptions(volume, client.MergeFromWithOptimisticLock{}))
 	}
-	return r.Patch(ctx, volume, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	if len(selector) == 0 {
+		return patch(false)
+	}
+	if err := patch(true); err != nil {
+		if apierrors.IsConflict(err) {
+			return err
+		}
+		return patch(false)
+	}
+	return nil
 }
 
 // shortestRequeue combines two requests to run again, where zero means "no request".

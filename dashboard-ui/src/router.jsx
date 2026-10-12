@@ -14,6 +14,8 @@ const route = (path, mode, validateSearch) => createRoute({
   component: () => <DashboardScreen mode={mode} />,
 });
 
+const deviceSearch = (search) => ({ code: typeof search.code === "string" && search.code ? search.code : undefined });
+
 export const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => <DashboardScreen mode="projects" /> }),
   route("/projects", "projects"),
@@ -26,6 +28,7 @@ export const routeTree = rootRoute.addChildren([
   route("/projects/$projectName/logical-databases/$name", "resource:logical-databases", projectSearch),
   route("/projects/$projectName/object-stores/$name", "resource:object-stores", projectSearch),
   route("/projects/$projectName", "workspace", projectSearch),
+  route("/device", "device", deviceSearch),
   route("/settings", "settings"),
   route("/settings/domain", "settings:domain"),
   route("/settings/connectors", "settings:connectors"),

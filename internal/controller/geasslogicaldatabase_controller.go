@@ -14,8 +14,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -97,6 +100,9 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		if message := r.regionMismatch(ctx, &logical, &server); message != "" {
 			return r.setNotReady(ctx, &logical, message)
 		}
+		if message := r.complianceMismatch(ctx, &logical, &server); message != "" {
+			return r.setNotReady(ctx, &logical, message)
+		}
 	}
 	var parentSecret corev1.Secret
 	if err := r.Get(ctx, client.ObjectKey{Name: server.Status.ConnectionSecret, Namespace: server.Status.TargetNamespace}, &parentSecret); err != nil {
@@ -153,23 +159,22 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}); err != nil {
 		return r.setNotReady(ctx, &logical, err.Error())
 	}
-	latest := logical.DeepCopy()
+	latest := &geassv1alpha1.GeassLogicalDatabase{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&logical), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.ConnectionSecret = secret.Name
-	latest.Status.JobName = jobName
-	latest.Status.Database = target.database
-	latest.Status.Username = target.username
-	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-	platform.ClearReconcileRetry(&retryState)
-	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-	completeProvisionSuccess(&latest.Status.Provision)
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "LogicalDatabaseReady", "Logical database connection is available")
-	if err := r.Status().Update(ctx, latest); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	_, err = platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.ConnectionSecret = secret.Name
+		latest.Status.JobName = jobName
+		latest.Status.Database = target.database
+		latest.Status.Username = target.username
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+		completeProvisionSuccess(&latest.Status.Provision)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "LogicalDatabaseReady", "Logical database connection is available")
+	})
+	return ctrl.Result{}, err
 }
 
 // regionMismatch refuses a project that would reach a shared server in another region: every query would
@@ -181,6 +186,17 @@ func (r *GeassLogicalDatabaseReconciler) regionMismatch(ctx context.Context, log
 		return ""
 	}
 	return fmt.Sprintf("This database server runs in the %s region, but the project runs in the %s region", serverRegion, projectRegion)
+}
+
+// complianceMismatch refuses a project that requires node tags, such as a compliance tag, when the
+// shared server does not run on nodes carrying them: its data would sit on nodes the project is not
+// allowed to use.
+func (r *GeassLogicalDatabaseReconciler) complianceMismatch(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, server *geassv1alpha1.GeassDatabase) string {
+	required, err := platform.ProjectRequiredTags(ctx, r.Client, logical.Spec.Project)
+	if err != nil {
+		return ""
+	}
+	return platform.ComplianceMismatchMessage("database server", pinnedNodePlacement(server), required)
 }
 
 // loginSecretRef is where an administrative login is read from.
@@ -462,20 +478,43 @@ func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context,
 const labelLogicalRole = "geass.dev/logical-database-role"
 
 func (r *GeassLogicalDatabaseReconciler) setNotReady(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, message string) (ctrl.Result, error) {
-	latest := logical.DeepCopy()
-	if err := r.Get(ctx, client.ObjectKeyFromObject(logical), latest); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
+	latest := &geassv1alpha1.GeassLogicalDatabase{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(logical), latest); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
-	latest.Status.Conditions = conditions
-	if err := r.Status().Update(ctx, latest); err != nil {
+	var result ctrl.Result
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		var conditions []metav1.Condition
+		result, conditions = finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+		latest.Status.Conditions = conditions
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return result, nil
 }
 
 func (r *GeassLogicalDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).For(&geassv1alpha1.GeassLogicalDatabase{}).Named("geasslogicaldatabase").Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&geassv1alpha1.GeassLogicalDatabase{}).
+		// A project changing its region or required tags changes which shared servers it may use.
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.logicalDatabasesForProject),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Named("geasslogicaldatabase").
+		Complete(r)
+}
+
+func (r *GeassLogicalDatabaseReconciler) logicalDatabasesForProject(ctx context.Context, project client.Object) []ctrl.Request {
+	var list geassv1alpha1.GeassLogicalDatabaseList
+	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for i := range list.Items {
+		if list.Items[i].Spec.Project == project.GetName() {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
+	}
+	return requests
 }
 
 func conditionStatus(conditions []metav1.Condition, conditionType string) string {

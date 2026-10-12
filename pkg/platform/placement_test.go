@@ -191,3 +191,83 @@ func TestRegionsAndTagsAcrossNodes(t *testing.T) {
 	require.Equal(t, map[string]int{"us": 2, "eu": 1}, RegionsOf(nodes))
 	require.Equal(t, map[string]TagUse{"storage": {Nodes: 2, Reserved: true}}, TagsOf(nodes))
 }
+
+func TestRequiredTagsBindLikeTagsButAreKeptForJobs(t *testing.T) {
+	p := NewPlacement("us", []string{"storage"}).WithRequired([]string{"hipaa", " hipaa ", "storage"})
+	require.Equal(t, []string{"hipaa", "storage"}, p.Required, "required tags are normalised")
+	require.Equal(t, []string{"hipaa", "storage"}, p.AllTags(), "a tag asked for twice is one tag")
+	require.Equal(t, map[string]string{LabelRegion: "us", TagKey("hipaa"): "true", TagKey("storage"): "true"}, p.NodeSelector())
+	require.Len(t, p.Tolerations(), 2)
+
+	jobs := p.Jobs()
+	require.Equal(t, Placement{Region: "us", Required: []string{"hipaa", "storage"}}, jobs, "jobs drop what the service asked for and keep what the project requires")
+
+	require.Equal(t, Placement{Region: "us"}, NewPlacement("us", []string{"storage"}).Jobs(), "without required tags jobs stay in the region only")
+}
+
+func TestRequiredTagsAloneAreNotAnywhere(t *testing.T) {
+	p := Placement{}.WithRequired([]string{"hipaa"})
+	require.False(t, p.IsZero())
+	require.Equal(t, map[string]string{TagKey("hipaa"): "true"}, p.NodeSelector())
+	require.Equal(t, "nodes tagged hipaa", p.Describe())
+	require.Equal(t, "hipaa nodes in the eu region", NewPlacement("eu", nil).WithRequired([]string{"hipaa"}).Describe())
+}
+
+func TestRequiredTagsDecideWhichNodesAreEligible(t *testing.T) {
+	hipaa := map[string]string{LabelRegion: "us", TagKey("hipaa"): "true"}
+	p := NewPlacement("us", nil).WithRequired([]string{"hipaa"})
+	compliance := corev1.Taint{Key: TagKey("hipaa"), Value: ComplianceTaintValue, Effect: corev1.TaintEffectNoSchedule}
+
+	require.True(t, p.Eligible(ptrNode(readyNode("a", hipaa, compliance))), "the project may use the compliance node it requires")
+	require.False(t, p.Eligible(ptrNode(readyNode("b", map[string]string{LabelRegion: "us"}))), "a node without the tag is never eligible")
+	require.False(t, NewPlacement("us", nil).Eligible(ptrNode(readyNode("a", hipaa, compliance))), "work that does not require the tag stays off a compliance node")
+	require.True(t, NewPlacement("us", nil).ReservedAgainst(ptrNode(readyNode("a", hipaa, compliance))))
+}
+
+func ptrNode(node corev1.Node) *corev1.Node { return &node }
+
+func TestPinnedPlacementKeepsRequiredTagsAndReadsOldPins(t *testing.T) {
+	p := NewPlacement("us", []string{"storage"}).WithRequired([]string{"hipaa"})
+	require.Equal(t, p, ParsePlacement(p.Encode()))
+
+	require.Equal(t, NewPlacement("us", []string{"storage"}), ParsePlacement(`{"region":"us","tags":["storage"]}`), "a pin written before required tags existed still reads")
+	require.True(t, ParsePlacement("not json").IsZero())
+}
+
+func TestMissingTagsSaysWhichRequirementsAServerDoesNotMeet(t *testing.T) {
+	server := NewPlacement("us", []string{"hipaa"})
+	require.Empty(t, server.MissingTags([]string{"hipaa"}))
+	require.Equal(t, []string{"pci"}, server.MissingTags([]string{"pci", "hipaa"}))
+	require.Equal(t, []string{"hipaa"}, Placement{}.MissingTags([]string{"hipaa"}), "a server that runs anywhere meets nothing")
+	require.Empty(t, Placement{}.MissingTags(nil))
+
+	require.Empty(t, ComplianceMismatchMessage("database server", server, []string{"hipaa"}))
+	require.Equal(t, "This database server does not run on nodes tagged pci, which the project requires", ComplianceMismatchMessage("database server", server, []string{"pci"}))
+}
+
+func TestComplianceTagsAreAlwaysReservedAndReadBack(t *testing.T) {
+	node := readyNode("n1", nil)
+	desired := geassv1alpha1.GeassNodePlacement{
+		Region: "us",
+		Tags:   []geassv1alpha1.GeassNodeTag{{Name: "hipaa", Compliance: true}, {Name: "gpu", Reserved: true}},
+	}
+
+	require.True(t, ApplyNodePlacement(&node, desired))
+	require.ElementsMatch(t, []corev1.Taint{
+		{Key: TagKey("hipaa"), Value: ComplianceTaintValue, Effect: corev1.TaintEffectNoSchedule},
+		reservedTaint("gpu"),
+	}, node.Spec.Taints, "a compliance tag is reserved without being asked to be")
+	require.False(t, ApplyNodePlacement(&node, desired))
+
+	read := NodePlacementOf(&node)
+	require.Equal(t, []geassv1alpha1.GeassNodeTag{
+		{Name: "gpu", Reserved: true},
+		{Name: "hipaa", Reserved: true, Compliance: true},
+	}, read.Tags)
+
+	// Dropping the compliance flag turns the taint into an ordinary reservation.
+	desired.Tags[0] = geassv1alpha1.GeassNodeTag{Name: "hipaa", Reserved: true}
+	require.True(t, ApplyNodePlacement(&node, desired))
+	require.Contains(t, node.Spec.Taints, reservedTaint("hipaa"))
+	require.Len(t, node.Spec.Taints, 2, "the old taint is replaced, not duplicated")
+}

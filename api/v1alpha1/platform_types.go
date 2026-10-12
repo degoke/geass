@@ -56,11 +56,21 @@ type GeassProjectSpec struct {
 	// +kubebuilder:validation:MaxLength=40
 	// +optional
 	Region string `json:"region,omitempty"`
+	// RequiredTags are node tags every workload of this project must run on, such as "hipaa". A node
+	// needs all of them. Unlike a service's own runOn tags, these apply to everything the project
+	// runs: services, databases, buckets, builds, and the jobs that back up and restore them.
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:items:MaxLength=40
+	// +listType=set
+	// +optional
+	RequiredTags []string `json:"requiredTags,omitempty"`
 	// Environments are the isolated environments enabled for this project.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:MaxItems=100
 	Environments []string `json:"environments"`
 	// SharedVariables are environment-scoped values available to project services.
 	// +optional
@@ -149,7 +159,8 @@ type GeassProjectEnvironmentStatus struct {
 
 type GeassProjectStatus struct {
 	// ClusterRef is the cluster observed by the controller. It prevents silent project migration.
-	ClusterRef   string                          `json:"clusterRef,omitempty"`
+	ClusterRef string `json:"clusterRef,omitempty"`
+	// +kubebuilder:validation:MaxItems=100
 	Environments []GeassProjectEnvironmentStatus `json:"environments,omitempty"`
 	// ReconcileRetry tracks provision retries before reconciliation gives up.
 	// +optional
@@ -281,17 +292,23 @@ type GeassBuildSpec struct {
 	LogStoreRef      *corev1.LocalObjectReference `json:"logStoreRef,omitempty"`
 }
 
+// MaxCIChecks is how many CI check names a build keeps in its status.
+const MaxCIChecks = 50
+
 type GeassBuildStatus struct {
-	Phase           GeassBuildPhase    `json:"phase,omitempty"`
-	JobRef          string             `json:"jobRef,omitempty"`
-	Image           string             `json:"image,omitempty"`
-	ImageDigest     string             `json:"imageDigest,omitempty"`
-	LogRef          string             `json:"logRef,omitempty"`
-	FailureReason   string             `json:"failureReason,omitempty"`
-	RetryCount      int32              `json:"retryCount,omitempty"`
-	StartedAt       *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt     *metav1.Time       `json:"completedAt,omitempty"`
-	CIState         string             `json:"ciState,omitempty"`
+	Phase         GeassBuildPhase `json:"phase,omitempty"`
+	JobRef        string          `json:"jobRef,omitempty"`
+	Image         string          `json:"image,omitempty"`
+	ImageDigest   string          `json:"imageDigest,omitempty"`
+	LogRef        string          `json:"logRef,omitempty"`
+	FailureReason string          `json:"failureReason,omitempty"`
+	RetryCount    int32           `json:"retryCount,omitempty"`
+	StartedAt     *metav1.Time    `json:"startedAt,omitempty"`
+	CompletedAt   *metav1.Time    `json:"completedAt,omitempty"`
+	CIState       string          `json:"ciState,omitempty"`
+	// CIChecks are the names of the checks that ran. At most MaxCIChecks are kept: a monorepo can run
+	// hundreds, and a status that grows with the repository is not one to store in etcd.
+	// +kubebuilder:validation:MaxItems=50
 	CIChecks        []string           `json:"ciChecks,omitempty"`
 	SourceRevision  string             `json:"sourceRevision,omitempty"`
 	CancelRequested bool               `json:"cancelRequested,omitempty"`

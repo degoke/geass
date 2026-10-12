@@ -79,8 +79,7 @@ func (r *GeassDatabaseReconciler) databaseStorageClass(ctx context.Context, db *
 
 // newVolumeStorageClass is the policy for a database with no volume yet.
 func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db *geassv1alpha1.GeassDatabase) (string, bool, error) {
-	region := pinnedNodePlacement(db).Region
-	want := platform.DatabaseStorageClassIn(db.Spec.Engine, databaseWantsHA(db), region)
+	want := platform.DatabaseStorageClassFor(db.Spec.Engine, databaseWantsHA(db), pinnedNodePlacement(db))
 	available, err := r.storageClassExists(ctx, want)
 	if err != nil {
 		return "", false, err
@@ -88,10 +87,11 @@ func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db 
 	if available {
 		return want, false, nil
 	}
-	// A region's class is made by the cluster controller once the region's Longhorn nodes are ready. If
+	// A region's class, or the class for a project's required tags, is made by the cluster controller
+	// once the Longhorn nodes it covers are ready. If
 	// Longhorn is already serving the global class, the regional one is only a moment behind, and
 	// settling for local storage now would pin the database to it for good. Wait for it.
-	if _, regional := platform.RegionFromRegionalClass(want); regional {
+	if platform.IsScopedReplicatedClass(want) {
 		if global, err := r.storageClassExists(ctx, platform.StorageClassReplicated); err != nil {
 			return "", false, err
 		} else if global {

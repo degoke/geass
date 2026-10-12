@@ -64,6 +64,18 @@ type GeassClusterLoggingAddon struct {
 	RetentionDays int32 `json:"retentionDays,omitempty"`
 }
 
+// GeassClusterServerlessAddon controls scale to zero: KEDA and its HTTP add-on, which hold a request while a
+// sleeping service starts, and put it to sleep again when it has been idle.
+type GeassClusterServerlessAddon struct {
+	// Enabled installs KEDA and the HTTP add-on. It is opt-in: it adds a few small pods, and changes the
+	// ingress controller's settings so it can route to the add-on. Services can then ask to scale to zero.
+	// Turning it off stops services from scaling to zero but never uninstalls KEDA: services that were asleep are
+	// woken and run normally.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // GeassClusterAddonsSpec groups platform add-on toggles.
 type GeassClusterAddonsSpec struct {
 	// CertManager controls cert-manager installation.
@@ -81,6 +93,10 @@ type GeassClusterAddonsSpec struct {
 	// Logging controls log collection and search.
 	// +optional
 	Logging GeassClusterLoggingAddon `json:"logging,omitempty"`
+
+	// Serverless controls scale to zero.
+	// +optional
+	Serverless GeassClusterServerlessAddon `json:"serverless,omitempty"`
 }
 
 // GeassClusterNetworkSpec says how the cluster's nodes reach each other.
@@ -198,6 +214,12 @@ func LogRetentionDays(spec GeassClusterAddonsSpec) int32 {
 		return spec.Logging.RetentionDays
 	}
 	return DefaultLogRetentionDays
+}
+
+// ServerlessEnabled reports whether scale to zero was explicitly turned on. Like Longhorn and logging it is
+// opt-in: an unset value means "not installed".
+func ServerlessEnabled(spec GeassClusterAddonsSpec) bool {
+	return spec.Serverless.Enabled != nil && *spec.Serverless.Enabled
 }
 
 // LonghornEnabled reports whether Longhorn was explicitly turned on. Unlike the

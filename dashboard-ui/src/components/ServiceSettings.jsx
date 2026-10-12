@@ -62,6 +62,9 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
   const [autoscaling, setAutoscaling] = useState(Boolean(spec.autoscaling?.maxReplicas > 1));
   const [maxReplicas, setMaxReplicas] = useState(spec.autoscaling?.maxReplicas || 3);
   const [targetCPU, setTargetCPU] = useState(spec.autoscaling?.targetCPUUtilization || 50);
+  const [sleeps, setSleeps] = useState(Boolean(spec.scaleToZero?.enabled));
+  const [idleMinutes, setIdleMinutes] = useState(Math.round((spec.scaleToZero?.idleSeconds || 300) / 60) || 5);
+  const sleepCondition = (item?.status?.conditions || []).find((entry) => entry.type === "ScaleToZero");
   const [dockerfile, setDockerfile] = useState(git?.dockerfile || "");
   const [watchPatterns, setWatchPatterns] = useState((git?.watchPatterns || []).join("\n"));
   const [buildCache, setBuildCache] = useState(Boolean(spec.build?.cache));
@@ -244,8 +247,12 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     memory,
                     replicas: String(replicas),
                     autoscaling: autoscaling ? "on" : "",
-                    maxReplicas: String(maxReplicas),
+                    // The server turns autoscaling on for any maximum above one that comes with a target, so an
+                    // off switch has to say there is no maximum.
+                    maxReplicas: autoscaling ? String(maxReplicas) : "1",
                     targetCPU: String(targetCPU),
+                    scaleToZero: sleeps ? "on" : "off",
+                    ...(sleeps ? { idleSeconds: String(Math.max(1, idleMinutes) * 60) } : {}),
                     ...(runOnShown ? { runOnTags: runOn.join(",") } : {}),
                   })}
                 >
@@ -268,7 +275,14 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                   </ResourceSettingsBlock>
                   <RunOnField data={data} region={region} value={runOn} onChange={setRunOn} note="Applies on deploy." />
                   <ResourceSettingsBlock title="Autoscaling" description="Scale out when average CPU crosses your target." live>
-                    <ToggleRow label="Enable autoscaling" checked={autoscaling} onChange={setAutoscaling} />
+                    <ToggleRow
+                      label="Enable autoscaling"
+                      checked={autoscaling}
+                      onChange={(value) => {
+                        setAutoscaling(value);
+                        if (value) setSleeps(false);
+                      }}
+                    />
                     {autoscaling ? (
                       <SettingsPanel className="rw-resource-settings-panel-spaced">
                         <Field label="Scale up to">
@@ -279,6 +293,28 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                         </Field>
                       </SettingsPanel>
                     ) : null}
+                  </ResourceSettingsBlock>
+                  <ResourceSettingsBlock
+                    title="Sleep when idle"
+                    description="Stop this service when nobody is using it and start it on the next request, which waits a few seconds while it wakes. It needs a public domain, and the serverless add-on on the cluster."
+                    live
+                  >
+                    <ToggleRow
+                      label="Sleep when idle"
+                      checked={sleeps}
+                      onChange={(value) => {
+                        setSleeps(value);
+                        if (value) setAutoscaling(false);
+                      }}
+                    />
+                    {sleeps ? (
+                      <SettingsPanel className="rw-resource-settings-panel-spaced">
+                        <Field label="Sleep after (minutes)">
+                          <Input type="number" min="1" max="1440" value={idleMinutes} onChange={(event) => setIdleMinutes(Number(event.currentTarget.value) || 5)} />
+                        </Field>
+                      </SettingsPanel>
+                    ) : null}
+                    {sleeps && sleepCondition && sleepCondition.status !== "True" ? <Muted size="sm">{sleepCondition.message} Until then it keeps running.</Muted> : null}
                   </ResourceSettingsBlock>
                   {saveButton("scale")}
                 </FormStack>

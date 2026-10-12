@@ -31,7 +31,7 @@ func conflictOnce(t *testing.T, objects ...client.Object) (client.Client, *atomi
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	var conflicts atomic.Int32
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&geassv1alpha1.GeassDeployment{}).WithInterceptorFuncs(interceptor.Funcs{
 		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
 			switch obj.(type) {
 			case *geassv1alpha1.GeassProject, *geassv1alpha1.GeassApp, *geassv1alpha1.GeassDatabase:

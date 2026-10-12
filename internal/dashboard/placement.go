@@ -212,6 +212,10 @@ func (s *Server) handleNodePlacementSave(w http.ResponseWriter, r *http.Request,
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
+	if err := s.requireProjectTags(r.Context(), &desired); err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
 	before := platform.NodePlacementOf(&node)
 	base := node.DeepCopy()
 	if platform.ApplyNodePlacement(&node, desired) {
@@ -255,6 +259,7 @@ func nodePlacementFromForm(r *http.Request) (geassv1alpha1.GeassNodePlacement, e
 	}
 	tags := splitNames(r.Form["tags"])
 	reserved := splitNames(r.Form["reserved"])
+	compliance := splitNames(r.Form["compliance"])
 	for _, tag := range tags {
 		if err := platform.ValidatePlacementName("tag", tag); err != nil {
 			return desired, platform.UserError(capitalizeFirst(err.Error()))
@@ -265,13 +270,54 @@ func nodePlacementFromForm(r *http.Request) (geassv1alpha1.GeassNodePlacement, e
 			return desired, platform.UserError(fmt.Sprintf("%s cannot be reserved because the node does not have that tag", tag))
 		}
 	}
+	for _, tag := range compliance {
+		if !slices.Contains(tags, tag) {
+			return desired, platform.UserError(fmt.Sprintf("%s cannot be a compliance tag because the node does not have that tag", tag))
+		}
+	}
 	if len(tags) > 16 {
 		return desired, platform.UserError("A node can have at most 16 tags")
 	}
 	for _, tag := range tags {
-		desired.Tags = append(desired.Tags, geassv1alpha1.GeassNodeTag{Name: tag, Reserved: slices.Contains(reserved, tag)})
+		isCompliance := slices.Contains(compliance, tag)
+		desired.Tags = append(desired.Tags, geassv1alpha1.GeassNodeTag{
+			Name:       tag,
+			Reserved:   isCompliance || slices.Contains(reserved, tag),
+			Compliance: isCompliance,
+		})
 	}
 	return desired, nil
+}
+
+// requireProjectTags makes every tag that a project requires a compliance tag, so a node carrying it is
+// kept for the projects that need it: a project's data must never share a node with work that does not
+// belong to it, and an admin who forgets the switch would otherwise leave the node open to anything.
+func (s *Server) requireProjectTags(ctx context.Context, desired *geassv1alpha1.GeassNodePlacement) error {
+	required, err := s.projectsRequiringTags(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range desired.Tags {
+		if len(required[desired.Tags[i].Name]) > 0 {
+			desired.Tags[i].Reserved, desired.Tags[i].Compliance = true, true
+		}
+	}
+	return nil
+}
+
+// projectsRequiringTags maps each tag some project requires to the projects that require it.
+func (s *Server) projectsRequiringTags(ctx context.Context) (map[string][]geassv1alpha1.GeassProject, error) {
+	var projects geassv1alpha1.GeassProjectList
+	if err := s.Client.List(ctx, &projects, client.InNamespace(systemNamespace)); err != nil {
+		return nil, err
+	}
+	required := map[string][]geassv1alpha1.GeassProject{}
+	for _, project := range projects.Items {
+		for _, tag := range project.Spec.RequiredTags {
+			required[tag] = append(required[tag], project)
+		}
+	}
+	return required, nil
 }
 
 func capitalizeFirst(text string) string {
@@ -305,11 +351,74 @@ func (s *Server) declareNodePlacement(ctx context.Context, nodeName string, plac
 // placementWarnings names what a node change leaves without a home: projects whose region no node is
 // left in. Running workloads are not moved, but they could not restart.
 func (s *Server) placementWarnings(ctx context.Context, nodeName string, before, after geassv1alpha1.GeassNodePlacement) []string {
-	if before.Region == after.Region || before.Region == "" {
-		return nil
-	}
 	nodes, err := s.listNodes(ctx)
 	if err != nil {
+		return nil
+	}
+	warnings := s.tagWarnings(ctx, nodes, nodeName, before, after)
+	return append(warnings, s.regionWarnings(ctx, nodes, nodeName, before, after)...)
+}
+
+// tagWarnings names what a tag change means for compliance: workloads that were already running on a
+// node that just became a compliance node, and projects left with no node carrying a tag they require.
+func (s *Server) tagWarnings(ctx context.Context, nodes []corev1.Node, nodeName string, before, after geassv1alpha1.GeassNodePlacement) []string {
+	var warnings []string
+	wasCompliance := map[string]bool{}
+	hadTag := map[string]bool{}
+	for _, tag := range before.Tags {
+		hadTag[tag.Name] = true
+		wasCompliance[tag.Name] = tag.Compliance
+	}
+	for _, tag := range after.Tags {
+		if tag.Compliance && !wasCompliance[tag.Name] {
+			warnings = append(warnings, fmt.Sprintf("%s is now a compliance tag on this node. Workloads already running here keep running until they restart, so restart any that do not belong to a project requiring %s", tag.Name, tag.Name))
+		}
+	}
+	required, err := s.projectsRequiringTags(ctx)
+	if err != nil {
+		return warnings
+	}
+	keptTag := map[string]bool{}
+	for _, tag := range after.Tags {
+		keptTag[tag.Name] = true
+	}
+	for tag := range hadTag {
+		projects := required[tag]
+		if keptTag[tag] || len(projects) == 0 {
+			continue
+		}
+		for _, project := range projects {
+			region := project.Spec.Region
+			if region == "" {
+				region, _ = platform.DefaultRegion(ctx, s.Client, project.Spec.ClusterRef.Name)
+			}
+			if !otherNodeHasTag(nodes, nodeName, tag, region) {
+				warnings = append(warnings, fmt.Sprintf("%s requires %s, and no other node carries it, so its workloads cannot restart until one does", projectLabel(project), tag))
+			}
+		}
+	}
+	return warnings
+}
+
+// otherNodeHasTag reports whether a node other than the one being changed carries the tag in the region
+// (any region when it is empty).
+func otherNodeHasTag(nodes []corev1.Node, nodeName, tag, region string) bool {
+	for i := range nodes {
+		if nodes[i].Name == nodeName {
+			continue
+		}
+		if region != "" && nodes[i].Labels[platform.LabelRegion] != region {
+			continue
+		}
+		if _, ok := nodes[i].Labels[platform.TagKey(tag)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) regionWarnings(ctx context.Context, nodes []corev1.Node, nodeName string, before, after geassv1alpha1.GeassNodePlacement) []string {
+	if before.Region == after.Region || before.Region == "" {
 		return nil
 	}
 	for i := range nodes {

@@ -628,14 +628,11 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, db, "GeassDatabase")
-		if secret.StringData == nil {
-			secret.StringData = map[string]string{}
+		if secretValue(secret, "username") == "" {
+			setSecretStrings(secret, map[string]string{"username": appContainerName})
 		}
-		if _, ok := secret.StringData["username"]; !ok && secretValue(secret, "username") == "" {
-			secret.StringData["username"] = appContainerName
-		}
-		if _, ok := secret.StringData["password"]; !ok && secretValue(secret, "password") == "" {
-			secret.StringData["password"] = db.Name + "-password"
+		if secretValue(secret, "password") == "" {
+			setSecretStrings(secret, map[string]string{"password": db.Name + "-password"})
 		}
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})
@@ -735,43 +732,48 @@ func (r *GeassDatabaseReconciler) writeConnectionSecret(ctx context.Context, db 
 		if scheme == "http" {
 			uri = fmt.Sprintf("http://%s:%s", host, port)
 		}
-		secret.StringData = map[string]string{
+		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyHost:     host,
 			platform.ConnectionKeyPort:     port,
 			platform.ConnectionKeyDatabase: databaseName(db),
 			platform.ConnectionKeyUsername: username,
 			platform.ConnectionKeyPassword: password,
 			platform.ConnectionKeyURI:      uri,
-		}
+		})
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})
 	return err
 }
 
 func (r *GeassDatabaseReconciler) setReady(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, host, message string) (ctrl.Result, error) {
-	latest := db.DeepCopy()
+	latest := &geassv1alpha1.GeassDatabase{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(db), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.TargetNamespace = wsNS
-	latest.Status.ConnectionSecret = db.Name + "-connection"
-	latest.Status.Host = host
-	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-	platform.ClearReconcileRetry(&retryState)
-	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-	completeProvisionSuccess(&latest.Status.Provision)
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "DatabaseReady", message)
-	return ctrl.Result{}, r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.TargetNamespace = wsNS
+		latest.Status.ConnectionSecret = db.Name + "-connection"
+		latest.Status.Host = host
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+		completeProvisionSuccess(&latest.Status.Provision)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "DatabaseReady", message)
+	})
+	return ctrl.Result{}, err
 }
 
 func (r *GeassDatabaseReconciler) setNotReady(ctx context.Context, db *geassv1alpha1.GeassDatabase, message string) (ctrl.Result, error) {
-	latest := db.DeepCopy()
+	latest := &geassv1alpha1.GeassDatabase{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(db), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
-	latest.Status.Conditions = conditions
-	if err := r.Status().Update(ctx, latest); err != nil {
+	var result ctrl.Result
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		var conditions []metav1.Condition
+		result, conditions = finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+		latest.Status.Conditions = conditions
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return result, nil
@@ -967,7 +969,7 @@ func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassDatabase{}).
 		// A project choosing or changing its backup storage must reach the databases waiting for it.
-		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject)).
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject), builder.WithPredicates(readyOrSpecChanged())).
 		// A database given its first logical database must start giving out its administrative login.
 		Watches(&geassv1alpha1.GeassLogicalDatabase{}, handler.EnqueueRequestsFromMapFunc(r.databasesForLogicalDatabase)).
 		// A restore or final backup finishing should be noticed at once, not at the next poll.

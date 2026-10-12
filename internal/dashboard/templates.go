@@ -283,6 +283,10 @@ func (s *Server) exportTemplate(ctx context.Context, projectName, environment, n
 		case app.Spec.Source.Function != nil:
 			resource.Kind = templates.KindFunction
 			resource.Runtime, resource.Code = app.Spec.Source.Function.Runtime, app.Spec.Source.Function.Code
+			resource.Mode = app.Spec.Source.Function.Mode
+			for _, trigger := range app.Spec.Source.Function.Triggers {
+				resource.Triggers = append(resource.Triggers, templates.Trigger(trigger))
+			}
 		case app.Spec.Source.Git != nil:
 			resource.Kind = templates.KindService
 			resource.Repository, resource.Branch = app.Spec.Source.Git.Repository, app.Spec.Source.Git.Branch
@@ -467,7 +471,7 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 		}
 		switch resource.Kind {
 		case templates.KindFunction:
-			app.Spec.Source.Function = &geassv1alpha1.GeassAppFunctionSource{Runtime: resource.Runtime, Code: resource.Code}
+			app.Spec.Source.Function = resource.FunctionSource()
 		default:
 			if resource.Repository != "" {
 				branch := resource.Branch

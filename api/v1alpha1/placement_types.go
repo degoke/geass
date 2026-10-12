@@ -19,6 +19,11 @@ type GeassNodeTag struct {
 	// dedicated to the work that does.
 	// +optional
 	Reserved bool `json:"reserved,omitempty"`
+
+	// Compliance marks the tag as a compliance boundary, such as "hipaa". A compliance tag is always
+	// reserved, so nothing but the projects that require it can land on the node.
+	// +optional
+	Compliance bool `json:"compliance,omitempty"`
 }
 
 // GeassNodePlacement says where a node sits and what it is for. The operator writes it onto the

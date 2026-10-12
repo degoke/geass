@@ -246,12 +246,12 @@ func (r *GeassObjectStoreReconciler) ensureMinIORootSecret(ctx context.Context, 
 			}
 			accessKey, secretKey = generatedAccess, generatedSecret
 		}
-		secret.StringData = map[string]string{
+		setSecretStrings(secret, map[string]string{
 			"rootUser":                      accessKey,
 			"rootPassword":                  secretKey,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
-		}
+		})
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
 	if err != nil {
@@ -512,6 +512,12 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) || server.Status.Endpoint == "" {
 		return r.setNotReady(ctx, store, "Set up the MinIO server in cluster settings first")
 	}
+	// A project that requires node tags must not keep its objects on a server that runs elsewhere.
+	if required, err := platform.ProjectRequiredTags(ctx, r.Client, store.Spec.Project); err == nil {
+		if message := platform.ComplianceMismatchMessage("MinIO server", pinnedStorePlacement(server), required); message != "" {
+			return r.setNotReady(ctx, store, message)
+		}
+	}
 	rootSecret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
 		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
@@ -582,12 +588,12 @@ func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context
 		if err != nil {
 			return err
 		}
-		secret.StringData = map[string]string{
+		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyEndpoint:  endpoint,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
 			platform.ConnectionKeyBucket:    buckets[0],
-		}
+		})
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
 	return accessKey, secretKey, err
@@ -597,10 +603,10 @@ func (r *GeassObjectStoreReconciler) ensureMinIOUserSecret(ctx context.Context, 
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
-		secret.StringData = map[string]string{
+		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
-		}
+		})
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
 	return err
@@ -895,44 +901,50 @@ func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Conte
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
-		secret.StringData = map[string]string{
+		bucket := store.Name
+		if len(store.Spec.Buckets) > 0 {
+			bucket = store.Spec.Buckets[0]
+		}
+		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyEndpoint:  endpoint,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
-			platform.ConnectionKeyBucket:    store.Name,
-		}
-		if len(store.Spec.Buckets) > 0 {
-			secret.StringData[platform.ConnectionKeyBucket] = store.Spec.Buckets[0]
-		}
+			platform.ConnectionKeyBucket:    bucket,
+		})
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
 	return err
 }
 
 func (r *GeassObjectStoreReconciler) setReady(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, message string) (ctrl.Result, error) {
-	latest := store.DeepCopy()
+	latest := &geassv1alpha1.GeassObjectStore{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	latest.Status.TargetNamespace = wsNS
-	latest.Status.ConnectionSecret = store.Name + "-connection"
-	latest.Status.Endpoint = endpoint
-	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-	platform.ClearReconcileRetry(&retryState)
-	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-	completeProvisionSuccess(&latest.Status.Provision)
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ObjectStoreReady", message)
-	return ctrl.Result{}, r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.TargetNamespace = wsNS
+		latest.Status.ConnectionSecret = store.Name + "-connection"
+		latest.Status.Endpoint = endpoint
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+		completeProvisionSuccess(&latest.Status.Provision)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ObjectStoreReady", message)
+	})
+	return ctrl.Result{}, err
 }
 
 func (r *GeassObjectStoreReconciler) setNotReady(ctx context.Context, store *geassv1alpha1.GeassObjectStore, message string) (ctrl.Result, error) {
-	latest := store.DeepCopy()
+	latest := &geassv1alpha1.GeassObjectStore{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
 		return ctrl.Result{}, err
 	}
-	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
-	latest.Status.Conditions = conditions
-	if err := r.Status().Update(ctx, latest); err != nil {
+	var result ctrl.Result
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		var conditions []metav1.Condition
+		result, conditions = finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, &latest.Status.Provision, latest.Generation, message)
+		latest.Status.Conditions = conditions
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return result, nil
@@ -972,6 +984,20 @@ func (r *GeassObjectStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			pod, ok := obj.(*corev1.Pod)
 			return ok && isClusterMinIOWorkloadPod(pod)
 		}))).
+		// A project changing its region or required tags changes which MinIO server it may use.
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, project client.Object) []ctrl.Request {
+			var list geassv1alpha1.GeassObjectStoreList
+			if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+				return nil
+			}
+			var requests []ctrl.Request
+			for i := range list.Items {
+				if list.Items[i].Spec.Project == project.GetName() {
+					requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+				}
+			}
+			return requests
+		}), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("geassobjectstore").
 		Complete(r)
 }

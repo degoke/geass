@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -141,7 +142,8 @@ func (r *GeassBackupArchiveReconciler) archivesForDatabase(ctx context.Context, 
 func (r *GeassBackupArchiveReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassBackupArchive{}).
-		Watches(&geassv1alpha1.GeassDatabase{}, handler.EnqueueRequestsFromMapFunc(r.archivesForDatabase)).
+		// An archive only needs to know its database is going or gone, not each of the database's status writes.
+		Watches(&geassv1alpha1.GeassDatabase{}, handler.EnqueueRequestsFromMapFunc(r.archivesForDatabase), builder.WithPredicates(databaseGoneOrDeleting())).
 		Named("geassbackuparchive").
 		Complete(r)
 }

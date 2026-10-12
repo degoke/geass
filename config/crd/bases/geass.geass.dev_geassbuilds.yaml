@@ -135,8 +135,12 @@ spec:
               cancelRequested:
                 type: boolean
               ciChecks:
+                description: |-
+                  CIChecks are the names of the checks that ran. At most MaxCIChecks are kept: a monorepo can run
+                  hundreds, and a status that grows with the repository is not one to store in etcd.
                 items:
                   type: string
+                maxItems: 50
                 type: array
               ciState:
                 type: string

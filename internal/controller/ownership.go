@@ -84,3 +84,16 @@ func ensureNamespace(ctx context.Context, c client.Client, name string, labels m
 	}
 	return c.Create(ctx, ns)
 }
+
+// setSecretStrings sets string values on a secret's Data, leaving its other keys as they are, which is how
+// StringData is merged by the API server. It is written to Data and not StringData because the API server
+// never returns StringData: a mutate function that sets it always looks like a change to
+// CreateOrUpdate, and the secret would be written on every reconcile.
+func setSecretStrings(secret *corev1.Secret, values map[string]string) {
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte, len(values))
+	}
+	for key, value := range values {
+		secret.Data[key] = []byte(value)
+	}
+}

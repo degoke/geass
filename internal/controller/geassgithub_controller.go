@@ -32,14 +32,19 @@ func (r *GeassGitHubConnectionReconciler) Reconcile(ctx context.Context, req ctr
 	if ready && connection.Spec.WebhookSecretRef != nil {
 		ready = r.Get(ctx, client.ObjectKey{Name: connection.Spec.WebhookSecretRef.Name, Namespace: connection.Namespace}, &corev1.Secret{}) == nil
 	}
-	latest := connection.DeepCopy()
-	latest.Status.Ready = ready
+	latest := &geassv1alpha1.GeassGitHubConnection{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(connection), latest); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 	reason, message := "ConnectionReady", "GitHub connection Secret is available"
 	if !ready {
 		reason, message = "SecretUnavailable", "GitHub authentication or webhook Secret is unavailable"
 	}
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, githubConditionStatus(ready), reason, message)
-	return ctrl.Result{}, r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.Ready = ready
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, githubConditionStatus(ready), reason, message)
+	})
+	return ctrl.Result{}, err
 }
 
 func githubConditionStatus(ready bool) metav1.ConditionStatus {

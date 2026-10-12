@@ -88,6 +88,12 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleDashboardLogin(w, mutation)
 	case mutation.URL.Path == "/logout":
 		s.handleDashboardLogout(w, mutation)
+	case mutation.URL.Path == "/auth/device":
+		s.handleDeviceStart(w, mutation)
+	case mutation.URL.Path == "/auth/token":
+		s.handleDeviceToken(w, mutation)
+	case mutation.URL.Path == "/auth/device/approve":
+		s.handleDeviceApprove(w, mutation)
 	case mutation.URL.Path == "/tokens/create":
 		s.handleAPITokenCreate(w, mutation)
 	case mutation.URL.Path == "/tokens/revoke":

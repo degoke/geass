@@ -34,6 +34,7 @@ import (
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -57,6 +58,12 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	// One client configuration for everything that talks to the API server, so they share a connection
+	// pool and rate limits are not multiplied by the number of clients.
+	restConfig := ctrl.GetConfigOrDie()
+	// Time every request to the API server. The reconcile and queue metrics say how the controllers are
+	// doing; this says how the API server is doing for them.
+	restConfig.Wrap(platform.InstrumentTransport)
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -160,8 +167,9 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  controller.CacheOptions(),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -217,7 +225,7 @@ func main() {
 	if err := (&controller.GeassBuildReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Kube:   kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		Kube:   kubernetes.NewForConfigOrDie(restConfig),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassbuild")
 		os.Exit(1)
@@ -299,8 +307,8 @@ func main() {
 			Client:    mgr.GetClient(),
 			Cache:     mgr.GetCache(),
 			Addr:      dashboardAddr,
-			Kube:      kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
-			Config:    ctrl.GetConfigOrDie(),
+			Kube:      kubernetes.NewForConfigOrDie(restConfig),
+			Config:    restConfig,
 			GitHubApp: githubapp.LoadConfigFromEnv(),
 			Webhooks:  webhookDispatcher,
 		}); err != nil {

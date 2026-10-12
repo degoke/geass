@@ -58,6 +58,9 @@ type dashboardSessionInfo struct {
 	Username  string `json:"username"`
 	Role      string `json:"role"`
 	CanMutate bool   `json:"canMutate"`
+	// CanReadSensitive is whether the session may read what is kept from viewers: logs, the names of a
+	// service's variables, and the like. Admins can, and so can an observer token, which changes nothing.
+	CanReadSensitive bool `json:"-"`
 }
 
 type loginAttempt struct {
@@ -96,7 +99,8 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
-		if !session.CanMutate && (isDashboardWriteMethod(r) || dashboardWriteCallback(r.URL.Path) || dashboardSensitiveRead(r.URL.Path)) {
+		if !session.CanMutate && (isDashboardWriteMethod(r) || dashboardWriteCallback(r.URL.Path) ||
+			(dashboardSensitiveRead(r.URL.Path) && !session.CanReadSensitive)) {
 			writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "viewer role cannot access this"})
 			return
 		}
@@ -148,6 +152,9 @@ func dashboardPublicPath(r *http.Request) bool {
 	case path == platform.GeassDashboardProbePath, path == "/webhooks/github":
 		return true
 	case path == "/api/login", path == "/api/logout", path == "/api/session":
+		return true
+	// Signing in from a program: it starts and collects a request, and approving one takes a signed-in admin.
+	case path == "/api/auth/device" && r.Method == http.MethodPost, path == "/api/auth/token" && r.Method == http.MethodPost:
 		return true
 	case strings.HasPrefix(path, "/assets/"):
 		return true
@@ -266,7 +273,7 @@ func (s *Server) currentSession(r *http.Request) *dashboardSessionInfo {
 	if liveRole == "" {
 		liveRole = dashboardRoleViewer
 	}
-	return &dashboardSessionInfo{Username: user.Username, Role: liveRole, CanMutate: liveRole == dashboardRoleAdmin}
+	return &dashboardSessionInfo{Username: user.Username, Role: liveRole, CanMutate: liveRole == dashboardRoleAdmin, CanReadSensitive: liveRole == dashboardRoleAdmin}
 }
 
 func (s *Server) dashboardAuth(r *http.Request) (*dashboardAuth, error) {

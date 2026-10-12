@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -46,6 +47,7 @@ func newFakeClient(objects ...client.Object) client.Client {
 	scheme := runtime.NewScheme()
 	_ = geassv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
 	_ = storagev1.AddToScheme(scheme)
 	return fake.NewClientBuilder().
@@ -58,6 +60,7 @@ func newFakeClient(objects ...client.Object) client.Client {
 			&geassv1alpha1.GeassPlatformConfig{},
 			&geassv1alpha1.GeassConsoleSession{},
 			&geassv1alpha1.GeassProject{},
+			&geassv1alpha1.GeassDeployment{},
 		).
 		Build()
 }

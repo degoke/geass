@@ -52,6 +52,19 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingadmissionpolicies
+  - validatingadmissionpolicybindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - apps
   resources:
   - deployments
@@ -169,7 +182,28 @@ rules:
 - apiGroups:
   - helm.cattle.io
   resources:
+  - helmchartconfigs
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - helm.cattle.io
+  resources:
   - helmcharts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - http.keda.sh
+  resources:
+  - httpscaledobjects
   verbs:
   - create
   - delete
@@ -191,6 +225,7 @@ rules:
   - monitoring.coreos.com
   resources:
   - podmonitors
+  - prometheusrules
   - servicemonitors
   verbs:
   - create

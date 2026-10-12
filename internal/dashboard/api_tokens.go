@@ -52,6 +52,9 @@ func tokenSession(record *apitokens.Record) *dashboardSessionInfo {
 		Username:  "token:" + record.Name,
 		Role:      record.Role,
 		CanMutate: record.Role == apitokens.RoleAdmin,
+		// An observer is shut out of nothing that only reads. Everything it can reach it can only look at:
+		// writes are refused for it (it cannot mutate), whatever it asks.
+		CanReadSensitive: record.Role == apitokens.RoleAdmin || record.Role == apitokens.RoleObserver,
 	}
 }
 
@@ -201,6 +204,9 @@ var (
 // projectTokenRoute is the complete list of what a project token can do. Everything not listed here,
 // such as creating or deleting resources, the terminal, networking, and settings, is refused.
 func projectTokenRoute(method, path string) (tokenRoute, bool) {
+	if v1Path, found := strings.CutPrefix(path, v1Prefix); found {
+		return projectTokenV1Route(method, v1Path)
+	}
 	switch {
 	case method == http.MethodGet && (path == "/api/token" || path == "/api/token/services"):
 		return tokenRoute{}, true
@@ -225,6 +231,27 @@ func projectTokenRoute(method, path string) (tokenRoute, bool) {
 	case http.MethodPost:
 		if projectTokenAppWrites[action] {
 			return tokenRoute{app: name}, true
+		}
+	}
+	return tokenRoute{}, false
+}
+
+// projectTokenV1Route is the part of the v1 API a project token can read that has no dashboard route to go
+// through. What the dashboard also offers (logs, metrics, variables) is reached by its dashboard path, which
+// the adapter rewrites v1 requests to before they get here, so the list above covers those too. A mutation
+// was rewritten before it got here as well.
+func projectTokenV1Route(method, path string) (tokenRoute, bool) {
+	if method != http.MethodGet && method != http.MethodHead {
+		return tokenRoute{}, false
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	switch {
+	case len(parts) == 1 && (parts[0] == "me" || parts[0] == "version" || parts[0] == kindApps):
+		return tokenRoute{}, true
+	case len(parts) >= 2 && parts[0] == kindApps:
+		switch strings.Join(parts[2:], "/") {
+		case "", "status", "deployments", "logs/stream":
+			return tokenRoute{app: parts[1]}, true
 		}
 	}
 	return tokenRoute{}, false

@@ -5083,3 +5083,9 @@ code,
 .rw-network-allow {
   margin-top: 4px;
 }
+
+.rw-code-triggers { display: grid; gap: 8px; margin-top: 16px; }
+.rw-code-triggers h4 { margin: 0; font-size: 13px; }
+.rw-code-trigger { display: grid; grid-template-columns: 1fr 1.4fr 1fr auto; gap: 8px; align-items: center; }
+.rw-code-trigger-actions { display: flex; gap: 8px; }
+@media (max-width: 640px) { .rw-code-trigger { grid-template-columns: 1fr; } }

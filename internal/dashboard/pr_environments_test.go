@@ -541,3 +541,30 @@ func TestPullRequestDatabasesDoNotInheritBackupsOrRestores(t *testing.T) {
 	require.Equal(t, int32(30), base.Spec.Backup.RetentionDays)
 	require.NotNil(t, base.Spec.RestoreFrom)
 }
+
+func TestPullRequestCloneHasNoSchedules(t *testing.T) {
+	ctx := context.Background()
+	job := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "nightly-job", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassAppSpec{
+			Project: testProjectName, Environment: "production",
+			Source: geassv1alpha1.GeassAppSource{Function: &geassv1alpha1.GeassAppFunctionSource{
+				Runtime: "node", Code: "export function handler() {}", Mode: "event",
+				Triggers: []geassv1alpha1.GeassFunctionTrigger{{Name: "nightly", Schedule: "0 3 * * *"}},
+			}},
+			Deploy: geassv1alpha1.GeassAppDeploySpec{Enabled: true},
+		},
+	}
+	srv, c := prFixture(t, enabledPR(), job)
+
+	_, err := srv.handlePullRequestEvent(ctx, prPayload("opened", 7, "feature-x"))
+	require.NoError(t, err)
+
+	clone, ok := getApp(t, c, "nightly-job-pr7")
+	require.True(t, ok)
+	require.Empty(t, clone.Spec.Source.Function.Triggers, "a schedule would otherwise run once per open pull request")
+	require.Equal(t, "event", clone.Spec.Source.Function.Mode, "the rest of the function is cloned")
+	original, ok := getApp(t, c, "nightly-job")
+	require.True(t, ok)
+	require.Len(t, original.Spec.Source.Function.Triggers, 1, "and the original keeps its own")
+}

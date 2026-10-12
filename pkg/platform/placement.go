@@ -26,6 +26,9 @@ const (
 	TagKeyPrefix       = "tag.geass.dev/"
 	tagLabelValue      = "true"
 	ReservedTaintValue = "reserved"
+	// ComplianceTaintValue marks the taint of a compliance tag. It keeps the node for the projects that
+	// require the tag, and lets the tag's compliance status be read back from the node.
+	ComplianceTaintValue = "compliance"
 
 	// MaxPlacementName bounds regions, zones and tags. A label value may be 63 characters; this leaves
 	// room and keeps names readable.
@@ -42,9 +45,10 @@ const AnnotationNodePlacement = "geass.dev/node-placement"
 // Encode is the form a placement is pinned in.
 func (p Placement) Encode() string {
 	raw, err := json.Marshal(struct {
-		Region string   `json:"region,omitempty"`
-		Tags   []string `json:"tags,omitempty"`
-	}{p.Region, p.Tags})
+		Region   string   `json:"region,omitempty"`
+		Tags     []string `json:"tags,omitempty"`
+		Required []string `json:"required,omitempty"`
+	}{p.Region, p.Tags, p.Required})
 	if err != nil {
 		return "{}"
 	}
@@ -55,13 +59,14 @@ func (p Placement) Encode() string {
 // databases that predate placement already run.
 func ParsePlacement(raw string) Placement {
 	var parsed struct {
-		Region string   `json:"region"`
-		Tags   []string `json:"tags"`
+		Region   string   `json:"region"`
+		Tags     []string `json:"tags"`
+		Required []string `json:"required"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		return Placement{}
 	}
-	return NewPlacement(parsed.Region, parsed.Tags)
+	return NewPlacement(parsed.Region, parsed.Tags).WithRequired(parsed.Required)
 }
 
 // TagKey is the label (and taint) key for a node tag.
@@ -73,6 +78,10 @@ type Placement struct {
 	Region string
 	// Tags is sorted and has no duplicates; build a Placement with NewPlacement.
 	Tags []string
+	// Required are the tags the workload's project demands, such as a compliance tag. They bind like
+	// Tags, but the short-lived jobs that work on the workload's data keep them (see Jobs), where
+	// they drop Tags. Sorted and without duplicates; set them with WithRequired.
+	Required []string
 }
 
 // NewPlacement normalizes a region and tags into a Placement.
@@ -91,8 +100,32 @@ func NewPlacement(region string, tags []string) Placement {
 	return Placement{Region: strings.TrimSpace(region), Tags: clean}
 }
 
+// WithRequired adds the tags the project demands.
+func (p Placement) WithRequired(tags []string) Placement {
+	p.Required = NewPlacement("", tags).Tags
+	return p
+}
+
+// Jobs is where the short-lived jobs of a workload (backups, restores, builds) run: in its region,
+// near it, and only on the nodes its project requires. They are not pinned to the tags the workload
+// itself asked for, so they do not take room on nodes reserved for the workload, but they handle its
+// data, so they never leave the nodes a project requires.
+func (p Placement) Jobs() Placement {
+	return NewPlacement(p.Region, nil).WithRequired(p.Required)
+}
+
+// AllTags is every tag a node must carry: the workload's own and its project's required ones.
+func (p Placement) AllTags() []string {
+	if len(p.Required) == 0 {
+		return p.Tags
+	}
+	return NewPlacement("", slices.Concat(p.Tags, p.Required)).Tags
+}
+
 // IsZero reports whether the workload may run anywhere.
-func (p Placement) IsZero() bool { return p.Region == "" && len(p.Tags) == 0 }
+func (p Placement) IsZero() bool {
+	return p.Region == "" && len(p.Tags) == 0 && len(p.Required) == 0
+}
 
 // NodeSelector is the labels a node must carry.
 func (p Placement) NodeSelector() map[string]string {
@@ -103,7 +136,7 @@ func (p Placement) NodeSelector() map[string]string {
 	if p.Region != "" {
 		selector[LabelRegion] = p.Region
 	}
-	for _, tag := range p.Tags {
+	for _, tag := range p.AllTags() {
 		selector[TagKey(tag)] = tagLabelValue
 	}
 	return selector
@@ -111,11 +144,12 @@ func (p Placement) NodeSelector() map[string]string {
 
 // Tolerations let the workload onto nodes that reserve the tags it asks for.
 func (p Placement) Tolerations() []corev1.Toleration {
-	if len(p.Tags) == 0 {
+	tags := p.AllTags()
+	if len(tags) == 0 {
 		return nil
 	}
-	tolerations := make([]corev1.Toleration, 0, len(p.Tags))
-	for _, tag := range p.Tags {
+	tolerations := make([]corev1.Toleration, 0, len(tags))
+	for _, tag := range tags {
 		tolerations = append(tolerations, corev1.Toleration{Key: TagKey(tag), Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule})
 	}
 	return tolerations
@@ -181,7 +215,7 @@ func (p Placement) Tolerates(taint corev1.Taint) bool {
 	if taint.Effect != corev1.TaintEffectNoSchedule && taint.Effect != corev1.TaintEffectNoExecute {
 		return true
 	}
-	for _, tag := range p.Tags {
+	for _, tag := range p.AllTags() {
 		if taint.Key == TagKey(tag) {
 			return true
 		}
@@ -224,6 +258,17 @@ func (p Placement) ReservedAgainst(node *corev1.Node) bool {
 	return false
 }
 
+// IsComplianceNode reports whether the node is kept for a compliance tag: some tag taints it with the
+// compliance marker. Only the projects that require the tag may put anything on it.
+func IsComplianceNode(node *corev1.Node) bool {
+	for _, taint := range node.Spec.Taints {
+		if strings.HasPrefix(taint.Key, TagKeyPrefix) && taint.Value == ComplianceTaintValue {
+			return true
+		}
+	}
+	return false
+}
+
 // NodeUsable reports whether a node is ready and open for scheduling, whatever it is tagged or reserved
 // for: it counts toward the cluster's total capacity.
 func NodeUsable(node *corev1.Node) bool {
@@ -239,16 +284,41 @@ func nodeIsReady(node *corev1.Node) bool {
 	return false
 }
 
+// MissingTags are the tags a project requires that this placement does not run on. A shared server,
+// which holds data for several projects, is only open to a project when none are missing. A server
+// that was installed before placement existed runs anywhere, so it is missing every one.
+func (p Placement) MissingTags(required []string) []string {
+	var missing []string
+	have := p.AllTags()
+	for _, tag := range NewPlacement("", required).Tags {
+		if !slices.Contains(have, tag) {
+			missing = append(missing, tag)
+		}
+	}
+	return missing
+}
+
+// ComplianceMismatchMessage is why a shared server (what names it, "database server") cannot take a
+// project that requires tags: empty when it can.
+func ComplianceMismatchMessage(what string, server Placement, required []string) string {
+	missing := server.MissingTags(required)
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("This %s does not run on nodes tagged %s, which the project requires", what, joinWords(missing))
+}
+
 // Describe names where the placement runs, for messages: "the us region", "storage nodes in the us
 // region", "nodes tagged storage". It is empty when the workload may run anywhere.
 func (p Placement) Describe() string {
+	tags := p.AllTags()
 	switch {
-	case p.Region != "" && len(p.Tags) > 0:
-		return fmt.Sprintf("%s nodes in the %s region", joinWords(p.Tags), p.Region)
+	case p.Region != "" && len(tags) > 0:
+		return fmt.Sprintf("%s nodes in the %s region", joinWords(tags), p.Region)
 	case p.Region != "":
 		return fmt.Sprintf("the %s region", p.Region)
-	case len(p.Tags) > 0:
-		return "nodes tagged " + joinWords(p.Tags)
+	case len(tags) > 0:
+		return "nodes tagged " + joinWords(tags)
 	default:
 		return ""
 	}
@@ -286,20 +356,22 @@ func NodePlacementOf(node *corev1.Node) geassv1alpha1.GeassNodePlacement {
 		Zone:   node.Labels[LabelZone],
 	}
 	reserved := map[string]bool{}
+	compliance := map[string]bool{}
 	for _, taint := range node.Spec.Taints {
 		if tag, ok := strings.CutPrefix(taint.Key, TagKeyPrefix); ok && taint.Effect == corev1.TaintEffectNoSchedule {
 			reserved[tag] = true
+			compliance[tag] = taint.Value == ComplianceTaintValue
 		}
 	}
 	for key := range node.Labels {
 		if tag, ok := strings.CutPrefix(key, TagKeyPrefix); ok {
-			placement.Tags = append(placement.Tags, geassv1alpha1.GeassNodeTag{Name: tag, Reserved: reserved[tag]})
+			placement.Tags = append(placement.Tags, geassv1alpha1.GeassNodeTag{Name: tag, Reserved: reserved[tag], Compliance: compliance[tag]})
 		}
 	}
 	// A reserved tag always shows, even if its label was removed by hand.
 	for tag := range reserved {
 		if !slices.ContainsFunc(placement.Tags, func(t geassv1alpha1.GeassNodeTag) bool { return t.Name == tag }) {
-			placement.Tags = append(placement.Tags, geassv1alpha1.GeassNodeTag{Name: tag, Reserved: true})
+			placement.Tags = append(placement.Tags, geassv1alpha1.GeassNodeTag{Name: tag, Reserved: true, Compliance: compliance[tag]})
 		}
 	}
 	slices.SortFunc(placement.Tags, func(a, b geassv1alpha1.GeassNodeTag) int { return strings.Compare(a.Name, b.Name) })
@@ -328,11 +400,14 @@ func ApplyNodePlacement(node *corev1.Node, desired geassv1alpha1.GeassNodePlacem
 	setLabel(LabelZone, desired.Zone)
 
 	wantTags := map[string]bool{}
-	wantReserved := map[string]bool{}
+	wantReserved := map[string]string{}
 	for _, tag := range desired.Tags {
 		wantTags[tag.Name] = true
-		if tag.Reserved {
-			wantReserved[tag.Name] = true
+		switch {
+		case tag.Compliance:
+			wantReserved[tag.Name] = ComplianceTaintValue
+		case tag.Reserved:
+			wantReserved[tag.Name] = ReservedTaintValue
 		}
 	}
 	for key := range node.Labels {
@@ -352,16 +427,16 @@ func ApplyNodePlacement(node *corev1.Node, desired geassv1alpha1.GeassNodePlacem
 		switch {
 		case !ours:
 			kept = append(kept, taint)
-		case wantReserved[tag] && taint.Effect == corev1.TaintEffectNoSchedule && !haveReserved[tag]:
+		case wantReserved[tag] != "" && taint.Value == wantReserved[tag] && taint.Effect == corev1.TaintEffectNoSchedule && !haveReserved[tag]:
 			haveReserved[tag] = true
 			kept = append(kept, taint)
 		default:
 			changed = true
 		}
 	}
-	for tag := range wantReserved {
+	for tag, value := range wantReserved {
 		if !haveReserved[tag] {
-			kept = append(kept, corev1.Taint{Key: TagKey(tag), Value: ReservedTaintValue, Effect: corev1.TaintEffectNoSchedule})
+			kept = append(kept, corev1.Taint{Key: TagKey(tag), Value: value, Effect: corev1.TaintEffectNoSchedule})
 			changed = true
 		}
 	}

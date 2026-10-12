@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -99,6 +100,9 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.reconcileProjectNetwork(ctx, &project, namespace); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.reconcileProjectCompliance(ctx, &project, namespace); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.reconcileSharedVariables(ctx, &project, env, namespace); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -118,16 +122,18 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&project), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	latest.Status.Environments = make([]geassv1alpha1.GeassProjectEnvironmentStatus, 0, len(project.Spec.Environments))
-	latest.Status.ClusterRef = cluster.Name
-	for _, env := range project.Spec.Environments {
-		latest.Status.Environments = append(latest.Status.Environments, geassv1alpha1.GeassProjectEnvironmentStatus{Name: env, Namespace: desired[env]})
-	}
-	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-	platform.ClearReconcileRetry(&retryState)
-	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-	latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
-	return ctrl.Result{}, r.Status().Update(ctx, latest)
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		latest.Status.Environments = make([]geassv1alpha1.GeassProjectEnvironmentStatus, 0, len(project.Spec.Environments))
+		latest.Status.ClusterRef = cluster.Name
+		for _, env := range project.Spec.Environments {
+			latest.Status.Environments = append(latest.Status.Environments, geassv1alpha1.GeassProjectEnvironmentStatus{Name: env, Namespace: desired[env]})
+		}
+		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+		platform.ClearReconcileRetry(&retryState)
+		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
+	})
+	return ctrl.Result{}, err
 }
 
 func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, project *geassv1alpha1.GeassProject, environment, namespace string) error {
@@ -180,13 +186,16 @@ func (r *GeassProjectReconciler) reconcileSharedVariables(ctx context.Context, p
 }
 
 func (r *GeassProjectReconciler) setProjectNotReady(ctx context.Context, project *geassv1alpha1.GeassProject, message string) (ctrl.Result, error) {
-	latest := project.DeepCopy()
+	latest := &geassv1alpha1.GeassProject{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(project), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	result, conditions := finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, nil, latest.Generation, message)
-	latest.Status.Conditions = conditions
-	if err := r.Status().Update(ctx, latest); err != nil {
+	var result ctrl.Result
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		var conditions []metav1.Condition
+		result, conditions = finishNotReady(latest.Status.Conditions, &latest.Status.ReconcileRetry, nil, latest.Generation, message)
+		latest.Status.Conditions = conditions
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return result, nil
@@ -194,7 +203,9 @@ func (r *GeassProjectReconciler) setProjectNotReady(ctx context.Context, project
 
 func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&geassv1alpha1.GeassProject{}).
+		// Nothing wakes a project through its status, and the dashboard writes its status constantly (webhook
+		// deliveries, pull requests), so only what the project asks for, and its metadata, are acted on.
+		For(&geassv1alpha1.GeassProject{}, builder.WithPredicates(specOrMetadataChanged())).
 		Watches(&geassv1alpha1.GeassCluster{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
 			var projects geassv1alpha1.GeassProjectList
 			if err := r.List(ctx, &projects, client.InNamespace(platform.SystemNamespace)); err != nil {
@@ -207,7 +218,7 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 			}
 			return requests
-		})).
+		}), builder.WithPredicates(readyOrSpecChanged())).
 		// A network policy that is edited or deleted by hand is put back.
 		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
 		Complete(r)

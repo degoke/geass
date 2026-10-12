@@ -29,6 +29,10 @@ const (
 const (
 	RoleAdmin  = "admin"
 	RoleViewer = "viewer"
+	// RoleObserver reads everything a viewer can and also what a viewer cannot, such as logs and the names of
+	// a service's variables, but changes nothing. It is what a monitoring script or a read-only agent needs:
+	// a viewer is shut out of logs, and an admin can do far more than watching.
+	RoleObserver = "observer"
 )
 
 const (
@@ -94,8 +98,8 @@ func New(request Request, now time.Time) (string, Record, error) {
 		if record.Role == "" {
 			record.Role = RoleViewer
 		}
-		if record.Role != RoleAdmin && record.Role != RoleViewer {
-			return "", Record{}, fmt.Errorf("role must be %s or %s", RoleAdmin, RoleViewer)
+		if record.Role != RoleAdmin && record.Role != RoleViewer && record.Role != RoleObserver {
+			return "", Record{}, fmt.Errorf("role must be %s, %s or %s", RoleAdmin, RoleObserver, RoleViewer)
 		}
 		if request.Project != "" || request.Environment != "" {
 			return "", Record{}, fmt.Errorf("workspace tokens are not tied to a project or environment")

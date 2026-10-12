@@ -30,18 +30,24 @@ export function tagsInRegion(data, region) {
   nodes.forEach((node) => {
     if (region && node.region !== region) return;
     (node.tags || []).forEach((tag) => {
-      const entry = found.get(tag.name) || { name: tag.name, nodes: 0, reserved: false };
+      const entry = found.get(tag.name) || { name: tag.name, nodes: 0, reserved: false, compliance: false };
       entry.nodes += 1;
       entry.reserved = entry.reserved || Boolean(tag.reserved);
+      entry.compliance = entry.compliance || Boolean(tag.compliance);
       found.set(tag.name, entry);
     });
   });
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** What a node's tags read as in a table: "storage (reserved), compute". */
+/** What a node's tags read as in a table: "storage (reserved), hipaa (compliance), compute". */
 export function describeTags(tags) {
-  return (tags || []).map((tag) => (tag.reserved ? `${tag.name} (reserved)` : tag.name)).join(", ");
+  return (tags || [])
+    .map((tag) => {
+      if (tag.compliance) return `${tag.name} (compliance)`;
+      return tag.reserved ? `${tag.name} (reserved)` : tag.name;
+    })
+    .join(", ");
 }
 
 /** Splits a typed list ("storage, gpu") into clean tag names. */

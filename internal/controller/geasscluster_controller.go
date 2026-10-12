@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/helmchart"
@@ -114,6 +115,11 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileTelemetryIsolation(ctx, &cluster))
 	// And measuring the ingress controller, which is where every service's request rate comes from.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileIngressMetrics(ctx, &cluster))
+	// And the operator's own monitor and alert rules, so its health is measured and noticed too.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileOperatorMonitoring(ctx, &cluster))
+	// And scale to zero, which is not needed to run workloads and comes up on the side, asking to be visited
+	// again until it has.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileServerless(ctx, &cluster))
 	return result, nil
 }
 
@@ -207,40 +213,42 @@ func (r *GeassClusterReconciler) addonReady(ctx context.Context, chartName, targ
 }
 
 func (r *GeassClusterReconciler) updateStatus(ctx context.Context, cluster *geassv1alpha1.GeassCluster, addonsReady bool, reconcileErr error) (ctrl.Result, error) {
-	latest := cluster.DeepCopy()
+	latest := &geassv1alpha1.GeassCluster{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(cluster), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	conditions := latest.Status.Conditions
 	var failureOutcome platform.NotReadyOutcome
-	if reconcileErr != nil {
-		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, platform.ConditionReasonReconcileError, reconcileErr.Error())
-		failureOutcome = platform.ApplyNotReady(conditions, reconcileRetryFromAPI(&latest.Status.ReconcileRetry), latest.Generation, reconcileErr.Error())
-		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, failureOutcome.Retry)
-		conditions = failureOutcome.Conditions
-	} else if addonsReady {
-		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionTrue, "AddonsReady", platform.ConditionMessage(platform.ConditionAddonsReady, true))
-	} else {
-		conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, "AddonsPending", platform.ConditionMessage(platform.ConditionAddonsReady, false))
-	}
-
-	overallReady := addonsReady && reconcileErr == nil
-	if overallReady {
-		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
-		platform.ClearReconcileRetry(&retryState)
-		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
-		conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionTrue, "ClusterReady", "Geass cluster is ready")
-		latest.Status.Phase = geassv1alpha1.ClusterPhaseReady
-	} else {
-		if reconcileErr == nil {
-			conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionFalse, "ClusterPending", "Geass cluster is not ready")
+	overallReady := false
+	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		conditions := latest.Status.Conditions
+		if reconcileErr != nil {
+			conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, platform.ConditionReasonReconcileError, reconcileErr.Error())
+			failureOutcome = platform.ApplyNotReady(conditions, reconcileRetryFromAPI(&latest.Status.ReconcileRetry), latest.Generation, reconcileErr.Error())
+			writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, failureOutcome.Retry)
+			conditions = failureOutcome.Conditions
+		} else if addonsReady {
+			conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionTrue, "AddonsReady", platform.ConditionMessage(platform.ConditionAddonsReady, true))
+		} else {
+			conditions = platform.SetCondition(conditions, platform.ConditionAddonsReady, metav1.ConditionFalse, "AddonsPending", platform.ConditionMessage(platform.ConditionAddonsReady, false))
 		}
-		latest.Status.Phase = ""
-	}
 
-	latest.Status.Conditions = conditions
-	if err := r.Status().Update(ctx, latest); err != nil {
+		overallReady = addonsReady && reconcileErr == nil
+		if overallReady {
+			retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
+			platform.ClearReconcileRetry(&retryState)
+			writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
+			conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionTrue, "ClusterReady", "Geass cluster is ready")
+			latest.Status.Phase = geassv1alpha1.ClusterPhaseReady
+		} else {
+			if reconcileErr == nil {
+				conditions = platform.SetCondition(conditions, platform.ConditionReady, metav1.ConditionFalse, "ClusterPending", "Geass cluster is not ready")
+			}
+			latest.Status.Phase = ""
+		}
+
+		latest.Status.Conditions = conditions
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -264,6 +272,9 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// its old replica count until the next node event. The mapper enqueues every
 		// cluster whatever object it is given.
 		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(replicatedVolumeBound())).
+		// A project starting to require node tags needs a storage class for them, so its databases
+		// are not left waiting for the next node event.
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("geasscluster").
 		Complete(r)
 }

@@ -166,6 +166,10 @@ func (s *Server) retriggerBuild(ctx context.Context, build *geassv1alpha1.GeassB
 	latest.Status.CancelRequested = false
 	latest.Status.Phase = geassv1alpha1.GeassBuildPending
 	latest.Status.FailureReason = ""
+	// The build starts over, so what said it had run and finished is cleared: the controller does not
+	// run a build again just because its job is gone, only because it is asked to.
+	latest.Status.StartedAt = nil
+	latest.Status.CompletedAt = nil
 	latest.Status.SourceRevision = ""
 	latest.Status.CIState = ""
 	latest.Status.CIChecks = nil

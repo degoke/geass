@@ -71,3 +71,29 @@ func TestProjectlessWorkloadsUseTheClusterDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "us", region)
 }
+
+func TestProjectRequiredTagsReachEveryResolvedPlacement(t *testing.T) {
+	project := projectIn("eu")
+	project.Spec.RequiredTags = []string{"hipaa", "hipaa"}
+	c := placementClient(t, clusterWithDefault("us"), project)
+
+	p, err := ResolvePlacement(context.Background(), c, "shop", []string{"storage"})
+	require.NoError(t, err)
+	require.Equal(t, NewPlacement("eu", []string{"storage"}).WithRequired([]string{"hipaa"}), p)
+
+	jobs, err := ProjectJobPlacement(context.Background(), c, "shop")
+	require.NoError(t, err)
+	require.Equal(t, Placement{Region: "eu", Required: []string{"hipaa"}}, jobs, "builds and jobs stay on the required nodes but not on the service's own tags")
+
+	required, err := ProjectRequiredTags(context.Background(), c, "shop")
+	require.NoError(t, err)
+	require.Equal(t, []string{"hipaa"}, required)
+}
+
+func TestAProjectWithoutRequiredTagsResolvesAsBefore(t *testing.T) {
+	c := placementClient(t, clusterWithDefault("us"), projectIn("eu"))
+	p, err := ResolvePlacement(context.Background(), c, "shop", nil)
+	require.NoError(t, err)
+	require.Equal(t, NewPlacement("eu", nil), p)
+	require.Nil(t, p.Required)
+}

@@ -6,7 +6,7 @@ import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
 import { UsagePanel } from "@/components/UsagePanel";
-import { CLUSTER_CHARTS, ServiceMetrics } from "@/components/ServiceMetrics";
+import { CLUSTER_CHARTS, OPERATOR_CHARTS, ServiceMetrics } from "@/components/ServiceMetrics";
 import { Badge, Button, CapacityBar, DataTable, Field, Muted, PageSection, Select } from "@/components/geass-ui";
 import { SettingsSection } from "@/layout/SettingsShell";
 import { PlatformPage } from "@/layout/PlatformPage";
@@ -131,6 +131,9 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       <UsagePanel />
       <PageSection title="Cluster metrics" description="What services use across the cluster, and what the machines are doing.">
         <ServiceMetrics scope="cluster" name="cluster" charts={CLUSTER_CHARTS} />
+      </PageSection>
+      <PageSection title="Geass health" description="How the operator is doing: failed and slow reconciles, work waiting, and how the Kubernetes API server is answering it.">
+        <ServiceMetrics scope="operator" name="operator" charts={OPERATOR_CHARTS} />
       </PageSection>
       <DefaultRegionSection data={data} reload={reload} mutable={mutable} />
       <HAReadinessSection data={data} />

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,10 +115,12 @@ func TestPlatformConfigReconcileVerifiesDashboardDomainForManagedTunnel(t *testi
 		WithObjects(config, secret, dashboardService).
 		WithStatusSubresource(&geassv1alpha1.GeassPlatformConfig{}).
 		Build()
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	r := &GeassPlatformConfigReconciler{
 		Client:     c,
 		Scheme:     scheme,
 		HTTPClient: &http.Client{Transport: managedTunnelTransport{probeOK: true}},
+		now:        func() time.Time { return fixed },
 	}
 
 	// The first pass creates the tunnel and records its CNAME target in the spec;
@@ -128,7 +131,7 @@ func TestPlatformConfigReconcileVerifiesDashboardDomainForManagedTunnel(t *testi
 		result, err = r.Reconcile(context.Background(), reconcileRequest(config))
 		require.NoError(t, err)
 	}
-	require.Equal(t, platform.RequeueAfterDomainVerify, result.RequeueAfter, "the managed tunnel connector must keep being synced after the domain verifies")
+	require.Equal(t, platform.RequeueAfterCloudflareResync, result.RequeueAfter, "the managed tunnel connector is checked again at the resync, and sooner whenever its routes change")
 
 	var updated geassv1alpha1.GeassPlatformConfig
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(config), &updated))

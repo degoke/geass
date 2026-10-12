@@ -22,6 +22,10 @@ const (
 	maxProvisionAttemptErrors = MaxProvisionAttemptErrors
 )
 
+// StartFailureMarker is in the message of a service whose copy cannot start. Such a message says what is wrong
+// with the service itself, so it is kept as it is and not taken for a fault of the platform.
+const StartFailureMarker = "cannot start: "
+
 // SanitizeProvisionMessage returns product-facing text for attempt history.
 func SanitizeProvisionMessage(message string) string {
 	msg := strings.TrimSpace(message)
@@ -29,6 +33,9 @@ func SanitizeProvisionMessage(message string) string {
 		return "Provisioning issue"
 	}
 	if msg == ProvisionFailedUserMessage || msg == RetryingProvisionMessage {
+		return msg
+	}
+	if strings.Contains(msg, StartFailureMarker) {
 		return msg
 	}
 	if ReconcileFailureIsPermanent(msg) {
@@ -127,6 +134,7 @@ func CompleteActiveProvisionAttempt(status *geassv1alpha1.GeassProvisionStatus, 
 		status.ProvisionAttempts[i].Phase = phase
 		status.ProvisionAttempts[i].Summary = summary
 		status.ProvisionAttempts[i].CompletedAt = &now
+		provisionDuration.WithLabelValues(string(phase)).Observe(now.Sub(status.ProvisionAttempts[i].StartedAt.Time).Seconds())
 		if len(status.ProvisionAttempts[i].Errors) > MaxProvisionAttemptErrorsRetained {
 			errs := status.ProvisionAttempts[i].Errors
 			status.ProvisionAttempts[i].Errors = errs[len(errs)-MaxProvisionAttemptErrorsRetained:]

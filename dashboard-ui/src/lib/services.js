@@ -487,6 +487,11 @@ function diffAppChanges(live, deployed) {
   if (liveMax !== deployedMax) {
     pushChange(lines, `Autoscale max: ${deployedMax ?? "—"} → ${liveMax ?? "—"}`);
   }
+  const liveSleep = live?.scaleToZero?.enabled ? `after ${Math.round((live.scaleToZero.idleSeconds || 300) / 60)} min idle` : "off";
+  const deployedSleep = deployed?.scaleToZero?.enabled ? `after ${Math.round((deployed.scaleToZero.idleSeconds || 300) / 60)} min idle` : "off";
+  if (liveSleep !== deployedSleep) {
+    pushChange(lines, `Sleep when idle: ${deployedSleep} → ${liveSleep}`);
+  }
   return lines;
 }
 

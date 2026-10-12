@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -69,12 +70,24 @@ type Resource struct {
 	// Function source.
 	Runtime string `json:"runtime,omitempty"`
 	Code    string `json:"code,omitempty"`
+	// Mode is "event" for a handler, and empty or "http" for a program that serves HTTP itself.
+	Mode string `json:"mode,omitempty"`
+	// Triggers are the function's schedules.
+	Triggers []Trigger `json:"triggers,omitempty"`
 
 	// Database settings.
 	Engine  string `json:"engine,omitempty"`
 	Version string `json:"version,omitempty"`
 
 	Variables []Variable `json:"variables,omitempty"`
+}
+
+// Trigger is a schedule that calls a function.
+type Trigger struct {
+	Name     string `json:"name"`
+	Schedule string `json:"schedule"`
+	Path     string `json:"path,omitempty"`
+	Payload  string `json:"payload,omitempty"`
 }
 
 // Variable is an environment variable of a service or function.
@@ -157,11 +170,11 @@ func (r Resource) validate(databases map[string]bool) error {
 		if hasRepo && !repoPattern.MatchString(r.Repository) {
 			return fmt.Errorf("repository must look like owner/name")
 		}
-		if r.Runtime != "" || r.Code != "" {
-			return fmt.Errorf("runtime and code only apply to functions")
+		if r.Runtime != "" || r.Code != "" || r.Mode != "" || len(r.Triggers) > 0 {
+			return fmt.Errorf("runtime, code, mode and triggers only apply to functions")
 		}
 	case KindFunction:
-		if err := platform.ValidateFunction(r.Runtime, r.Code); err != nil {
+		if err := platform.ValidateFunctionSource(r.FunctionSource()); err != nil {
 			return err
 		}
 		if r.Image != "" || r.Repository != "" {
@@ -255,4 +268,13 @@ func GenerateSecret() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// FunctionSource is the function a resource describes.
+func (r Resource) FunctionSource() *geassv1alpha1.GeassAppFunctionSource {
+	fn := &geassv1alpha1.GeassAppFunctionSource{Runtime: r.Runtime, Code: r.Code, Mode: r.Mode}
+	for _, trigger := range r.Triggers {
+		fn.Triggers = append(fn.Triggers, geassv1alpha1.GeassFunctionTrigger(trigger))
+	}
+	return fn
 }
