@@ -190,10 +190,16 @@ func (r *GeassPlatformConfigReconciler) reconcileIngressDashboardDomain(ctx cont
 	}
 
 	if !platform.ProbeDashboardURL(ctx, r.HTTPClient, platform.DashboardURLFromConfig(*config)) {
+		message := "Dashboard HTTPS endpoint is not reachable yet"
+		// The dashboard's certificate comes from the cluster's issuer; when that is the reason HTTPS
+		// never comes up, saying so saves the operator a search through cert-manager's logs.
+		if hint := platform.ClusterIssuerProblemFor(ctx, r.Client); hint != "" {
+			message += " (" + hint + ")"
+		}
 		return platform.DashboardDomainReconcileResult{
 			Status:  metav1.ConditionFalse,
 			Reason:  "PendingHTTPS",
-			Message: "Dashboard HTTPS endpoint is not reachable yet",
+			Message: message,
 		}, platform.RequeueAfterDomainVerify
 	}
 	return platform.DashboardDomainReconcileResult{
@@ -223,7 +229,7 @@ func (r *GeassPlatformConfigReconciler) reconcileDashboardIngress(ctx context.Co
 			Name:      platform.DashboardIngressName,
 			Namespace: platform.SystemNamespace,
 			Annotations: map[string]string{
-				"cert-manager.io/cluster-issuer":                   "letsencrypt-prod",
+				"cert-manager.io/cluster-issuer":                   platform.ClusterIssuerName,
 				"traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
 			},
 		},

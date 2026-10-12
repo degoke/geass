@@ -16,6 +16,9 @@ type ClusterCRApply struct {
 	Version     string
 	ServerURL   string
 	Network     Network
+	// ACMEEmail is the Let's Encrypt contact address. Without one the operator creates no certificate
+	// issuer, so no ingress gets an HTTPS certificate until it is set.
+	ACMEEmail string
 }
 
 func (s *ClusterCRApply) Name() string { return "apply GeassCluster CR" }
@@ -52,7 +55,11 @@ func (s *ClusterCRApply) Run() error {
 		return fmt.Errorf("wait for GeassCluster CRD: %w", err)
 	}
 
-	manifest := geassClusterManifest(name, version, serverURL, s.Network)
+	if s.ACMEEmail == "" {
+		Warnf(s.Name(), "%s is not set, so no certificate issuer is created and HTTPS certificates will not be issued; "+
+			"set spec.addons.certManager.acmeEmail on the GeassCluster to enable them", acmeEmailEnv)
+	}
+	manifest := geassClusterManifest(name, version, serverURL, s.Network, s.ACMEEmail)
 
 	Logf(s.Name(), "Applying GeassCluster name=%s version=%s serverURL=%s", name, version, serverURL)
 	opts := kubeOpts
@@ -60,7 +67,7 @@ func (s *ClusterCRApply) Run() error {
 	return runCommandWithOptions(s.Name(), opts, "k3s", "kubectl", "apply", "-f", "-")
 }
 
-func geassClusterManifest(name, version, serverURL string, network Network) string {
+func geassClusterManifest(name, version, serverURL string, network Network, acmeEmail string) string {
 	return fmt.Sprintf(`apiVersion: %s
 kind: GeassCluster
 metadata:
@@ -77,7 +84,7 @@ spec:
       enabled: true
     logging:
       enabled: true
-%s`, geassClusterAPIVersion, name, version, serverURL, networkManifest(network))
+%s%s`, geassClusterAPIVersion, name, version, serverURL, certManagerManifest(acmeEmail), networkManifest(network))
 }
 
 // networkManifest is the cluster's network section: only a multi-site cluster says anything, and the

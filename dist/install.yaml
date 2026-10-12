@@ -1012,6 +1012,21 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runOn:
+                description: RunOn asks for nodes with particular tags, on top of
+                  the project's region.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               secretData:
                 additionalProperties:
                   type: string
@@ -2139,10 +2154,38 @@ spec:
                   certManager:
                     description: CertManager controls cert-manager installation.
                     properties:
+                      acmeEmail:
+                        description: |-
+                          ACMEEmail is the contact address Let's Encrypt knows the cluster's ACME account by, and where it
+                          sends expiry notices. When it is set, Geass keeps the letsencrypt-prod ClusterIssuer that every
+                          ingress asks for in place; when it is empty, no issuer is created and no HTTPS certificate can be
+                          issued, which the ClusterIssuerReady condition reports. The installer sets it from GEASS_ACME_EMAIL.
+                          Let's Encrypt refuses placeholder domains such as example.com.
+                        maxLength: 254
+                        pattern: ^([^@\s]+@[^@\s]+\.[^@\s]+)?$
+                        type: string
                       enabled:
                         default: true
                         description: Enabled installs cert-manager when true.
                         type: boolean
+                    type: object
+                  logging:
+                    description: Logging controls log collection and search.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs log collection. It is opt-in: it adds a pod per node and a server with a volume, which a
+                          small cluster may not want, and it is not installed unless asked for. The installer turns it on.
+                        type: boolean
+                      retentionDays:
+                        default: 7
+                        description: RetentionDays is how long logs are kept before
+                          they are deleted.
+                        format: int32
+                        maximum: 90
+                        minimum: 1
+                        type: integer
                     type: object
                   longhorn:
                     description: Longhorn controls the Longhorn storage engine installation.
@@ -2170,6 +2213,24 @@ spec:
                         - full
                         type: string
                     type: object
+                type: object
+              defaultRegion:
+                description: |-
+                  DefaultRegion is where projects that do not choose a region run. Left empty, such projects
+                  may run on any node.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              network:
+                description: Network says how the nodes reach each other.
+                properties:
+                  multiSite:
+                    description: |-
+                      MultiSite means the nodes are at different providers and reach each other over the internet, so
+                      the overlay network is encrypted (k3s's WireGuard backend) and every node advertises its public
+                      IP. It is chosen when the cluster is installed, because switching means restarting every node,
+                      and workers are joined to match it.
+                    type: boolean
                 type: object
               serverURL:
                 description: ServerURL is the URL of the GeassCluster server.
@@ -2488,7 +2549,8 @@ spec:
                 - Redis
                 type: string
               environment:
-                description: Environment is the project environment.
+                description: Environment is the project environment. Empty for the
+                  cluster-wide server.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
@@ -2553,8 +2615,9 @@ spec:
                 - External
                 type: string
               project:
-                description: Project is the owning project.
-                minLength: 1
+                description: |-
+                  Project is the owning project. Leave it empty for the cluster-wide server: one Postgres or MySQL
+                  that projects share, each taking logical databases of its own on it (see GeassLogicalDatabase).
                 type: string
               provider:
                 description: Provider is required when Placement is External.
@@ -2647,6 +2710,29 @@ spec:
                 x-kubernetes-validations:
                 - message: set either restorePoint or time, not both
                   rule: '!(has(self.restorePoint) && has(self.time))'
+              runOn:
+                description: |-
+                  RunOn asks for nodes with particular tags, on top of the project's region. It is read when
+                  the database is first provisioned: its volumes stay where they were created.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              serverRegion:
+                description: |-
+                  ServerRegion is where the cluster-wide server runs. A server with a project follows its
+                  project's region instead.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               storageSize:
                 anyOf:
                 - type: integer
@@ -2667,8 +2753,6 @@ spec:
                 type: string
             required:
             - engine
-            - environment
-            - project
             type: object
           status:
             description: GeassDatabaseStatus defines the observed state of GeassDatabase.
@@ -3364,7 +3448,20 @@ spec:
             type: object
           spec:
             properties:
+              connectionLimit:
+                description: |-
+                  ConnectionLimit caps how many connections the database's own login may hold on a shared server, so
+                  one project cannot use up all of them. It does not apply on a project's own server.
+                format: int32
+                maximum: 1000
+                minimum: 1
+                type: integer
               databaseName:
+                description: |-
+                  DatabaseName is what the database is called in the app's own terms. On a project's own server it is
+                  the name of the database there. On the cluster-wide server, which many projects share, it is
+                  prefixed with the project and environment so names never collide, and the database gets a login of
+                  its own that can reach nothing else.
                 type: string
               environment:
                 description: GeassEnvironment identifies an opt-in isolated environment
@@ -3443,6 +3540,10 @@ spec:
                   type: object
                 type: array
               connectionSecret:
+                type: string
+              database:
+                description: Database is the database's real name on the server; on
+                  a shared server it is not DatabaseName.
                 type: string
               jobName:
                 type: string
@@ -3545,6 +3646,10 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              username:
+                description: Username is the login that owns the database on a shared
+                  server.
+                type: string
             type: object
         required:
         - metadata
@@ -3724,6 +3829,49 @@ spec:
               eip:
                 description: EIP is the Elastic IP address of the node.
                 type: string
+              placement:
+                description: Placement is the node's region, zone and tags. Leave
+                  it out to manage the node's labels by hand.
+                properties:
+                  region:
+                    description: |-
+                      Region groups nodes that are close together, such as "us" or "eu". A project pinned to a
+                      region only runs on nodes in it.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  tags:
+                    description: Tags describe what the node is for.
+                    items:
+                      description: GeassNodeTag is a free-form label on a node, such
+                        as "storage" or "gpu".
+                      properties:
+                        name:
+                          description: Name is the tag, a lowercase DNS label.
+                          maxLength: 40
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        reserved:
+                          description: |-
+                            Reserved keeps every workload that does not ask for this tag off the node, so the node is
+                            dedicated to the work that does.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  zone:
+                    description: |-
+                      Zone is the provider or site inside the region, such as "aws-us-east-1". Replicas of a highly
+                      available database are spread across zones.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                type: object
               role:
                 description: Role is the role of the node in the cluster.
                 enum:
@@ -4030,6 +4178,28 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runOn:
+                description: |-
+                  RunOn asks for nodes with particular tags. The cluster MinIO server has no project, so
+                  this is the only way to choose where it runs.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              serverRegion:
+                description: ServerRegion is where the cluster MinIO server runs.
+                  Project buckets follow their project instead.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
             required:
             - engine
             type: object
@@ -4555,6 +4725,29 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              network:
+                description: Network sets who can reach this project's services. Without
+                  it the project is isolated.
+                properties:
+                  allowFromProjects:
+                    description: |-
+                      AllowFromProjects names other projects whose services may reach this project's services, such as
+                      a front-end project calling an internal API. It has no effect when isolation is None.
+                    items:
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 20
+                    type: array
+                    x-kubernetes-list-type: set
+                  isolation:
+                    default: Project
+                    description: Isolation defaults to Project.
+                    enum:
+                    - Project
+                    - None
+                    type: string
+                type: object
               prEnvironments:
                 description: PREnvironments creates a temporary copy of an environment
                   for every pull request.
@@ -4578,6 +4771,14 @@ spec:
                 required:
                 - enabled
                 type: object
+              region:
+                description: |-
+                  Region is where this project's workloads run: only nodes in the region are used. Empty means the
+                  cluster's default region. It is chosen when the project is created and cannot change while the
+                  project has databases or storage, because their data lives on the nodes.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.
@@ -5299,6 +5500,15 @@ rules:
   - ""
   resources:
   - nodes
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - persistentvolumes
   - pods
   verbs:
@@ -5363,6 +5573,17 @@ rules:
   - update
   - watch
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - clusterissuers
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - geass.geass.dev
   resources:
   - geassapps
@@ -5394,6 +5615,7 @@ rules:
   - geassapps/finalizers
   - geassclusters/finalizers
   - geassdatabases/finalizers
+  - geasslogicaldatabases/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
   - geassprojects/finalizers
@@ -5446,6 +5668,7 @@ rules:
 - apiGroups:
   - longhorn.io
   resources:
+  - nodes
   - volumes
   verbs:
   - get
@@ -5454,6 +5677,7 @@ rules:
 - apiGroups:
   - monitoring.coreos.com
   resources:
+  - podmonitors
   - servicemonitors
   verbs:
   - create
@@ -5467,6 +5691,7 @@ rules:
   - networking.k8s.io
   resources:
   - ingresses
+  - networkpolicies
   verbs:
   - create
   - delete
@@ -5645,6 +5870,13 @@ spec:
         app.kubernetes.io/name: geass
         control-plane: controller-manager
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
       containers:
       - args:
         - --metrics-bind-address=:8443
@@ -5694,4 +5926,8 @@ spec:
           type: RuntimeDefault
       serviceAccountName: geass-controller-manager
       terminationGracePeriodSeconds: 10
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
       volumes: []

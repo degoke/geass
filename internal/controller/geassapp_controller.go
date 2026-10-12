@@ -800,7 +800,7 @@ func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1a
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, ing, func() error {
 		applyGeassLabels(ing, app, "GeassApp")
 		if app.Spec.Ingress.TLSEnabled {
-			ing.Annotations = map[string]string{"cert-manager.io/cluster-issuer": "letsencrypt-prod", "traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}
+			ing.Annotations = map[string]string{"cert-manager.io/cluster-issuer": platform.ClusterIssuerName, "traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}
 		} else {
 			ing.Annotations = map[string]string{"traefik.ingress.kubernetes.io/router.entrypoints": "web"}
 		}

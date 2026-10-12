@@ -9,3 +9,8 @@ spec:
   tokenSecretRef:
     name: geass-token
     namespace: geass-system
+  # Set a real contact address to have Geass create the letsencrypt-prod ClusterIssuer, which every
+  # HTTPS certificate is requested from. Let's Encrypt refuses placeholder domains such as example.com.
+  # addons:
+  #   certManager:
+  #     acmeEmail: you@yourdomain.com
