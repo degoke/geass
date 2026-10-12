@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -279,25 +278,21 @@ func clusterIssuerState(issuer *unstructured.Unstructured, readyReason, readyMes
 // the status does, as it means "since", so the reason changing under a status that stays False does not
 // restart the clock.
 func (r *GeassClusterReconciler) setClusterIssuerCondition(ctx context.Context, key client.ObjectKey, outcome *clusterIssuerOutcome) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &geassv1alpha1.GeassCluster{}
-		if err := r.Get(ctx, key, latest); err != nil {
-			return client.IgnoreNotFound(err)
-		}
-		var changed bool
+	latest := &geassv1alpha1.GeassCluster{}
+	if err := r.Get(ctx, key, latest); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		if outcome == nil {
-			changed = meta.RemoveStatusCondition(&latest.Status.Conditions, platform.ConditionClusterIssuerReady)
-		} else {
-			changed = meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
-				Type:    platform.ConditionClusterIssuerReady,
-				Status:  outcome.status,
-				Reason:  outcome.reason,
-				Message: outcome.message,
-			})
+			meta.RemoveStatusCondition(&latest.Status.Conditions, platform.ConditionClusterIssuerReady)
+			return
 		}
-		if !changed {
-			return nil
-		}
-		return r.Status().Update(ctx, latest)
+		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+			Type:    platform.ConditionClusterIssuerReady,
+			Status:  outcome.status,
+			Reason:  outcome.reason,
+			Message: outcome.message,
+		})
 	})
+	return client.IgnoreNotFound(err)
 }
