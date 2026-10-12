@@ -444,26 +444,31 @@ func (r *GeassDatabaseReconciler) reconcileExternal(ctx context.Context, db *gea
 	if err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
+	database := databaseName(db)
+	// revokeLogin undoes a PlanetScale login issued in this pass, for when it cannot be stored.
+	var revokeLogin func(context.Context) error
 	if db.Spec.Mode == geassv1alpha1.DatabaseModeCreate && db.Spec.Provider == geassv1alpha1.DatabaseProviderPlanetScale {
 		connSecret := &corev1.Secret{}
 		err := r.Get(ctx, client.ObjectKey{Name: db.Name + "-connection", Namespace: wsNS}, connSecret)
 		switch {
 		case err == nil:
+			// PlanetScale shows the password once, so the login is kept from the secret. The port is not
+			// part of it: it comes from the spec or the engine below, so it never goes stale.
 			host = secretValue(connSecret, platform.ConnectionKeyHost)
 			username = secretValue(connSecret, platform.ConnectionKeyUsername)
 			password = secretValue(connSecret, platform.ConnectionKeyPassword)
-			if port == "" {
-				port = secretValue(connSecret, platform.ConnectionKeyPort)
+			// Only a Postgres login names its own database; a MySQL one connects to the database that was created.
+			if db.Spec.Engine != geassv1alpha1.DatabaseEngineMySQL {
+				database = firstNonEmpty(secretValue(connSecret, platform.ConnectionKeyDatabase), database)
 			}
 		case apierrors.IsNotFound(err):
-			createdHost, createdUser, createdPass, createErr := r.createPlanetScaleDatabase(ctx, db)
+			created, revoke, createErr := r.createPlanetScaleDatabase(ctx, db)
 			if createErr != nil {
 				return r.setNotReady(ctx, db, createErr.Error())
 			}
-			host, username, password = createdHost, createdUser, createdPass
-			if port == "" {
-				port = platform.PostgresDefaultPort
-			}
+			revokeLogin = revoke
+			host, username, password = created.Host, created.Username, created.Password
+			database = firstNonEmpty(created.Database, database)
 		default:
 			return r.setNotReady(ctx, db, err.Error())
 		}
@@ -474,7 +479,14 @@ func (r *GeassDatabaseReconciler) reconcileExternal(ctx context.Context, db *gea
 	if port == "" {
 		port = defaultPortForEngine(db.Spec.Engine)
 	}
-	if err := r.writeConnectionSecret(ctx, db, wsNS, host, port, username, password, schemeForEngine(db.Spec.Engine)); err != nil {
+	if err := r.writeConnectionSecret(ctx, db, wsNS, host, port, database, username, password, schemeForEngine(db.Spec.Engine)); err != nil {
+		// PlanetScale shows the password once, so a login that was not stored can never be used. It is
+		// revoked rather than left behind, because the next pass issues another one.
+		if revokeLogin != nil {
+			if revokeErr := revokeLogin(ctx); revokeErr != nil {
+				logf.FromContext(ctx).Error(revokeErr, "Could not revoke PlanetScale login that was not stored", "database", db.Name)
+			}
+		}
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	return r.setReady(ctx, db, wsNS, host, string(db.Spec.Provider)+" database is ready")
@@ -500,34 +512,77 @@ func (r *GeassDatabaseReconciler) resolveExternalCredentials(ctx context.Context
 	return host, port, username, password, nil
 }
 
-func (r *GeassDatabaseReconciler) createPlanetScaleDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase) (host, username, password string, err error) {
+const (
+	// messagePlanetScaleStarting must read as an in-progress message, so waiting is never counted as a failure.
+	messagePlanetScaleStarting = "PlanetScale database is starting"
+	// messagePlanetScaleTimedOut is what a database that never became ready reports. Unlike waiting, it counts as a
+	// failure, so a database PlanetScale cannot finish ends up failed instead of "starting" forever.
+	messagePlanetScaleTimedOut = "PlanetScale database did not become ready"
+	// planetScaleStartTimeout is how long a new database may take. PlanetScale needs minutes.
+	planetScaleStartTimeout = 30 * time.Minute
+)
+
+var errPlanetScaleStarting = errors.New(messagePlanetScaleStarting)
+
+// planetScaleWaitExpired reports whether a database has been waiting on PlanetScale for longer than the timeout.
+// The Ready condition keeps its transition time while the message stays the same, so that is how long it has been
+// starting. Once it has said it gave up it keeps saying so, which lets the failures count up to a terminal one.
+func planetScaleWaitExpired(conditions []metav1.Condition, now time.Time) bool {
+	for _, condition := range conditions {
+		if condition.Type != platform.ConditionReady || condition.Status != metav1.ConditionFalse {
+			continue
+		}
+		if strings.HasPrefix(condition.Message, messagePlanetScaleTimedOut) {
+			return true
+		}
+		return condition.Message == messagePlanetScaleStarting && now.Sub(condition.LastTransitionTime.Time) > planetScaleStartTimeout
+	}
+	return false
+}
+
+// createPlanetScaleDatabase makes sure the database exists on PlanetScale and, once it is ready, issues a login for
+// it. The returned function revokes that login, for when it cannot be stored.
+func (r *GeassDatabaseReconciler) createPlanetScaleDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase) (cloud.PlanetScaleCredentials, func(context.Context) error, error) {
+	kind, err := platform.PlanetScaleKind(db.Spec.Engine)
+	if err != nil {
+		return cloud.PlanetScaleCredentials{}, nil, err
+	}
 	if db.Spec.ConnectionRef == nil || db.Spec.ConnectionRef.Name == "" {
-		return "", "", "", fmt.Errorf("a PlanetScale connection is required")
+		return cloud.PlanetScaleCredentials{}, nil, fmt.Errorf("a PlanetScale connection is required")
 	}
 	connection, secret, err := r.cloudConnection(ctx, db.Spec.Project, db.Spec.ConnectionRef.Name)
 	if err != nil {
-		return "", "", "", err
+		return cloud.PlanetScaleCredentials{}, nil, err
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderPlanetScale {
-		return "", "", "", fmt.Errorf("connection %q is not a PlanetScale connection", connection.Name)
+		return cloud.PlanetScaleCredentials{}, nil, fmt.Errorf("connection %q is not a PlanetScale connection", connection.Name)
 	}
-	psClient := &cloud.PlanetScaleClient{
-		HTTP:  r.HTTP,
-		Token: secretValue(secret, platform.SecretKeyToken),
-		Org:   firstNonEmpty(connection.Spec.Organization, secretValue(secret, platform.SecretKeyOrganization)),
+	token, org := platform.PlanetScaleAccess(*connection, secret)
+	if token == "" || org == "" {
+		return cloud.PlanetScaleCredentials{}, nil, fmt.Errorf("PlanetScale token and organization are required")
 	}
-	if psClient.Token == "" || psClient.Org == "" {
-		return "", "", "", fmt.Errorf("PlanetScale token and organization are required")
-	}
+	psClient := &cloud.PlanetScaleClient{HTTP: r.HTTP, Token: token, Org: org}
 	name := databaseName(db)
-	if err := psClient.EnsureDatabase(name); err != nil {
-		return "", "", "", err
-	}
-	pass, err := psClient.CreatePassword(name, db.Name)
+	database, err := psClient.EnsureDatabase(ctx, name, kind, strings.TrimSpace(db.Spec.ClusterSize))
 	if err != nil {
-		return "", "", "", err
+		return cloud.PlanetScaleCredentials{}, nil, err
 	}
-	return firstNonEmpty(pass.Host, db.Spec.ExternalHost), firstNonEmpty(pass.Username, db.Spec.Username), firstNonEmpty(pass.Plain, ""), nil
+	// A new database takes a while to provision and cannot issue logins until then. Waiting costs one
+	// request per pass, where a login attempt would fail and count towards giving up on the database.
+	if !database.Ready {
+		if planetScaleWaitExpired(db.Status.Conditions, r.now()) {
+			return cloud.PlanetScaleCredentials{}, nil, fmt.Errorf("%s within %s; check the database in PlanetScale", messagePlanetScaleTimedOut, planetScaleStartTimeout)
+		}
+		return cloud.PlanetScaleCredentials{}, nil, errPlanetScaleStarting
+	}
+	creds, err := psClient.CreateCredentials(ctx, name, kind, db.Name)
+	if err != nil {
+		return cloud.PlanetScaleCredentials{}, nil, err
+	}
+	creds.Host = firstNonEmpty(creds.Host, db.Spec.ExternalHost)
+	creds.Username = firstNonEmpty(creds.Username, db.Spec.Username)
+	revoke := func(ctx context.Context) error { return psClient.RevokeCredentials(ctx, name, kind, creds.ID) }
+	return creds, revoke, nil
 }
 
 func (r *GeassDatabaseReconciler) validateDatabaseCloudConnection(ctx context.Context, db *geassv1alpha1.GeassDatabase) error {
@@ -545,21 +600,7 @@ func (r *GeassDatabaseReconciler) validateDatabaseCloudConnection(ctx context.Co
 }
 
 func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, project, name string) (*geassv1alpha1.GeassCloudConnection, *corev1.Secret, error) {
-	connection := &geassv1alpha1.GeassCloudConnection{}
-	if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: platform.SystemNamespace}, connection); err != nil {
-		return nil, nil, fmt.Errorf("cloud connection %q is unavailable", name)
-	}
-	if err := platform.ValidateCloudConnectionForProject(*connection, project); err != nil {
-		return nil, nil, err
-	}
-	if connection.Spec.SecretRef.Name == "" {
-		return nil, nil, fmt.Errorf("cloud connection %q has no credentials", name)
-	}
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, secret); err != nil {
-		return nil, nil, fmt.Errorf("cloud connection secret %q is unavailable", connection.Spec.SecretRef.Name)
-	}
-	return connection, secret, nil
+	return platform.LoadCloudConnection(ctx, r.Client, project, name)
 }
 
 func (r *GeassDatabaseReconciler) haReady(ctx context.Context) (bool, error) {
@@ -719,16 +760,16 @@ func (r *GeassDatabaseReconciler) reconcileGeneratedConnectionSecret(ctx context
 	}
 	username := firstNonEmpty(secretValue(bootstrap, "username"), appContainerName)
 	password := firstNonEmpty(secretValue(bootstrap, "password"), db.Name+"-password")
-	return r.writeConnectionSecret(ctx, db, wsNS, host, port, username, password, scheme)
+	return r.writeConnectionSecret(ctx, db, wsNS, host, port, databaseName(db), username, password, scheme)
 }
 
-func (r *GeassDatabaseReconciler) writeConnectionSecret(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, host, port, username, password, scheme string) error {
+func (r *GeassDatabaseReconciler) writeConnectionSecret(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, host, port, database, username, password, scheme string) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, db, "GeassDatabase")
-		uri := fmt.Sprintf("%s://%s:%s@%s:%s/%s", scheme, username, password, host, port, databaseName(db))
+		uri := fmt.Sprintf("%s://%s:%s@%s:%s/%s", scheme, username, password, host, port, database)
 		if scheme == "redis" {
 			uri = fmt.Sprintf("redis://:%s@%s:%s", password, host, port)
 		}
@@ -738,7 +779,7 @@ func (r *GeassDatabaseReconciler) writeConnectionSecret(ctx context.Context, db 
 		secret.StringData = map[string]string{
 			platform.ConnectionKeyHost:     host,
 			platform.ConnectionKeyPort:     port,
-			platform.ConnectionKeyDatabase: databaseName(db),
+			platform.ConnectionKeyDatabase: database,
 			platform.ConnectionKeyUsername: username,
 			platform.ConnectionKeyPassword: password,
 			platform.ConnectionKeyURI:      uri,

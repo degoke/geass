@@ -59,6 +59,8 @@ type Server struct {
 	// LogStore answers log history queries; nil uses the logging add-on's VictoriaLogs server.
 	LogStore logStoreReader
 
+	planetScaleSizeCache planetScaleSizeCache
+
 	authMu        sync.Mutex
 	auth          *dashboardAuth
 	loginMu       sync.Mutex
@@ -2168,6 +2170,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 			Mode:             parseDatabaseMode(r.FormValue("mode")),
 			HighAvailability: ha,
 			DatabaseName:     strings.TrimSpace(r.FormValue("databaseName")),
+			ClusterSize:      strings.TrimSpace(r.FormValue("clusterSize")),
 			ExternalHost:     strings.TrimSpace(r.FormValue("host")),
 			Username:         strings.TrimSpace(r.FormValue("username")),
 			Version:          strings.TrimSpace(r.FormValue("version")),
@@ -2191,6 +2194,10 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
+	}
+	if err := s.validateClusterSize(r.Context(), db, db.Spec.ClusterSize); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	if port := strings.TrimSpace(r.FormValue("port")); port != "" {
 		var parsed int
@@ -2406,6 +2413,20 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 	if !ok {
 		return
 	}
+	clusterSizePresent := formHasValue(r, "clusterSize")
+	clusterSize := strings.TrimSpace(r.FormValue("clusterSize"))
+	if clusterSizePresent && clusterSize != db.Spec.ClusterSize {
+		// PlanetScale sizes a database when it creates it, which it has done once the connection secret exists.
+		// Before that, even after a deploy, the size can still be corrected: the create may have been refused.
+		if db.Status.ConnectionSecret != "" {
+			redirectFormError(w, r, fallback, "A PlanetScale database is sized when it is created, so its size cannot change after that")
+			return
+		}
+		if err := s.validateClusterSize(r.Context(), &db, clusterSize); err != nil {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
+	}
 	if runOnPresent && db.Spec.Deploy.Enabled && !slices.Equal(runOnTags, db.Spec.RunOn.Tags) {
 		redirectFormError(w, r, fallback, "A database keeps its data on the nodes it was first deployed to, so which nodes it runs on cannot change after that")
 		return
@@ -2430,6 +2451,9 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		}
 		if runOnPresent {
 			db.Spec.RunOn.Tags = runOnTags
+		}
+		if clusterSizePresent {
+			db.Spec.ClusterSize = clusterSize
 		}
 		if err := applyBackupForm(r, &db); err != nil {
 			return err

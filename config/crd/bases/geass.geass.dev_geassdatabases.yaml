@@ -70,6 +70,13 @@ spec:
                 required:
                 - enabled
                 type: object
+              clusterSize:
+                description: |-
+                  ClusterSize is the PlanetScale cluster size (for example PS_10) a created database is
+                  provisioned with. The sizes PlanetScale offers for an engine are listed by the dashboard API at
+                  /api/planetscale/cluster-sizes. It applies when the database is created; changing it
+                  afterwards does not resize the database.
+                type: string
               connectionRef:
                 description: ConnectionRef identifies a GeassCloudConnection used
                   for PlanetScale or AWS.

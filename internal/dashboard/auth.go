@@ -135,7 +135,7 @@ func dashboardSensitiveRead(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/projects/") && (strings.HasSuffix(path, "/logs") || strings.HasSuffix(path, "/logs/stream") || strings.HasSuffix(path, "/logs/history")):
 		return true
-	case path == "/api/settings/github", path == "/api/templates", path == "/api/tokens":
+	case path == "/api/settings/github", path == "/api/templates", path == "/api/tokens", path == "/api/planetscale/cluster-sizes":
 		return true
 	default:
 		return false
