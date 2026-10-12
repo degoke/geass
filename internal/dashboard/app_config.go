@@ -52,15 +52,28 @@ func (s *Server) writeAppSecretsJSON(w http.ResponseWriter, r *http.Request, app
 }
 
 func writeAppPendingJSON(w http.ResponseWriter, app *geassv1alpha1.GeassApp) {
+	writeJSON(w, http.StatusOK, appPendingPayload(app))
+}
+
+// writeAppSettingsJSON answers a settings save: the pending state, plus what the save means for the
+// running service ("applied" is none, live or deploy; liveChanged says some of it is already in effect).
+func writeAppSettingsJSON(w http.ResponseWriter, app *geassv1alpha1.GeassApp, applied string, liveChanged bool) {
+	payload := appPendingPayload(app)
+	payload["applied"] = applied
+	payload["liveChanged"] = liveChanged
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func appPendingPayload(app *geassv1alpha1.GeassApp) map[string]any {
 	title, detail, button := appPendingBannerCopy(app)
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"ok":       true,
 		"pending":  appPendingKinds(app),
 		"deployed": app.Spec.Deploy.Enabled,
 		"title":    title,
 		"detail":   detail,
 		"button":   button,
-	})
+	}
 }
 
 var errVariableNotFound = errors.New("variable was not found")

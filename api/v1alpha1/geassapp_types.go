@@ -286,6 +286,10 @@ type GeassAppSpec struct {
 	// Autoscaling configures optional CPU-based horizontal pod autoscaling.
 	// +optional
 	Autoscaling *GeassAppAutoscalingSpec `json:"autoscaling,omitempty"`
+
+	// RunOn asks for nodes with particular tags, on top of the project's region.
+	// +optional
+	RunOn GeassWorkloadPlacement `json:"runOn,omitempty"`
 }
 
 // GeassAppStatus defines the observed state of GeassApp.

@@ -45,7 +45,7 @@ type GeassNodeReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassnodes/finalizers,verbs=update
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch;delete
 
 func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -53,6 +53,14 @@ func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var node geassv1alpha1.GeassNode
 	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if node.DeletionTimestamp.IsZero() {
+		// A failure here must not stop the node from being provisioned or health-checked; it is retried
+		// on the next pass, which every ready node gets every minute.
+		if err := r.syncPlacement(ctx, &node); err != nil {
+			log.Error(err, "Could not apply node placement", "node", node.Name)
+		}
 	}
 
 	if node.Spec.Role == geassv1alpha1.NodeRoleControlPlane && node.Spec.Default {
@@ -94,6 +102,32 @@ func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	default:
 		return r.setFailed(ctx, &node, fmt.Sprintf("unsupported node role %q", node.Spec.Role))
 	}
+}
+
+// syncPlacement writes the node's region, zone and tags onto the Kubernetes node, as labels and, for
+// reserved tags, taints. It does nothing for a node that declares no placement, so nodes labelled by
+// hand or by a cloud provider are left alone, and nothing while the node has not registered yet: it
+// is labelled at join instead.
+func (r *GeassNodeReconciler) syncPlacement(ctx context.Context, node *geassv1alpha1.GeassNode) error {
+	if node.Spec.Placement == nil {
+		return nil
+	}
+	name := node.Status.NodeName
+	if name == "" {
+		name = node.Name
+	}
+	var k8sNode corev1.Node
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, &k8sNode); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	base := k8sNode.DeepCopy()
+	if !platform.ApplyNodePlacement(&k8sNode, *node.Spec.Placement) {
+		return nil
+	}
+	// Taints are patched as a whole list, so the patch carries the version it was computed from: if the
+	// node's own controllers changed it meanwhile (a not-ready taint, say), this is retried on the next
+	// pass instead of overwriting them.
+	return r.Patch(ctx, &k8sNode, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 }
 
 func (r *GeassNodeReconciler) reconcileDefaultControlPlane(
@@ -220,15 +254,25 @@ func (r *GeassNodeReconciler) provision(
 		sshPort = 22
 	}
 
-	err := r.SSH.Provision(ctx, ssh.ProvisionInput{
+	k3sVersion, err := workerK3sVersion(ctx, r.Client, cluster)
+	if err != nil {
+		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+	}
+	err = r.SSH.Provision(ctx, ssh.ProvisionInput{
 		Host:       node.Spec.EIP,
 		Port:       sshPort,
 		User:       node.Spec.SSHUser,
 		PrivateKey: sshKey,
-		K3sVersion: cluster.Spec.Version,
+		K3sVersion: k3sVersion,
 		ServerURL:  cluster.Spec.ServerURL,
 		Token:      token,
 		NodeName:   node.Name,
+		Config: ssh.NewAgentConfig(ssh.AgentOptions{
+			Placement:  node.Spec.Placement,
+			MultiSite:  cluster.Spec.Network.MultiSite,
+			ExternalIP: node.Spec.EIP,
+		}),
+		MultiSite: cluster.Spec.Network.MultiSite,
 	})
 	if err != nil {
 		log.Error(err, "Provisioning failed")
@@ -323,8 +367,27 @@ func (r *GeassNodeReconciler) handleDeletion(
 		}
 	}
 
+	// Uninstalling k3s from the machine does not take the node out of the cluster: it stays listed as
+	// NotReady for good. This runs whether or not the machine could be reached, since a machine that was
+	// deleted at its provider is the usual reason to remove a node.
+	if node.Spec.Role == geassv1alpha1.NodeRoleWorker && !node.Spec.Default {
+		r.removeKubernetesNode(ctx, node)
+	}
+
 	controllerutil.RemoveFinalizer(node, NodeFinalizer)
 	return ctrl.Result{}, r.Update(ctx, node)
+}
+
+// removeKubernetesNode deletes the cluster's node object for a worker that is being removed. A problem is
+// logged and does not hold the removal back.
+func (r *GeassNodeReconciler) removeKubernetesNode(ctx context.Context, node *geassv1alpha1.GeassNode) {
+	name := node.Status.NodeName
+	if name == "" {
+		name = node.Name
+	}
+	if err := client.IgnoreNotFound(r.Delete(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})); err != nil {
+		logf.FromContext(ctx).Error(err, "Could not remove the node from the cluster", "node", name)
+	}
 }
 
 func (r *GeassNodeReconciler) setFailed(

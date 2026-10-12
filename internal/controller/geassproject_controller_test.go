@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,6 +22,7 @@ func TestProjectReconcilerCreatesEnvironmentNamespaces(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
 	cluster := &geassv1alpha1.GeassCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassClusterSpec{
@@ -44,6 +46,10 @@ func TestProjectReconcilerCreatesEnvironmentNamespaces(t *testing.T) {
 		var ns corev1.Namespace
 		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: testProjectName + "-" + env}, &ns))
 		require.Equal(t, testProjectName, ns.Labels[platform.LabelProject])
+		for _, name := range []string{platform.ProjectIsolationPolicyName, platform.CloudMetadataPolicyName} {
+			require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: name, Namespace: ns.Name}, &networkingv1.NetworkPolicy{}),
+				"every environment is isolated from the first reconcile, before any service is deployed into it")
+		}
 	}
 	var updated geassv1alpha1.GeassProject
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(project), &updated))

@@ -3,6 +3,8 @@ package dashboard
 import (
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/equality"
+
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -31,6 +33,43 @@ func initializeAppPendingChanges(app *geassv1alpha1.GeassApp) {
 		return
 	}
 	platform.InitializePendingCreated(&app.ObjectMeta)
+}
+
+// What a saved settings edit means for the running resource, sent to the UI so it can say so.
+const (
+	// settingsUnchanged: the form held nothing new, so nothing was written.
+	settingsUnchanged = "none"
+	// settingsLive: every change took effect already (a replica count, a domain, a backup schedule).
+	settingsLive = "live"
+	// settingsNeedDeploy: at least one change waits for a deploy.
+	settingsNeedDeploy = "deploy"
+	// settingsDeployed: the save was a deploy.
+	settingsDeployed = "deployed"
+)
+
+// settingsOutcome names what a saved edit means: nothing to save, applied already, or waiting for deploy.
+func settingsOutcome(changed, pending bool) string {
+	switch {
+	case !changed:
+		return settingsUnchanged
+	case pending:
+		return settingsNeedDeploy
+	default:
+		return settingsLive
+	}
+}
+
+// recordAppSettingsEdit updates the pending markers after a settings edit that is not a deploy and
+// returns what the edit means for the running service. liveChanged says a live setting changed, even
+// when something else in the same edit still needs a deploy.
+func recordAppSettingsEdit(app *geassv1alpha1.GeassApp, before *geassv1alpha1.GeassAppSpec) (outcome string, liveChanged bool) {
+	if equality.Semantic.DeepEqual(before, &app.Spec) {
+		return settingsUnchanged, false
+	}
+	touched := platform.AppRolloutChanged(before, &app.Spec)
+	snapshot, known := platform.LastDeployedSpec(app)
+	pending := platform.RecordSettingsEdit(&app.ObjectMeta, touched, known, known && platform.AppRolloutChanged(&snapshot, &app.Spec))
+	return settingsOutcome(true, touched && pending), platform.AppLiveChanged(before, &app.Spec)
 }
 
 func pendingKindLabels(kinds []string) []string {

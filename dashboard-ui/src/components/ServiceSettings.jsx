@@ -3,6 +3,9 @@ import { AlertTriangle, ExternalLink, Gauge, GitBranch, Globe, Hammer, Rocket, S
 import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
+import { settingsSavedMessage } from "@/lib/services";
+import { projectRegion, tagsInRegion } from "@/lib/placement";
+import { RunOnField } from "@/components/RunOnField";
 import { defaultSizeForKind } from "@/lib/capacity";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
 import { SizeFields } from "@/components/SizeFields";
@@ -67,7 +70,11 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
   const [workingDir, setWorkingDir] = useState(spec.build?.workingDir || "");
   const [healthPath, setHealthPath] = useState(probePath(spec.deploy?.readinessProbe));
   const [metrics, setMetrics] = useState(Boolean(spec.metrics?.enabled));
+  const [runOn, setRunOn] = useState(spec.runOn?.tags || []);
   const [saving, setSaving] = useState("");
+  const region = projectRegion(project, data);
+  // Only send the choice when there is one to make, so a cluster without node tags never touches it.
+  const runOnShown = tagsInRegion(data, region).length > 0 || runOn.length > 0;
 
   const sections = useMemo(() => [
       { id: "source", label: "Source", icon: GitBranch, keywords: ["source", "image", "github", "repository", "branch", "root directory", "wait for ci", "auto deploy"] },
@@ -87,11 +94,11 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
     );
   }
 
-  const save = (section, values, message = "Settings saved. Deploy to apply them.") => (event) => {
+  const save = (section, values) => (event) => {
     event?.preventDefault();
     setSaving(section);
     action(`/apps/${name}/update`, values)
-      .then(() => { reload?.(); alertUser(message); })
+      .then((result) => { reload?.(); alertUser(settingsSavedMessage(result)); })
       .catch((error) => alertUser(error.message))
       .finally(() => setSaving(""));
   };
@@ -206,15 +213,15 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       </Muted>
                     )}
                     <SettingsPanel className="rw-resource-settings-panel-spaced">
-                      <Field label="Custom domain" description="Point a DNS record at your cluster, then enter the hostname.">
+                      <Field label="Custom domain" description="Point a DNS record at your cluster, then enter the hostname. Applies instantly.">
                         <Input value={host} onChange={(event) => setHost(event.currentTarget.value)} placeholder="api.example.com" />
                       </Field>
                       <Field label="Port" description="The port your service listens on. Defaults to 8080.">
                         <Input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.currentTarget.value)} placeholder="8080" />
                       </Field>
                     </SettingsPanel>
-                    <ToggleRow label="HTTPS" description="Serve this domain over TLS." checked={tls} onChange={setTls} />
-                    <ToggleRow label="Verify DNS" description="Check that the hostname resolves before reporting the domain as ready." checked={dnsVerification} onChange={setDnsVerification} />
+                    <ToggleRow label="HTTPS" description="Serve this domain over TLS. Applies instantly." checked={tls} onChange={setTls} />
+                    <ToggleRow label="Verify DNS" description="Check that the hostname resolves before reporting the domain as ready. Applies instantly." checked={dnsVerification} onChange={setDnsVerification} />
                   </ResourceSettingsBlock>
                   {saveButton("networking")}
                 </FormStack>
@@ -239,9 +246,10 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     autoscaling: autoscaling ? "on" : "",
                     maxReplicas: String(maxReplicas),
                     targetCPU: String(targetCPU),
+                    ...(runOnShown ? { runOnTags: runOn.join(",") } : {}),
                   })}
                 >
-                  <ResourceSettingsBlock title="Replicas" description="How many instances of this service run.">
+                  <ResourceSettingsBlock title="Replicas" description="How many instances of this service run." live>
                     <SettingsPanel>
                       <Field label="Replicas">
                         <Input type="number" min="1" value={replicas} onChange={(event) => setReplicas(Number(event.currentTarget.value) || 1)} />
@@ -258,7 +266,8 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       />
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Autoscaling" description="Scale out when average CPU crosses your target.">
+                  <RunOnField data={data} region={region} value={runOn} onChange={setRunOn} note="Applies on deploy." />
+                  <ResourceSettingsBlock title="Autoscaling" description="Scale out when average CPU crosses your target." live>
                     <ToggleRow label="Enable autoscaling" checked={autoscaling} onChange={setAutoscaling} />
                     {autoscaling ? (
                       <SettingsPanel className="rw-resource-settings-panel-spaced">
@@ -290,7 +299,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                         </Field>
                       </SettingsPanel>
                     </ResourceSettingsBlock>
-                    <ResourceSettingsBlock title="Watch paths" description="Gitignore-style rules that decide which changed files trigger a new deployment. One pattern per line.">
+                    <ResourceSettingsBlock title="Watch paths" description="Gitignore-style rules that decide which changed files trigger a new deployment. One pattern per line." live>
                       <SettingsPanel>
                         <Textarea rows={4} value={watchPatterns} onChange={(event) => setWatchPatterns(event.currentTarget.value)} placeholder={"/src/**\n!/docs/**"} spellCheck={false} aria-label="Watch paths" />
                       </SettingsPanel>
@@ -349,7 +358,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Metrics" description="Expose Prometheus metrics from /metrics. Requires Prometheus Operator in the cluster.">
+                  <ResourceSettingsBlock title="Metrics" description="Expose Prometheus metrics from /metrics. Requires Prometheus Operator in the cluster." live>
                     <ToggleRow label="Enable metrics" checked={metrics} onChange={setMetrics} />
                   </ResourceSettingsBlock>
                   {saveButton("deploy")}

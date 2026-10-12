@@ -65,6 +65,10 @@ type GeassNodeSpec struct {
 
 	// ClusterRef is the reference to the GeassCluster resource.
 	ClusterRef corev1.ObjectReference `json:"clusterRef"`
+
+	// Placement is the node's region, zone and tags. Leave it out to manage the node's labels by hand.
+	// +optional
+	Placement *GeassNodePlacement `json:"placement,omitempty"`
 }
 
 // GeassNodeStatus defines the observed state of GeassNode.

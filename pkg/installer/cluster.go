@@ -15,6 +15,7 @@ type ClusterCRApply struct {
 	ClusterName string
 	Version     string
 	ServerURL   string
+	Network     Network
 }
 
 func (s *ClusterCRApply) Name() string { return "apply GeassCluster CR" }
@@ -29,6 +30,9 @@ func (s *ClusterCRApply) Run() error {
 		version = "v1"
 	}
 	serverURL := s.ServerURL
+	if serverURL == "" {
+		serverURL = s.Network.ServerURL()
+	}
 	if serverURL == "" {
 		serverURL = "https://127.0.0.1:6443"
 	}
@@ -48,7 +52,7 @@ func (s *ClusterCRApply) Run() error {
 		return fmt.Errorf("wait for GeassCluster CRD: %w", err)
 	}
 
-	manifest := geassClusterManifest(name, version, serverURL)
+	manifest := geassClusterManifest(name, version, serverURL, s.Network)
 
 	Logf(s.Name(), "Applying GeassCluster name=%s version=%s serverURL=%s", name, version, serverURL)
 	opts := kubeOpts
@@ -56,7 +60,7 @@ func (s *ClusterCRApply) Run() error {
 	return runCommandWithOptions(s.Name(), opts, "k3s", "kubectl", "apply", "-f", "-")
 }
 
-func geassClusterManifest(name, version, serverURL string) string {
+func geassClusterManifest(name, version, serverURL string, network Network) string {
 	return fmt.Sprintf(`apiVersion: %s
 kind: GeassCluster
 metadata:
@@ -71,5 +75,16 @@ spec:
   addons:
     longhorn:
       enabled: true
-`, geassClusterAPIVersion, name, version, serverURL)
+    logging:
+      enabled: true
+%s`, geassClusterAPIVersion, name, version, serverURL, networkManifest(network))
+}
+
+// networkManifest is the cluster's network section: only a multi-site cluster says anything, and the
+// operator reads it when it joins workers.
+func networkManifest(network Network) string {
+	if !network.MultiSite {
+		return ""
+	}
+	return "  network:\n    multiSite: true\n"
 }

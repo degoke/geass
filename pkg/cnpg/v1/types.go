@@ -62,6 +62,18 @@ type ClusterSpec struct {
 	Backup *BackupConfiguration `json:"backup,omitempty"`
 	// ExternalClusters lists clusters whose backups a recovery bootstrap can read.
 	ExternalClusters []ExternalCluster `json:"externalClusters,omitempty"`
+	// Affinity decides which nodes the instances may run on.
+	Affinity *AffinityConfiguration `json:"affinity,omitempty"`
+	// EnableSuperuserAccess makes CNPG create the postgres login's secret (<cluster>-superuser). The
+	// application's own login is only the owner of its database and cannot create others.
+	EnableSuperuserAccess *bool `json:"enableSuperuserAccess,omitempty"`
+}
+
+// AffinityConfiguration is the part of CNPG's pod placement that Geass sets: the nodes instances are
+// restricted to. CNPG's own anti-affinity, which spreads instances over nodes, is left at its default.
+type AffinityConfiguration struct {
+	NodeSelector map[string]string   `json:"nodeSelector,omitempty"`
+	Tolerations  []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
 // StorageConfiguration defines PVC settings.

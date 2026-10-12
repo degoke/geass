@@ -37,7 +37,20 @@ spec:
             type: object
           spec:
             properties:
+              connectionLimit:
+                description: |-
+                  ConnectionLimit caps how many connections the database's own login may hold on a shared server, so
+                  one project cannot use up all of them. It does not apply on a project's own server.
+                format: int32
+                maximum: 1000
+                minimum: 1
+                type: integer
               databaseName:
+                description: |-
+                  DatabaseName is what the database is called in the app's own terms. On a project's own server it is
+                  the name of the database there. On the cluster-wide server, which many projects share, it is
+                  prefixed with the project and environment so names never collide, and the database gets a login of
+                  its own that can reach nothing else.
                 type: string
               environment:
                 description: GeassEnvironment identifies an opt-in isolated environment
@@ -116,6 +129,10 @@ spec:
                   type: object
                 type: array
               connectionSecret:
+                type: string
+              database:
+                description: Database is the database's real name on the server; on
+                  a shared server it is not DatabaseName.
                 type: string
               jobName:
                 type: string
@@ -218,6 +235,10 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              username:
+                description: Username is the login that owns the database on a shared
+                  server.
+                type: string
             type: object
         required:
         - metadata

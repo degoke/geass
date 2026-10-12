@@ -89,6 +89,49 @@ spec:
               eip:
                 description: EIP is the Elastic IP address of the node.
                 type: string
+              placement:
+                description: Placement is the node's region, zone and tags. Leave
+                  it out to manage the node's labels by hand.
+                properties:
+                  region:
+                    description: |-
+                      Region groups nodes that are close together, such as "us" or "eu". A project pinned to a
+                      region only runs on nodes in it.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  tags:
+                    description: Tags describe what the node is for.
+                    items:
+                      description: GeassNodeTag is a free-form label on a node, such
+                        as "storage" or "gpu".
+                      properties:
+                        name:
+                          description: Name is the tag, a lowercase DNS label.
+                          maxLength: 40
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        reserved:
+                          description: |-
+                            Reserved keeps every workload that does not ask for this tag off the node, so the node is
+                            dedicated to the work that does.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  zone:
+                    description: |-
+                      Zone is the provider or site inside the region, such as "aws-us-east-1". Replicas of a highly
+                      available database are spread across zones.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                type: object
               role:
                 description: Role is the role of the node in the cluster.
                 enum:

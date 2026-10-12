@@ -14,7 +14,9 @@ import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
 import { supportsBackups } from "@/lib/backups";
-import { deployedStorageSize } from "@/lib/services";
+import { projectRegion, tagsInRegion } from "@/lib/placement";
+import { RunOnField } from "@/components/RunOnField";
+import { deployedStorageSize, settingsSavedMessage } from "@/lib/services";
 import { SizeFields } from "@/components/SizeFields";
 import { RailCopyField } from "@/components/rail-controls";
 import { DatabaseBackups } from "@/components/DatabaseBackups";
@@ -57,6 +59,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
   const [targetCPU, setTargetCPU] = useState(item.spec?.autoscaling?.targetCPUUtilization || 50);
   const [version, setVersion] = useState(item.spec?.version || "");
+  const [runOn, setRunOn] = useState(item.spec?.runOn?.tags || []);
   const [storageSize, setStorageSize] = useState(item.spec?.storageSize || defaultStorageForEngine(item.spec?.engine, data?.platform?.defaultStorage));
   const deployedStorage = deployedStorageSize(item);
   // Unknown counts as resizable; the backend makes the same call and the cluster has the last word.
@@ -189,6 +192,10 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
       }
     }
     if (kind === "databases" && inCluster) Object.assign(values, { cpu, memory });
+    // A database keeps its data on the nodes it was first deployed to, so the choice closes then.
+    if (kind === "databases" && inCluster && !item.spec?.deploy?.enabled && (runOn.length || tagsInRegion(data, projectRegion(project, data)).length)) {
+      values.runOnTags = runOn.join(",");
+    }
     if (kind === "databases" && showStorage && !storageLocked) values.storageSize = storageSize;
     if (isBucket) {
       Object.assign(values, {
@@ -198,10 +205,9 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
       if (isExternalBucket && connectionRef) values.connectionRef = connectionRef;
     }
     action(`/${kind}/${name}/update`, values)
-      .then(() => {
+      .then((result) => {
         reload();
-        if (kind === "apps" || isBucket || kind === "databases") alertUser("Settings saved. Deploy to apply them.");
-        else alertUser("Settings saved");
+        alertUser(settingsSavedMessage(result));
       })
       .catch((error) => alertUser(error.message));
   };
@@ -458,6 +464,18 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                       />
                     </SettingsPanel>
                   </ResourceSettingsBlock>
+                  {kind === "databases" && inCluster && (
+                    <RunOnField
+                      data={data}
+                      region={projectRegion(project, data)}
+                      value={runOn}
+                      onChange={setRunOn}
+                      disabled={Boolean(item.spec?.deploy?.enabled)}
+                      note={item.spec?.deploy?.enabled
+                        ? "A database keeps its data on the nodes it was first deployed to, so this can no longer change."
+                        : "Chosen before the first deploy. After that the database stays on its nodes."}
+                    />
+                  )}
                   {kind === "apps" && (
                     <>
                       <ResourceSettingsBlock title="Replicas" description="How many instances run for this service.">

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { History } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
-import { formatRelativeTime } from "@/lib/services";
+import { formatRelativeTime, settingsSavedMessage } from "@/lib/services";
 import {
   archiveForDatabase,
   backupSpec,
@@ -66,9 +66,9 @@ export function DatabaseBackups({ item, name, data, reload }) {
       backups: enabled ? "on" : "off",
       backupRetentionDays: days,
     })
-      .then(() => {
+      .then((result) => {
         reload();
-        alertUser("Settings saved. Deploy to apply them.");
+        alertUser(settingsSavedMessage(result));
       })
       .catch((error) => alertUser(error.message))
       .finally(() => setSaving(false));
@@ -120,7 +120,8 @@ export function DatabaseBackups({ item, name, data, reload }) {
       <FormStack className="rw-rail-form" onSubmit={save}>
         <ResourceSettingsBlock
           title="Backup settings"
-          description="Backups let you restore this database to a new one if its data is lost, damaged or deleted. Changes apply when you deploy."
+          description="Backups let you restore this database to a new one if its data is lost, damaged or deleted."
+          live
         >
           <SettingsPanel className="rw-resource-settings-toggle-row">
             <Switch

@@ -311,7 +311,7 @@ var _ = Describe("GeassApp Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "metrics-app-metrics", Namespace: testDevTargetNS}, &monitoringv1.ServiceMonitor{})).To(Succeed())
 	})
 
-	It("reconciles the last deployed snapshot while changes are pending", func() {
+	It("reconciles the last deployed snapshot while changes are pending, except for live settings", func() {
 		one := int32(1)
 		app := &geassv1alpha1.GeassApp{
 			ObjectMeta: metav1.ObjectMeta{Name: "pending-app", Namespace: ns},
@@ -348,7 +348,8 @@ var _ = Describe("GeassApp Controller", func() {
 
 		deploy := &appsv1.Deployment{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pending-app", Namespace: testDevTargetNS}, deploy)).To(Succeed())
-		Expect(*deploy.Spec.Replicas).To(Equal(int32(1)))
+		// Replicas are a live setting, so they apply while the pending image stays frozen.
+		Expect(*deploy.Spec.Replicas).To(Equal(int32(5)))
 		Expect(deploy.Spec.Template.Spec.Containers[0].Image).To(Equal("nginx:alpine"))
 		unchanged := &geassv1alpha1.GeassApp{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pending-app", Namespace: ns}, unchanged)).To(Succeed())

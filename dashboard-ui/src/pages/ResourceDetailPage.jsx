@@ -19,7 +19,7 @@ import { PageFrame } from "@/layout/PageFrame";
 import { ResourceSettings } from "@/components/ResourceSettings";
 import { FunctionEditor } from "@/components/FunctionEditor";
 import { ServiceConsole } from "@/components/ServiceConsole";
-import { ServiceMetrics } from "@/components/ServiceMetrics";
+import { DATABASE_CHARTS, ServiceMetrics } from "@/components/ServiceMetrics";
 import { ServiceSettings } from "@/components/ServiceSettings";
 import { Status } from "@/components/Status";
 import {
@@ -206,7 +206,10 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
           )}
         </PageSection>
       )}
-      {view === "monitor" && (
+      {view === "monitor" && kind === "databases" && (
+        <ServiceMetrics scope="databases" name={name} charts={DATABASE_CHARTS} />
+      )}
+      {view === "monitor" && kind !== "databases" && (
         <Stack gap="sm">
           {(data?.metrics || []).length ? (
             <>

@@ -107,7 +107,8 @@ spec:
                 - Redis
                 type: string
               environment:
-                description: Environment is the project environment.
+                description: Environment is the project environment. Empty for the
+                  cluster-wide server.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
@@ -172,8 +173,9 @@ spec:
                 - External
                 type: string
               project:
-                description: Project is the owning project.
-                minLength: 1
+                description: |-
+                  Project is the owning project. Leave it empty for the cluster-wide server: one Postgres or MySQL
+                  that projects share, each taking logical databases of its own on it (see GeassLogicalDatabase).
                 type: string
               provider:
                 description: Provider is required when Placement is External.
@@ -266,6 +268,29 @@ spec:
                 x-kubernetes-validations:
                 - message: set either restorePoint or time, not both
                   rule: '!(has(self.restorePoint) && has(self.time))'
+              runOn:
+                description: |-
+                  RunOn asks for nodes with particular tags, on top of the project's region. It is read when
+                  the database is first provisioned: its volumes stay where they were created.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              serverRegion:
+                description: |-
+                  ServerRegion is where the cluster-wide server runs. A server with a project follows its
+                  project's region instead.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               storageSize:
                 anyOf:
                 - type: integer
@@ -286,8 +311,6 @@ spec:
                 type: string
             required:
             - engine
-            - environment
-            - project
             type: object
           status:
             description: GeassDatabaseStatus defines the observed state of GeassDatabase.

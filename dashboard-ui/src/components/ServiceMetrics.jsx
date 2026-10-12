@@ -33,10 +33,15 @@ function formatRequests(value) {
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(2)} req/s`;
 }
 
+function formatFraction(value) {
+  return `${(Math.max(0, value) * 100).toFixed(value >= 0.1 ? 0 : 1)}%`;
+}
+
 const CHARTS = [
   { key: "cpu", title: "CPU", format: formatCPU },
   { key: "memory", title: "Memory", format: formatBytes },
-  { key: "network", title: "Public Network Traffic", format: formatRate },
+  { key: "network", title: "Network out", format: formatRate },
+  { key: "networkIn", title: "Network in", format: formatRate },
   { key: "requests", title: "Requests", format: formatRequests },
 ];
 
@@ -134,5 +139,24 @@ export function ServiceMetrics({ scope, name, environment, charts = CHARTS }) {
     </div>
   );
 }
+
+/** Charts for a database: its pods, and the space its volume has used. */
+export const DATABASE_CHARTS = [
+  { key: "cpu", title: "CPU", format: formatCPU },
+  { key: "memory", title: "Memory", format: formatBytes },
+  { key: "storage", title: "Disk used", format: formatBytes },
+  { key: "network", title: "Network out", format: formatRate },
+  { key: "networkIn", title: "Network in", format: formatRate },
+];
+
+/** Charts for the whole cluster: what pods use, and what the machines themselves are doing. */
+export const CLUSTER_CHARTS = [
+  { key: "cpu", title: "CPU used by services", format: formatCPU },
+  { key: "memory", title: "Memory used by services", format: formatBytes },
+  { key: "nodeCpu", title: "Machines busy (CPU)", format: formatFraction },
+  { key: "nodeMemory", title: "Machines memory in use", format: formatFraction },
+  { key: "network", title: "Network out", format: formatRate },
+  { key: "networkIn", title: "Network in", format: formatRate },
+];
 
 export { CHARTS as METRIC_CHARTS };

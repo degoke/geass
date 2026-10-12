@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -93,6 +94,9 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			platform.LabelEnvironment: env,
 			platform.LabelCluster:     cluster.Name,
 		}); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileProjectNetwork(ctx, &project, namespace); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileSharedVariables(ctx, &project, env, namespace); err != nil {
@@ -204,5 +208,7 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return requests
 		})).
+		// A network policy that is edited or deleted by hand is put back.
+		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
 		Complete(r)
 }

@@ -50,6 +50,21 @@ spec:
       #             operator: In
       #             values:
       #               - linux
+      # The installer puts the operator's image on the control plane only (it ships inside the installer, not
+      # in a registry), so the operator has to run there: scheduled onto a worker, which is possible as soon as
+      # one has joined, it sits in ImagePullBackOff and nothing manages the cluster. "Exists" rather than a
+      # value because k3s labels control plane nodes "true" and other distributions leave the value empty.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         # Projects are configured by default to adhere to the "restricted" Pod Security Standards.
         # This ensures that deployments meet the highest security requirements for Kubernetes.

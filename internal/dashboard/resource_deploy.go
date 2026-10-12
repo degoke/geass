@@ -71,7 +71,7 @@ func (s *Server) handleDatabaseDeploy(w http.ResponseWriter, r *http.Request, na
 	if db.Spec.Placement != geassv1alpha1.DatabasePlacementExternal {
 		est := platform.EstimateWorkload(databaseCreateWorkloadKind(db.Spec.Engine), db.Spec.HighAvailability, 0)
 		est = platform.EstimateFromResources(est.Label, databaseResources(&db), est.Replicas)
-		if s.rejectIfNoCapacityFor(w, r, fallback, est) {
+		if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, s.databasePlacement(r.Context(), &db)) {
 			return
 		}
 	}
@@ -132,7 +132,7 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 		if len(appPendingKinds(app)) == 0 {
 			continue
 		}
-		if s.rejectIfNoCapacityFor(w, r, workspacePanelURL(project, environment, "", ""), appDeployEstimate(app)) {
+		if s.rejectIfNoCapacityForPlacement(w, r, workspacePanelURL(project, environment, "", ""), appDeployEstimate(app), s.appPlacement(ctx, app)) {
 			return deployed, errCapacityRejected
 		}
 		markDeployed := func() error {
@@ -171,7 +171,7 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 		if db.Spec.Placement != geassv1alpha1.DatabasePlacementExternal {
 			est := platform.EstimateWorkload(databaseCreateWorkloadKind(db.Spec.Engine), db.Spec.HighAvailability, 0)
 			est = platform.EstimateFromResources(est.Label, databaseResources(db), est.Replicas)
-			if s.rejectIfNoCapacityFor(w, r, workspacePanelURL(project, environment, "", ""), est) {
+			if s.rejectIfNoCapacityForPlacement(w, r, workspacePanelURL(project, environment, "", ""), est, s.databasePlacement(ctx, db)) {
 				return deployed, errCapacityRejected
 			}
 		}

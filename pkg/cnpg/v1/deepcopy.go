@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"maps"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,6 +33,31 @@ func (in *ClusterSpec) DeepCopyInto(out *ClusterSpec) {
 			in.ExternalClusters[i].DeepCopyInto(&out.ExternalClusters[i])
 		}
 	}
+	if in.Affinity != nil {
+		out.Affinity = in.Affinity.DeepCopy()
+	}
+	if in.EnableSuperuserAccess != nil {
+		enabled := *in.EnableSuperuserAccess
+		out.EnableSuperuserAccess = &enabled
+	}
+}
+
+func (in *AffinityConfiguration) DeepCopy() *AffinityConfiguration {
+	if in == nil {
+		return nil
+	}
+	out := &AffinityConfiguration{}
+	if in.NodeSelector != nil {
+		out.NodeSelector = make(map[string]string, len(in.NodeSelector))
+		maps.Copy(out.NodeSelector, in.NodeSelector)
+	}
+	if in.Tolerations != nil {
+		out.Tolerations = make([]corev1.Toleration, len(in.Tolerations))
+		for i := range in.Tolerations {
+			in.Tolerations[i].DeepCopyInto(&out.Tolerations[i])
+		}
+	}
+	return out
 }
 
 func (in *ClusterStatus) DeepCopyInto(out *ClusterStatus) {

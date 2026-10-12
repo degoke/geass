@@ -105,10 +105,16 @@ export function ResourceSettingsSection({ id, icon: Icon, title, children, hidde
   );
 }
 
-export function ResourceSettingsBlock({ title, description, children }) {
+/** `live` marks settings that take effect as soon as they are saved, with no deploy. */
+export function ResourceSettingsBlock({ title, description, live = false, children }) {
   return (
     <div className="rw-resource-settings-block">
-      {title ? <h3 className="rw-settings-subtitle">{title}</h3> : null}
+      {title ? (
+        <h3 className="rw-settings-subtitle">
+          {title}
+          {live ? <span className="rw-live-badge">Applies instantly</span> : null}
+        </h3>
+      ) : null}
       {description ? <p className="rw-rail-body">{description}</p> : null}
       {children}
     </div>

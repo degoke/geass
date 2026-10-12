@@ -7,7 +7,9 @@ import (
 	"strings"
 )
 
-type SystemChecks struct{}
+type SystemChecks struct {
+	Network Network
+}
 
 func (s *SystemChecks) Name() string { return "system checks" }
 
@@ -38,7 +40,27 @@ func (s *SystemChecks) Run() error {
 		return fmt.Errorf("insufficient disk space on /: %d MB (10240 MB required)", diskKB/1024)
 	}
 
+	if err := s.Network.Validate(); err != nil {
+		return err
+	}
+	if s.Network.MultiSite {
+		if err := checkWireGuard(s.Name()); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// checkWireGuard verifies the kernel can create a WireGuard interface, which k3s's encrypted overlay
+// needs. It is built in from Linux 5.6; older kernels need the module installed. Creating and removing a
+// throwaway interface tests exactly what k3s will do.
+func checkWireGuard(step string) error {
+	if err := runCommand(step, "ip", "link", "add", "geass-wgcheck", "type", "wireguard"); err != nil {
+		return fmt.Errorf("this machine's kernel cannot create a WireGuard interface, which a multi-site cluster needs "+
+			"(built in from Linux 5.6; install the wireguard package on older kernels): %w", err)
+	}
+	return runCommand(step, "ip", "link", "del", "geass-wgcheck")
 }
 
 func totalMemoryKB() (int, error) {

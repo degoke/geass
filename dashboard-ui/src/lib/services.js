@@ -5,6 +5,25 @@ const PENDING_UPDATES_ANNOTATION = "geass.dev/pending-updates";
 const DEPLOY_WORKFLOW_ANNOTATION = "geass.dev/deploy-workflow";
 const LAST_DEPLOYED_ANNOTATION = "geass.dev/last-deployed";
 
+/**
+ * What a settings save means for the running resource. The API reports `applied` as "none"
+ * (nothing changed), "live" (already in effect), "deploy" (waiting for a deploy) or "deployed".
+ */
+export function settingsSavedMessage(result) {
+  switch (result?.applied) {
+    case "none":
+      return "Nothing to save";
+    case "live":
+      return "Saved. Applied now";
+    case "deploy":
+      return result.liveChanged ? "Saved. Some changes are live; deploy to apply the rest" : "Saved. Deploy to apply them";
+    case "deployed":
+      return "Saved and deployed";
+    default:
+      return "Settings saved";
+  }
+}
+
 export function openResourceDialog() {
   window.dispatchEvent(new Event("geass:open-resource"));
 }

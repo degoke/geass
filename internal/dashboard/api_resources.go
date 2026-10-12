@@ -29,6 +29,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPITokenServices(w, r)
 	case r.URL.Path == "/api/tokens":
 		s.handleAPITokensList(w, r)
+	case r.URL.Path == "/api/usage":
+		s.handleAPIUsage(w, r)
 	case r.URL.Path == "/api/events":
 		s.handleDashboardEvents(w, r)
 	case r.URL.Path == "/api/settings/github":
@@ -51,6 +53,16 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAppConsoleWS(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/console/ws"))
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "apps", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/metrics"))
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/logs/history"):
+		s.handleAPIProjectLogHistory(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs/history"))
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/logs/stream"):
+		s.handleAPIProjectLogStream(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs/stream"))
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/logs"):
+		s.handleAPIProjectLogs(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs"))
+	case strings.HasPrefix(r.URL.Path, "/api/databases/") && strings.HasSuffix(r.URL.Path, "/metrics"):
+		s.handleAPIMetrics(w, r, "databases", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/databases/"), "/metrics"))
+	case r.URL.Path == "/api/cluster/metrics":
+		s.handleAPIMetrics(w, r, "cluster", "cluster")
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "projects", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/metrics"))
 	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -113,6 +125,12 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 		}
 	}
 	info.Capacity = s.clusterCapacity(ctx)
+	for i := range data.Clusters.Items {
+		if region := data.Clusters.Items[i].Spec.DefaultRegion; region != "" {
+			info.DefaultRegion = region
+			break
+		}
+	}
 	classes := s.storageClasses(ctx)
 	info.StorageExpandable = classes.newVolumeExpandable()
 	info.DefaultStorage = platform.DatabaseStorageDefaults()

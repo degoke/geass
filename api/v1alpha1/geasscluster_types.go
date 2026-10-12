@@ -47,6 +47,23 @@ type GeassClusterLonghornAddon struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
+// GeassClusterLoggingAddon controls log collection and search: a Fluent Bit shipper on every node and a
+// VictoriaLogs server that keeps what it ships, so logs survive the pods that wrote them.
+type GeassClusterLoggingAddon struct {
+	// Enabled installs log collection. It is opt-in: it adds a pod per node and a server with a volume, which a
+	// small cluster may not want, and it is not installed unless asked for. The installer turns it on.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// RetentionDays is how long logs are kept before they are deleted.
+	// +kubebuilder:default=7
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=90
+	// +optional
+	RetentionDays int32 `json:"retentionDays,omitempty"`
+}
+
 // GeassClusterAddonsSpec groups platform add-on toggles.
 type GeassClusterAddonsSpec struct {
 	// CertManager controls cert-manager installation.
@@ -60,6 +77,20 @@ type GeassClusterAddonsSpec struct {
 	// Longhorn controls the Longhorn storage engine installation.
 	// +optional
 	Longhorn GeassClusterLonghornAddon `json:"longhorn,omitempty"`
+
+	// Logging controls log collection and search.
+	// +optional
+	Logging GeassClusterLoggingAddon `json:"logging,omitempty"`
+}
+
+// GeassClusterNetworkSpec says how the cluster's nodes reach each other.
+type GeassClusterNetworkSpec struct {
+	// MultiSite means the nodes are at different providers and reach each other over the internet, so
+	// the overlay network is encrypted (k3s's WireGuard backend) and every node advertises its public
+	// IP. It is chosen when the cluster is installed, because switching means restarting every node,
+	// and workers are joined to match it.
+	// +optional
+	MultiSite bool `json:"multiSite,omitempty"`
 }
 
 // GeassClusterSpec defines the desired state of GeassCluster.
@@ -76,6 +107,17 @@ type GeassClusterSpec struct {
 	// Addons controls default platform add-ons reconciled by the cluster controller.
 	// +optional
 	Addons GeassClusterAddonsSpec `json:"addons,omitempty"`
+
+	// Network says how the nodes reach each other.
+	// +optional
+	Network GeassClusterNetworkSpec `json:"network,omitempty"`
+
+	// DefaultRegion is where projects that do not choose a region run. Left empty, such projects
+	// may run on any node.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	// +optional
+	DefaultRegion string `json:"defaultRegion,omitempty"`
 }
 
 type ClusterPhase string
@@ -139,6 +181,23 @@ func init() {
 // AddonEnabled returns whether an addon pointer is enabled (default true).
 func AddonEnabled(enabled *bool) bool {
 	return enabled == nil || *enabled
+}
+
+// LoggingEnabled reports whether log collection was explicitly turned on. Like Longhorn it is opt-in, so
+// existing clusters and test fixtures never start collecting logs by accident.
+func LoggingEnabled(spec GeassClusterAddonsSpec) bool {
+	return spec.Logging.Enabled != nil && *spec.Logging.Enabled
+}
+
+// DefaultLogRetentionDays is how long logs are kept when no retention is chosen.
+const DefaultLogRetentionDays = 7
+
+// LogRetentionDays is the retention to apply: the chosen one, or the default.
+func LogRetentionDays(spec GeassClusterAddonsSpec) int32 {
+	if spec.Logging.RetentionDays > 0 {
+		return spec.Logging.RetentionDays
+	}
+	return DefaultLogRetentionDays
 }
 
 // LonghornEnabled reports whether Longhorn was explicitly turned on. Unlike the

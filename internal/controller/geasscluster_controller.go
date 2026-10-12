@@ -30,6 +30,29 @@ import (
 const certManagerValues = `installCRDs: true
 `
 
+// monitoringPrometheusValues apply to both monitoring profiles.
+//   - The chart's names are pinned, so the Prometheus Service is one the dashboard can find.
+//   - The monitor selectors are opened up because Geass creates ServiceMonitors without the chart's
+//     release label, which the chart's default selector requires; without this, app metrics are
+//     never scraped.
+//   - Metrics sit on a volume so history survives the pod being rescheduled (the chart default is an
+//     emptyDir), and are capped by age and size so they cannot fill it.
+const monitoringPrometheusValues = `fullnameOverride: ` + platform.MonitoringFullName + `
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    retention: 15d
+    retentionSize: 4GB
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+`
+
 const monitoringLiteValues = `grafana:
   enabled: false
   defaultDashboardsEnabled: false
@@ -43,12 +66,9 @@ kubeStateMetrics:
   enabled: true
 nodeExporter:
   enabled: true
-prometheus:
-  prometheusSpec:
-    serviceMonitorSelectorNilUsesHelmValues: false
 prometheusOperator:
   enabled: true
-`
+` + monitoringPrometheusValues
 
 // GeassClusterReconciler reconciles a GeassCluster object.
 type GeassClusterReconciler struct {
@@ -88,6 +108,12 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// written and only ever shortens the requeue. It cannot affect readiness, and a
 	// problem in it must not feed the failure count that pauses this reconciler.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornVolumeReplicas(ctx, &cluster))
+	// The same goes for keeping Longhorn's regions in step with the nodes' labels.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornRegions(ctx, &cluster))
+	// And closing the metrics and log stores to everything but the platform.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileTelemetryIsolation(ctx, &cluster))
+	// And measuring the ingress controller, which is where every service's request rate comes from.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileIngressMetrics(ctx, &cluster))
 	return result, nil
 }
 
@@ -118,9 +144,9 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 	}
 
 	if geassv1alpha1.AddonEnabled(cluster.Spec.Addons.Monitoring.Enabled) {
-		values := monitoringLiteValues
-		if cluster.Spec.Addons.Monitoring.Profile == "full" {
-			values = ""
+		values, err := monitoringChartValues(cluster)
+		if err != nil {
+			return false, err
 		}
 		spec := helmv1.HelmChartSpec{
 			Chart:           platform.MonitoringReleaseChart,
@@ -154,6 +180,9 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 			log.Info("Waiting for Longhorn add-on")
 		}
 	}
+
+	// Logging is not needed to run workloads, so it is installed on the side and never holds the cluster back.
+	r.reconcileLogging(ctx, cluster)
 
 	return allReady, nil
 }

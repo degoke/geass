@@ -458,7 +458,7 @@ func TestAppDeploymentsRendersContextDetailsAndFilters(t *testing.T) {
 	require.Contains(t, body, "Skipped change")
 }
 
-func TestAppScaleIsPendingUntilDeploy(t *testing.T) {
+func TestAppScaleAppliesWithoutADeploy(t *testing.T) {
 	ctx := context.Background()
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: testAppName, Namespace: platform.SystemNamespace},
@@ -477,7 +477,7 @@ func TestAppScaleIsPendingUntilDeploy(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: testAppName, Namespace: platform.SystemNamespace}, &updated))
 	require.NotNil(t, updated.Spec.Replicas)
 	require.Equal(t, int32(3), *updated.Spec.Replicas)
-	require.Equal(t, pendingChangeSettings, updated.Annotations[platform.AppPendingChangesAnnotation])
+	require.Empty(t, updated.Annotations[platform.AppPendingChangesAnnotation], "a replica count never replaces the pods, so it is not pending")
 	var deployments geassv1alpha1.GeassDeploymentList
 	require.NoError(t, c.List(ctx, &deployments, client.InNamespace(platform.SystemNamespace)))
 	require.Empty(t, deployments.Items)

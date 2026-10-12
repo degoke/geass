@@ -179,7 +179,7 @@ func TestDatabaseSettingsTurnBackupsOnWithRetention(t *testing.T) {
 	require.NotNil(t, db.Spec.Backup)
 	require.True(t, db.Spec.Backup.Enabled)
 	require.EqualValues(t, 30, db.Spec.Backup.RetentionDays)
-	require.NotEmpty(t, db.Annotations[platform.PendingChangesAnnotation], "backup settings are applied by the usual deploy step like any other setting")
+	require.Empty(t, db.Annotations[platform.PendingChangesAnnotation], "backups never restart the database, so they apply without a deploy")
 }
 
 func TestDatabaseSettingsTurnBackupsOffKeepingTheRetentionChoice(t *testing.T) {

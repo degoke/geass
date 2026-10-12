@@ -11,6 +11,7 @@ const k3sKubeconfigEnv = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
 
 type K3sInstall struct {
 	Version string // optional, defaults to upstream installer channel resolution
+	Network Network
 }
 
 func (s *K3sInstall) Name() string { return "install k3s (server)" }
@@ -31,6 +32,13 @@ func (s *K3sInstall) Run() error {
 	}
 	if trace {
 		Logf(s.Name(), "Installer shell tracing enabled")
+	}
+
+	if err := writeK3sConfig(s.Name(), s.Network.ServerConfig()); err != nil {
+		return err
+	}
+	if s.Network.MultiSite {
+		Logf(s.Name(), "Multi-site cluster: WireGuard overlay, advertising %s", s.Network.ExternalIP)
 	}
 
 	script, err := outputCommand(s.Name(), "curl", "-sfL", "https://get.k3s.io")
@@ -60,6 +68,19 @@ func (s *K3sInstall) Run() error {
 		echoStdout: true,
 		echoStderr: true,
 	}, "sh", shArgs...)
+}
+
+// writeK3sConfig installs the server's configuration file before k3s starts, so every setting is in
+// effect from the first boot.
+func writeK3sConfig(step, content string) error {
+	if err := os.MkdirAll("/etc/rancher/k3s", 0o755); err != nil {
+		return fmt.Errorf("create k3s config directory: %w", err)
+	}
+	if err := os.WriteFile(k3sConfigPath, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", k3sConfigPath, err)
+	}
+	Logf(step, "Wrote %s", k3sConfigPath)
+	return nil
 }
 
 func installTraceEnabled() bool {

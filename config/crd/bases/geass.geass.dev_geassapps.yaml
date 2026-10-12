@@ -1004,6 +1004,21 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runOn:
+                description: RunOn asks for nodes with particular tags, on top of
+                  the project's region.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               secretData:
                 additionalProperties:
                   type: string

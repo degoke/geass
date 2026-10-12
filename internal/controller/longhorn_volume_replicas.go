@@ -130,7 +130,27 @@ func (r *GeassClusterReconciler) reconcileLonghornVolumeReplicas(ctx context.Con
 		return volumeReplicaRetryAfter
 	}
 
-	raised, failures, failed, more := 0, 0, false, false
+	failed, more := r.raiseVolumesTo(ctx, names, volumes, desired)
+
+	switch {
+	case more:
+		// A refused volume is retried on every pass anyway, so it must not set the pace
+		// for healthy volumes still waiting: at the retry interval they would take ten
+		// times as long.
+		return volumeReplicaPace
+	case failed:
+		return volumeReplicaRetryAfter
+	default:
+		return 0
+	}
+}
+
+// raiseVolumesTo raises the named volumes that are below desired, at most volumeReplicaBatchSize of
+// them. failed says Longhorn refused at least one, and more that volumes are still waiting behind the
+// batch, which is what sets the pace of the next pass.
+func (r *GeassClusterReconciler) raiseVolumesTo(ctx context.Context, names []string, volumes map[string]*unstructured.Unstructured, desired int64) (failed, more bool) {
+	log := logf.FromContext(ctx)
+	raised, failures := 0, 0
 	for _, name := range names {
 		volume, ok := volumes[name]
 		if !ok {
@@ -160,17 +180,7 @@ func (r *GeassClusterReconciler) reconcileLonghornVolumeReplicas(ctx context.Con
 		log.Info("Raised Longhorn volume replica count", "volume", name, "from", have, "to", desired)
 	}
 
-	switch {
-	case more:
-		// A refused volume is retried on every pass anyway, so it must not set the pace
-		// for healthy volumes still waiting: at the retry interval they would take ten
-		// times as long.
-		return volumeReplicaPace
-	case failed:
-		return volumeReplicaRetryAfter
-	default:
-		return 0
-	}
+	return failed, more
 }
 
 // replicatedVolumeNames are the Longhorn volumes behind bound claims of the

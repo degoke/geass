@@ -31,7 +31,7 @@ func defaultPrometheusURL() string {
 	if v := os.Getenv("GEASS_PROMETHEUS_URL"); v != "" {
 		return v
 	}
-	return "http://kube-prometheus-stack-prometheus." + platform.MonitoringTargetNS + ".svc:9090"
+	return "http://" + platform.MonitoringPrometheusService + "." + platform.MonitoringTargetNS + ".svc:9090"
 }
 
 func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (string, error) {

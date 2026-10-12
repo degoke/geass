@@ -97,6 +97,9 @@ func dumpPodSpec(in dumpJobInput) corev1.PodSpec {
 		RestartPolicy: corev1.RestartPolicyNever,
 		Volumes:       []corev1.Volume{{Name: backupVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &scratch}}}},
 	}
+	// The copy is staged on a node's disk and travels to or from the database, so it runs in the
+	// database's region.
+	jobPlacement(pinnedNodePlacement(in.db)).ApplyToPodSpec(&pod)
 	if in.restoreKey == "" {
 		pod.InitContainers = []corev1.Container{{
 			Name: dumpContainer, Image: in.target.image, Command: dumpCommand(in),

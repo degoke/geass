@@ -24,17 +24,22 @@ func main() {
 		}
 	}
 
+	// GEASS_MULTI_SITE=1 GEASS_NODE_EXTERNAL_IP=<public ip> builds a cluster whose nodes are at
+	// different providers: an encrypted WireGuard overlay instead of VXLAN, and the public IP advertised.
+	network := installer.NetworkFromEnv()
+
 	steps := []installer.Step{
-		&installer.SystemChecks{},          // OS, memory, disk, arch
-		&installer.FirewallSetup{},         // open 6443, 10250, 8472/udp when a host firewall is active
-		&installer.RemoveExistingInstall{}, // uninstall k3s if already present
-		&installer.NodePrerequisites{},     // iSCSI initiator, which Longhorn needs on every node
-		&installer.K3sInstall{},            // download get.k3s.io installer and run server mode
-		&installer.WaitForK3s{},            // poll until /etc/rancher/k3s/k3s.yaml exists
-		&installer.ImageImport{},           // load embedded operator image into k3s containerd
-		&installer.OperatorDeploy{},        // apply embedded operator manifests
-		&installer.WaitForOperator{},       // poll until operator pod Running
-		&installer.ClusterCRApply{},        // apply initial GeassCluster CR
+		&installer.SystemChecks{Network: network},   // OS, memory, disk, arch, and WireGuard for multi-site
+		&installer.FirewallSetup{Network: network},  // open 6443, 10250 and the overlay port when a host firewall is active
+		&installer.RemoveExistingInstall{},          // uninstall k3s if already present
+		&installer.NodePrerequisites{},              // iSCSI initiator, which Longhorn needs on every node
+		&installer.K3sInstall{Network: network},     // download get.k3s.io installer and run server mode
+		&installer.WaitForK3s{},                     // poll until /etc/rancher/k3s/k3s.yaml exists
+		&installer.ImageImport{},                    // load embedded operator image into k3s containerd
+		&installer.OperatorDeploy{},                 // apply embedded operator manifests
+		&installer.WaitForOperator{},                // poll until operator pod Running
+		&installer.JoinTokenSecret{},                // store the join token the operator needs to add workers
+		&installer.ClusterCRApply{Network: network}, // apply initial GeassCluster CR
 	}
 
 	installer.Logf("installer", "Starting installation with %d steps", len(steps))

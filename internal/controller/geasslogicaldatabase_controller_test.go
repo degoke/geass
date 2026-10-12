@@ -39,8 +39,12 @@ func TestLogicalDatabasePublishesProjectConnectionSecret(t *testing.T) {
 	}
 	parentSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "postgres-connection", Namespace: testDevTargetNS},
-		Data:       map[string][]byte{platform.ConnectionKeyHost: []byte("postgres-rw")},
+		Data: map[string][]byte{
+			platform.ConnectionKeyHost: []byte("postgres-rw"), platform.ConnectionKeyUsername: []byte("app"), platform.ConnectionKeyPassword: []byte("apppw"),
+		},
 	}
+	// The operator asks CloudNativePG for the administrator login once a server has logical databases.
+	adminSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "postgres-superuser", Namespace: testDevTargetNS}}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: testDBName + "-create", Namespace: testDevTargetNS}, Status: batchv1.JobStatus{Succeeded: 1}}
 	project := &geassv1alpha1.GeassProject{
 		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
@@ -57,7 +61,7 @@ func TestLogicalDatabasePublishesProjectConnectionSecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace},
 		Status:     geassv1alpha1.GeassClusterStatus{Conditions: []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue}}},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(logical).WithObjects(server, logical, parentSecret, job, project, cluster).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(logical).WithObjects(server, logical, parentSecret, adminSecret, job, project, cluster).Build()
 	r := &GeassLogicalDatabaseReconciler{Client: c, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), requestFor(logical))
 	require.NoError(t, err)
@@ -67,4 +71,10 @@ func TestLogicalDatabasePublishesProjectConnectionSecret(t *testing.T) {
 	var updated geassv1alpha1.GeassLogicalDatabase
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(logical), &updated))
 	require.Equal(t, testDBName+"-connection", updated.Status.ConnectionSecret)
+
+	// On a project's own server the app uses the server's own login, so the secret now carries it: before,
+	// it held a URI with no credentials that nothing could connect with.
+	require.Equal(t, "app", string(connection.Data[platform.ConnectionKeyUsername]))
+	require.Equal(t, "apppw", string(connection.Data[platform.ConnectionKeyPassword]))
+	require.Equal(t, "postgresql://app:apppw@postgres-rw:5432/"+testDBName, string(connection.Data[platform.ConnectionKeyURI]))
 }

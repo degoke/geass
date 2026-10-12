@@ -119,6 +119,29 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              network:
+                description: Network sets who can reach this project's services. Without
+                  it the project is isolated.
+                properties:
+                  allowFromProjects:
+                    description: |-
+                      AllowFromProjects names other projects whose services may reach this project's services, such as
+                      a front-end project calling an internal API. It has no effect when isolation is None.
+                    items:
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 20
+                    type: array
+                    x-kubernetes-list-type: set
+                  isolation:
+                    default: Project
+                    description: Isolation defaults to Project.
+                    enum:
+                    - Project
+                    - None
+                    type: string
+                type: object
               prEnvironments:
                 description: PREnvironments creates a temporary copy of an environment
                   for every pull request.
@@ -142,6 +165,14 @@ spec:
                 required:
                 - enabled
                 type: object
+              region:
+                description: |-
+                  Region is where this project's workloads run: only nodes in the region are used. Empty means the
+                  cluster's default region. It is chosen when the project is created and cannot change while the
+                  project has databases or storage, because their data lives on the nodes.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.

@@ -13,6 +13,7 @@ import {
   HardDrive,
   KeyRound,
   Layers,
+  Network,
   Plug,
   Settings,
   ShieldCheck,
@@ -24,12 +25,15 @@ import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { normalizeProjectName } from "@/lib/project-names";
 import { projectResources } from "@/lib/project-resources";
+import { defaultRegion, platformRegions } from "@/lib/placement";
 import { RailCopyField } from "@/components/rail-controls";
 import { ApiTokens } from "@/components/ApiTokens";
 import { PREnvironments } from "@/components/PREnvironments";
 import { ProjectBackups } from "@/components/ProjectBackups";
+import { ProjectNetwork } from "@/components/ProjectNetwork";
 import { ProjectWebhooks } from "@/components/ProjectWebhooks";
 import { ServiceMetrics } from "@/components/ServiceMetrics";
+import { UsagePanel } from "@/components/UsagePanel";
 import { Button, Field, Input, Select, Switch, Textarea } from "@/components/geass-ui";
 import {
   SettingsAlert,
@@ -47,6 +51,7 @@ const SECTIONS = [
   { id: "variables", label: "Shared Variables", icon: Variable },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "backups", label: "Backups", icon: ShieldCheck },
+  { id: "network", label: "Network", icon: Network },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "danger", label: "Danger", icon: AlertTriangle, danger: true },
@@ -58,6 +63,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
   const queryClient = useQueryClient();
   const [section, setSection] = useState("general");
   const [displayName, setDisplayName] = useState(project.spec?.displayName || name);
+  const [region, setRegion] = useState(project.spec?.region || "");
   const [newEnvironment, setNewEnvironment] = useState("");
   const [confirmDelete, setConfirmDelete] = useState("");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -72,6 +78,8 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
   const githubEnvironment = workspaceEnvironment || project.spec?.environments?.[0] || "";
   const [variable, setVariable] = useState({ environment: githubEnvironment, name: "", value: "", secret: false });
   const mutable = canMutate(data);
+  const regions = platformRegions(data);
+  const hasDatabases = (projectResources(data, name).databases || []).some((db) => db.spec?.placement !== "External");
   const deleteConfirmLabel = project.spec?.displayName || name;
   const deleteConfirmTarget = useMemo(
     () => normalizeProjectName(deleteConfirmLabel) || name,
@@ -193,7 +201,9 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               className="rw-rail-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                action(`/projects/${name}/settings/save`, { displayName, environments: project.spec?.environments || [] })
+                const values = { displayName, environments: project.spec?.environments || [] };
+                if (regions.length) values.region = region;
+                action(`/projects/${name}/settings/save`, values)
                   .then(() => { reload(); alertUser("Project settings saved"); })
                   .catch((error) => alertUser(error.message));
               }}
@@ -204,6 +214,19 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               <Field label="Description">
                 <Textarea disabled placeholder="Optional description" aria-label="Project description" rows={3} />
               </Field>
+              {regions.length ? (
+                <Field
+                  label="Region"
+                  description={hasDatabases
+                    ? "Fixed, because this project has databases and their data stays on the nodes of the region they were created in."
+                    : "This project only runs on nodes in its region. Services restart in the new region when it changes."}
+                >
+                  <Select value={region} onChange={(event) => setRegion(event.target.value)} disabled={!mutable || hasDatabases} aria-label="Project region">
+                    <option value="">{defaultRegion(data) ? `Cluster default (${defaultRegion(data)})` : "Any region"}</option>
+                    {regions.map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
+                  </Select>
+                </Field>
+              ) : null}
               <RailCopyField label="Project ID" value={name} onCopy={copyProjectId} />
               <SettingsFormActions>
                 <Button type="submit" disabled={!mutable}>Update</Button>
@@ -253,6 +276,8 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
 
       {section === "usage" && (
         <>
+          <UsagePanel projectName={name} title="What this project takes of the cluster" />
+          <SettingsDivider />
           <SettingsSection title="Current Usage" flat>
             <div className="rw-settings-usage-grid">
               <SettingsPanel className="rw-settings-usage-lines">
@@ -410,6 +435,12 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       {section === "backups" && (
         <SettingsSection title="Backups" flat>
           <ProjectBackups project={project} data={data} mutable={mutable} reload={reload} />
+        </SettingsSection>
+      )}
+
+      {section === "network" && (
+        <SettingsSection title="Network" flat>
+          <ProjectNetwork project={project} data={data} mutable={mutable} reload={reload} />
         </SettingsSection>
       )}
 

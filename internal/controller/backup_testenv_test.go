@@ -235,7 +235,7 @@ func newBackupEnv(t *testing.T, mutate ...func(*backupEnvConfig)) *backupEnv {
 
 // ensureCluster runs reconcileCNPGCluster with no storage class, which is all the backup tests need.
 func (e *backupEnv) ensureCluster(plan *backupPlan, recovery *recoveryPlan) error {
-	_, err := e.r.reconcileCNPGCluster(context.Background(), e.db, e.wsNS, "", plan, recovery)
+	_, err := e.r.reconcileCNPGCluster(context.Background(), e.db, e.wsNS, "", platform.Placement{}, plan, recovery)
 	return err
 }
 

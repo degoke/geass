@@ -48,6 +48,7 @@ export const routeTree = rootRoute.addChildren([
     },
   }),
   route("/object-storage", "settings:object"),
+  route("/shared-databases", "settings:databases"),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
