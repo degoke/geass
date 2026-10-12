@@ -1,0 +1,40 @@
+---
+import { installDocsUrl } from "../../lib/site";
+---
+  <section class="sec" id="install" aria-labelledby="install-title">
+    <div class="sec-inner">
+      <div class="sec-head">
+        <span class="eyebrow mono">GET STARTED</span>
+        <h2 id="install-title">Sign the contract in one line</h2>
+        <p class="sub">Three steps from a fresh server to a running cloud. It all runs on your own hardware, so your data stays yours.</p>
+      </div>
+
+      <ol class="steps">
+        <li>
+          <span class="num mono">01</span>
+          <h3>Install</h3>
+          <p>Run one command on a fresh Linux server. Geass sets up the cluster.</p>
+        </li>
+        <li>
+          <span class="num mono">02</span>
+          <h3>Connect</h3>
+          <p>Join more servers, then plug in your code and your cloud accounts.</p>
+        </li>
+        <li>
+          <span class="num mono">03</span>
+          <h3>Ship</h3>
+          <p>Push code or pick a template. Geass runs it, backs it up and keeps it running.</p>
+        </li>
+      </ol>
+
+      <div class="cmdbox">
+        <span class="cmd-tags"><span>linux</span><span>sudo</span></span>
+        <code class="cmd" id="install-cmd"><span class="prompt">$</span>curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh</code>
+        <button type="button" class="copy" id="copy" aria-label="Copy install command">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="13" height="13"/><path d="M4 16V4h12"/></svg>
+        </button>
+      </div>
+      <p class="copy-status mono" id="copy-status" role="status" aria-live="polite"></p>
+      <p class="reqs mono">2 GB RAM · amd64 or arm64 · root access · <a href={installDocsUrl}>read the install guide</a></p>
+    </div>
+  </section>
