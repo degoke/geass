@@ -9,6 +9,7 @@ import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/Settin
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
 import { ClusterCapacityPage } from "@/pages/platform/ClusterCapacityPage";
 import { ObjectStorageSettingsPage } from "@/pages/platform/ObjectStorageSettingsPage";
+import { SharedDatabasesPage } from "@/pages/platform/SharedDatabasesPage";
 import { ConnectorsPage } from "@/pages/platform/ConnectorsPage";
 
 function apexFromDashboardHost(host, subdomain = "geass") {
@@ -84,8 +85,9 @@ export function PlatformSettingsPage({ data, page, reload }) {
       </SettingsSection>
     );
   }
-  if (page === "ha" || page === "cluster") return <ClusterCapacityPage data={data} embedded />;
+  if (page === "ha" || page === "cluster") return <ClusterCapacityPage data={data} reload={reload} embedded />;
   if (page === "object") return <ObjectStorageSettingsPage data={data} reload={reload} embedded />;
+  if (page === "databases") return <SharedDatabasesPage data={data} reload={reload} embedded />;
   return (
     <>
       <SettingsSection title="General settings" flat>

@@ -3,38 +3,43 @@ package dashboard
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
 type clusterCapacity struct {
-	Known                  bool                                 `json:"known"`
-	CPUAllocatable         string                               `json:"cpuAllocatable"`
-	CPURequested           string                               `json:"cpuRequested"`
-	CPUAvailable           string                               `json:"cpuAvailable"`
-	MemoryAllocatable      string                               `json:"memoryAllocatable"`
-	MemoryRequested        string                               `json:"memoryRequested"`
-	MemoryAvailable        string                               `json:"memoryAvailable"`
-	CPUAllocatableMillis   int64                                `json:"cpuAllocatableMillis"`
-	CPURequestedMillis     int64                                `json:"cpuRequestedMillis"`
-	CPUAvailableMillis     int64                                `json:"cpuAvailableMillis"`
-	MemoryAllocatableBytes int64                                `json:"memoryAllocatableBytes"`
-	MemoryRequestedBytes   int64                                `json:"memoryRequestedBytes"`
-	MemoryAvailableBytes   int64                                `json:"memoryAvailableBytes"`
-	LargestNodeCPUMillis   int64                                `json:"largestNodeCpuMillis"`
-	LargestNodeMemoryBytes int64                                `json:"largestNodeMemoryBytes"`
-	HealthyNodes           int                                  `json:"healthyNodes"`
-	SchedulableNodes       int                                  `json:"schedulableNodes"`
-	Nodes                  []capacityNode                       `json:"nodes"`
-	Issues                 []capacityIssue                      `json:"issues"`
-	Estimates              map[string]platform.WorkloadEstimate `json:"estimates"`
-	CPUSizes               []platform.SizeOption                `json:"cpuSizes"`
-	MemorySizes            []platform.SizeOption                `json:"memorySizes"`
-	Message                string                               `json:"message,omitempty"`
+	Known                  bool            `json:"known"`
+	CPUAllocatable         string          `json:"cpuAllocatable"`
+	CPURequested           string          `json:"cpuRequested"`
+	CPUAvailable           string          `json:"cpuAvailable"`
+	MemoryAllocatable      string          `json:"memoryAllocatable"`
+	MemoryRequested        string          `json:"memoryRequested"`
+	MemoryAvailable        string          `json:"memoryAvailable"`
+	CPUAllocatableMillis   int64           `json:"cpuAllocatableMillis"`
+	CPURequestedMillis     int64           `json:"cpuRequestedMillis"`
+	CPUAvailableMillis     int64           `json:"cpuAvailableMillis"`
+	MemoryAllocatableBytes int64           `json:"memoryAllocatableBytes"`
+	MemoryRequestedBytes   int64           `json:"memoryRequestedBytes"`
+	MemoryAvailableBytes   int64           `json:"memoryAvailableBytes"`
+	LargestNodeCPUMillis   int64           `json:"largestNodeCpuMillis"`
+	LargestNodeMemoryBytes int64           `json:"largestNodeMemoryBytes"`
+	HealthyNodes           int             `json:"healthyNodes"`
+	SchedulableNodes       int             `json:"schedulableNodes"`
+	Nodes                  []capacityNode  `json:"nodes"`
+	Issues                 []capacityIssue `json:"issues"`
+	// Where names the part of the cluster these numbers cover ("the us region"); empty for the whole
+	// cluster as a general workload sees it.
+	Where       string                               `json:"where,omitempty"`
+	Regions     []regionInfo                         `json:"regions,omitempty"`
+	Tags        []tagInfo                            `json:"tags,omitempty"`
+	Estimates   map[string]platform.WorkloadEstimate `json:"estimates"`
+	CPUSizes    []platform.SizeOption                `json:"cpuSizes"`
+	MemorySizes []platform.SizeOption                `json:"memorySizes"`
+	Message     string                               `json:"message,omitempty"`
 }
 
 type capacityNode struct {
@@ -45,6 +50,10 @@ type capacityNode struct {
 	CPUAllocatable    string   `json:"cpuAllocatable"`
 	MemoryAllocatable string   `json:"memoryAllocatable"`
 	Pressure          []string `json:"pressure"`
+	// Region, Zone and Tags are where the node sits and what it is for.
+	Region string                       `json:"region,omitempty"`
+	Zone   string                       `json:"zone,omitempty"`
+	Tags   []geassv1alpha1.GeassNodeTag `json:"tags,omitempty"`
 }
 
 type capacityIssue struct {
@@ -53,7 +62,12 @@ type capacityIssue struct {
 }
 
 func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
-	snapshot := clusterCapacity{Estimates: platform.WorkloadEstimates(), CPUSizes: platform.CPUSizes(), MemorySizes: platform.MemorySizes(), Message: "Node capacity is unavailable until the cluster reports schedulable nodes"}
+	return s.clusterCapacityFor(ctx, platform.Placement{})
+}
+
+// clusterCapacityFor is the capacity available to a workload that may only run on some nodes.
+func (s *Server) clusterCapacityFor(ctx context.Context, placement platform.Placement) clusterCapacity {
+	snapshot := clusterCapacity{Where: placement.Describe(), Estimates: platform.WorkloadEstimates(), CPUSizes: platform.CPUSizes(), MemorySizes: platform.MemorySizes(), Message: "Node capacity is unavailable until the cluster reports schedulable nodes"}
 	if s == nil || s.Client == nil {
 		return snapshot
 	}
@@ -67,7 +81,8 @@ func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
 		snapshot.Message = "Could not read cluster pods"
 		return snapshot
 	}
-	capacity := platform.ComputeClusterSnapshot(nodes.Items, pods.Items)
+	capacity := platform.ComputeClusterSnapshotFor(nodes.Items, pods.Items, placement)
+	snapshot.Regions, snapshot.Tags = regionsAndTags(nodes.Items)
 	for _, node := range nodes.Items {
 		entry := describeCapacityNode(node)
 		snapshot.Nodes = append(snapshot.Nodes, entry)
@@ -94,6 +109,9 @@ func (s *Server) clusterCapacity(ctx context.Context) clusterCapacity {
 	snapshot.MemoryRequested = platform.FormatMemoryBytes(snapshot.MemoryRequestedBytes)
 	snapshot.MemoryAvailable = capacity.MemoryAvailable
 	if snapshot.SchedulableNodes == 0 {
+		if snapshot.Where != "" {
+			snapshot.Message = "There is no ready node in " + snapshot.Where + " yet"
+		}
 		return snapshot
 	}
 	snapshot.Known = capacity.Known
@@ -121,6 +139,8 @@ func describeCapacityNode(node corev1.Node) capacityNode {
 	if _, ok := node.Labels["node-role.kubernetes.io/master"]; ok {
 		entry.Role = "control-plane"
 	}
+	placement := platform.NodePlacementOf(&node)
+	entry.Region, entry.Zone, entry.Tags = placement.Region, placement.Zone, placement.Tags
 	for _, condition := range node.Status.Conditions {
 		switch condition.Type {
 		case corev1.NodeReady:
@@ -153,15 +173,6 @@ func (c clusterCapacity) Fits(est platform.WorkloadEstimate) (bool, string) {
 		LargestNodeMemoryBytes: c.LargestNodeMemoryBytes,
 		CPUAvailable:           c.CPUAvailable,
 		MemoryAvailable:        c.MemoryAvailable,
+		Where:                  c.Where,
 	}.Fits(est)
-}
-
-func (s *Server) rejectIfNoCapacityFor(w http.ResponseWriter, r *http.Request, fallback string, est platform.WorkloadEstimate) bool {
-	snapshot := s.clusterCapacity(r.Context())
-	ok, message := snapshot.Fits(est)
-	if ok {
-		return false
-	}
-	redirectFormError(w, r, fallback, message)
-	return true
 }

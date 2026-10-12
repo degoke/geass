@@ -7,7 +7,8 @@ import { action, isReady, list, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { projectResources } from "@/lib/project-resources";
-import { Button } from "@/components/geass-ui";
+import { defaultRegion, hasRegionChoice, platformRegions } from "@/lib/placement";
+import { Button, Select } from "@/components/geass-ui";
 
 function allResources(resources) {
   return [...resources.apps, ...resources.databases, ...resources.stores, ...resources.logical];
@@ -30,8 +31,9 @@ export function ProjectsPage({ data }) {
   const searchRef = useRef(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("recent");
+  const [region, setRegion] = useState("");
   const create = useMutation({
-    mutationFn: () => action("/projects/create"),
+    mutationFn: () => action("/projects/create", region ? { region } : {}),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
       navigate({ to: result.project ? `/projects/${result.project}` : "/projects" });
@@ -78,6 +80,12 @@ export function ProjectsPage({ data }) {
             classNames={{ input: "rw-search-input" }}
             w={{ base: "100%", sm: 280 }}
           />
+          {canMutate(data) && hasRegionChoice(data) ? (
+            <Select value={region} onChange={(event) => setRegion(event.currentTarget.value)} aria-label="Region for the new project" w={{ base: "100%", sm: 190 }}>
+              <option value="">{defaultRegion(data) ? `Default region (${defaultRegion(data)})` : "Any region"}</option>
+              {platformRegions(data).map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
+            </Select>
+          ) : null}
           {canMutate(data) ? (
             <Button onClick={() => create.mutate()} disabled={create.isPending} leftSection={<Plus size={15} />}>
               New project

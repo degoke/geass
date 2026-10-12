@@ -107,13 +107,8 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, r.Update(ctx, &app)
 	}
 
-	if app.Spec.Deploy.Enabled && appPendingUpdates(&app) > 0 {
-		snapshot, ok := platform.LastDeployedSpec(&app)
-		if !ok {
-			return r.setNotReady(ctx, &app, "Service has pending changes and no last deployed snapshot")
-		}
-		app.Spec = snapshot
-		app.Spec.Deploy.Enabled = true
+	if !applyAppDeployedSpec(&app) {
+		return r.setNotReady(ctx, &app, "Service has pending changes and no last deployed snapshot")
 	}
 
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, app.Spec.Project, app.Spec.Environment); err != nil {
@@ -177,7 +172,11 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	est := platform.EstimateFromResources("service", appContainerResources(&app), deploymentReplicas(&app))
-	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est); !ok {
+	placement, err := platform.ResolvePlacement(ctx, r.Client, app.Spec.Project, app.Spec.RunOn.Tags)
+	if err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
 	if err := r.reconcileDeployment(ctx, &app, wsNS); err != nil {
@@ -422,6 +421,10 @@ func (r *GeassAppReconciler) reconcileSecret(ctx context.Context, app *geassv1al
 }
 
 func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
+	placement, err := platform.ResolvePlacement(ctx, r.Client, app.Spec.Project, app.Spec.RunOn.Tags)
+	if err != nil {
+		return err
+	}
 	replicas := int32(1)
 	if app.Spec.Replicas != nil {
 		replicas = *app.Spec.Replicas
@@ -434,7 +437,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS},
 	}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		applyGeassLabels(deploy, app, "GeassApp")
 		selector := geassResourceLabels(app, "GeassApp")
 		deploy.Spec.Replicas = &replicas
@@ -595,6 +598,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		if pullSecret := appImagePullSecret(app); pullSecret != nil {
 			deploy.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{*pullSecret}
 		}
+		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
 		return setSameNamespaceOwner(app, deploy, r.Scheme)
 	})
 	return err
@@ -846,6 +850,17 @@ func (r *GeassAppReconciler) reconcileIngress(ctx context.Context, app *geassv1a
 
 func stringPtr(value string) *string { return &value }
 
+// serviceMonitorSelector picks out the app's Service. A ServiceMonitor matches Services by the labels
+// on the Service itself, which are the Geass ownership labels. appLabels are the labels on the pods
+// (they are the Service's selector, not its labels), so selecting by them matches no Service at all and
+// the app is never scraped.
+func serviceMonitorSelector(app *geassv1alpha1.GeassApp) map[string]string {
+	return map[string]string{
+		labelGeassKind: "GeassApp",
+		labelGeassName: app.Name,
+	}
+}
+
 func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) error {
 	name := app.Name + "-metrics"
 	if !app.Spec.Metrics.Enabled {
@@ -873,7 +888,7 @@ func (r *GeassAppReconciler) reconcileServiceMonitor(ctx context.Context, app *g
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sm, func() error {
 		applyGeassLabels(sm, app, "GeassApp")
-		sm.Spec.Selector = metav1.LabelSelector{MatchLabels: r.appLabels(app)}
+		sm.Spec.Selector = metav1.LabelSelector{MatchLabels: serviceMonitorSelector(app)}
 		sm.Spec.Endpoints = []monitoringv1.Endpoint{{
 			Port: metricsPort,
 			Path: metricsPath,

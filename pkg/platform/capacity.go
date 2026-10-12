@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -157,4 +158,46 @@ func UnknownCapacityMessage(est WorkloadEstimate) string {
 
 func NodeTooSmallMessage(est WorkloadEstimate) string {
 	return fmt.Sprintf("This %s needs about %s CPU and %s memory per instance, but no schedulable node has enough allocatable capacity. Scale up with larger nodes", est.Label, est.PerCPU, est.PerMemory)
+}
+
+// NoNodesInPlacementMessage is the answer when nothing in the requested part of the cluster can run
+// the workload at all.
+func NoNodesInPlacementMessage(est WorkloadEstimate, where string) string {
+	return fmt.Sprintf("There is no ready node in %s to run this %s. Add a node there, or choose another region", where, est.Label)
+}
+
+// ReservedNodesMessage is the answer when the nodes that could run the workload are all kept for other
+// work. Adding a node is one fix; releasing a reservation is the other.
+func ReservedNodesMessage(est WorkloadEstimate, where string, reserved int) string {
+	place := "the cluster"
+	if where != "" {
+		place = where
+	}
+	noun := "nodes in"
+	if reserved == 1 {
+		noun = "node in"
+	}
+	return fmt.Sprintf("The %s %s %s reserved for other work, so this %s has nowhere to run. Add a node, or release a node from its reservation", noun, place, plural(reserved, "is", "are"), est.Label)
+}
+
+func plural(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
+}
+
+func NodeTooSmallInPlacementMessage(est WorkloadEstimate, where string) string {
+	return fmt.Sprintf("This %s needs about %s CPU and %s memory per instance, but no node in %s has enough allocatable capacity. Add larger nodes there", est.Label, est.PerCPU, est.PerMemory, where)
+}
+
+func InsufficientCapacityInPlacementMessage(est WorkloadEstimate, where, availableCPU, availableMemory string) string {
+	return fmt.Sprintf("This %s needs about %s CPU and %s memory. %s currently has %s CPU and %s memory available. Add nodes there before creating it", est.Label, est.CPU, est.Memory, upperFirst(where), availableCPU, availableMemory)
+}
+
+func upperFirst(text string) string {
+	if text == "" {
+		return text
+	}
+	return strings.ToUpper(text[:1]) + text[1:]
 }

@@ -106,6 +106,9 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "creating logical database") {
 		return false
 	}
+	if strings.Contains(msg, "administrator login") {
+		return false
+	}
 	if strings.Contains(msg, "database server is not ready") {
 		return false
 	}

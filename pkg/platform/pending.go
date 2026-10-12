@@ -104,6 +104,47 @@ func MarkPendingChange(meta *metav1.ObjectMeta, kind string) {
 	meta.Annotations[PendingUpdatesAnnotation] = strconv.Itoa(PendingUpdates(meta.Annotations) + 1)
 }
 
+// EnsurePendingChange records a pending change kind without counting it again when it is already
+// recorded, for callers that re-derive the state from the resource instead of counting saves.
+func EnsurePendingChange(meta *metav1.ObjectMeta, kind string) {
+	if meta.Annotations != nil && slices.Contains(splitPendingKinds(meta.Annotations[PendingChangesAnnotation]), kind) {
+		return
+	}
+	MarkPendingChange(meta, kind)
+}
+
+// RemovePendingChange drops one pending change kind, for example when an edit is reverted. Other
+// kinds stay, and the counter is reset once nothing is left to deploy.
+func RemovePendingChange(meta *metav1.ObjectMeta, kind string) {
+	if meta.Annotations == nil {
+		return
+	}
+	kinds := splitPendingKinds(meta.Annotations[PendingChangesAnnotation])
+	if !slices.Contains(kinds, kind) {
+		// A bare counter with no recorded kinds reads as pending "settings" (see PendingKinds).
+		if len(kinds) == 0 && kind == PendingChangeSettings && PendingUpdates(meta.Annotations) > 0 {
+			ClearPendingChanges(meta)
+		}
+		return
+	}
+	kinds = slices.DeleteFunc(kinds, func(existing string) bool { return existing == kind })
+	if len(kinds) == 0 {
+		ClearPendingChanges(meta)
+		return
+	}
+	meta.Annotations[PendingChangesAnnotation] = strings.Join(normalizePendingKinds(kinds), ",")
+}
+
+func splitPendingKinds(raw string) []string {
+	var kinds []string
+	for part := range strings.SplitSeq(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			kinds = append(kinds, part)
+		}
+	}
+	return kinds
+}
+
 // ClearPendingChanges clears deploy-pending state after a successful deploy.
 func ClearPendingChanges(meta *metav1.ObjectMeta) {
 	if meta.Annotations == nil {

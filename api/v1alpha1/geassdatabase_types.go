@@ -55,15 +55,15 @@ const (
 
 // GeassDatabaseSpec defines the desired state of GeassDatabase.
 type GeassDatabaseSpec struct {
-	// Project is the owning project.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Project string `json:"project"`
-	// Environment is the project environment.
+	// Project is the owning project. Leave it empty for the cluster-wide server: one Postgres or MySQL
+	// that projects share, each taking logical databases of its own on it (see GeassLogicalDatabase).
+	// +optional
+	Project string `json:"project,omitempty"`
+	// Environment is the project environment. Empty for the cluster-wide server.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Required
-	Environment GeassEnvironment `json:"environment"`
+	// +optional
+	Environment GeassEnvironment `json:"environment,omitempty"`
 
 	// Engine is the database engine to provision.
 	// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis
@@ -149,6 +149,18 @@ type GeassDatabaseSpec struct {
 	// It is only read while the database is first provisioned; changing it afterwards has no effect.
 	// +optional
 	RestoreFrom *GeassDatabaseRestoreSpec `json:"restoreFrom,omitempty"`
+
+	// RunOn asks for nodes with particular tags, on top of the project's region. It is read when
+	// the database is first provisioned: its volumes stay where they were created.
+	// +optional
+	RunOn GeassWorkloadPlacement `json:"runOn,omitempty"`
+
+	// ServerRegion is where the cluster-wide server runs. A server with a project follows its
+	// project's region instead.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	// +optional
+	ServerRegion string `json:"serverRegion,omitempty"`
 }
 
 // GeassDatabaseBackupSpec configures backups for one database.

@@ -2638,6 +2638,21 @@ button.rw-side-link.rw-side-on {
   margin-bottom: 0;
 }
 
+.rw-live-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  color: var(--rw-green);
+  background: color-mix(in srgb, var(--rw-green) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rw-green) 35%, transparent);
+}
+
 .rw-resource-settings-block .rw-rail-form {
   max-width: none;
 }
@@ -4620,6 +4635,51 @@ code,
   word-break: break-word;
 }
 
+.rw-logs-lines {
+  white-space: normal;
+}
+
+.rw-log-line {
+  display: grid;
+  grid-template-columns: 6.8rem 7rem 1fr;
+  gap: 10px;
+  padding: 1px 0;
+  font-family: var(--geass-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rw-log-time,
+.rw-log-source {
+  color: var(--rw-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-log-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rw-log-line.is-error .rw-log-text {
+  color: var(--rw-red);
+}
+
+.rw-log-line.is-warn .rw-log-text {
+  color: #d4a84b;
+}
+
+.rw-log-line.is-debug .rw-log-text {
+  color: var(--rw-muted);
+}
+
+.rw-log-line.is-previous {
+  opacity: 0.75;
+  border-left: 2px solid var(--rw-line);
+  padding-left: 6px;
+}
+
 .rw-logs-empty {
   padding: 24px 4px;
 }
@@ -5018,4 +5078,8 @@ code,
   margin-top: 6px;
   color: #e8a84a;
   font-size: 11px;
+}
+
+.rw-network-allow {
+  margin-top: 4px;
 }

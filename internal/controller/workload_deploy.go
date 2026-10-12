@@ -22,6 +22,25 @@ func workloadAwaitingDeploy(meta metav1.ObjectMeta, deployEnabled bool) bool {
 	return !deployEnabled
 }
 
+// applyAppDeployedSpec makes app.Spec the spec to reconcile. A deployed service with edits waiting for
+// a deploy runs its last deployed snapshot, so pending edits stay frozen; settings that never replace
+// the pods (replicas, domain, scaling) are taken from the current spec so they apply as soon as they
+// are saved. It reports false when edits are pending but there is no snapshot to run instead.
+func applyAppDeployedSpec(app *geassv1alpha1.GeassApp) bool {
+	if !app.Spec.Deploy.Enabled || appPendingUpdates(app) == 0 {
+		return true
+	}
+	snapshot, ok := platform.LastDeployedSpec(app)
+	if !ok {
+		return false
+	}
+	live := platform.LiveAppSettings(&app.Spec)
+	app.Spec = snapshot
+	app.Spec.Deploy.Enabled = true
+	platform.ApplyLiveAppSettings(&app.Spec, live)
+	return true
+}
+
 func applyObjectStoreDeployedSpec(store *geassv1alpha1.GeassObjectStore) error {
 	if !platform.ObjectStoreInfrastructureActive(store) {
 		return ErrAwaitingDeploy
@@ -46,8 +65,12 @@ func applyDatabaseDeployedSpec(db *geassv1alpha1.GeassDatabase) error {
 		if !ok {
 			return fmt.Errorf("resource has pending changes and no last deployed snapshot")
 		}
+		// Backups are scheduled beside the database and never restart it, so they follow the
+		// current spec while everything else waits for a deploy.
+		live := platform.LiveDatabaseSettings(&db.Spec)
 		db.Spec = snapshot
 		db.Spec.Deploy.Enabled = true
+		platform.ApplyLiveDatabaseSettings(&db.Spec, live)
 	}
 	return nil
 }

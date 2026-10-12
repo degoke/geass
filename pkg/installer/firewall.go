@@ -4,34 +4,48 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
 const firewallFirewalld = "firewalld"
 
-var k3sPorts = []struct {
+type firewallPort struct {
 	port     string
 	protocol string
 	desc     string
-}{
-	{"6443", "tcp", "Kubernetes API server"},
-	{"10250", "tcp", "kubelet metrics"},
-	{"8472", "udp", "Flannel VXLAN overlay"},
 }
 
-type FirewallSetup struct{}
+// k3sPorts are the ports the control plane host must accept. The overlay's port depends on the network:
+// WireGuard for a multi-site cluster, whose traffic crosses the internet, and VXLAN otherwise.
+func k3sPorts(network Network) []firewallPort {
+	overlay := firewallPort{platform.VXLANPort, "udp", "Flannel VXLAN overlay"}
+	if network.MultiSite {
+		overlay = firewallPort{platform.WireGuardPort, "udp", "Flannel WireGuard overlay (encrypted, between sites)"}
+	}
+	return []firewallPort{
+		{"6443", "tcp", "Kubernetes API server"},
+		{"10250", "tcp", "kubelet metrics"},
+		overlay,
+	}
+}
+
+type FirewallSetup struct {
+	Network Network
+}
 
 func (s *FirewallSetup) Name() string { return "configure firewall" }
 
 func (s *FirewallSetup) Run() error {
 	fw := detectActiveFirewall(s.Name())
 	if fw == "" {
-		Warnf(s.Name(), "%s", formatFirewallSkipWarning())
+		Warnf(s.Name(), "%s", formatFirewallSkipWarning(s.Network))
 		return nil
 	}
 
 	Logf(s.Name(), "Detected active firewall backend: %s", fw)
 
-	for _, p := range k3sPorts {
+	for _, p := range k3sPorts(s.Network) {
 		switch fw {
 		case "ufw":
 			if err := runCommand(s.Name(), "ufw", "allow", fmt.Sprintf("%s/%s", p.port, p.protocol)); err != nil {
@@ -128,12 +142,12 @@ func parseIPTablesActive(output string) bool {
 	return false
 }
 
-func formatFirewallSkipWarning() string {
+func formatFirewallSkipWarning(network Network) string {
 	var b strings.Builder
 	b.WriteString("No active host firewall detected; skipping port configuration. ")
 	b.WriteString("K3s manages its own packet rules, so this is not required for the cluster to start. ")
 	b.WriteString("If you use a host firewall, manually allow:\n")
-	for _, p := range k3sPorts {
+	for _, p := range k3sPorts(network) {
 		fmt.Fprintf(&b, "  - %s/%s (%s)\n", p.port, p.protocol, p.desc)
 	}
 	return strings.TrimRight(b.String(), "\n")

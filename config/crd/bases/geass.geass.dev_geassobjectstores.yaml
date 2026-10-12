@@ -178,6 +178,28 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runOn:
+                description: |-
+                  RunOn asks for nodes with particular tags. The cluster MinIO server has no project, so
+                  this is the only way to choose where it runs.
+                properties:
+                  tags:
+                    description: Tags are node tags the workload must run on. A node
+                      needs all of them.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              serverRegion:
+                description: ServerRegion is where the cluster MinIO server runs.
+                  Project buckets follow their project instead.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
             required:
             - engine
             type: object

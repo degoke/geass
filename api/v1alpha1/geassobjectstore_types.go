@@ -81,6 +81,17 @@ type GeassObjectStoreSpec struct {
 	// Deploy gates bucket provisioning until the user deploys from the dashboard.
 	// +optional
 	Deploy GeassDeploySpec `json:"deploy,omitempty"`
+
+	// RunOn asks for nodes with particular tags. The cluster MinIO server has no project, so
+	// this is the only way to choose where it runs.
+	// +optional
+	RunOn GeassWorkloadPlacement `json:"runOn,omitempty"`
+
+	// ServerRegion is where the cluster MinIO server runs. Project buckets follow their project instead.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	// +optional
+	ServerRegion string `json:"serverRegion,omitempty"`
 }
 
 // GeassObjectStoreStatus defines the observed state of GeassObjectStore.

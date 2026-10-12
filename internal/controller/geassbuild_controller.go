@@ -78,6 +78,13 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildWaitingForCI, ptr(metav1.Now()), nil)
 		}
 		job = r.jobFor(build)
+		// Builds run in the project's region so a project never spends another region's capacity, or
+		// pulls its source and pushes its image across regions. They never need the tags.
+		region, err := platform.ProjectRegion(ctx, r.Client, build.Spec.Project)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		platform.NewPlacement(region, nil).ApplyToPodSpec(&job.Spec.Template.Spec)
 		if err := controllerutil.SetControllerReference(build, job, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}

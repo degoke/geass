@@ -58,6 +58,24 @@ spec:
                         description: Enabled installs cert-manager when true.
                         type: boolean
                     type: object
+                  logging:
+                    description: Logging controls log collection and search.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs log collection. It is opt-in: it adds a pod per node and a server with a volume, which a
+                          small cluster may not want, and it is not installed unless asked for. The installer turns it on.
+                        type: boolean
+                      retentionDays:
+                        default: 7
+                        description: RetentionDays is how long logs are kept before
+                          they are deleted.
+                        format: int32
+                        maximum: 90
+                        minimum: 1
+                        type: integer
+                    type: object
                   longhorn:
                     description: Longhorn controls the Longhorn storage engine installation.
                     properties:
@@ -84,6 +102,24 @@ spec:
                         - full
                         type: string
                     type: object
+                type: object
+              defaultRegion:
+                description: |-
+                  DefaultRegion is where projects that do not choose a region run. Left empty, such projects
+                  may run on any node.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              network:
+                description: Network says how the nodes reach each other.
+                properties:
+                  multiSite:
+                    description: |-
+                      MultiSite means the nodes are at different providers and reach each other over the internet, so
+                      the overlay network is encrypted (k3s's WireGuard backend) and every node advertises its public
+                      IP. It is chosen when the cluster is installed, because switching means restarting every node,
+                      and workers are joined to match it.
+                    type: boolean
                 type: object
               serverURL:
                 description: ServerURL is the URL of the GeassCluster server.

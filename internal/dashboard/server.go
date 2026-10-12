@@ -17,6 +17,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,6 +52,12 @@ type Server struct {
 
 	// consoleExec attaches interactive terminals; nil uses the Kubernetes exec API (tests replace it).
 	consoleExec consoleExecFunc
+
+	// podLogs opens a container's log; nil uses the Kubernetes API (tests replace it).
+	podLogs podLogsFunc
+
+	// LogStore answers log history queries; nil uses the logging add-on's VictoriaLogs server.
+	LogStore logStoreReader
 
 	authMu        sync.Mutex
 	auth          *dashboardAuth
@@ -185,7 +192,16 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	if !requireMutation(w, r, fallback) {
 		return
 	}
-	name, _, err := s.createDefaultProject(r.Context())
+	if err := r.ParseForm(); err != nil {
+		redirectFormError(w, r, fallback, "could not read the form")
+		return
+	}
+	region := strings.ToLower(strings.TrimSpace(r.FormValue("region")))
+	if err := s.validateRegion(r.Context(), region); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	name, _, err := s.createProjectIn(r.Context(), region)
 	if err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
@@ -197,7 +213,8 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/projects/"+name)
 }
 
-func (s *Server) createDefaultProject(ctx context.Context) (string, int, error) {
+// createProjectIn creates a project that runs in the given region; empty means the cluster's default.
+func (s *Server) createProjectIn(ctx context.Context, region string) (string, int, error) {
 	id, displayName, err := s.generateUniqueProject(ctx)
 	if err != nil {
 		return "", http.StatusInternalServerError, err
@@ -216,7 +233,7 @@ func (s *Server) createDefaultProject(ctx context.Context) (string, int, error) 
 			return "", http.StatusBadRequest, err
 		}
 	}
-	p := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{DisplayName: displayName, ClusterRef: corev1.LocalObjectReference{Name: cluster}, Environments: environments}}
+	p := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{DisplayName: displayName, ClusterRef: corev1.LocalObjectReference{Name: cluster}, Environments: environments, Region: region}}
 	if err := s.Client.Create(ctx, p); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return "", http.StatusConflict, fmt.Errorf("project already exists")
@@ -309,6 +326,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectWebhooks(w, r, name, parts[2])
 		case len(parts) == 2 && parts[1] == "backup-storage":
 			s.handleProjectBackupStorage(w, r, name)
+		case len(parts) == 2 && parts[1] == "network":
+			s.handleProjectNetwork(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "install":
 			s.handleProjectGitHubInstall(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "disconnect":
@@ -750,6 +769,14 @@ func (s *Server) handleProjectSettingsSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	p.Spec.Environments = normalized
+	if formHasValue(r, "region") {
+		region := strings.ToLower(strings.TrimSpace(r.FormValue("region")))
+		if err := s.projectRegionChange(r.Context(), &p, region); err != nil {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
+		p.Spec.Region = region
+	}
 	if err := s.Client.Update(r.Context(), &p); err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
@@ -1113,7 +1140,7 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 		http.NotFound(w, r)
 		return
 	}
-	if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(app)) {
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(app), s.appPlacement(r.Context(), app)) {
 		return
 	}
 	markDeployed := func() error {
@@ -1741,6 +1768,15 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	}
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "settings")
 	deployNow := r.FormValue("deploy") == "on"
+	// What the form changes is judged against this copy: only settings that need a deploy make the
+	// service pending, and a form that changes nothing writes nothing.
+	before := app.Spec.DeepCopy()
+	before.Deploy.RestartPolicy = corev1.RestartPolicyAlways
+	if tags, present, ok := s.runOnTagsFromForm(w, r, fallback, app.Spec.Project); !ok {
+		return
+	} else if present {
+		app.Spec.RunOn.Tags = tags
+	}
 	if formHasValue(r, "project") || formHasValue(r, "environment") {
 		project := strings.TrimSpace(r.FormValue("project"))
 		if project == "" {
@@ -1861,10 +1897,12 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	if formHasValue(r, "livenessPath", "livenessPort", "livenessPeriod", "livenessTimeout", "livenessFailureThreshold") {
 		app.Spec.Deploy.LivenessProbe = httpProbeFromForm("liveness", r, app.Spec.Port)
 	}
+	applied, liveChanged := "", false
 	if deployNow {
-		if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(&app)) {
+		if s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(&app), s.appPlacement(r.Context(), &app)) {
 			return
 		}
+		applied = settingsDeployed
 		app.Spec.Deploy.Enabled = true
 		clearAppPendingChanges(&app)
 		if err := platform.SetLastDeployedSpec(&app); err != nil {
@@ -1872,11 +1910,13 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			return
 		}
 	} else {
-		markAppPendingChange(&app, pendingChangeSettings)
+		applied, liveChanged = recordAppSettingsEdit(&app, before)
 	}
-	if err := s.Client.Update(r.Context(), &app); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+	if applied != settingsUnchanged {
+		if err := s.Client.Update(r.Context(), &app); err != nil {
+			redirectFormInternalError(w, r, fallback)
+			return
+		}
 	}
 	if deployNow {
 		if _, err := s.recordDeployment(r.Context(), &app); err != nil {
@@ -1885,7 +1925,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 		}
 	}
 	if isHXRequest(r) || isJSONRequest(r) {
-		writeAppPendingJSON(w, &app)
+		writeAppSettingsJSON(w, &app, applied, liveChanged)
 		return
 	}
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "settings")
@@ -1931,10 +1971,10 @@ func (s *Server) handleAppScale(w http.ResponseWriter, r *http.Request, name str
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	// The controller updates apps all the time, so save against the latest copy.
+	// The controller updates apps all the time, so save against the latest copy. A replica count never
+	// replaces the pods, so it applies at once instead of waiting for a deploy.
 	updated, err := s.mutateApp(r.Context(), name, func(app *geassv1alpha1.GeassApp) error {
 		app.Spec.Replicas = &replicas
-		markAppPendingChange(app, pendingChangeSettings)
 		return nil
 	})
 	if err != nil {
@@ -2008,7 +2048,7 @@ func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name 
 		app.Spec.Source.Image = &geassv1alpha1.GeassAppImageSource{Image: revision.Spec.Image}
 	}
 	app.Spec.Replicas = revision.Spec.Replicas
-	if s.rejectIfNoCapacityFor(w, r, fallback, appDeployEstimate(&app)) {
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(&app), s.appPlacement(r.Context(), &app)) {
 		return
 	}
 	app.Spec.Deploy.Enabled = true
@@ -2140,6 +2180,11 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.Spec.StorageSize = storageSize
+	if tags, present, ok := s.runOnTagsFromForm(w, r, fallback, db.Spec.Project); !ok {
+		return
+	} else if present {
+		db.Spec.RunOn.Tags = tags
+	}
 	if ref := strings.TrimSpace(r.FormValue("connectionRef")); ref != "" {
 		db.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
 		if err := s.validateCloudConnectionForProject(r.Context(), db.Spec.Project, ref); err != nil {
@@ -2263,7 +2308,23 @@ func (s *Server) handleLogicalDatabaseCreate(w http.ResponseWriter, r *http.Requ
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	logical := &geassv1alpha1.GeassLogicalDatabase{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassLogicalDatabaseSpec{Project: project, Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")), ServerRef: server, DatabaseName: database}}
+	if message, err := s.validateLogicalDatabaseServer(r.Context(), project, r.FormValue("environment"), server); err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	} else if message != "" {
+		redirectFormError(w, r, fallback, message)
+		return
+	}
+	connectionLimit := int32(0)
+	if raw := strings.TrimSpace(r.FormValue("connectionLimit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 1000 {
+			redirectFormError(w, r, fallback, "The connection limit must be a whole number from 1 to 1000")
+			return
+		}
+		connectionLimit = int32(parsed)
+	}
+	logical := &geassv1alpha1.GeassLogicalDatabase{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassLogicalDatabaseSpec{Project: project, Environment: geassv1alpha1.GeassEnvironment(r.FormValue("environment")), ServerRef: server, DatabaseName: database, ConnectionLimit: connectionLimit}}
 	if err := s.Client.Create(r.Context(), logical); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			redirectFormError(w, r, fallback, "logical database already exists")
@@ -2341,10 +2402,20 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
+	runOnTags, runOnPresent, ok := s.runOnTagsFromForm(w, r, fallback, db.Spec.Project)
+	if !ok {
+		return
+	}
+	if runOnPresent && db.Spec.Deploy.Enabled && !slices.Equal(runOnTags, db.Spec.RunOn.Tags) {
+		redirectFormError(w, r, fallback, "A database keeps its data on the nodes it was first deployed to, so which nodes it runs on cannot change after that")
+		return
+	}
 	// Everything is validated, so applying it is repeatable: the operator also writes
 	// to this object (it records the storage class at first provision), and a save
 	// that races it is re-applied to the fresh copy instead of failing.
+	applied, liveChanged := settingsUnchanged, false
 	apply := func() error {
+		before := db.Spec.DeepCopy()
 		if hasEnv {
 			db.Spec.Environment = geassv1alpha1.GeassEnvironment(env)
 		}
@@ -2357,15 +2428,31 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 		if resources != nil {
 			db.Spec.Resources = *resources
 		}
+		if runOnPresent {
+			db.Spec.RunOn.Tags = runOnTags
+		}
 		if err := applyBackupForm(r, &db); err != nil {
 			return err
 		}
-		platform.MarkPendingChange(&db.ObjectMeta, platform.PendingChangeSettings)
+		// Backups apply at once; the rest waits for a deploy. A form that changes nothing, or that
+		// puts everything back as deployed, leaves nothing pending.
+		changed := !equality.Semantic.DeepEqual(before, &db.Spec)
+		pending := false
+		if changed {
+			snapshot, known := platform.UnmarshalLastDeployed[geassv1alpha1.GeassDatabaseSpec](db.Annotations)
+			touched := platform.DatabaseRolloutChanged(before, &db.Spec)
+			pending = touched && platform.RecordSettingsEdit(&db.ObjectMeta, touched, known, known && platform.DatabaseRolloutChanged(&snapshot, &db.Spec))
+		}
+		applied, liveChanged = settingsOutcome(changed, pending), platform.DatabaseLiveChanged(before, &db.Spec)
 		return nil
 	}
 	_ = apply() // validated above
 	if err := s.updateReapplying(r.Context(), &db, apply); err != nil {
 		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "applied": applied, "liveChanged": liveChanged})
 		return
 	}
 	redirectAfterResourceUpdate(w, r, db.Spec.Project, string(db.Spec.Environment), "databases", name, "settings")
@@ -2524,7 +2611,22 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1)) {
+	// Choosing where the server runs is the platform's call, and its data stays there.
+	region := strings.ToLower(strings.TrimSpace(r.FormValue("region")))
+	if err := s.validateRegion(r.Context(), region); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	effectiveRegion := region
+	if effectiveRegion == "" {
+		effectiveRegion, _ = platform.DefaultRegion(r.Context(), s.Client, "")
+	}
+	tags := splitNames(r.Form["runOnTags"])
+	if err := s.validateTags(r.Context(), effectiveRegion, tags); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1), platform.NewPlacement(effectiveRegion, tags)) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -2534,9 +2636,11 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
-			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
-			Resources: res,
+			Engine:       geassv1alpha1.ObjectStoreEngineMinIO,
+			Placement:    geassv1alpha1.ObjectStorePlacementInCluster,
+			Resources:    res,
+			ServerRegion: region,
+			RunOn:        geassv1alpha1.GeassWorkloadPlacement{Tags: tags},
 		},
 	}
 	if err := s.Client.Create(r.Context(), store); err != nil {
@@ -2744,7 +2848,7 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 				redirectFormUserError(w, r, fallback, err)
 				return
 			}
-			if s.rejectIfNoCapacityFor(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1)) {
+			if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1), pinnedStorePlacementOf(&store)) {
 				return
 			}
 			store.Spec.Resources = res
@@ -2757,6 +2861,7 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	fallback = workspaceResourceURL(store.Spec.Project, string(store.Spec.Environment), "object-stores", name, "settings")
+	before := store.Spec.DeepCopy()
 	if project, ok := formNonEmpty(r, "project"); ok {
 		store.Spec.Project = project
 	}
@@ -2786,11 +2891,19 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	if !isClusterMinIO(&store) {
-		platform.MarkPendingChange(&store.ObjectMeta, platform.PendingChangeSettings)
+	changed := !equality.Semantic.DeepEqual(before, &store.Spec)
+	pending := false
+	if changed {
+		snapshot, known := platform.UnmarshalLastDeployed[geassv1alpha1.GeassObjectStoreSpec](store.Annotations)
+		touched := platform.ObjectStoreRolloutChanged(before, &store.Spec)
+		pending = touched && platform.RecordSettingsEdit(&store.ObjectMeta, touched, known, known && platform.ObjectStoreRolloutChanged(&snapshot, &store.Spec))
 	}
 	if err := s.Client.Update(r.Context(), &store); err != nil {
 		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "applied": settingsOutcome(changed, pending), "liveChanged": false})
 		return
 	}
 	redirectAfterResourceUpdate(w, r, store.Spec.Project, string(store.Spec.Environment), "object-stores", name, "settings")
@@ -2808,6 +2921,17 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 	if err := s.Client.Get(r.Context(), key, obj); err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	if db, ok := obj.(*geassv1alpha1.GeassDatabase); ok {
+		inUse, err := s.sharedServerInUse(r.Context(), db)
+		if err != nil {
+			redirectFormInternalError(w, r, listPath)
+			return
+		}
+		if inUse != "" {
+			redirectFormError(w, r, listPath, inUse)
+			return
+		}
 	}
 	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterMinIO(store) {
 		attached, err := s.attachedProjectMinIONames(r.Context())

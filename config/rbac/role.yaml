@@ -24,6 +24,15 @@ rules:
   - ""
   resources:
   - nodes
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - persistentvolumes
   - pods
   verbs:
@@ -119,6 +128,7 @@ rules:
   - geassapps/finalizers
   - geassclusters/finalizers
   - geassdatabases/finalizers
+  - geasslogicaldatabases/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
   - geassprojects/finalizers
@@ -171,6 +181,7 @@ rules:
 - apiGroups:
   - longhorn.io
   resources:
+  - nodes
   - volumes
   verbs:
   - get
@@ -179,6 +190,7 @@ rules:
 - apiGroups:
   - monitoring.coreos.com
   resources:
+  - podmonitors
   - servicemonitors
   verbs:
   - create
@@ -192,6 +204,7 @@ rules:
   - networking.k8s.io
   resources:
   - ingresses
+  - networkpolicies
   verbs:
   - create
   - delete

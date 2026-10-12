@@ -58,7 +58,7 @@ func TestScaleAcceptsTheLimitsAndSurvivesAControllerWriteConflict(t *testing.T) 
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(app), &saved))
 	require.NotNil(t, saved.Spec.Replicas)
 	require.Equal(t, int32(1000), *saved.Spec.Replicas)
-	require.Equal(t, pendingChangeSettings, saved.Annotations[platform.AppPendingChangesAnnotation])
+	require.Empty(t, saved.Annotations[platform.AppPendingChangesAnnotation], "scaling applies at once, so there is nothing to deploy")
 
 	rec = scaleApp(srv, "0")
 	require.Equal(t, http.StatusOK, rec.Code, "zero replicas pauses the service and is allowed")

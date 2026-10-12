@@ -3,11 +3,12 @@ import { Modal } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ArrowLeft, Container, Database, GitBranch, HardDrive, Info, Layers, Search, Sparkles, SquareFunction } from "lucide-react";
-import { action, api, list, resourceName } from "@/lib/api";
+import { action, api, condition, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { validateContainerImageReference } from "@/lib/container-image";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
 import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
+import { projectRegion, sharedServerRegion } from "@/lib/placement";
 import { Button, Muted } from "@/components/geass-ui";
 
 const IMAGE_EXAMPLES = [
@@ -73,6 +74,14 @@ export function ResourceDialog({ project, environment, data }) {
   const githubLinked = Boolean(currentProject?.spec?.githubConnectionRef?.name);
   const githubReady = Boolean(platform.hasGitHubApp);
   const servers = list(data, "databases").filter((item) => item.spec?.project === project && item.spec?.environment === environment && (item.spec?.engine === "Postgres" || item.spec?.engine === "MySQL" || !item.spec?.engine));
+  // Servers shared by every project: a database with no project. A project can only use one in its own
+  // region, and one that is still starting cannot take a database yet.
+  const region = projectRegion(currentProject, data);
+  const sharedServers = list(data, "databases").filter((item) => {
+    if (item.spec?.project || !(item.spec?.engine === "Postgres" || item.spec?.engine === "MySQL")) return false;
+    const where = sharedServerRegion(item);
+    return !where || !region || where === region;
+  });
   const awsConnections = availableConnections(data, "AWS", project);
   const planetConnections = availableConnections(data, "PlanetScale", project);
   const minioAvailable = Boolean(platform.minioAvailable);
@@ -199,7 +208,7 @@ export function ResourceDialog({ project, environment, data }) {
 
   const createDatabase = (row) => {
     if (row.value === "logical") {
-      const values = draftPayload(project, environment, { server: resourceName(servers[0]) });
+      const values = draftPayload(project, environment, { server: row.server || resourceName(servers[0]) });
       if (!values) return missingProject();
       return action("/logical-databases/create", values)
         .then((result) => afterCreate(result, "logical-databases", "Logical database saved as a draft. Configure it in settings."))
@@ -284,6 +293,14 @@ export function ResourceDialog({ project, environment, data }) {
           description: servers.length ? "Create inside an existing server" : "Create a database server first",
           disabled: servers.length === 0,
         },
+        ...sharedServers.map((server) => ({
+          key: `shared-${resourceName(server)}`,
+          label: `${resourceDisplayName(server)} (shared)`,
+          value: "logical",
+          server: resourceName(server),
+          description: `A database of its own on the shared ${server.spec?.engine === "MySQL" ? "MySQL" : "Postgres"} server`,
+          disabled: condition(server) !== "True",
+        })),
       ];
       return dbRows
         .filter((row) => matches(row.label))
@@ -339,7 +356,7 @@ export function ResourceDialog({ project, environment, data }) {
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, minioAvailable, awsConnections.length, planetConnections.length, servers.length, repos.data, templates.data]);
+  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, minioAvailable, awsConnections.length, planetConnections.length, servers.length, sharedServers.length, repos.data, templates.data]);
 
   const goBack = () => {
     setText("");

@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -98,12 +99,15 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err := r.validateDatabaseCloudConnection(ctx, &db); err != nil {
 			return r.setNotReady(ctx, &db, err.Error())
 		}
-		if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
-			return r.setNotReady(ctx, &db, err.Error())
+		// The cluster-wide server belongs to no project, so there is no project to check.
+		if !isSharedDatabase(&db) {
+			if err := platform.ValidateProjectPlacement(ctx, r.Client, db.Spec.Project, db.Spec.Environment); err != nil {
+				return r.setNotReady(ctx, &db, err.Error())
+			}
 		}
 	}
 
-	wsNS, err := resourceNamespace(db.Spec.Project, string(db.Spec.Environment))
+	wsNS, err := databaseNamespace(&db)
 	if err != nil {
 		return r.setNotReady(ctx, &db, err.Error())
 	}
@@ -161,6 +165,12 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
+	// Placement comes first: a database in a region gets that region's storage class.
+	placement, err := r.databaseNodePlacement(ctx, &db)
+	if err != nil {
+		return r.setNotReady(ctx, &db, err.Error())
+	}
+
 	storageClass, waitForStorage, err := r.databaseStorageClass(ctx, &db, wsNS)
 	if err != nil {
 		return r.setNotReady(ctx, &db, storageFailureMessage(err))
@@ -171,13 +181,13 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	switch db.Spec.Engine {
 	case geassv1alpha1.DatabaseEnginePostgres, "":
-		return r.reconcilePostgres(ctx, &db, wsNS, storageClass, log.WithValues("engine", "Postgres"))
+		return r.reconcilePostgres(ctx, &db, wsNS, storageClass, placement, log.WithValues("engine", "Postgres"))
 	case geassv1alpha1.DatabaseEngineMySQL:
-		return r.reconcileHelmDatabase(ctx, &db, wsNS, mysqlChartName(db.Name), platform.MySQLReleaseChart, platform.MySQLChartRepo, platform.MySQLChartVersion, mysqlValues(&db, storageClass), mysqlHost(&db, wsNS), platform.MySQLDefaultPort, "mysql")
+		return r.reconcileHelmDatabase(ctx, &db, wsNS, mysqlChartName(db.Name), platform.MySQLReleaseChart, platform.MySQLChartRepo, platform.MySQLChartVersion, mysqlValues(&db, storageClass, placement), mysqlHost(&db, wsNS), platform.MySQLDefaultPort, "mysql", placement)
 	case geassv1alpha1.DatabaseEngineRedis:
-		return r.reconcileHelmDatabase(ctx, &db, wsNS, redisDatabaseChartName(db.Name), platform.RedisReleaseChart, platform.RedisChartRepo, platform.RedisChartVersion, redisDatabaseValues(&db), redisDatabaseHost(&db, wsNS), platform.RedisDefaultPort, "redis")
+		return r.reconcileHelmDatabase(ctx, &db, wsNS, redisDatabaseChartName(db.Name), platform.RedisReleaseChart, platform.RedisChartRepo, platform.RedisChartVersion, redisDatabaseValues(&db, placement), redisDatabaseHost(&db, wsNS), platform.RedisDefaultPort, "redis", placement)
 	case geassv1alpha1.DatabaseEngineSQLite:
-		return r.reconcileSQLite(ctx, &db, wsNS, storageClass)
+		return r.reconcileSQLite(ctx, &db, wsNS, storageClass, placement)
 	default:
 		return r.setNotReady(ctx, &db, fmt.Sprintf("unsupported engine %q", db.Spec.Engine))
 	}
@@ -214,8 +224,8 @@ func databaseName(db *geassv1alpha1.GeassDatabase) string {
 	return db.Name
 }
 
-func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
-	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db)); !ok {
+func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.ensureCNPGOperator(ctx); err != nil {
@@ -244,7 +254,7 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 	if err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	cluster, err := r.reconcileCNPGCluster(ctx, db, wsNS, storageClass, plan, recovery)
+	cluster, err := r.reconcileCNPGCluster(ctx, db, wsNS, storageClass, placement, plan, recovery)
 	if err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
@@ -290,8 +300,8 @@ func (r *GeassDatabaseReconciler) recoveryForNewCluster(ctx context.Context, db 
 	return r.planRecovery(ctx, db, wsNS)
 }
 
-func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, chartName, chart, repo, version, values, host, port, scheme string) (ctrl.Result, error) {
-	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: chartName, Namespace: platform.HelmChartNamespace}}, databaseCapacityEstimate(db)); !ok {
+func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, chartName, chart, repo, version, values, host, port, scheme string, placement platform.Placement) (ctrl.Result, error) {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: chartName, Namespace: platform.HelmChartNamespace}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
@@ -359,11 +369,11 @@ func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *g
 	return result, err
 }
 
-func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string) (ctrl.Result, error) {
+func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) (ctrl.Result, error) {
 	if db.Spec.HighAvailability {
 		return r.setNotReady(ctx, db, "SQLite does not support high availability")
 	}
-	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db)); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
@@ -395,6 +405,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 			Name:         "data",
 			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc.Name}},
 		}}
+		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
 		return setSameNamespaceOwner(db, deploy, r.Scheme)
 	}); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -642,15 +653,23 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 // only when the Cluster is first created. An existing Cluster's volumes are already
 // bound to a class, CNPG rejects changing it, and the class was pinned from them,
 // so the live value is kept as it is.
-func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, plan *backupPlan, recovery *recoveryPlan) (*cnpgv1.Cluster, error) {
+func (r *GeassDatabaseReconciler) reconcileCNPGCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, plan *backupPlan, recovery *recoveryPlan) (*cnpgv1.Cluster, error) {
 	cluster := &cnpgv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS},
 	}
+	adminLogin := r.databaseNeedsAdminLogin(ctx, db)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cluster, func() error {
 		applyGeassLabels(cluster, db, "GeassDatabase")
 		live := cluster.Spec
 		desired := desiredClusterSpec(db, plan, recovery)
 		desired.Storage.StorageClass = stringPtrOrNil(storageClass)
+		desired.Affinity = cnpgAffinity(placement)
+		// Once on, the administrative login stays: taking it away would strand logical databases that
+		// are still being created or dropped.
+		if adminLogin || utilptr.Deref(live.EnableSuperuserAccess, false) {
+			enabled := true
+			desired.EnableSuperuserAccess = &enabled
+		}
 		if cluster.ResourceVersion != "" { // already stored, so its volumes exist
 			desired.Storage.StorageClass = live.Storage.StorageClass
 			desired.Bootstrap = live.Bootstrap
@@ -759,11 +778,11 @@ func (r *GeassDatabaseReconciler) setNotReady(ctx context.Context, db *geassv1al
 }
 
 func mysqlChartName(name string) string {
-	return "geass-mysql-" + name
+	return platform.MySQLChartReleaseName(name)
 }
 
 func redisDatabaseChartName(name string) string {
-	return "geass-redis-db-" + name
+	return platform.RedisChartReleaseName(name)
 }
 
 func mysqlHost(db *geassv1alpha1.GeassDatabase, wsNS string) string {
@@ -778,7 +797,7 @@ func redisDatabaseHost(db *geassv1alpha1.GeassDatabase, wsNS string) string {
 	return fmt.Sprintf("%s-master.%s.svc", redisDatabaseChartName(db.Name), wsNS)
 }
 
-func mysqlValues(db *geassv1alpha1.GeassDatabase, storageClass string) string {
+func mysqlValues(db *geassv1alpha1.GeassDatabase, storageClass string, placement platform.Placement) string {
 	architecture := "standalone"
 	if databaseWantsHA(db) {
 		architecture = "replication"
@@ -790,7 +809,7 @@ func mysqlValues(db *geassv1alpha1.GeassDatabase, storageClass string) string {
 	// they land on another class and size than the one the user sees.
 	secondary := ""
 	if databaseWantsHA(db) {
-		secondary = "secondary:\n" + mysqlPersistence(db, storageClass)
+		secondary = "secondary:\n" + mysqlPersistence(db, storageClass) + placement.HelmValues(2)
 	}
 	return fmt.Sprintf(`architecture: %s
 auth:
@@ -806,10 +825,10 @@ primary:
     limits:
       cpu: %s
       memory: %s
-%s`, architecture, password, appContainerName, password, databaseName(db), mysqlPersistence(db, storageClass),
+%s%s`, architecture, password, appContainerName, password, databaseName(db), mysqlPersistence(db, storageClass),
 		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
 		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory),
-		secondary)
+		placement.HelmValues(2), secondary)
 }
 
 // mysqlPersistence is the volume block shared by the primary and its secondaries.
@@ -821,7 +840,7 @@ func mysqlPersistence(db *geassv1alpha1.GeassDatabase, storageClass string) stri
 	return block
 }
 
-func redisDatabaseValues(db *geassv1alpha1.GeassDatabase) string {
+func redisDatabaseValues(db *geassv1alpha1.GeassDatabase, placement platform.Placement) string {
 	architecture := "standalone"
 	if databaseWantsHA(db) {
 		architecture = "replication"
@@ -841,9 +860,18 @@ master:
     limits:
       cpu: %s
       memory: %s
-`, architecture, db.Name+"-password",
+%s%s`, architecture, db.Name+"-password",
 		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
-		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory))
+		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory),
+		placement.HelmValues(2), redisReplicaPlacement(db, placement))
+}
+
+// redisReplicaPlacement keeps a replicated Redis's replicas in the same place as its master.
+func redisReplicaPlacement(db *geassv1alpha1.GeassDatabase, placement platform.Placement) string {
+	if !databaseWantsHA(db) || placement.IsZero() {
+		return ""
+	}
+	return "replica:\n" + placement.HelmValues(2)
 }
 
 func databaseInstanceResources(db *geassv1alpha1.GeassDatabase) corev1.ResourceRequirements {
@@ -940,6 +968,8 @@ func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&geassv1alpha1.GeassDatabase{}).
 		// A project choosing or changing its backup storage must reach the databases waiting for it.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject)).
+		// A database given its first logical database must start giving out its administrative login.
+		Watches(&geassv1alpha1.GeassLogicalDatabase{}, handler.EnqueueRequestsFromMapFunc(r.databasesForLogicalDatabase)).
 		// A restore or final backup finishing should be noticed at once, not at the next poll.
 		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(databaseForBackupJob),
 			builder.WithPredicates(predicate.NewPredicateFuncs(isBackupJob))).

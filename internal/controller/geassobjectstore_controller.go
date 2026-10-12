@@ -185,9 +185,17 @@ func (r *GeassObjectStoreReconciler) reconcileClusterMinIO(ctx context.Context, 
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
+	placement, pinnedNow, err := r.clusterMinIOPlacement(ctx, store)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	if pinnedNow {
+		// The chart is rendered from the stored server, so let it see the pin first.
+		return ctrl.Result{Requeue: true}, nil
+	}
 	res := clusterMinIOResources(store)
 	est := platform.EstimateFromResources("MinIO server", res, 1)
-	if ok, msg := workloadFitsClusterUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOChartName, Namespace: platform.HelmChartNamespace}}, est); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOChartName, Namespace: platform.HelmChartNamespace}}, est, placement); !ok {
 		return r.setNotReady(ctx, store, msg)
 	}
 	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
@@ -272,6 +280,58 @@ func (r *GeassObjectStoreReconciler) ensureClusterMinIOHelm(ctx context.Context)
 	return helmchart.Ensure(ctx, r.Client, platform.ClusterMinIOChartName, spec)
 }
 
+// clusterMinIOPlacement decides, once, which nodes the cluster MinIO server runs on: its volume lives
+// there. The choice is the server's region (or the cluster default) and the tags it asks for, recorded
+// on the server like a database's. A server that was installed before placement existed stays where
+// it is. pinnedNow says the decision was just recorded.
+func (r *GeassObjectStoreReconciler) clusterMinIOPlacement(ctx context.Context, store *geassv1alpha1.GeassObjectStore) (placement platform.Placement, pinnedNow bool, err error) {
+	if pinned, ok := store.Annotations[platform.AnnotationNodePlacement]; ok {
+		return platform.ParsePlacement(pinned), false, nil
+	}
+	if store.Status.TargetNamespace == "" {
+		region := store.Spec.ServerRegion
+		if region == "" {
+			if region, err = platform.DefaultRegion(ctx, r.Client, ""); err != nil {
+				return platform.Placement{}, false, err
+			}
+		}
+		placement = platform.NewPlacement(region, store.Spec.RunOn.Tags)
+	}
+	latest := &geassv1alpha1.GeassObjectStore{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
+		return platform.Placement{}, false, err
+	}
+	base := latest.DeepCopy()
+	if latest.Annotations == nil {
+		latest.Annotations = map[string]string{}
+	}
+	latest.Annotations[platform.AnnotationNodePlacement] = placement.Encode()
+	if err := r.Patch(ctx, latest, client.MergeFrom(base)); err != nil {
+		return platform.Placement{}, false, err
+	}
+	return placement, true, nil
+}
+
+func pinnedStorePlacement(store *geassv1alpha1.GeassObjectStore) platform.Placement {
+	if store == nil {
+		return platform.Placement{}
+	}
+	return platform.ParsePlacement(store.Annotations[platform.AnnotationNodePlacement])
+}
+
+// minioPlacementValues are the chart values that keep the MinIO server, and the chart's own setup
+// job, on the placement's nodes. The setup job only needs the region.
+func minioPlacementValues(p platform.Placement) string {
+	if p.IsZero() {
+		return ""
+	}
+	values := p.HelmValues(0)
+	if job := jobPlacement(p); !job.IsZero() {
+		values += "postJob:\n" + job.HelmValues(2)
+	}
+	return values
+}
+
 func clusterMinIOResources(server *geassv1alpha1.GeassObjectStore) corev1.ResourceRequirements {
 	if server != nil && len(server.Spec.Resources.Requests) > 0 {
 		return server.Spec.Resources
@@ -315,11 +375,12 @@ resources:
     memory: %s
 persistence:
   size: 10Gi
-`, platform.LabelManagedBy, platform.ManagedByValue, minioRootSecretName(server.Name),
+%s`, platform.LabelManagedBy, platform.ManagedByValue, minioRootSecretName(server.Name),
 		platform.MinIOImageRepository, platform.MinIOImageTag,
 		platform.MinIOMCImageRepository, platform.MinIOMCImageTag,
 		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
-		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory))
+		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory),
+		minioPlacementValues(pinnedStorePlacement(server)))
 	users, policies, err := r.minioBucketIdentities(ctx)
 	if err != nil {
 		return "", err

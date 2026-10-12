@@ -49,6 +49,13 @@ type GeassProjectSpec struct {
 	// ClusterRef identifies the GeassCluster that owns this project.
 	// +kubebuilder:validation:Required
 	ClusterRef corev1.LocalObjectReference `json:"clusterRef"`
+	// Region is where this project's workloads run: only nodes in the region are used. Empty means the
+	// cluster's default region. It is chosen when the project is created and cannot change while the
+	// project has databases or storage, because their data lives on the nodes.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	// +optional
+	Region string `json:"region,omitempty"`
 	// Environments are the isolated environments enabled for this project.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
@@ -73,6 +80,9 @@ type GeassProjectSpec struct {
 	// that have backups turned on report that they need storage.
 	// +optional
 	BackupStorage *GeassBackupStorage `json:"backupStorage,omitempty"`
+	// Network sets who can reach this project's services. Without it the project is isolated.
+	// +optional
+	Network *GeassProjectNetwork `json:"network,omitempty"`
 }
 
 // GeassWebhook is an outbound webhook for project events.
@@ -406,13 +416,29 @@ type GeassLogicalDatabaseSpec struct {
 	Environment GeassEnvironment `json:"environment"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	ServerRef    string `json:"serverRef"`
+	ServerRef string `json:"serverRef"`
+	// DatabaseName is what the database is called in the app's own terms. On a project's own server it is
+	// the name of the database there. On the cluster-wide server, which many projects share, it is
+	// prefixed with the project and environment so names never collide, and the database gets a login of
+	// its own that can reach nothing else.
 	DatabaseName string `json:"databaseName"`
+	// ConnectionLimit caps how many connections the database's own login may hold on a shared server, so
+	// one project cannot use up all of them. It does not apply on a project's own server.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	ConnectionLimit int32 `json:"connectionLimit,omitempty"`
 }
 
 type GeassLogicalDatabaseStatus struct {
 	ConnectionSecret string `json:"connectionSecret,omitempty"`
 	JobName          string `json:"jobName,omitempty"`
+	// Database is the database's real name on the server; on a shared server it is not DatabaseName.
+	// +optional
+	Database string `json:"database,omitempty"`
+	// Username is the login that owns the database on a shared server.
+	// +optional
+	Username string `json:"username,omitempty"`
 	// ReconcileRetry tracks provision retries before reconciliation gives up.
 	// +optional
 	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`

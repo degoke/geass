@@ -201,7 +201,12 @@ prepare-installer-assets: require-docker manifests generate kustomize ## Build o
 	mkdir -p pkg/installer/assets
 	$(CONTAINER_TOOL) build --platform linux/$(GEASS_GOARCH) -t $(OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) save $(OPERATOR_IMAGE) -o $(INSTALLER_OPERATOR_TAR)
+	# The manifests must name the image saved above. The checked-in kustomization names a placeholder
+	# (controller:latest) that no node has, so without this the operator stays in ImagePullBackOff and the
+	# install never finishes. The placeholder is put back so the working tree is left as it was found.
+	cd config/manager && "$(KUSTOMIZE)" edit set image geass-operator=$(OPERATOR_IMAGE)
 	"$(KUSTOMIZE)" build config/default > $(INSTALLER_OPERATOR_MANIFESTS)
+	cd config/manager && "$(KUSTOMIZE)" edit set image geass-operator=controller:latest
 
 .PHONY: build-geass
 build-geass: prepare-installer-assets ## Build geass installer with embedded operator image and manifests.

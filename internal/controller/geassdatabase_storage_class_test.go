@@ -203,7 +203,7 @@ func TestReconcileCNPGClusterCreatesVolumesOnTheChosenClass(t *testing.T) {
 	db := storageTestDB(geassv1alpha1.DatabaseEnginePostgres, false)
 	r, _ := storageTestReconciler(t)
 
-	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, nil, nil)
+	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, platform.Placement{}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cluster.Spec.Storage.StorageClass)
 	require.Equal(t, platform.StorageClassReplicated, *cluster.Spec.Storage.StorageClass)
@@ -219,7 +219,7 @@ func TestReconcileCNPGClusterNeverMovesExistingVolumes(t *testing.T) {
 
 	// CNPG rejects a storage class change on a live cluster, and its volumes are
 	// bound to the old class regardless, so the existing choice must survive.
-	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, nil, nil)
+	cluster, err := r.reconcileCNPGCluster(context.Background(), db, storageTestNS, platform.StorageClassReplicated, platform.Placement{}, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, cluster.Spec.Storage.StorageClass)
 }
@@ -245,8 +245,8 @@ func TestEnsureSQLitePVCSetsTheClassOnlyWhenCreating(t *testing.T) {
 
 func TestMySQLValuesCarryTheStorageClass(t *testing.T) {
 	db := storageTestDB(geassv1alpha1.DatabaseEngineMySQL, false)
-	require.Contains(t, mysqlValues(db, platform.StorageClassReplicated), "storageClass: \"geass-replicated\"")
-	require.NotContains(t, mysqlValues(db, ""), "storageClass")
+	require.Contains(t, mysqlValues(db, platform.StorageClassReplicated, platform.Placement{}), "storageClass: \"geass-replicated\"")
+	require.NotContains(t, mysqlValues(db, "", platform.Placement{}), "storageClass")
 }
 
 // The CNPG CRD arrives with the CNPG Helm chart, which reconcilePostgres installs
@@ -338,12 +338,12 @@ func TestMySQLValuesGiveHASecondariesTheSameVolumeSettings(t *testing.T) {
 	size := resource.MustParse("20Gi")
 	db.Spec.StorageSize = &size
 
-	values := mysqlValues(db, platform.StorageClassReplicated)
+	values := mysqlValues(db, platform.StorageClassReplicated, platform.Placement{})
 	require.Contains(t, values, "secondary:")
 	require.Equal(t, 2, strings.Count(values, `storageClass: "geass-replicated"`), "primary and secondary")
 	require.Equal(t, 2, strings.Count(values, "size: 20Gi"), "primary and secondary")
 
-	standalone := mysqlValues(storageTestDB(geassv1alpha1.DatabaseEngineMySQL, false), platform.StorageClassReplicated)
+	standalone := mysqlValues(storageTestDB(geassv1alpha1.DatabaseEngineMySQL, false), platform.StorageClassReplicated, platform.Placement{})
 	require.NotContains(t, standalone, "secondary:")
 	require.Equal(t, 1, strings.Count(standalone, `storageClass: "geass-replicated"`))
 }

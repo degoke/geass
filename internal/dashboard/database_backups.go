@@ -213,7 +213,7 @@ func (s *Server) handleDatabaseRestore(w http.ResponseWriter, r *http.Request) {
 	db := restoredDatabase(&archive, environment, restorePoint, restoreTime)
 	est := platform.EstimateWorkload(databaseCreateWorkloadKind(db.Spec.Engine), false, 0)
 	est = platform.EstimateFromResources(est.Label, databaseResources(db), est.Replicas)
-	if s.rejectIfNoCapacityFor(w, r, fallback, est) {
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, s.databasePlacement(ctx, db)) {
 		return
 	}
 	// A restore is a deliberate action with nothing to review, so it deploys straight away, as the

@@ -1,6 +1,9 @@
 package platform
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // UserError is an error whose text is written for end users and shown in the dashboard as it is.
 // A named type lets these sentences stay capitalised without tripping the style check on
@@ -8,6 +11,12 @@ import "fmt"
 type UserError string
 
 func (e UserError) Error() string { return string(e) }
+
+// IsUserError reports whether err is, or wraps, a UserError.
+func IsUserError(err error) bool {
+	var userErr UserError
+	return errors.As(err, &userErr)
+}
 
 // Userf formats a UserError.
 func Userf(format string, args ...any) error {

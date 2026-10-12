@@ -34,6 +34,7 @@ export const SETTINGS_PATHS = [
   "/settings/github",
   "/settings/tokens",
   "/object-storage",
+  "/shared-databases",
   "/cluster",
   "/ha-readiness",
 ];
@@ -49,6 +50,7 @@ export const SETTINGS_LINKS = [
   { id: "connectors", label: "Connectors", to: "/settings/connectors", active: (path) => path.startsWith("/settings/connectors") || path.startsWith("/settings/github") },
   { id: "tokens", label: "Tokens", to: "/settings/tokens", active: (path) => path.startsWith("/settings/tokens") },
   { id: "object", label: "Object storage", to: "/object-storage", active: (path) => path.startsWith("/object-storage") },
+  { id: "databases", label: "Databases", to: "/shared-databases", active: (path) => path.startsWith("/shared-databases") },
 ];
 
 /** @deprecated use SETTINGS_LINKS */

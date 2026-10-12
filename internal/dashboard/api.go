@@ -42,7 +42,9 @@ type dashboardPlatform struct {
 	PlanetScaleAvailable bool            `json:"planetScaleAvailable"`
 	MinIOAvailable       bool            `json:"minioAvailable"`
 	Capacity             clusterCapacity `json:"capacity"`
-	StorageExpandable    bool            `json:"storageExpandable"`
+	// DefaultRegion is where projects that do not choose a region run.
+	DefaultRegion     string `json:"defaultRegion,omitempty"`
+	StorageExpandable bool   `json:"storageExpandable"`
 	// FixedSizeDatabases names deployed databases whose volume cannot be resized,
 	// for example ones created before Longhorn was installed.
 	FixedSizeDatabases []string `json:"fixedSizeDatabases,omitempty"`
@@ -102,6 +104,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAppCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/apps/"):
 		s.handleAppRoutes(w, mutation)
+	case mutation.URL.Path == "/shared-databases/create":
+		s.handleSharedDatabaseCreate(w, mutation)
 	case mutation.URL.Path == "/databases/create":
 		s.handleDatabaseCreate(w, mutation)
 	case mutation.URL.Path == "/databases/restore":
@@ -116,6 +120,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleObjectStoreCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/object-stores/"):
 		s.handleObjectStoreRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/nodes/"):
+		s.handleNodeRoutes(w, mutation)
+	case mutation.URL.Path == "/platform/default-region":
+		s.handlePlatformDefaultRegionSave(w, mutation)
 	case mutation.URL.Path == "/settings/domain/save":
 		s.handlePlatformDomainSave(w, mutation)
 	case mutation.URL.Path == "/settings/domain/verify":

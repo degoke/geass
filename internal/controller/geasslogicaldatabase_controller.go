@@ -3,7 +3,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strconv"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,25 +21,46 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-// GeassLogicalDatabaseReconciler publishes a database-specific connection
-// secret after its platform-managed Postgres or MySQL server is ready.
+// GeassLogicalDatabaseReconciler gives a project a database on a server that is already running, and
+// publishes its connection secret in the project's namespace.
+//
+// The server is either the project's own (a GeassDatabase in the same project and environment) or the
+// cluster-wide one (a GeassDatabase with no project). On the cluster-wide server many projects share one
+// Postgres or MySQL, so each logical database is created with a login of its own that owns it and can
+// reach nothing else, and is dropped, with its login, when the logical database is deleted.
 type GeassLogicalDatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
+const (
+	// FinalizerLogicalDatabase holds a shared-server logical database until it has been dropped.
+	FinalizerLogicalDatabase = "geass.geass.dev/logicaldatabase"
+	// logicalDropTimeout bounds how long deleting a logical database waits for the server to drop it. A server
+	// that is gone or unwell must never keep the object from being deleted.
+	logicalDropTimeout = 3 * time.Minute
+
+	messageWaitingForAdminLogin = "Waiting for the database server's administrator login"
+)
+
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasslogicaldatabases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasslogicaldatabases/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geasslogicaldatabases/finalizers,verbs=update
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+
+var databaseNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var logical geassv1alpha1.GeassLogicalDatabase
 	if err := r.Get(ctx, req.NamespacedName, &logical); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if result, paused := beginProvisionReconcileUnlessDeleting(!logical.DeletionTimestamp.IsZero(), logical.Status.Conditions, logical.Generation, &logical.Status.ReconcileRetry); paused {
+	if !logical.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, &logical)
+	}
+	if result, paused := beginProvisionReconcileUnlessDeleting(false, logical.Status.Conditions, logical.Generation, &logical.Status.ReconcileRetry); paused {
 		return result, nil
 	}
 	if err := platform.ValidateProjectPlacement(ctx, r.Client, logical.Spec.Project, logical.Spec.Environment); err != nil {
@@ -46,10 +70,18 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	if err := r.Get(ctx, client.ObjectKey{Name: logical.Spec.ServerRef, Namespace: logical.Namespace}, &server); err != nil {
 		return r.setNotReady(ctx, &logical, fmt.Sprintf("database server %q is unavailable", logical.Spec.ServerRef))
 	}
+	shared := platform.IsSharedDatabase(&server)
+	if shared {
+		// The server has to be able to drop this database when it goes, so it is held until it has.
+		if !controllerutil.ContainsFinalizer(&logical, FinalizerLogicalDatabase) {
+			controllerutil.AddFinalizer(&logical, FinalizerLogicalDatabase)
+			return ctrl.Result{}, r.Update(ctx, &logical)
+		}
+	}
 	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
 		return r.setNotReady(ctx, &logical, "database server is not ready")
 	}
-	if server.Spec.Project != logical.Spec.Project || server.Spec.Environment != logical.Spec.Environment {
+	if !shared && (server.Spec.Project != logical.Spec.Project || server.Spec.Environment != logical.Spec.Environment) {
 		return r.setNotReady(ctx, &logical, "database server is in a different project or environment")
 	}
 	if server.Status.TargetNamespace == "" || server.Status.ConnectionSecret == "" {
@@ -58,27 +90,46 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	if server.Spec.Engine != geassv1alpha1.DatabaseEnginePostgres && server.Spec.Engine != geassv1alpha1.DatabaseEngineMySQL && server.Spec.Engine != "" {
 		return r.setNotReady(ctx, &logical, "logical databases require a Postgres or MySQL server")
 	}
-	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(logical.Spec.DatabaseName) {
+	if !databaseNamePattern.MatchString(logical.Spec.DatabaseName) {
 		return r.setNotReady(ctx, &logical, "database name must contain only letters, numbers, and underscores")
+	}
+	if shared {
+		if message := r.regionMismatch(ctx, &logical, &server); message != "" {
+			return r.setNotReady(ctx, &logical, message)
+		}
 	}
 	var parentSecret corev1.Secret
 	if err := r.Get(ctx, client.ObjectKey{Name: server.Status.ConnectionSecret, Namespace: server.Status.TargetNamespace}, &parentSecret); err != nil {
 		return r.setNotReady(ctx, &logical, "database connection secret is unavailable")
 	}
+	admin, ok, err := r.adminLogin(ctx, &server)
+	if err != nil {
+		return r.setNotReady(ctx, &logical, err.Error())
+	}
+	if !ok {
+		return r.setNotReady(ctx, &logical, messageWaitingForAdminLogin)
+	}
+
+	target, err := r.logicalTarget(ctx, &logical, &server, &parentSecret, shared)
+	if err != nil {
+		return r.setNotReady(ctx, &logical, err.Error())
+	}
 	jobName := logical.Name + "-create"
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: server.Status.TargetNamespace}}
-	createContainer := logicalDatabaseJobContainer(server, logical.Spec.DatabaseName)
+	container := logicalDatabaseJobContainer(&server, admin, target, false)
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, job, func() error {
 		job.Labels = map[string]string{
 			platform.LabelManagedBy:       platform.ManagedByValue,
 			platform.LabelProject:         logical.Spec.Project,
 			platform.LabelEnvironment:     string(logical.Spec.Environment),
 			platform.LabelLogicalDatabase: logical.Name,
+			labelLogicalRole:              "create",
 		}
 		if job.Status.Succeeded == 0 {
 			job.Spec.BackoffLimit = int32ptr(6)
 			job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
-			job.Spec.Template.Spec.Containers = []corev1.Container{createContainer}
+			job.Spec.Template.Spec.Containers = []corev1.Container{container}
+			jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
 		}
 		return nil
 	}); err != nil {
@@ -96,30 +147,8 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-connection", Namespace: ns}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		port := parentSecret.Data[platform.ConnectionKeyPort]
-		if len(port) == 0 {
-			if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
-				port = []byte(platform.MySQLDefaultPort)
-			} else {
-				port = []byte(platform.PostgresDefaultPort)
-			}
-		}
-		scheme := "postgresql"
-		if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
-			scheme = "mysql"
-		}
 		secret.Type = corev1.SecretTypeOpaque
-		secret.Data = map[string][]byte{
-			platform.ConnectionKeyHost:     parentSecret.Data[platform.ConnectionKeyHost],
-			platform.ConnectionKeyPort:     port,
-			platform.ConnectionKeyDatabase: []byte(logical.Spec.DatabaseName),
-			platform.ConnectionKeyURI: fmt.Appendf(nil,
-				"%s://%s/%s",
-				scheme,
-				string(parentSecret.Data[platform.ConnectionKeyHost]),
-				logical.Spec.DatabaseName,
-			),
-		}
+		secret.Data = logicalConnectionData(&server, &parentSecret, target)
 		return nil
 	}); err != nil {
 		return r.setNotReady(ctx, &logical, err.Error())
@@ -130,6 +159,8 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	latest.Status.ConnectionSecret = secret.Name
 	latest.Status.JobName = jobName
+	latest.Status.Database = target.database
+	latest.Status.Username = target.username
 	retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
 	platform.ClearReconcileRetry(&retryState)
 	writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
@@ -141,37 +172,294 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	return ctrl.Result{}, nil
 }
 
+// regionMismatch refuses a project that would reach a shared server in another region: every query would
+// cross regions. A project with no region, and a server with none, can be paired with anything.
+func (r *GeassLogicalDatabaseReconciler) regionMismatch(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, server *geassv1alpha1.GeassDatabase) string {
+	serverRegion := pinnedNodePlacement(server).Region
+	projectRegion, err := platform.ProjectRegion(ctx, r.Client, logical.Spec.Project)
+	if err != nil || serverRegion == "" || projectRegion == "" || serverRegion == projectRegion {
+		return ""
+	}
+	return fmt.Sprintf("This database server runs in the %s region, but the project runs in the %s region", serverRegion, projectRegion)
+}
+
+// loginSecretRef is where an administrative login is read from.
+type loginSecretRef struct {
+	secret, userKey, passwordKey string
+	// user is used when the secret holds no user name.
+	user string
+	// namespace is where the secret lives, which is the server's namespace.
+	namespace string
+}
+
+// adminLogin finds the login that can create databases and logins on the server. Postgres has its
+// superuser secret once the operator enables it (the application's own login only owns its database);
+// MySQL's root password is the same one the server was installed with. ok is false while it is not
+// there yet.
+func (r *GeassLogicalDatabaseReconciler) adminLogin(ctx context.Context, server *geassv1alpha1.GeassDatabase) (loginSecretRef, bool, error) {
+	ns := server.Status.TargetNamespace
+	if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
+		ref := loginSecretRef{secret: server.Name + "-bootstrap", passwordKey: platform.ConnectionKeyPassword, user: "root", namespace: ns}
+		return ref, r.secretExists(ctx, ref), nil
+	}
+	ref := loginSecretRef{secret: server.Name + "-superuser", userKey: platform.ConnectionKeyUsername, passwordKey: platform.ConnectionKeyPassword, namespace: ns}
+	return ref, r.secretExists(ctx, ref), nil
+}
+
+func (r *GeassLogicalDatabaseReconciler) secretExists(ctx context.Context, ref loginSecretRef) bool {
+	var secret corev1.Secret
+	return r.Get(ctx, client.ObjectKey{Name: ref.secret, Namespace: ref.namespace}, &secret) == nil
+}
+
+// logicalTarget is what a logical database is called on its server and how it is reached.
+type logicalTarget struct {
+	database string
+	// username and password are the login the project's apps use.
+	username string
+	password string
+	// createLogin is whether the login is made for this database (the shared server) rather than the
+	// server's own login being reused (a project's own server).
+	createLogin     bool
+	connectionLimit int32
+	// credentialsSecret holds the generated password for the job to set; empty when no login is created.
+	credentialsSecret string
+}
+
+func (r *GeassLogicalDatabaseReconciler) logicalTarget(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, server *geassv1alpha1.GeassDatabase, parent *corev1.Secret, shared bool) (logicalTarget, error) {
+	if !shared {
+		return logicalTarget{
+			database: logical.Spec.DatabaseName,
+			username: secretValue(parent, platform.ConnectionKeyUsername),
+			password: secretValue(parent, platform.ConnectionKeyPassword),
+		}, nil
+	}
+	database, login := platform.SharedDatabaseNames(logical.Spec.Project, string(logical.Spec.Environment), logical.Spec.DatabaseName)
+	password, secretName, err := r.ensureLoginPassword(ctx, logical, server)
+	if err != nil {
+		return logicalTarget{}, err
+	}
+	limit := logical.Spec.ConnectionLimit
+	if limit == 0 {
+		limit = platform.DefaultSharedConnectionLimit
+	}
+	return logicalTarget{database: database, username: login, password: password, createLogin: true, connectionLimit: limit, credentialsSecret: secretName}, nil
+}
+
+// ensureLoginPassword creates the database's password once and keeps it. It lives beside the server, in
+// the system namespace, where the Job that sets it can read it and no project can.
+func (r *GeassLogicalDatabaseReconciler) ensureLoginPassword(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, server *geassv1alpha1.GeassDatabase) (password, secretName string, err error) {
+	secretName = logical.Name + "-login"
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: server.Status.TargetNamespace}}
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		password = secretValue(secret, platform.ConnectionKeyPassword)
+		if password == "" {
+			generated, genErr := randomCredential()
+			if genErr != nil {
+				return genErr
+			}
+			password = generated
+		}
+		secret.Type = corev1.SecretTypeOpaque
+		// Written as data, not stringData, so the password read back on the next pass is the one written.
+		secret.Data = map[string][]byte{platform.ConnectionKeyPassword: []byte(password)}
+		if server.Status.TargetNamespace == logical.Namespace {
+			return controllerutil.SetControllerReference(logical, secret, r.Scheme)
+		}
+		return nil
+	})
+	return password, secretName, err
+}
+
+// logicalConnectionData is the connection secret an app reads.
+func logicalConnectionData(server *geassv1alpha1.GeassDatabase, parent *corev1.Secret, target logicalTarget) map[string][]byte {
+	port := parent.Data[platform.ConnectionKeyPort]
+	scheme := "postgresql"
+	if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
+		scheme = "mysql"
+		if len(port) == 0 {
+			port = []byte(platform.MySQLDefaultPort)
+		}
+	} else if len(port) == 0 {
+		port = []byte(platform.PostgresDefaultPort)
+	}
+	host := string(parent.Data[platform.ConnectionKeyHost])
+	credentials := ""
+	if target.username != "" {
+		credentials = url.UserPassword(target.username, target.password).String() + "@"
+	}
+	return map[string][]byte{
+		platform.ConnectionKeyHost:     parent.Data[platform.ConnectionKeyHost],
+		platform.ConnectionKeyPort:     port,
+		platform.ConnectionKeyDatabase: []byte(target.database),
+		platform.ConnectionKeyUsername: []byte(target.username),
+		platform.ConnectionKeyPassword: []byte(target.password),
+		platform.ConnectionKeyURI:      fmt.Appendf(nil, "%s://%s%s:%s/%s", scheme, credentials, host, port, target.database),
+	}
+}
+
 func int32ptr(value int32) *int32 { return &value }
+
 func secretKey(name, key string) *corev1.EnvVarSource {
 	return &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: key}}
 }
 
-func logicalDatabaseJobContainer(server geassv1alpha1.GeassDatabase, database string) corev1.Container {
-	secret := server.Status.ConnectionSecret
+// logicalDatabaseJobContainer is the container that creates (or, with drop, removes) the database. It
+// connects with the server's administrative login, and creates the database for the login the project's
+// apps use. On a project's own server that login already exists (the server's own); on the shared server
+// it is created here, owns the database, and is the only one allowed to connect to it.
+func logicalDatabaseJobContainer(server *geassv1alpha1.GeassDatabase, admin loginSecretRef, target logicalTarget, drop bool) corev1.Container {
+	connection := server.Status.ConnectionSecret
 	env := []corev1.EnvVar{
-		{Name: "DB_HOST", ValueFrom: secretKey(secret, platform.ConnectionKeyHost)},
-		{Name: "DB_PORT", ValueFrom: secretKey(secret, platform.ConnectionKeyPort)},
-		{Name: "DB_USER", ValueFrom: secretKey(secret, platform.ConnectionKeyUsername)},
-		{Name: "DB_PASSWORD", ValueFrom: secretKey(secret, platform.ConnectionKeyPassword)},
-		{Name: "DB_NAME", Value: database},
+		{Name: "DB_HOST", ValueFrom: secretKey(connection, platform.ConnectionKeyHost)},
+		{Name: "DB_PORT", ValueFrom: secretKey(connection, platform.ConnectionKeyPort)},
+		{Name: "DB_PASSWORD", ValueFrom: secretKey(admin.secret, admin.passwordKey)},
+		{Name: "APP_DB", Value: target.database},
+		{Name: "APP_USER", Value: target.username},
+		{Name: "CONNECTION_LIMIT", Value: strconv.Itoa(int(target.connectionLimit))},
 	}
-	if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
-		return corev1.Container{
-			Name:    "create-database",
-			Image:   "mysql:8.4",
-			Env:     env,
-			Command: []string{"/bin/sh", "-ceu", `mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME"`},
-		}
+	if admin.userKey != "" {
+		env = append(env, corev1.EnvVar{Name: "DB_USER", ValueFrom: secretKey(admin.secret, admin.userKey)})
+	} else {
+		env = append(env, corev1.EnvVar{Name: "DB_USER", Value: admin.user})
 	}
-	return corev1.Container{
-		Name:  "create-database",
-		Image: "postgres:16-alpine",
-		Env:   env,
-		Command: []string{"/bin/sh", "-ceu", `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
-if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then exit 0; fi
-psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$DB_NAME\""`},
+	if target.createLogin {
+		env = append(env,
+			corev1.EnvVar{Name: "CREATE_LOGIN", Value: "1"},
+			corev1.EnvVar{Name: "APP_PASSWORD", ValueFrom: secretKey(target.credentialsSecret, platform.ConnectionKeyPassword)},
+		)
+	}
+	mysql := server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL
+	switch {
+	case mysql && drop:
+		return corev1.Container{Name: "drop-database", Image: "mysql:8.4", Env: env, Command: []string{"/bin/sh", "-ceu", mysqlDropScript}}
+	case mysql:
+		return corev1.Container{Name: "create-database", Image: "mysql:8.4", Env: env, Command: []string{"/bin/sh", "-ceu", mysqlCreateScript}}
+	case drop:
+		return corev1.Container{Name: "drop-database", Image: "postgres:16-alpine", Env: env, Command: []string{"/bin/sh", "-ceu", postgresDropScript}}
+	default:
+		return corev1.Container{Name: "create-database", Image: "postgres:16-alpine", Env: env, Command: []string{"/bin/sh", "-ceu", postgresCreateScript}}
 	}
 }
+
+// The scripts take their values from the environment and hand them to the client as variables, so nothing
+// a project controls is ever interpolated into SQL by the shell.
+const postgresCreateScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
+psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_password="${APP_PASSWORD:-}" -v app_db="$APP_DB" -v conn_limit="$CONNECTION_LIMIT" -v create_login="${CREATE_LOGIN:-0}" <<'SQL'
+SELECT :create_login::int = 1 AS make_login \gset
+\if :make_login
+  SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS present \gset
+  \if :present
+    ALTER ROLE :"app_user" WITH LOGIN PASSWORD :'app_password' CONNECTION LIMIT :conn_limit;
+  \else
+    CREATE ROLE :"app_user" WITH LOGIN PASSWORD :'app_password' CONNECTION LIMIT :conn_limit;
+  \endif
+\endif
+SELECT NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db') AS missing \gset
+\if :missing
+  CREATE DATABASE :"app_db" OWNER :"app_user";
+\endif
+REVOKE ALL ON DATABASE :"app_db" FROM PUBLIC;
+GRANT ALL ON DATABASE :"app_db" TO :"app_user";
+SQL
+`
+
+const postgresDropScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
+psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
+DROP DATABASE IF EXISTS :"app_db" WITH (FORCE);
+DROP ROLE IF EXISTS :"app_user";
+SQL
+`
+
+const mysqlCreateScript = `export MYSQL_PWD="$DB_PASSWORD"
+{
+  echo "CREATE DATABASE IF NOT EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
+  if [ "${CREATE_LOGIN:-0}" = "1" ]; then
+    echo "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD';"
+    echo "ALTER USER '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD' WITH MAX_USER_CONNECTIONS $CONNECTION_LIMIT;"
+  fi
+  echo "GRANT ALL PRIVILEGES ON \` + "`" + `$APP_DB\` + "`" + `.* TO '$APP_USER'@'%';"
+} | mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER"
+`
+
+const mysqlDropScript = `export MYSQL_PWD="$DB_PASSWORD"
+{
+  echo "DROP DATABASE IF EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
+  echo "DROP USER IF EXISTS '$APP_USER'@'%';"
+} | mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER"
+`
+
+// finalize drops a shared-server logical database, then lets go of it. Dropping is best effort and bounded:
+// a server that is gone, not ready or slow must not keep the object from being deleted, which is why it
+// gives up after logicalDropTimeout. A logical database on a project's own server is left on the server, as
+// it always has been.
+func (r *GeassLogicalDatabaseReconciler) finalize(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(logical, FinalizerLogicalDatabase) {
+		return ctrl.Result{}, nil
+	}
+	wait, err := r.dropSharedDatabase(ctx, logical)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if wait > 0 {
+		return ctrl.Result{RequeueAfter: wait}, nil
+	}
+	if ns, nsErr := resourceNamespace(logical.Spec.Project, string(logical.Spec.Environment)); nsErr == nil {
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-connection", Namespace: ns}}))
+	}
+	controllerutil.RemoveFinalizer(logical, FinalizerLogicalDatabase)
+	return ctrl.Result{}, r.Update(ctx, logical)
+}
+
+// dropSharedDatabase runs the drop Job and reports how long to wait before looking again; zero means
+// there is nothing left to wait for.
+func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase) (time.Duration, error) {
+	var server geassv1alpha1.GeassDatabase
+	if err := r.Get(ctx, client.ObjectKey{Name: logical.Spec.ServerRef, Namespace: logical.Namespace}, &server); err != nil {
+		return 0, client.IgnoreNotFound(err)
+	}
+	ns := server.Status.TargetNamespace
+	if ns == "" || conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
+		return 0, nil
+	}
+	admin, ok, err := r.adminLogin(ctx, &server)
+	if err != nil || !ok {
+		return 0, err
+	}
+	// Whatever happens, the create Job must go: a database made again under the same name would otherwise
+	// find the old Job done and never be created.
+	defer func() {
+		_ = r.DeleteAllOf(ctx, &batchv1.Job{}, client.InNamespace(ns), client.MatchingLabels{platform.LabelLogicalDatabase: logical.Name, labelLogicalRole: "create"}, client.PropagationPolicy(metav1.DeletePropagationBackground))
+	}()
+
+	database, login := platform.SharedDatabaseNames(logical.Spec.Project, string(logical.Spec.Environment), logical.Spec.DatabaseName)
+	target := logicalTarget{database: database, username: login}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-drop", Namespace: ns}}
+	err = r.Get(ctx, client.ObjectKeyFromObject(job), job)
+	switch {
+	case apierrors.IsNotFound(err):
+		job.Labels = map[string]string{platform.LabelManagedBy: platform.ManagedByValue, platform.LabelLogicalDatabase: logical.Name, labelLogicalRole: "drop"}
+		job.Spec.BackoffLimit = int32ptr(3)
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+		job.Spec.Template.Spec.Containers = []corev1.Container{logicalDatabaseJobContainer(&server, admin, target, true)}
+		jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
+		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
+			return 0, err
+		}
+		return 5 * time.Second, nil
+	case err != nil:
+		return 0, err
+	}
+	finished := job.Status.Succeeded > 0 || job.Status.Failed > 0
+	expired := time.Since(logical.DeletionTimestamp.Time) > logicalDropTimeout
+	if finished || expired {
+		_ = client.IgnoreNotFound(r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)))
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-login", Namespace: ns}}))
+		return 0, nil
+	}
+	return 5 * time.Second, nil
+}
+
+const labelLogicalRole = "geass.dev/logical-database-role"
 
 func (r *GeassLogicalDatabaseReconciler) setNotReady(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, message string) (ctrl.Result, error) {
 	latest := logical.DeepCopy()

@@ -8,10 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -110,30 +114,6 @@ var metricWindows = map[string]metricWindowSpec{
 	"24h": {24 * time.Hour, 15 * time.Minute},
 }
 
-type metricSeriesQuery struct {
-	key   string
-	query string
-}
-
-// metricSeriesQueries returns the PromQL for one scope. namespace and pod are regular
-// expressions already escaped for use inside a label matcher.
-func metricSeriesQueries(namespace, pod, traefikService string) []metricSeriesQuery {
-	podMatcher := ""
-	if pod != "" {
-		podMatcher = `,pod=~"` + pod + `"`
-	}
-	ns := `namespace=~"` + namespace + `"`
-	queries := []metricSeriesQuery{
-		{"cpu", `sum(rate(container_cpu_usage_seconds_total{` + ns + podMatcher + `,container!=""}[2m]))`},
-		{"memory", `sum(container_memory_working_set_bytes{` + ns + podMatcher + `,container!=""})`},
-		{"network", `sum(rate(container_network_transmit_bytes_total{` + ns + podMatcher + `}[2m]))`},
-	}
-	if traefikService != "" {
-		queries = append(queries, metricSeriesQuery{"requests", `sum(rate(traefik_service_requests_total{service=~"` + traefikService + `"}[2m]))`})
-	}
-	return queries
-}
-
 var metricNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 // handleAPIMetrics serves GET /api/apps/{name}/metrics and /api/projects/{name}/metrics.
@@ -152,7 +132,7 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 		return
 	}
 
-	var queries []metricSeriesQuery
+	var metrics metricScope
 	switch scope {
 	case "apps":
 		app, err := s.getApp(r, name)
@@ -165,25 +145,51 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 			writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not resolve the service namespace"})
 			return
 		}
-		quotedNS := regexp.QuoteMeta(namespace)
-		quotedName := regexp.QuoteMeta(name)
-		queries = metricSeriesQueries(quotedNS, quotedName+`-[a-z0-9]+-[a-z0-9]+`, `.*`+quotedNS+`-`+quotedName+`-.*`)
+		quotedNS := promRegexLiteral(namespace)
+		quotedName := promRegexLiteral(name)
+		metrics = metricScope{
+			namespaces:     []string{namespace},
+			podPattern:     quotedName + `-[a-z0-9]+-[a-z0-9]+`,
+			ingressService: `.*` + quotedNS + `-` + quotedName + `-.*`,
+		}
 	case "projects":
-		environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-		namespace := regexp.QuoteMeta(name) + `-.+`
-		if environment != "" {
-			resolved, err := platform.ProjectNamespace(name, environment)
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "invalid environment"})
+		var project geassv1alpha1.GeassProject
+		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &project); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "project not found"})
+			return
+		}
+		namespaces, err := projectMetricNamespaces(&project, strings.TrimSpace(r.URL.Query().Get("environment")))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "invalid environment"})
+			return
+		}
+		metrics = metricScope{namespaces: namespaces}
+	case "databases":
+		var db geassv1alpha1.GeassDatabase
+		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &db); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "database not found"})
+			return
+		}
+		if db.Spec.Placement == geassv1alpha1.DatabasePlacementExternal {
+			writeJSON(w, http.StatusOK, map[string]any{"window": window, "step": int(spec.step.Seconds()), "available": false, "message": "This database runs outside the cluster, so there is nothing here to measure."})
+			return
+		}
+		namespace := db.Status.TargetNamespace
+		if namespace == "" {
+			var err error
+			if namespace, err = databaseNamespaceOf(&db); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not resolve the database namespace"})
 				return
 			}
-			namespace = regexp.QuoteMeta(resolved)
 		}
-		queries = metricSeriesQueries(namespace, "", "")
+		metrics = databaseMetricScope(&db, namespace)
+	case "cluster":
+		metrics = metricScope{all: true}
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 		return
 	}
+	queries := metrics.queries()
 
 	payload := map[string]any{"window": window, "step": int(spec.step.Seconds()), "available": false}
 	ranger, ok := s.metricsClient(r.Context(), true).(rangeMetricsClient)
@@ -211,4 +217,57 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 		payload["message"] = "Metrics appear once Prometheus is installed and reachable from Geass."
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+// projectMetricNamespaces lists the namespaces of a project's environments, or of just one of them.
+// They are matched exactly: a prefix match on the project name would also pick up the environments
+// of another project whose name starts with it ("api" and "api-v2").
+func projectMetricNamespaces(project *geassv1alpha1.GeassProject, environment string) ([]string, error) {
+	environments := project.Spec.Environments
+	if environment != "" {
+		if !slices.Contains(environments, environment) {
+			return nil, fmt.Errorf("environment %q is not part of this project", environment)
+		}
+		environments = []string{environment}
+	}
+	namespaces := make([]string, 0, len(environments))
+	for _, env := range environments {
+		namespace, err := platform.ProjectNamespace(project.Name, env)
+		if err != nil {
+			return nil, err
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	return namespaces, nil
+}
+
+// databaseNamespaceOf is where a database's pods run: its project's environment namespace, or the system
+// namespace for the cluster-wide server.
+func databaseNamespaceOf(db *geassv1alpha1.GeassDatabase) (string, error) {
+	if platform.IsSharedDatabase(db) {
+		return platform.SystemNamespace, nil
+	}
+	return platform.ProjectNamespace(db.Spec.Project, string(db.Spec.Environment))
+}
+
+// databaseMetricScope selects a database's own pods and volumes. Pods and claims are named by the engine's
+// chart or operator, which is the only thing that ties them to the database in the container metrics.
+func databaseMetricScope(db *geassv1alpha1.GeassDatabase, namespace string) metricScope {
+	name := promRegexLiteral(db.Name)
+	scope := metricScope{namespaces: []string{namespace}}
+	switch db.Spec.Engine {
+	case geassv1alpha1.DatabaseEngineMySQL:
+		release := promRegexLiteral(platform.MySQLChartReleaseName(db.Name))
+		scope.podPattern = release + `(-primary|-secondary)?-[0-9]+`
+		scope.volumePattern = `data-` + release + `(-primary|-secondary)?-[0-9]+`
+	case geassv1alpha1.DatabaseEngineRedis:
+		scope.podPattern = promRegexLiteral(platform.RedisChartReleaseName(db.Name)) + `-(master|replicas)-[0-9]+`
+	case geassv1alpha1.DatabaseEngineSQLite:
+		scope.podPattern = name + `-[a-z0-9]+-[a-z0-9]+`
+		scope.volumePattern = name + `-sqlite`
+	default:
+		scope.podPattern = name + `-[0-9]+`
+		scope.volumePattern = name + `-[0-9]+`
+	}
+	return scope
 }

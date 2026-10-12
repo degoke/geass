@@ -2,6 +2,7 @@ package platform
 
 import (
 	"strconv"
+	"strings"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
@@ -68,6 +69,46 @@ func LonghornSingleStorageClassParameters() map[string]string {
 	params := LonghornStorageClassParameters(1)
 	params["dataLocality"] = "strict-local"
 	return params
+}
+
+// RegionalReplicatedClassPrefix starts the name of a region's replicated class.
+const RegionalReplicatedClassPrefix = StorageClassReplicated + "-"
+
+// RegionalReplicatedClass is the replicated class that keeps a volume's copies on nodes in one region.
+// The global class spreads them over every node, which would put a project's data in another region.
+func RegionalReplicatedClass(region string) string {
+	return RegionalReplicatedClassPrefix + region
+}
+
+// RegionFromRegionalClass reads the region out of a regional class name.
+func RegionFromRegionalClass(class string) (string, bool) {
+	return strings.CutPrefix(class, RegionalReplicatedClassPrefix)
+}
+
+// LonghornRegionTag is the tag Geass puts on a region's Longhorn nodes. A storage class's nodeSelector
+// matches Longhorn's own node tags, not Kubernetes labels, so the region has to be mirrored there.
+func LonghornRegionTag(region string) string { return "geass-region-" + region }
+
+// LonghornRegionTagPrefix identifies the tags Geass owns on a Longhorn node.
+const LonghornRegionTagPrefix = "geass-region-"
+
+// LonghornRegionalStorageClassParameters are the parameters of a region's replicated class: the
+// replicated class's, restricted to the region's nodes.
+func LonghornRegionalStorageClassParameters(replicas int, region string) map[string]string {
+	params := LonghornStorageClassParameters(replicas)
+	params["nodeSelector"] = LonghornRegionTag(region)
+	return params
+}
+
+// DatabaseStorageClassIn is DatabaseStorageClass for a database pinned to a region: the replicated
+// class becomes the region's own. The single-replica class stays global, because strict-local puts
+// the one copy on the node the pod runs on, which is already in the region.
+func DatabaseStorageClassIn(engine geassv1alpha1.GeassDatabaseEngine, highAvailability bool, region string) string {
+	class := DatabaseStorageClass(engine, highAvailability)
+	if region != "" && class == StorageClassReplicated {
+		return RegionalReplicatedClass(region)
+	}
+	return class
 }
 
 // DatabaseWantsHA reports whether a database asks for high availability, either

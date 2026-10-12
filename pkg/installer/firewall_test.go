@@ -102,7 +102,7 @@ target     prot opt source               destination
 }
 
 func TestFormatFirewallSkipWarning(t *testing.T) {
-	msg := formatFirewallSkipWarning()
+	msg := formatFirewallSkipWarning(Network{})
 	for _, want := range []string{
 		"No active host firewall detected",
 		"6443/tcp",

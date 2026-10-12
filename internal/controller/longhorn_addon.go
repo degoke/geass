@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"maps"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -28,6 +29,21 @@ longhornUI:
   replicas: 0
 `
 
+// longhornReservationValues let Longhorn run on nodes that are reserved for a tag. Its system components
+// are told to tolerate every taint, and the chart's own manager and driver are given the same toleration:
+// a storage node cannot hold replicas without a manager on it. They are added only once a node is
+// reserved, because changing the chart's values restarts Longhorn's managers, which clusters that never
+// reserve a node have no reason to go through. Once added they stay (see longhornChartValues).
+const longhornReservationValues = `defaultSettings:
+  taintToleration: ":"
+longhornManager:
+  tolerations:
+    - operator: Exists
+longhornDriver:
+  tolerations:
+    - operator: Exists
+`
+
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=csidrivers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
@@ -35,13 +51,17 @@ longhornUI:
 // reconcileLonghorn installs Longhorn and, once it is running, the storage classes
 // Geass selects between. It reports whether storage is ready to use.
 func (r *GeassClusterReconciler) reconcileLonghorn(ctx context.Context) (bool, error) {
+	values, err := r.longhornChartValues(ctx)
+	if err != nil {
+		return false, err
+	}
 	spec := helmv1.HelmChartSpec{
 		Chart:           platform.LonghornReleaseChart,
 		Repo:            platform.LonghornChartRepo,
 		Version:         platform.LonghornChartVersion,
 		TargetNamespace: platform.LonghornTargetNS,
 		CreateNamespace: true,
-		ValuesContent:   longhornValues,
+		ValuesContent:   values,
 	}
 	if err := helmchart.Ensure(ctx, r.Client, platform.LonghornChartName, spec); err != nil {
 		return false, err
@@ -109,6 +129,29 @@ func (r *GeassClusterReconciler) longhornDriverInstalled(ctx context.Context) (b
 	return err == nil, err
 }
 
+// longhornChartValues are the values Longhorn is installed with: the base values, plus the toleration of
+// reserved nodes once any node is reserved. It never takes the toleration back out, so a reservation
+// that comes and goes does not restart Longhorn each time.
+func (r *GeassClusterReconciler) longhornChartValues(ctx context.Context) (string, error) {
+	if chart, err := helmchart.Get(ctx, r.Client, platform.LonghornChartName); err == nil && strings.Contains(chart.Spec.ValuesContent, longhornReservationValues) {
+		return longhornValues + longhornReservationValues, nil
+	} else if err != nil && !apierrors.IsNotFound(err) {
+		return "", err
+	}
+	var nodes corev1.NodeList
+	if err := r.List(ctx, &nodes); err != nil {
+		return "", err
+	}
+	for i := range nodes.Items {
+		for _, taint := range nodes.Items[i].Spec.Taints {
+			if strings.HasPrefix(taint.Key, platform.TagKeyPrefix) {
+				return longhornValues + longhornReservationValues, nil
+			}
+		}
+	}
+	return longhornValues, nil
+}
+
 // schedulableNodeCount is how many nodes can run Longhorn replicas. It counts
 // nodes that exist rather than nodes that are Ready, so a node that is briefly
 // unreachable does not make the replica count (and the class) flap.
@@ -131,6 +174,11 @@ func nodeSchedulable(node *corev1.Node) bool {
 		return false
 	}
 	for _, taint := range node.Spec.Taints {
+		// A node reserved for a tag still hosts replicas: Longhorn tolerates Geass reservations (see
+		// longhornReservationValues), and storage nodes are the ones most likely to be reserved.
+		if strings.HasPrefix(taint.Key, platform.TagKeyPrefix) {
+			continue
+		}
 		if taint.Effect == corev1.TaintEffectNoSchedule || taint.Effect == corev1.TaintEffectNoExecute {
 			return false
 		}
@@ -226,7 +274,8 @@ func nodeSchedulingChanged() predicate.Predicate {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldNode, okOld := e.ObjectOld.(*corev1.Node)
 			newNode, okNew := e.ObjectNew.(*corev1.Node)
-			return okOld && okNew && nodeSchedulable(oldNode) != nodeSchedulable(newNode)
+			return okOld && okNew && (nodeSchedulable(oldNode) != nodeSchedulable(newNode) ||
+				oldNode.Labels[platform.LabelRegion] != newNode.Labels[platform.LabelRegion])
 		},
 	}
 }
