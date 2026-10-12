@@ -3,10 +3,14 @@ package platform
 import (
 	"context"
 	"reflect"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
@@ -29,6 +33,10 @@ const (
 	StatusFailed  = "failed"
 )
 
+// statusRetry is how PatchStatus waits between tries after a conflict. The copy it reads again comes from the
+// informer cache, which can be a moment behind the write that caused the conflict.
+var statusRetry = wait.Backoff{Steps: 5, Duration: 25 * time.Millisecond, Factor: 2, Jitter: 0.1}
+
 // PatchStatus applies mutate to obj's status and sends it to the API server only if the status ended up
 // different from what it was. It reports whether it wrote.
 //
@@ -36,32 +44,48 @@ const (
 // runs: a request to the API server for nothing, and for any field that carries a timestamp, a real
 // write that wakes every watcher of the object. Comparing first makes the steady state free.
 //
-// The write is a merge patch of the status, with no resourceVersion check, so two writers that change
-// different fields do not make each other fail, and a stale copy cannot overwrite a field it did not change.
-// obj must be a fresh read: mutate edits it in place.
+// The write is a merge patch of the status, which sends a list such as the conditions as a whole. So that
+// two writers that change different conditions cannot overwrite each other, the patch carries the
+// resourceVersion it was made from: if the object has moved on, the write is refused, the object is read
+// again, mutate is applied to that, and the write is tried again. A mutate function is therefore run more
+// than once on a conflict, and has to do the same thing whenever it is run. obj must be a fresh read:
+// mutate edits it in place, and on a conflict it is replaced by a newer one.
 func PatchStatus(ctx context.Context, c client.Client, obj client.Object, mutate func()) (bool, error) {
 	kind := reflect.TypeOf(obj).Elem().Name()
-	base, ok := obj.DeepCopyObject().(client.Object)
-	if !ok {
-		return false, nil
-	}
-	mutate()
+	key := client.ObjectKeyFromObject(obj)
+	var wrote bool
+	err := retry.OnError(statusRetry, apierrors.IsConflict, func() error {
+		base, ok := obj.DeepCopyObject().(client.Object)
+		if !ok {
+			return nil
+		}
+		mutate()
 
-	changed, err := statusChanged(base, obj)
-	if err != nil {
+		changed, err := statusChanged(base, obj)
+		if err != nil || !changed {
+			wrote = false
+			return err
+		}
+		err = c.Status().Patch(ctx, obj, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+		if apierrors.IsConflict(err) {
+			if getErr := c.Get(ctx, key, obj); getErr != nil {
+				return getErr
+			}
+			return err
+		}
+		wrote = err == nil
+		return err
+	})
+	switch {
+	case err != nil:
 		statusWrites.WithLabelValues(kind, StatusFailed).Inc()
 		return false, err
-	}
-	if !changed {
+	case wrote:
+		statusWrites.WithLabelValues(kind, StatusWritten).Inc()
+	default:
 		statusWrites.WithLabelValues(kind, StatusSkipped).Inc()
-		return false, nil
 	}
-	if err := c.Status().Patch(ctx, obj, client.MergeFrom(base)); err != nil {
-		statusWrites.WithLabelValues(kind, StatusFailed).Inc()
-		return false, err
-	}
-	statusWrites.WithLabelValues(kind, StatusWritten).Inc()
-	return true, nil
+	return wrote, nil
 }
 
 // statusChanged compares only the status of two copies of an object. It works on the unstructured form so

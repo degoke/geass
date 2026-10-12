@@ -132,3 +132,65 @@ func TestPatchStatusReportsAFailedWrite(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, wrote)
 }
+
+// A writer that changes a different condition in the middle of PatchStatus must not be overwritten: the
+// conditions list goes in a merge patch as a whole.
+func TestPatchStatusDoesNotOverwriteAConditionAnotherWriterAdded(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	ctx := context.Background()
+	var raced bool
+	var attempts int
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&geassv1alpha1.GeassApp{}).WithObjects(statusTestApp()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				attempts++
+				if !raced {
+					raced = true
+					// Another writer adds its own condition after PatchStatus has read the object.
+					other := &geassv1alpha1.GeassApp{}
+					require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(obj), other))
+					other.Status.Conditions = SetCondition(other.Status.Conditions, "Other", metav1.ConditionTrue, "Elsewhere", "written by someone else")
+					require.NoError(t, c.Status().Update(ctx, other))
+				}
+				return c.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+
+	app := freshApp(t, c)
+	var runs int
+	wrote, err := PatchStatus(ctx, c, app, func() {
+		runs++
+		app.Status.Conditions = SetCondition(app.Status.Conditions, ConditionReady, metav1.ConditionTrue, "AppReady", "ready")
+	})
+
+	require.NoError(t, err)
+	require.True(t, wrote)
+	require.Equal(t, 2, attempts, "the first write was refused, and the second made from what the other writer left")
+	require.Equal(t, 2, runs, "mutate is applied again to the newer copy")
+	got := freshApp(t, c)
+	require.Len(t, got.Status.Conditions, 2, "both conditions survive")
+	types := []string{got.Status.Conditions[0].Type, got.Status.Conditions[1].Type}
+	require.ElementsMatch(t, []string{"Other", ConditionReady}, types)
+}
+
+func TestPatchStatusGivesUpWhenTheObjectKeepsMoving(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&geassv1alpha1.GeassApp{}).WithObjects(statusTestApp()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				other := &geassv1alpha1.GeassApp{}
+				require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(obj), other))
+				other.Status.URL += "x"
+				require.NoError(t, c.Status().Update(ctx, other))
+				return c.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	app := freshApp(t, c)
+
+	wrote, err := PatchStatus(context.Background(), c, app, func() { app.Status.ResolvedImage = "nginx" })
+
+	require.Error(t, err, "a conflict that does not go away is returned, and the reconcile is tried again")
+	require.False(t, wrote)
+}
