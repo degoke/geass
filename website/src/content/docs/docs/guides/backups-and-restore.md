@@ -24,7 +24,7 @@ New PostgreSQL, MySQL and SQLite databases created in the dashboard, through the
 
 ## Before you start
 
-1. **An AWS connection for the project.** Add one under **Settings**, **Connectors**. A connection belongs to one project. See [Connections](/docs/guides/connections/).
+1. **An AWS connection for the project.** Add one under **Settings**, **Connectors**. A connection belongs to one project. See [Connect AWS](/docs/guides/connectors/aws/).
 2. **Backup storage chosen for the project.** Choosing it records the bucket and connection. Geass creates the bucket when the first database with backups on needs it. See the next section.
 
 The AWS keys need to be able to create an S3 bucket and manage a restricted IAM user, as listed under [What Geass does in your AWS account](#what-geass-does-in-your-aws-account).
@@ -314,7 +314,7 @@ Geass created it for your project's backup storage, when a database first needed
 
 - [Databases](/docs/guides/databases/)
 - [Storage and volumes](/docs/guides/storage/)
-- [Connections](/docs/guides/connections/)
+- [Connect AWS](/docs/guides/connectors/aws/)
 - [Shared database servers](/docs/guides/shared-database-servers/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Command line](/docs/guides/command-line/)

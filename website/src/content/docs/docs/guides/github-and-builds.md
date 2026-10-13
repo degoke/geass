@@ -11,7 +11,7 @@ page covers choosing a repository, how builds work, the registry you must set up
 ## Before you start
 
 - **A GitHub App registered in Geass.** One admin does this once for the whole cluster. See
-  [Cloud connections](/docs/guides/connections/#github). It needs a dashboard address that is public and verified; see
+  [Connect GitHub](/docs/guides/connectors/github/). It needs a dashboard address that is public and verified; see
   [Domains and TLS](/docs/guides/domains-and-tls/).
 - **A container registry you control.** Geass does not ship a registry. Without one, a repository service does not
   build. See [Set the registry](#set-the-registry).
@@ -486,7 +486,7 @@ kubectl -n proj-1a2b3c4d-production get deploy amber-fern -o jsonpath='{.spec.te
 
 **"GitHub is not connected to this cluster yet" or "Connect GitHub in platform settings first".** No GitHub App is
 registered. An admin registers it under **Settings** → **Connectors** → **GitHub** (see
-[Cloud connections](/docs/guides/connections/#github)).
+[Connect GitHub](/docs/guides/connectors/github/)).
 
 **"Link this project to GitHub first".** The project has no installation. Use **Settings** → **Integrations** →
 **Connect to GitHub**.
@@ -549,7 +549,7 @@ receiver, and use **Send test** to try again. Geass does not retry a `4xx`.
 
 - [Apps](/docs/guides/apps/)
 - [Pull request environments](/docs/guides/pull-request-environments/)
-- [Cloud connections](/docs/guides/connections/#github): registering the GitHub App.
+- [Connect GitHub](/docs/guides/connectors/github/): registering the GitHub App.
 - [Users and API tokens](/docs/guides/users-and-tokens/)
 - [Domains and TLS](/docs/guides/domains-and-tls/)
 - [REST API](/docs/reference/rest-api/)

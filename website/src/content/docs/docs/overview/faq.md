@@ -112,7 +112,7 @@ Nothing to install or to deploy a service. Each account unlocks specific feature
 | AWS | S3 buckets, database backups | An access key that can create and delete S3 buckets and objects, and create and delete IAM users with their keys and policy |
 | PlanetScale | PlanetScale databases | A service token and the organization name |
 
-AWS and PlanetScale credentials belong to one project. See [Connections](/docs/guides/connections/).
+AWS and PlanetScale credentials belong to one project. See [Cloud connectors](/docs/guides/connectors/).
 
 ### Does Geass create servers, or work with Google Cloud or Azure?
 

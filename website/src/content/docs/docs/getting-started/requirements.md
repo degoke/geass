@@ -121,7 +121,7 @@ See [Connect a domain](/docs/getting-started/connect-domain/) and [Domains and T
 | PlanetScale | PlanetScale databases | A service token and the organization name |
 | Let's Encrypt (no account) | HTTPS certificates for the dashboard and your services | A real contact email address, passed to the installer as `GEASS_ACME_EMAIL` or set later on the cluster. Let's Encrypt refuses placeholder domains such as `example.com` |
 
-AWS and PlanetScale credentials are saved as connections that belong to one project. See [Connections](/docs/guides/connections/).
+AWS and PlanetScale credentials are saved as connections that belong to one project. See [Cloud connectors](/docs/guides/connectors/).
 
 ## Your own machine
 

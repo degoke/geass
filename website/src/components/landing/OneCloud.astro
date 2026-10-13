@@ -1,5 +1,6 @@
 ---
 import logo from "../../assets/geass-logo.svg";
+import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
 ---
   <section class="sec sec-black" id="cloud" aria-labelledby="cloud-title">
     <div class="sec-inner">
@@ -51,5 +52,6 @@ import logo from "../../assets/geass-logo.svg";
         </ul>
       </div>
       <p class="topo-note mono">Servers at more than one provider in a single cluster is experimental.</p>
+      <p class="topo-docs mono">Docs: <a href={addServersDocsUrl}>Add servers</a> · <a href={connectorsDocsUrl}>Cloud connectors</a></p>
     </div>
   </section>

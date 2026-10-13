@@ -211,7 +211,7 @@ Choose **Close** on the entry under **Open pull requests** to clear it.
 
 - [GitHub and builds](/docs/guides/github-and-builds/)
 - [Projects and environments](/docs/guides/projects-and-environments/)
-- [Cloud connections](/docs/guides/connections/#github): registering the GitHub App.
+- [Connect GitHub](/docs/guides/connectors/github/): registering the GitHub App.
 - [Domains and TLS](/docs/guides/domains-and-tls/)
 - [Usage and capacity](/docs/guides/usage-and-capacity/)
 - [Sleep when idle](/docs/guides/scale-to-zero/)

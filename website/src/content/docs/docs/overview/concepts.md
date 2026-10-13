@@ -94,7 +94,7 @@ Geass can use accounts you already have. **Settings → Connectors** shows four 
 | AWS | S3 buckets, database backups | One project: each connection is saved for a single project |
 | PlanetScale | PlanetScale databases | One project |
 
-AWS and PlanetScale credentials are called **cloud connections** (`GeassCloudConnection`). Every one is scoped to a single project and is usable only by it. The credentials are stored as Kubernetes Secrets in the cluster. See [Connections](/docs/guides/connections/).
+AWS and PlanetScale credentials are called **cloud connections** (`GeassCloudConnection`). Every one is scoped to a single project and is usable only by it. The credentials are stored as Kubernetes Secrets in the cluster. See [Cloud connectors](/docs/guides/connectors/).
 
 ## Platform settings
 

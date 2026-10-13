@@ -7,7 +7,7 @@ sidebar:
 
 A `GeassCloudConnection` tells Geass which Secret holds a project's credentials for AWS or PlanetScale. Buckets in your AWS account, database backups and PlanetScale databases use it. The resource holds no secrets: it points at a Secret in `geass-system` and records whether that Secret has what the provider needs.
 
-The dashboard creates one when you save a connection in **Settings** → **Connectors**, together with the Secret. The task-oriented view, with the permissions each provider needs and what Geass creates in your account, is in [Cloud connections](/docs/guides/connections/). Cloudflare and GitHub are not `GeassCloudConnection` objects: Cloudflare lives on the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/), and GitHub on a [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/).
+The dashboard creates one when you save a connection in **Settings** → **Connectors**, together with the Secret. The task-oriented view, with the permissions each provider needs and what Geass creates in your account, is in [Cloud connectors](/docs/guides/connectors/). Cloudflare and GitHub are not `GeassCloudConnection` objects: Cloudflare lives on the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/), and GitHub on a [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/).
 
 ## Summary
 
@@ -104,7 +104,7 @@ So there is no platform-wide connection: create one per project. The dashboard a
 | PlanetScale | `token` | Yes |
 | PlanetScale | `organization` | Yes, unless `spec.organization` is set |
 
-The dashboard creates the Secret `<name>-credentials`. If a Secret with that name already exists, it keeps the old one and ignores new credentials; see [Cloud connections](/docs/guides/connections/#rotate-aws-credentials).
+The dashboard creates the Secret `<name>-credentials`. If a Secret with that name already exists, it keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials).
 
 ## Status
 
@@ -168,7 +168,7 @@ kubectl -n geass-system get geasscloudconnection prod-aws -o jsonpath='{.status.
 
 ## Related
 
-- [Cloud connections](/docs/guides/connections/)
+- [Cloud connectors](/docs/guides/connectors/)
 - [GeassObjectStore](/docs/reference/resources/geass-object-store/)
 - [GeassDatabase](/docs/reference/resources/geass-database/)
 - [GeassBackupArchive](/docs/reference/resources/geass-backup-archive/)

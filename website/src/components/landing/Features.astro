@@ -1,4 +1,8 @@
 ---
+import { withBase } from "../../lib/site";
+
+// Each tile ends with links into the docs, so the page leads to the detail behind every claim.
+const doc = (slug: string) => withBase(`docs/${slug}/`);
 ---
   <section class="sec sec-black" id="features" aria-labelledby="features-title">
     <div class="sec-inner">
@@ -18,6 +22,12 @@
             <div class="pipe"><span class="st">pr-482</span><i></i><span class="st ring">preview</span></div>
           </div>
           <ul class="chips"><li>Functions</li><li>Templates</li><li>Your own domain</li><li>Object storage</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("guides/apps")}>Apps</a>
+            <a href={doc("guides/github-and-builds")}>GitHub and builds</a>
+            <a href={doc("guides/pull-request-environments")}>Pull-request environments</a>
+          </div>
         </article>
 
         <article class="tile">
@@ -29,6 +39,12 @@
             <div class="tl"><b style="left: 68%"></b><em style="left: 68%">restore to 14:32</em></div>
           </div>
           <ul class="chips"><li>Point-in-time restore</li><li>Shared servers</li><li>7-day undelete</li><li>SQL console</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("guides/databases")}>Databases</a>
+            <a href={doc("guides/backups-and-restore")}>Backups and restore</a>
+            <a href={doc("guides/shared-database-servers")}>Shared servers</a>
+          </div>
         </article>
 
         <article class="tile">
@@ -44,6 +60,12 @@
             </div>
           </div>
           <ul class="chips"><li>Regions and tags</li><li>Autoscaling</li><li>HA Postgres</li><li>Replicated volumes</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("getting-started/add-servers")}>Add servers</a>
+            <a href={doc("guides/scaling-and-placement")}>Scaling and placement</a>
+            <a href={doc("operations/high-availability")}>High availability</a>
+          </div>
         </article>
 
         <article class="tile">
@@ -56,6 +78,11 @@
             <span class="mini-btn">Deploy 2 changes</span>
           </div>
           <ul class="chips"><li>Instant live settings</li><li>Capacity checks</li><li>Deploy history</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("guides/projects-and-environments")}>Projects and environments</a>
+            <a href={doc("overview/concepts")}>Core concepts</a>
+          </div>
         </article>
 
         <article class="tile">
@@ -69,6 +96,11 @@
             </div>
           </div>
           <ul class="chips"><li>Live logs</li><li>CPU, memory, network</li><li>Terminal</li><li>Signed webhooks</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("guides/observability")}>Observability</a>
+            <a href={doc("guides/usage-and-capacity")}>Usage and capacity</a>
+          </div>
         </article>
 
         <article class="tile">
@@ -82,6 +114,12 @@
             <div class="own"><span>telemetry</span><b>none</b></div>
           </div>
           <ul class="chips"><li>Private by default</li><li>Admin and viewer roles</li><li>Source-available</li><li>Standard Kubernetes</li></ul>
+          <div class="tile-docs">
+            <span>Docs</span>
+            <a href={doc("operations/security")}>Security</a>
+            <a href={doc("guides/users-and-tokens")}>Users and tokens</a>
+            <a href={doc("guides/network-isolation")}>Network isolation</a>
+          </div>
         </article>
       </div>
     </div>

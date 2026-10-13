@@ -66,6 +66,9 @@ jobs:
       - name: Check internal links
         run: pnpm links
 
+      - name: Check search and sharing tags
+        run: pnpm seo
+
   test:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:

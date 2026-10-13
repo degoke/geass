@@ -602,7 +602,7 @@ All of these are admin writes.
 | --- | --- | --- |
 | `POST /api/projects/create` | `region` (optional) | Creates a project with a generated ID and name and one environment, `production`. `201` `{"project":"proj-1a2b3c4d"}` |
 | `POST /api/projects/{project}/settings/save` | `displayName` (required), `environments` (repeat; at least one), `region` | Renames the project, sets its environments, and optionally its region. The region cannot change while the project has in-cluster databases |
-| `POST /api/projects/{project}/settings/delete` | `confirmName` (the display name) | Deletes the project, its services, databases, logical databases, buckets, cloud connections and GitHub connection, and revokes its tokens. Delete AWS buckets first and wait for them to go; see [Cloud connections](/docs/guides/connections/#remove-an-aws-connection) |
+| `POST /api/projects/{project}/settings/delete` | `confirmName` (the display name) | Deletes the project, its services, databases, logical databases, buckets, cloud connections and GitHub connection, and revokes its tokens. Delete AWS buckets first and wait for them to go; see [Connect AWS](/docs/guides/connectors/aws/#remove-an-aws-connection) |
 | `POST /api/projects/{project}/environments/create` | `environment` | Adds an environment (a lowercase DNS label; the project ID plus the name must fit in 63 characters) |
 | `POST /api/projects/{project}/environments/archive` | `environment`, `confirmName` (the environment name) | Deletes an environment and everything in it. `{"ok":true,"deleted":3}`. The last environment cannot be removed |
 | `POST /api/projects/{project}/variables/save` | `name` (`^[A-Z_][A-Z0-9_]*$`), `environment`, `value`, `secret` (`on` to store it as a secret) | Creates or updates a shared variable |
@@ -718,7 +718,7 @@ server sends `{"type":"exit"}` at the end. The session ends after five minutes. 
 | --- | --- | --- |
 | `POST /api/databases/create` | `name`, `project`, `environment`, `engine` (`postgres`, `mysql`, `sqlite`, `redis`; case does not matter, anything else becomes Postgres), `placement` (`InCluster` or `External`), `provider` (`PlanetScale` or `AWS`), `mode` (`Create` or `Connect`), `highAvailability`, `databaseName`, `clusterSize` (PlanetScale only), `host`, `port`, `username`, `password`, `version`, `storageSize`, `connectionRef`, `cpu`, `memory`, `runOnTags` | Creates a draft. `{"ok":true,"name":"orders-db","kind":"databases"}` |
 | `POST /api/databases/{db}/update` | `version`, `storageSize`, `cpu`, `memory`, `backups` (`on` or `off`), `backupRetentionDays` (1 to 365), `clusterSize` (PlanetScale only, and only until the database has been created there), `runOnTags`, `environment` | `{"ok":true,"applied":"live","liveChanged":true}` |
-| `GET /api/planetscale/cluster-sizes` | `project`, `connection`, `engine` (`mysql` or `postgres`) as query fields | Lists the cluster sizes a PlanetScale connection can create: `{"items":[{"name","displayName","cpu","ramBytes","storageBytes","development","production","metal","provider","architecture","monthlyUsd","replicaMonthlyUsd"}]}`. Observer. `400` for a bad connection or engine, `502` `could not load PlanetScale cluster sizes`. See [Cloud connections](/docs/guides/connections/#choosing-a-size) |
+| `GET /api/planetscale/cluster-sizes` | `project`, `connection`, `engine` (`mysql` or `postgres`) as query fields | Lists the cluster sizes a PlanetScale connection can create: `{"items":[{"name","displayName","cpu","ramBytes","storageBytes","development","production","metal","provider","architecture","monthlyUsd","replicaMonthlyUsd"}]}`. Observer. `400` for a bad connection or engine, `502` `could not load PlanetScale cluster sizes`. See [Connect PlanetScale](/docs/guides/connectors/planetscale/#choosing-a-size) |
 | `POST /api/databases/{db}/deploy` | none | Deploys the draft or the pending change |
 | `POST /api/databases/{db}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/databases/{db}/delete` | `confirmName` | Deletes it (see [Backups and restore](/docs/guides/backups-and-restore/) for the final backup) |
@@ -733,7 +733,7 @@ server sends `{"type":"exit"}` at the end. The session ends after five minutes. 
 An external database (PlanetScale or AWS RDS) needs `placement=External`, `provider`, and either `mode=Create` with a
 connection (PlanetScale creates the database and a login itself, as a MySQL or Postgres database from `engine`) or `host`,
 `port`, `username` and `password` for one that exists. The dashboard sends neither `mode` nor those fields for an AWS RDS draft, so one made there cannot become ready, and its
-**PlanetScale** row is greyed out, so create PlanetScale databases through this API; see [Cloud connections](/docs/guides/connections/#planetscale).
+**PlanetScale** row is greyed out, so create PlanetScale databases through this API; see [Connect PlanetScale](/docs/guides/connectors/planetscale/).
 
 #### Buckets
 
@@ -818,7 +818,7 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |
 | `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project |
 
-Details of the last group are in [Cloud connections](/docs/guides/connections/).
+Details of the last group are in [Cloud connectors](/docs/guides/connectors/).
 
 ### Project token endpoints
 

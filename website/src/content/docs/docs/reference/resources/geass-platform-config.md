@@ -7,7 +7,7 @@ sidebar:
 
 The `GeassPlatformConfig` holds the settings that belong to the whole platform rather than to one project: the dashboard's domain and how it is published, the link to the Cloudflare connection, the link to the GitHub App, where to find Prometheus, and the registry that repository builds push to. There is one, named `platform`, in `geass-system`. The dashboard creates it the first time you save a domain, a Cloudflare connection or a GitHub App, and edits it from **Settings**. You can also create and edit it with `kubectl`.
 
-For the settings as a whole, with the operator flags and environment variables, see [Configuration](/docs/reference/configuration/). For the connections it points at, see [Cloud connections](/docs/guides/connections/).
+For the settings as a whole, with the operator flags and environment variables, see [Configuration](/docs/reference/configuration/). For the connections it points at, see [Cloud connectors](/docs/guides/connectors/).
 
 ## Summary
 
@@ -105,7 +105,7 @@ This condition reports the Cloudflare side. It is only set when `cloudflareConne
 | `TunnelConfigError` | `False` | The tunnel's routes could not be published. |
 | `DNSError` | `False` | Ingress mode: the dashboard's A record could not be created. |
 
-While `CloudflareReady` is true, services without a host get a default one under the root domain. See [Cloud connections](/docs/guides/connections/#cloudflare).
+While `CloudflareReady` is true, services without a host get a default one under the root domain. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
 ## How the dashboard maps to it
 
@@ -149,7 +149,7 @@ The routes are the dashboard's host and the host of every service that has one. 
 
 **`ZoneRequired`.** Choose the zone in **Settings** → **Domain**, or set `cloudflareZoneID`.
 
-**`CloudflareReady` is `CredentialsInvalid`.** Update the token with **Update API token**. See [Cloud connections](/docs/guides/connections/#cloudflare).
+**`CloudflareReady` is `CredentialsInvalid`.** Update the token with **Update API token**. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
 **The GitHub App cannot be saved: `dashboard URL must be configured first`.** The GitHub App needs a verified HTTPS dashboard address. Finish the domain first.
 
@@ -158,7 +158,7 @@ The routes are the dashboard's host and the host of every service that has one. 
 ## Related
 
 - [Configuration](/docs/reference/configuration/)
-- [Cloud connections](/docs/guides/connections/)
+- [Cloud connectors](/docs/guides/connectors/)
 - [Domains and TLS](/docs/guides/domains-and-tls/)
 - [GeassCluster](/docs/reference/resources/geass-cluster/)
 - [Sleep when idle](/docs/guides/scale-to-zero/)

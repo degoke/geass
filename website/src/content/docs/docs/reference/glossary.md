@@ -38,21 +38,21 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **CLI.** The `geass` command line, which deploys and runs services from a terminal by calling the `/api/v1` API. See [Command line](/docs/guides/command-line/) and the [CLI reference](/docs/reference/cli/).
 
-**Cloud connection.** A project's credentials for AWS or PlanetScale, kept as a `GeassCloudConnection`. See [Cloud connections](/docs/guides/connections/).
+**Cloud connection.** A project's credentials for AWS or PlanetScale, kept as a `GeassCloudConnection`. See [Cloud connectors](/docs/guides/connectors/).
 
-**Cloudflare Tunnel.** An optional way to publish the dashboard and services through Cloudflare, using a `cloudflared` Deployment instead of open ports. See [Cloud connections](/docs/guides/connections/#cloudflare).
+**Cloudflare Tunnel.** An optional way to publish the dashboard and services through Cloudflare, using a `cloudflared` Deployment instead of open ports. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
 **Cluster.** The K3s cluster that Geass runs and manages, represented by the `GeassCluster` named `default`. See [How it works](/docs/overview/how-it-works/).
 
 **Cluster MinIO.** The single MinIO server, shared by every project, that holds in-cluster buckets. See [Object storage](/docs/guides/object-storage/).
 
-**Cluster size.** The PlanetScale size a database is created with, kept as `spec.clusterSize`; it cannot change after the database exists. See [Cloud connections](/docs/guides/connections/#choosing-a-size).
+**Cluster size.** The PlanetScale size a database is created with, kept as `spec.clusterSize`; it cannot change after the database exists. See [Connect PlanetScale](/docs/guides/connectors/planetscale/#choosing-a-size).
 
 **ClusterIssuer.** The cert-manager issuer named `letsencrypt-prod` that Geass creates from the ACME email and that every HTTPS Ingress asks for its certificate. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
 
 **Compliance tag.** A node tag, such as `hipaa`, that is always reserved and that a project can require, so everything the project runs stays on those nodes. See [Compliance tags](/docs/guides/compliance-tags/).
 
-**Connector.** A card in **Settings** → **Connectors** (GitHub, Cloudflare, AWS or PlanetScale); the dashboard's word for a connection. See [Cloud connections](/docs/guides/connections/).
+**Connector.** A card in **Settings** → **Connectors** (GitHub, Cloudflare, AWS or PlanetScale); the dashboard's word for a connection. See [Cloud connectors](/docs/guides/connectors/).
 
 **Console session.** The audit record (`GeassConsoleSession`) of a terminal opened in a service. See [Security](/docs/operations/security/#auditing).
 
@@ -90,7 +90,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 ## G
 
-**GitHub App.** The one app, registered in GitHub, that lets Geass read repositories, receive pushes and build. See [Cloud connections](/docs/guides/connections/#github).
+**GitHub App.** The one app, registered in GitHub, that lets Geass read repositories, receive pushes and build. See [Connect GitHub](/docs/guides/connectors/github/).
 
 ## H
 

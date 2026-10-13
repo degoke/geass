@@ -156,5 +156,5 @@ sudo k3s kubectl -n geass-system patch geassobjectstore <name> --type merge -p '
 - [Command line](/docs/guides/command-line/)
 - [Backups and restore](/docs/guides/backups-and-restore/)
 - [Object storage](/docs/guides/object-storage/)
-- [Connections](/docs/guides/connections/)
+- [Cloud connectors](/docs/guides/connectors/)
 - [Add servers](/docs/getting-started/add-servers/)

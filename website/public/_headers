@@ -1,0 +1,11 @@
+# Response headers for static hosts that read a `_headers` file (Cloudflare Pages, Netlify). Other hosts ignore it.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+# Build output under /_astro has a content hash in its name, so it never changes at a given URL.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable

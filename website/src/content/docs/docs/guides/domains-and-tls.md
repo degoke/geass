@@ -40,7 +40,7 @@ hostname over port 80, and visitors use 443. See [Install](/docs/getting-started
   listens on them. Also a real email address for the Let's Encrypt account, given to the installer as `GEASS_ACME_EMAIL`
   or set on the cluster later (see [HTTPS and certificates](#https-and-certificates)). Let's Encrypt refuses placeholder
   domains such as `example.com`.
-- For Cloudflare: a connection, set up as described in [Cloud connections](/docs/guides/connections/#cloudflare).
+- For Cloudflare: a connection, set up as described in [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
 ## Set the platform domain
 
@@ -155,7 +155,7 @@ cluster reports one, for example `(No ACME contact email is configured, so the l
 created …)`.
 
 Everything that needs a public dashboard address waits for verification. Registering the GitHub App is the main one; see
-[Cloud connections](/docs/guides/connections/#github).
+[Connect GitHub](/docs/guides/connectors/github/).
 
 ## HTTPS and certificates
 
@@ -258,7 +258,7 @@ Connecting Cloudflare lets Geass manage DNS in one zone. What it creates depends
 | **Cloudflare Tunnel** | A tunnel named `geass`, its routes, and a proxied `CNAME` to `<tunnel ID>.cfargotunnel.com` for the dashboard host and for each service host in the zone. | Deployment `geass-cloudflared` and Secret `geass-cloudflared-token` in `geass-system`. |
 
 The token needs **Zone** → **Zone** → **Read** and **Zone** → **DNS** → **Edit**, and **Account** → **Cloudflare Tunnel** →
-**Edit** for tunnel mode. See [Cloud connections](/docs/guides/connections/#cloudflare) for connecting, rotating and
+**Edit** for tunnel mode. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/) for connecting, rotating and
 disconnecting.
 
 :::caution
@@ -407,7 +407,7 @@ the certificate must follow. Verification starts again. Keep the old record unti
 ## Related
 
 - [Connect a domain](/docs/getting-started/connect-domain/): a short walkthrough.
-- [Cloud connections](/docs/guides/connections/#cloudflare)
+- [Connect Cloudflare](/docs/guides/connectors/cloudflare/)
 - [Apps](/docs/guides/apps/)
 - [GitHub and builds](/docs/guides/github-and-builds/)
 - [Security](/docs/operations/security/)

@@ -149,7 +149,7 @@ A [function](/docs/guides/functions/) is a service, so it can sleep. A schedule 
 
 ## Cloudflare
 
-With the dashboard published through a Cloudflare tunnel, the tunnel reaches services without going through Traefik. Geass sends the route of a sleeping service to the add-on's proxy instead of to the service, so the tunnel wakes it too. Geass works the route out from the service's own settings and from the add-on being installed, and looks again whenever a service changes and every five minutes. See [Domains and TLS](/docs/guides/domains-and-tls/) and [Cloud connections](/docs/guides/connections/).
+With the dashboard published through a Cloudflare tunnel, the tunnel reaches services without going through Traefik. Geass sends the route of a sleeping service to the add-on's proxy instead of to the service, so the tunnel wakes it too. Geass works the route out from the service's own settings and from the add-on being installed, and looks again whenever a service changes and every five minutes. See [Domains and TLS](/docs/guides/domains-and-tls/) and [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
 ## Limits
 

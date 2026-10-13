@@ -4,17 +4,56 @@ import "../styles/landing.css";
 import favicon from "../assets/favicon.svg";
 import og from "../assets/og.png";
 import grotesk from "../assets/fonts/space-grotesk-latin-wght-normal.woff2?url";
+import { absoluteUrl, docsUrl, jsonLd, licenseUrl, siteName, socialTags, withBase } from "../lib/site";
 
 interface Props {
+  /** The search-result title: say what Geass is. */
   title: string;
   description: string;
+  /** The link-preview title and description (Open Graph, X). These can be more brand-led than the search ones. */
+  shareTitle: string;
   shareDescription: string;
 }
 
-const { title, description, shareDescription } = Astro.props;
-// Link scrapers ignore relative image paths, so the card is only absolute once SITE_URL is set.
-const ogImage = Astro.site ? new URL(og.src, Astro.site).href : og.src;
-const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+const { title, description, shareTitle, shareDescription } = Astro.props;
+
+// Link scrapers and search engines ignore relative URLs, so these are absolute whenever the build knows its address.
+const site = Astro.site;
+const abs = (path: string) => (site ? absoluteUrl(path, site) : path);
+const canonical = abs(Astro.url.pathname);
+const ogImage = abs(og.src);
+const home = abs(withBase("/"));
+
+// Structured data: the site, and the product it describes. No offers, ratings or organisation are claimed.
+// `downloadUrl` and `sameAs` (the GitHub releases and repository) are left out while that repository is private and
+// has no release: they would point search engines at 404s. Add them back once it is public and tagged.
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${home}#website`,
+      name: siteName,
+      url: home,
+      description,
+      inLanguage: "en",
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${home}#software`,
+      name: siteName,
+      url: home,
+      description,
+      applicationCategory: "DeveloperApplication",
+      applicationSubCategory: "Self-hosted cloud platform",
+      operatingSystem: "Linux",
+      license: licenseUrl,
+      softwareHelp: { "@type": "WebSite", url: abs(docsUrl) },
+      image: ogImage,
+      isPartOf: { "@id": `${home}#website` },
+    },
+  ],
+};
 ---
 
 <!doctype html>
@@ -24,21 +63,26 @@ const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : un
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#0a0a0a" />
     <meta name="color-scheme" content="dark" />
+    <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href={favicon.src} />
+    <link rel="icon" href={withBase("favicon.ico")} sizes="48x48" />
+    <link rel="apple-touch-icon" href={withBase("apple-touch-icon.png")} />
+    <link rel="sitemap" type="application/xml" href={withBase("sitemap-index.xml")} />
     <link rel="preload" href={grotesk} as="font" type="font/woff2" crossorigin />
-    {canonical && <link rel="canonical" href={canonical} />}
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content={title} />
+    <meta property="og:site_name" content={siteName} />
+    <meta property="og:locale" content="en" />
+    <meta property="og:title" content={shareTitle} />
     <meta property="og:description" content={shareDescription} />
-    <meta property="og:image" content={ogImage} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Geass: absolute command over servers you already own. One cloud to manage them all." />
-    {canonical && <meta property="og:url" content={canonical} />}
+    <meta property="og:url" content={canonical} />
     <meta name="twitter:card" content="summary_large_image" />
+    {socialTags({ title: shareTitle, description: shareDescription, image: ogImage }).map((attrs) => <meta {...attrs} />)}
+
+    <script type="application/ld+json" set:html={jsonLd(structuredData)} />
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>

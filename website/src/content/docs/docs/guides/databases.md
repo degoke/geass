@@ -15,7 +15,7 @@ This page covers one database per resource. To share a single server between man
 - You need a project and an environment. See [Projects and environments](/docs/guides/projects-and-environments/).
 - The cluster needs room for the database. Deploying is refused when no node can fit it. If the project requires node tags, the room has to be on nodes that carry them. See [Where a database runs](#where-a-database-runs).
 - The first PostgreSQL database on a cluster installs the CloudNativePG operator, which takes a few minutes.
-- For backups, the project needs an AWS connection. To have Geass create a PlanetScale database, it needs a PlanetScale connection. Connecting to an external database you already host needs no connection. See [Connections](/docs/guides/connections/).
+- For backups, the project needs an AWS connection. To have Geass create a PlanetScale database, it needs a PlanetScale connection. Connecting to an external database you already host needs no connection. See [Cloud connectors](/docs/guides/connectors/).
 - For resizable disks, the cluster needs the Longhorn add-on. See [Storage and volumes](/docs/guides/storage/).
 
 ## Engines
@@ -623,6 +623,6 @@ See [Backups and restore](/docs/guides/backups-and-restore/#failure-modes).
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [Environment variables](/docs/guides/environment-variables/)
-- [Connections](/docs/guides/connections/)
+- [Cloud connectors](/docs/guides/connectors/)
 - [High availability](/docs/operations/high-availability/)
 - [Troubleshooting](/docs/operations/troubleshooting/)

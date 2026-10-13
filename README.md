@@ -8,6 +8,11 @@
 <p align="center"><strong>Absolute command over servers you already own.</strong><br>
 Managed cloud experience on your VPS or bare-metal, powered by K3s.</p>
 
+<p align="center"><a href="https://rungeass.com"><strong>Website</strong></a> ·
+<a href="https://rungeass.com/docs/"><strong>Documentation</strong></a> ·
+<a href="https://rungeass.com/docs/getting-started/install/"><strong>Install guide</strong></a> ·
+<a href="https://github.com/degoke/geass/releases">Releases</a></p>
+
 [![License: ELv2](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/degoke/geass)](https://github.com/degoke/geass/releases/latest)
 
@@ -31,6 +36,8 @@ Geass bridges that gap: a unified control plane for your services, with the deve
 Geass is aimed at teams that need sovereign or on-premise deployments, self-hosted infrastructure, or cost-effective microservices on a fleet of VPS instances.
 
 ## Getting started
+
+The full documentation is at [rungeass.com/docs](https://rungeass.com/docs/). This page covers the install in brief.
 
 ### Requirements
 

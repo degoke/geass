@@ -21,7 +21,7 @@ A bucket is a place to keep files that your apps read and write over the S3 API:
 
 For an in-cluster bucket, a dashboard admin must set up the MinIO server once for the whole cluster. See [Set up the MinIO server](#set-up-the-minio-server).
 
-For an AWS bucket, add an AWS connection to the project in **Settings**, **Connectors**. The connection is scoped to one project. See [Connections](/docs/guides/connections/). The keys must let Geass create and delete IAM users, put user policies, create access keys, and create, list and delete S3 buckets and objects. Concretely Geass calls these IAM actions: `CreateUser`, `PutUserPolicy`, `CreateAccessKey`, `ListAccessKeys`, `DeleteAccessKey`, `DeleteUserPolicy` and `DeleteUser`. On S3 it creates buckets, lists objects, versions and multipart uploads, deletes objects and versions, aborts multipart uploads and deletes buckets.
+For an AWS bucket, add an AWS connection to the project in **Settings**, **Connectors**. The connection is scoped to one project. See [Connect AWS](/docs/guides/connectors/aws/). The keys must let Geass create and delete IAM users, put user policies, create access keys, and create, list and delete S3 buckets and objects. Concretely Geass calls these IAM actions: `CreateUser`, `PutUserPolicy`, `CreateAccessKey`, `ListAccessKeys`, `DeleteAccessKey`, `DeleteUserPolicy` and `DeleteUser`. On S3 it creates buckets, lists objects, versions and multipart uploads, deletes objects and versions, aborts multipart uploads and deletes buckets.
 
 ## Set up the MinIO server
 
@@ -309,7 +309,7 @@ Confirm the app has the four values from the Secret, that it uses path-style add
 - [Storage and volumes](/docs/guides/storage/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Command line](/docs/guides/command-line/)
-- [Connections](/docs/guides/connections/)
+- [Connect AWS](/docs/guides/connectors/aws/)
 - [Environment variables](/docs/guides/environment-variables/)
 - [Backups and restore](/docs/guides/backups-and-restore/), which uses its own S3 bucket and is separate from bucket resources
 - [Users and tokens](/docs/guides/users-and-tokens/)
