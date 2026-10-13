@@ -288,7 +288,8 @@ use the same API as the dashboard, so drafts, pending changes and **Deploy chang
 | Create a draft from an image, a repository or a function | `geass apps create web -p proj-1a2b3c4d -e production --image nginx:alpine --port 80` | `create_app` (image or repository) |
 | Deploy the pending changes, and wait | `geass deploy web --wait` | `deploy_app` |
 | Read a service's state and replicas | `geass status web` | `app_status` |
-| Read its logs | `geass logs web -f` | `get_logs` |
+| Read its logs | `geass logs web` or `geass logs web -f` | `get_logs` |
+| List its deployments | `geass apps deployments web` | `app_deployments` |
 | Set a variable or a secret | `geass env set web LOG_LEVEL=debug` | `set_variable` |
 | Set the replicas, or sleep when idle | `geass scale web 3`, `geass scale web --sleep-after 10m` | `scale_app`, `set_sleep_when_idle` |
 | Go back to an earlier deploy | `geass rollback web` | `rollback_app` |

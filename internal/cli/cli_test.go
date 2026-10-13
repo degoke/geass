@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/degoke/geass/internal/testshapes"
 	"github.com/degoke/geass/pkg/client"
 )
 
@@ -180,6 +181,10 @@ func TestScaleCanPutAServiceToSleep(t *testing.T) {
 	var requests []string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			reply(w, 200, testshapes.SleepStatus("web", true, "Sleeps when idle"))
+			return
+		}
 		requests = append(requests, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(raw)))
 		_, _ = w.Write([]byte(`{}`))
 	})
@@ -390,26 +395,73 @@ func TestRollbackGoesToThePreviousDeploymentByDefault(t *testing.T) {
 }
 
 func TestLogsPrintLinesAndFollowStreams(t *testing.T) {
+	var requests []string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery)
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/status"):
-			reply(w, 200, map[string]any{"name": "web", "project": "shop", "environment": "production"})
 		case strings.HasSuffix(r.URL.Path, "/logs/stream"):
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: {\"t\":\"2026-01-01T10:00:00Z\",\"pod\":\"web-5d8f-abcde\",\"line\":\"streamed line\"}\n\n")
+			_, _ = io.WriteString(w, "data: {\"t\":\"2026-01-01T10:00:00Z\",\"service\":\"web\",\"pod\":\"web-5d8f-abcde\",\"container\":\"app\",\"line\":\"streamed line\",\"level\":\"info\"}\n\n")
+		case strings.HasSuffix(r.URL.Path, "/logs"):
+			reply(w, 200, testshapes.LogsAnswer("web",
+				map[string]any{"t": "2026-01-01T09:00:00Z", "service": "web", "pod": "web-5d8f-abcde", "container": "app", "line": "hello", "level": "info"},
+				map[string]any{"t": "2026-01-01T09:00:05Z", "service": "web", "pod": "web-5d8f-fghij", "container": "app", "line": "Error: boom", "level": "error"},
+			))
 		default:
-			reply(w, 200, map[string]any{"logs": []map[string]any{{"t": "2026-01-01T09:00:00Z", "pod": "web-5d8f-abcde", "line": "hello"}}})
+			t.Errorf("unexpected request %s", r.URL)
 		}
 	})
 	h.signedIn(t, "", "")
 
-	code, stdout, _ := h.run("logs", "web", "--tail", "10")
-	require.Equal(t, ExitOK, code)
-	require.Contains(t, stdout, "09:00:00 abcde hello")
+	code, stdout, stderr := h.run("logs", "web", "--tail", "10")
+	require.Equal(t, ExitOK, code, stderr)
+	require.Equal(t, "09:00:00 abcde hello\n09:00:05 fghij Error: boom\n", stdout, "the lines the API sent, which an earlier version printed none of")
+	require.Equal(t, []string{"/api/v1/apps/web/logs?tail=10"}, requests, "one request: the service's own route")
 
 	code, stdout, _ = h.run("logs", "web", "-f")
 	require.Equal(t, ExitOK, code)
 	require.Contains(t, stdout, "streamed line")
+}
+
+func TestLogsPassTheirFiltersOn(t *testing.T) {
+	var query string
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		reply(w, 200, testshapes.LogsAnswer("web", map[string]any{"t": "2026-01-01T09:00:00Z", "pod": "web-5d8f-abcde", "line": "timeout", "level": "error"}))
+	})
+	h.signedIn(t, "", "")
+
+	code, stdout, stderr := h.run("logs", "web", "--tail", "10", "--since", "15m", "--level", "error", "--search", "timeout")
+
+	require.Equal(t, ExitOK, code, stderr)
+	require.Equal(t, "level=error&q=timeout&since=15m&tail=10", query)
+	require.Contains(t, stdout, "timeout")
+}
+
+func TestLogsAsJSONAreTheLinesTheAPISent(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, testshapes.LogsAnswer("web", map[string]any{"t": "2026-01-01T09:00:00Z", "service": "web", "pod": "web-5d8f-abcde", "container": "app", "line": "hello", "level": "info"}))
+	})
+	h.signedIn(t, "", "")
+
+	_, stdout, stderr := h.run("--json", "logs", "web")
+
+	var line client.LogLine
+	require.NoError(t, json.Unmarshal([]byte(stdout), &line), stdout)
+	require.Equal(t, "hello", line.Text)
+	require.Equal(t, "web", line.Service)
+	require.Empty(t, stderr)
+}
+
+func TestNoLogsSaysSoOnTheErrorStream(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) { reply(w, 200, testshapes.LogsAnswer("web")) })
+	h.signedIn(t, "", "")
+
+	code, stdout, stderr := h.run("logs", "web")
+
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stdout, "nothing is mixed into what a program reads")
+	require.Contains(t, stderr, "No log lines matched")
 }
 
 func TestLoginWithATokenSavesIt(t *testing.T) {

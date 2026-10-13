@@ -84,6 +84,16 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	if !store.DeletionTimestamp.IsZero() {
+		// A store that never became ready was never usable, so failed cleanup must not hold its deletion: the
+		// credentials that could not create anything (no S3 or IAM permission, say) cannot clean up either.
+		// Once a store has been ready, cleanup has to finish before the finalizer goes.
+		tolerate := func(err error) error {
+			if err == nil || strings.TrimSpace(store.Status.ConnectionSecret) != "" {
+				return err
+			}
+			log.Info("Could not clean up a bucket that never became ready", "name", store.Name, "error", err.Error())
+			return nil
+		}
 		if clusterServer {
 			attached, attachErr := r.attachedProjectMinIONames(ctx)
 			if attachErr != nil {
@@ -100,12 +110,12 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			}
 		} else if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal {
 			if platform.ObjectStoreInfrastructureActive(&store) {
-				if err := r.deleteExternalStore(ctx, &store); err != nil {
+				if err := tolerate(r.deleteExternalStore(ctx, deployedObjectStore(&store))); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
 		} else {
-			if err := r.deleteInClusterBuckets(ctx, &store); err != nil {
+			if err := tolerate(r.deleteInClusterBuckets(ctx, deployedObjectStore(&store))); err != nil {
 				return ctrl.Result{}, err
 			}
 			if err := client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}})); err != nil {
@@ -113,7 +123,9 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			}
 			if platform.ObjectStoreInfrastructureActive(&store) {
 				if err := r.ensureClusterMinIOHelm(ctx); err != nil && !errors.Is(err, errClusterMinIOMissing) {
-					return ctrl.Result{}, err
+					if err := tolerate(err); err != nil {
+						return ctrl.Result{}, err
+					}
 				}
 			}
 		}
@@ -222,7 +234,7 @@ func (r *GeassObjectStoreReconciler) reconcileClusterMinIO(ctx context.Context, 
 		return r.setNotReady(ctx, store, waitMsg)
 	}
 	endpoint := fmt.Sprintf("http://%s.%s.svc:9000", platform.ClusterMinIOChartName, platform.SystemNamespace)
-	if err := r.reconcileConnectionSecret(ctx, store, platform.SystemNamespace, endpoint, accessKey, secretKey); err != nil {
+	if err := r.reconcileConnectionSecret(ctx, store, platform.SystemNamespace, endpoint, store.Name, accessKey, secretKey); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	return r.setReady(ctx, store, platform.SystemNamespace, endpoint, "Cluster MinIO server is ready")
@@ -455,9 +467,11 @@ func (r *GeassObjectStoreReconciler) minioBucketIdentities(ctx context.Context) 
 		if secretKey == "" {
 			continue
 		}
-		buckets, err := objectStoreBuckets(store)
+		buckets, err := inClusterBucketNames(deployedObjectStore(store))
 		if err != nil {
-			return nil, nil, err
+			// The store's own reconcile reports the name. It must not stop the chart values being rendered for
+			// every other store, and for the MinIO server itself.
+			continue
 		}
 		policyName := minioPolicyName(store.Name)
 		users = append(users, minioBucketUser{existingSecret: minioUserSecretName(store.Name), policy: policyName})
@@ -485,24 +499,71 @@ func objectStoreBucketNames(store *geassv1alpha1.GeassObjectStore) ([]string, er
 	return buckets, nil
 }
 
-// objectStoreBuckets resolves bucket names for delete and policy sync (legacy stores used the resource name).
-func objectStoreBuckets(store *geassv1alpha1.GeassObjectStore) ([]string, error) {
+// inClusterBucketNames are the names the store's buckets have on the cluster MinIO server: the names in the spec,
+// each behind the project environment, so that projects never share a bucket.
+func inClusterBucketNames(store *geassv1alpha1.GeassObjectStore) ([]string, error) {
 	buckets, err := objectStoreBucketNames(store)
 	if err != nil {
 		return nil, err
 	}
-	if len(buckets) == 0 {
-		buckets = []string{store.Name}
+	names := make([]string, len(buckets))
+	for i, bucket := range buckets {
+		if names[i], err = platform.InClusterBucketName(store.Spec.Project, string(store.Spec.Environment), bucket); err != nil {
+			return nil, err
+		}
 	}
-	return buckets, nil
+	return names, nil
+}
+
+// deployedObjectStore is the store carrying the spec that was last deployed. A saved edit stays pending until it
+// is deployed, so what exists on MinIO or in AWS follows the deployed spec: that is what to grant access to and
+// what to remove. A store with nothing deployed keeps its own spec. With no edit pending it is the store itself,
+// so the result must be treated as read-only.
+func deployedObjectStore(store *geassv1alpha1.GeassObjectStore) *geassv1alpha1.GeassObjectStore {
+	if platform.PendingUpdates(store.Annotations) == 0 {
+		return store
+	}
+	deployed := store.DeepCopy()
+	// An error leaves the spec as it was, which is the best there is when no snapshot was recorded.
+	_ = applyObjectStoreDeployedSpec(deployed)
+	return deployed
+}
+
+// markProvisioningStarted records, before the first bucket or user is created, that the store may own resources
+// outside the cluster. Deleting a store that never became ready would otherwise leave them behind, because a
+// store is only known to own anything once its connection secret is written, which happens last. The annotation
+// is patched onto a fresh copy so that the deployed spec the reconcile is running is never written back.
+func (r *GeassObjectStoreReconciler) markProvisioningStarted(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
+	if store.Annotations[platform.AnnotationProvisioningStarted] == "true" {
+		return nil
+	}
+	latest := &geassv1alpha1.GeassObjectStore{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
+		return err
+	}
+	if latest.Annotations[platform.AnnotationProvisioningStarted] != "true" {
+		base := latest.DeepCopy()
+		if latest.Annotations == nil {
+			latest.Annotations = map[string]string{}
+		}
+		latest.Annotations[platform.AnnotationProvisioningStarted] = "true"
+		if err := r.Patch(ctx, latest, client.MergeFrom(base)); err != nil {
+			return err
+		}
+	}
+	if store.Annotations == nil {
+		store.Annotations = map[string]string{}
+	}
+	store.Annotations[platform.AnnotationProvisioningStarted] = "true"
+	return nil
 }
 
 func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS string) (ctrl.Result, error) {
-	buckets, err := objectStoreBucketNames(store)
+	serverBuckets, err := inClusterBucketNames(store)
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
-	if len(buckets) == 0 {
+	if len(serverBuckets) == 0 {
 		return r.setNotReady(ctx, store, "Configure the bucket name in settings, then deploy")
 	}
 	server, err := r.clusterMinIO(ctx)
@@ -528,12 +589,15 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
 	}
 	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
-	for _, bucket := range buckets {
+	if err := r.markProvisioningStarted(ctx, store); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	for _, bucket := range serverBuckets {
 		if err := s3.EnsureBucket(bucket); err != nil {
 			return r.setNotReady(ctx, store, err.Error())
 		}
 	}
-	userAccess, userSecret, err := r.ensureProjectBucketKeys(ctx, store, wsNS, server.Status.Endpoint)
+	userAccess, userSecret, err := r.ensureProjectBucketKeys(ctx, store, wsNS, server.Status.Endpoint, serverBuckets[0])
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
@@ -564,13 +628,13 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 	if err := r.clearStaleMinIOHelmJob(ctx); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
-	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, userAccess, userSecret); err != nil {
+	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, serverBuckets[0], userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	return r.setReady(ctx, store, wsNS, server.Status.Endpoint, "Bucket is ready on the cluster MinIO server")
 }
 
-func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint string) (string, string, error) {
+func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, bucket string) (string, string, error) {
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}
 	accessKey, secretKey := "", ""
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
@@ -584,15 +648,11 @@ func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context
 			}
 			secretKey = generatedSecret
 		}
-		buckets, err := objectStoreBuckets(store)
-		if err != nil {
-			return err
-		}
 		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyEndpoint:  endpoint,
 			platform.ConnectionKeyAccessKey: accessKey,
 			platform.ConnectionKeySecretKey: secretKey,
-			platform.ConnectionKeyBucket:    buckets[0],
+			platform.ConnectionKeyBucket:    bucket,
 		})
 		return setSameNamespaceOwner(store, secret, r.Scheme)
 	})
@@ -745,10 +805,9 @@ func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, st
 
 func (r *GeassObjectStoreReconciler) deleteExternalAWS(store *geassv1alpha1.GeassObjectStore, aws *cloud.AWSClient) error {
 	if store.Spec.CreateBucket {
-		buckets, err := objectStoreBuckets(store)
-		if err != nil {
-			buckets = []string{store.Name}
-		}
+		// Names that are missing or not valid mean no bucket was created, so none is removed: never one that
+		// merely shares the resource's name.
+		buckets, _ := objectStoreBucketNames(store)
 		for _, bucket := range buckets {
 			if err := aws.DeleteBucket(bucket); err != nil {
 				return err
@@ -760,6 +819,12 @@ func (r *GeassObjectStoreReconciler) deleteExternalAWS(store *geassv1alpha1.Geas
 
 func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
 	if !platform.ObjectStoreInfrastructureActive(store) {
+		return nil
+	}
+	buckets, err := inClusterBucketNames(store)
+	if err != nil || len(buckets) == 0 {
+		// Names that cannot be stored, or none, mean no bucket was created, so none is removed: never one that
+		// merely shares the resource's name.
 		return nil
 	}
 	server, err := r.clusterMinIO(ctx)
@@ -780,10 +845,6 @@ func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context,
 	secretKey := firstNonEmpty(secretValue(rootSecret, "rootPassword"), secretValue(rootSecret, platform.ConnectionKeySecretKey))
 	if accessKey == "" || secretKey == "" {
 		return fmt.Errorf("cluster MinIO credentials are unavailable")
-	}
-	buckets, err := objectStoreBuckets(store)
-	if err != nil {
-		buckets = []string{store.Name}
 	}
 	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
 	for _, bucket := range buckets {
@@ -869,6 +930,9 @@ func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, stor
 		return r.setNotReady(ctx, store, "AWS access key and secret key are required")
 	}
 	aws := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Region: region}
+	if err := r.markProvisioningStarted(ctx, store); err != nil {
+		return r.setNotReady(ctx, store, err.Error())
+	}
 	if store.Spec.CreateBucket {
 		for _, bucket := range buckets {
 			if err := aws.EnsureBucket(bucket); err != nil {
@@ -889,22 +953,18 @@ func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, stor
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	endpoint := fmt.Sprintf("https://s3.%s.amazonaws.com", region)
-	if err := r.reconcileConnectionSecret(ctx, store, wsNS, endpoint, userAccess, userSecret); err != nil {
+	if err := r.reconcileConnectionSecret(ctx, store, wsNS, endpoint, buckets[0], userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	return r.setReady(ctx, store, wsNS, endpoint, "AWS S3 bucket is ready")
 }
 
-func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, accessKey, secretKey string) error {
+func (r *GeassObjectStoreReconciler) reconcileConnectionSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, bucket, accessKey, secretKey string) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		applyGeassLabels(secret, store, "GeassObjectStore")
-		bucket := store.Name
-		if len(store.Spec.Buckets) > 0 {
-			bucket = store.Spec.Buckets[0]
-		}
 		setSecretStrings(secret, map[string]string{
 			platform.ConnectionKeyEndpoint:  endpoint,
 			platform.ConnectionKeyAccessKey: accessKey,

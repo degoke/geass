@@ -58,6 +58,8 @@ type Identity struct {
 	CanMutate        bool   `json:"canMutate"`
 	CanReadSensitive bool   `json:"canReadSensitive"`
 	Authentication   string `json:"authentication"`
+	// ExpiresAt is when the token stops working. It is nil for a token that never expires.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 // Me asks who the caller is.
@@ -133,7 +135,15 @@ type AppStatus struct {
 	PendingChanges int       `json:"pendingChanges"`
 	Replicas       *Replicas `json:"replicas,omitempty"`
 	// Sleeping is a service that stops when idle and has stopped: it is waiting for its next request, not down.
-	Sleeping    bool         `json:"sleeping,omitempty"`
+	Sleeping bool `json:"sleeping,omitempty"`
+	// ScaleToZero is present for a service that asked to sleep when idle. Active is whether it does, which the
+	// operator decides; Message says why not once it has.
+	ScaleToZero *struct {
+		IdleSeconds int32  `json:"idleSeconds"`
+		MaxReplicas int32  `json:"maxReplicas"`
+		Active      bool   `json:"active"`
+		Message     string `json:"message,omitempty"`
+	} `json:"scaleToZero,omitempty"`
 	Build       *BuildStatus `json:"build,omitempty"`
 	LastAttempt *Attempt     `json:"lastAttempt,omitempty"`
 }
@@ -202,6 +212,77 @@ func (c *Client) SetSleepWhenIdle(ctx context.Context, name string, enabled bool
 	return err
 }
 
+// SleepState is whether a service that asked to sleep when idle is doing so. The setting is saved at once, but
+// whether it takes effect is up to the operator: it needs the serverless add-on, a public host, and no CPU
+// autoscaling, and a service that lacks one keeps running.
+type SleepState struct {
+	// Requested is whether the service asked to sleep when idle.
+	Requested bool
+	// Active is whether it does. It is false until the operator has looked at the request.
+	Active bool
+	// Message says why not, once the operator has looked and found it cannot.
+	Message string
+}
+
+// Why says why a service that asked to sleep when idle is not doing so: the operator's message, or that it has not
+// said yet.
+func (s SleepState) Why() string {
+	if s.Message != "" {
+		return s.Message
+	}
+	return "the cluster has not said yet: check scaleToZero in the service's details (resource.details.scaleToZero)"
+}
+
+// SleepState reads whether a service that sleeps when idle is doing so, from the service's status.
+func (c *Client) SleepState(ctx context.Context, name string) (SleepState, error) {
+	status, err := c.AppStatus(ctx, name)
+	if err != nil {
+		return SleepState{}, err
+	}
+	if status.ScaleToZero == nil {
+		return SleepState{}, nil
+	}
+	return SleepState{Requested: true, Active: status.ScaleToZero.Active, Message: status.ScaleToZero.Message}, nil
+}
+
+// WaitForSleep gives the operator a moment to say whether a service that was just asked to sleep will, and returns
+// what it last said: as soon as the service sleeps, or when the wait runs out. It keeps waiting while the service
+// shows no request to sleep at all, because the read can lag the change that made the request. A state that is not
+// Active when it returns means the service cannot sleep (Message says why when the operator has said) or the
+// operator had not yet answered. Timeout defaults to ten seconds and Interval to one.
+func (c *Client) WaitForSleep(ctx context.Context, name string, options WaitOptions) (SleepState, error) {
+	timeout, interval := options.Timeout, options.Interval
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	caller := ctx
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var last SleepState
+	for {
+		state, err := c.SleepState(ctx, name)
+		if err != nil {
+			// Running out of time is an answer (the last state); the caller giving up is not.
+			if caller.Err() == nil && ctx.Err() != nil {
+				return last, nil
+			}
+			return last, err
+		}
+		last = state
+		if state.Active {
+			return state, nil
+		}
+		select {
+		case <-ctx.Done():
+			return last, caller.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
 // Rollback returns a service to an earlier deployment.
 func (c *Client) Rollback(ctx context.Context, name, revision string) error {
 	return c.Do(ctx, http.MethodPost, "/apps/"+url.PathEscape(name)+"/rollback", nil, map[string]any{"revision": revision}, nil)
@@ -226,7 +307,9 @@ func (c *Client) UnsetVariable(ctx context.Context, app, key string, secret bool
 	return c.Do(ctx, http.MethodPost, "/apps/"+url.PathEscape(app)+"/"+action, nil, map[string]any{"key": key}, nil)
 }
 
-// Variables are the names of a service's variables. Values are never returned.
+// Variables are a service's variables as the API reports them: the names of its secrets and the plain
+// configuration with its values. Secret values are never returned, but plain configuration is not secret, so
+// its values are: keep anything sensitive in a secret.
 type Variables struct {
 	Secrets []string `json:"secrets"`
 	Env     []struct {
@@ -236,13 +319,14 @@ type Variables struct {
 	Config map[string]any `json:"config"`
 }
 
-// Variables lists the names of a service's variables.
+// Variables lists a service's variables: secrets by name, plain configuration with its values.
 func (c *Client) Variables(ctx context.Context, app string) (Variables, error) {
 	var out Variables
 	return out, c.Do(ctx, http.MethodGet, "/apps/"+url.PathEscape(app)+"/variables", nil, nil, &out)
 }
 
-// CreateApp creates a service. fields are the request body: project, environment, source and the rest.
+// CreateApp creates a service. fields are the request body: project, environment, source and the rest. The
+// service is saved as a draft unless fields has "deploy": true, which deploys it as soon as it is saved.
 func (c *Client) CreateApp(ctx context.Context, fields map[string]any) (map[string]any, error) {
 	var out map[string]any
 	return out, c.Do(ctx, http.MethodPost, "/apps", nil, fields, &out)
@@ -299,23 +383,21 @@ func (o LogOptions) values() url.Values {
 	return query
 }
 
-// Logs reads a service's recent logs. It needs a role that may read logs.
+// Logs reads a service's recent logs, oldest first. It needs a role that may read logs.
+//
+// Tail is how many of the newest lines come back in all. The dashboard reads that many from the end of each
+// container's log before it applies Level and Search, so a filter looks through the most recent lines and not
+// through everything the service ever said: for an older line, give a larger Tail.
 func (c *Client) Logs(ctx context.Context, app string, options LogOptions) ([]LogLine, error) {
-	status, err := c.AppStatus(ctx, app)
-	if err != nil {
-		return nil, err
-	}
-	query := options.values()
-	query.Set("environment", status.Environment)
-	query.Set("service", app)
 	var out struct {
-		Logs []LogLine `json:"logs"`
+		Lines []LogLine `json:"lines"`
 	}
-	err = c.Do(ctx, http.MethodGet, "/projects/"+url.PathEscape(status.Project)+"/logs", query, nil, &out)
-	return out.Logs, err
+	err := c.Do(ctx, http.MethodGet, "/apps/"+url.PathEscape(app)+"/logs", options.values(), nil, &out)
+	return out.Lines, err
 }
 
-// FollowLogs streams a service's logs, recent lines first and then new ones, until the context ends.
+// FollowLogs streams a service's logs, recent lines first and then new ones, until the context ends. Tail
+// applies to each container's recent lines as the stream starts.
 func (c *Client) FollowLogs(ctx context.Context, app string, options LogOptions, handle func(LogLine) error) error {
 	return c.Stream(ctx, "/apps/"+url.PathEscape(app)+"/logs/stream", options.values(), func(data []byte) error {
 		var line LogLine
@@ -326,14 +408,18 @@ func (c *Client) FollowLogs(ctx context.Context, app string, options LogOptions,
 	})
 }
 
-// DeploymentLogs are the build and deploy logs of one deployment.
+// DeploymentLogSection is one stage of a deployment, such as its build.
+type DeploymentLogSection struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Lines is the stage's log as one block of text, a line to a line.
+	Lines string `json:"lines"`
+}
+
+// DeploymentLogs are the build and deploy logs of one deployment. Stages with nothing in them are left out.
 type DeploymentLogs struct {
-	ID       string `json:"id"`
-	Sections []struct {
-		ID    string   `json:"id"`
-		Title string   `json:"title"`
-		Lines []string `json:"lines"`
-	} `json:"sections"`
+	ID       string                 `json:"id"`
+	Sections []DeploymentLogSection `json:"sections"`
 }
 
 // DeploymentLogs reads the logs of a deployment.
@@ -342,7 +428,7 @@ func (c *Client) DeploymentLogs(ctx context.Context, app, id string) (Deployment
 	return out, c.Do(ctx, http.MethodGet, "/apps/"+url.PathEscape(app)+"/deployments/"+url.PathEscape(id)+"/logs", nil, nil, &out)
 }
 
-// Metrics reads a service's metrics over a window: 15m, 1h, 6h or 24h.
+// Metrics reads a service's metrics over a window: 15m, 1h, 6h or 24h. With no window the API answers for 15m.
 func (c *Client) Metrics(ctx context.Context, kind, name, window string) (map[string]any, error) {
 	var out map[string]any
 	query := url.Values{}
@@ -390,11 +476,16 @@ func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 }
 
 // SetNodePlacement sets a node's region, zone and tags. compliance names the tags that are compliance tags;
-// they are always reserved.
-func (c *Client) SetNodePlacement(ctx context.Context, node, region, zone string, tags, reserved, compliance []string) error {
-	return c.Do(ctx, http.MethodPost, "/nodes/"+url.PathEscape(node)+"/placement", nil, map[string]any{
+// they are always reserved. It returns the warnings the change brings, such as work that is already running on
+// the node and does not belong there, or a project that no longer has a node to restart on.
+func (c *Client) SetNodePlacement(ctx context.Context, node, region, zone string, tags, reserved, compliance []string) ([]string, error) {
+	var out struct {
+		Warnings []string `json:"warnings"`
+	}
+	err := c.Do(ctx, http.MethodPost, "/nodes/"+url.PathEscape(node)+"/placement", nil, map[string]any{
 		"region": region, "zone": zone, "tags": strings.Join(tags, ","), "reserved": strings.Join(reserved, ","), "compliance": strings.Join(compliance, ","),
-	}, nil)
+	}, &out)
+	return out.Warnings, err
 }
 
 // SetRequiredTags sets the node tags every workload of a project must run on.

@@ -563,7 +563,7 @@ Click a service on the **Resources** tab to open its panel. The panel has the ta
 | **General** | Project, environment, **Service ID** | Read-only. The service ID is `metadata.name`. |
 | **Danger** | **Delete service** | Deletes the `GeassApp`. You type the service ID to confirm. |
 
-The **Variables** tab writes `spec.configData` (**New Variable**, **Raw Editor**), the Secret `<app>-secrets` with `spec.secretRef` (the **Secret** switch), `spec.sharedVariableRefs` (**Shared Variable**) and entries in `spec.env` (**Add Reference**, which adds `DATABASE_URL`, `REDIS_URL` or `S3_ENDPOINT` from the `uri` key of the resource's connection Secret). See [Environment variables](/docs/guides/environment-variables/).
+The **Variables** tab writes `spec.configData` (**New Variable**, **Raw Editor**), the Secret `<app>-secrets` with `spec.secretRef` (the **Secret** switch), `spec.sharedVariableRefs` (**Shared Variable**) and entries in `spec.env` (**Add Reference**, which adds `DATABASE_URL` or `REDIS_URL` from the `uri` key of a database's connection Secret, or `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET` from the keys of a bucket's). See [Environment variables](/docs/guides/environment-variables/).
 
 The **Code** tab of a function edits `source.function.code` and `source.function.mode` (the **Mode** menu has **Server (serves HTTP)** and **Handler (gets an event)**), and under **Schedules** it edits `source.function.triggers`. **Save** records a pending change ("Code saved. Deploy to apply it."), and so does **Save schedules** ("Schedules saved. Deploy to start them."). Changing the mode does not rewrite the code.
 

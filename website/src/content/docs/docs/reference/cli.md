@@ -27,14 +27,14 @@ to see the command list, and `geass help <command>` (or `geass <command> --help`
 | Built in | `help`, `completion`, `--help` (`-h`), `--version` (`-v`) |
 
 `deploy`, `status`, `logs`, `env`, `scale` and `rollback` also exist under `geass apps`, where they do the same
-thing. `metrics` exists only at the top level.
+thing. `metrics` exists only at the top level, and `deployments` only under `geass apps`.
 
 ## Global flags
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--context` | string | the current login | Which saved login to use. List them with `geass config get-contexts`. |
-| `--url` | string | the saved address | The Geass address, such as `https://geass.example.com`. Overrides the saved one and `$GEASS_URL`. |
+| `--url` | string | the saved address | The Geass address, such as `https://geass.example.com`. Overrides the saved one and `$GEASS_URL`. A saved login is used only for its own address, see below. |
 | `--token` | string | the saved token | An API token. Overrides the saved one and `$GEASS_TOKEN`. |
 | `-p`, `--project` | string | none | The project, written as its ID, such as `proj-1a2b3c4d`. Also `$GEASS_PROJECT`. |
 | `-e`, `--environment` | string | none | The environment, such as `production`. Also `$GEASS_ENVIRONMENT`. |
@@ -43,12 +43,21 @@ thing. `metrics` exists only at the top level.
 | `-h`, `--help` | boolean | `false` | Show help for the command. |
 | `-v`, `--version` | boolean | `false` | Root command only. Print `geass version <version>`. |
 
-:::caution
-`--url` and `$GEASS_URL` change only where requests go. The token still comes from `--token`, `$GEASS_TOKEN` or the
-saved login, so `geass --url https://other.example.com apps list` sends the current login's saved token to
-`other.example.com`. When you work with a second cluster, also pass `--token`, or sign in to it with `geass login` and
-choose it with `--context`.
-:::
+A saved login belongs to the address it was made for, and its token is sent only there. When `--url` or `$GEASS_URL`
+points somewhere else, the current login's token, project and environment are not used for that address:
+
+- If you have exactly one login saved for that address, the command uses it. If you have several (an admin and a
+  read-only one, say), it uses none of them and stops as below: say which with `--context`.
+- A login you chose with `--context` or `$GEASS_CONTEXT` is never swapped for another. With an address that is not its
+  own, it supplies no token, project or environment.
+- If you have none, the command stops with ``not signed in to ADDRESS: run `geass login --url ADDRESS` `` (exit `4`) and
+  sends nothing.
+- A token you give with `--token` or `$GEASS_TOKEN` is your choice for this run and is used for whatever address you
+  give.
+
+Two addresses are the same when their scheme, host, port and path are. A host in capitals, a trailing slash and the
+default port (`:443` for `https`, `:80` for `http`) make no difference. `http://geass.example.com` is not
+`https://geass.example.com`: a token saved for one is never sent to the other.
 
 ## Environment variables
 
@@ -74,7 +83,8 @@ For the address, token, project and environment, the first of these that is set 
 2. The environment variable (`GEASS_URL`, `GEASS_TOKEN`, `GEASS_PROJECT`, `GEASS_ENVIRONMENT`).
 3. The saved login.
 
-The saved login is `--context`, else `$GEASS_CONTEXT`, else `current` in the configuration file.
+The saved login is `--context`, else `$GEASS_CONTEXT`, else `current` in the configuration file. It supplies the token,
+project and environment only for its own address, see [Global flags](#global-flags).
 
 If the command line cannot find a configuration directory (no `$HOME` in a bare container, for instance), every
 command fails with `could not find a configuration directory (set GEASS_CONFIG)`, even when `GEASS_URL` and
@@ -105,7 +115,8 @@ creates its folder with mode `0700`, and replaces it atomically. A file that is 
       "project": "proj-1a2b3c4d",
       "environment": "production",
       "user": "token:CLI: geass CLI on laptop",
-      "role": "observer"
+      "role": "observer",
+      "expiresAt": "2026-11-11T09:00:00Z"
     }
   }
 }
@@ -119,7 +130,7 @@ creates its folder with mode `0700`, and replaces it atomically. A file that is 
 | `token` | The API token. Empty after `geass logout`. |
 | `project`, `environment` | The defaults set by `geass config set-context`. |
 | `user`, `role` | What the token was when you signed in: `token:<token name>` and `admin`, `observer` or `viewer`. For information only. |
-| `expiresAt` | Part of the format, but nothing in the command line writes or reads it. |
+| `expiresAt` | When the token expires, as `geass login` last saw it. Absent for a token that never expires. `geass config get-contexts` shows it, and `geass logout` clears it. |
 
 ## Output
 
@@ -179,9 +190,12 @@ The command also uses the global flags `--url`, `--token` and `--context`.
   `slow_down`, and gives up when the code expires, 10 minutes after it was issued.
 - **Check and save.** The token is checked with `GET /me` before anything is saved. A login that fails is not saved. A
   login that works is saved under `--name`, else `--context`, else the host of the address, becomes the current login,
-  and keeps the project and environment defaults an earlier login of that name had.
+  and keeps the project and environment defaults an earlier login of that name had, when it was for the same address.
+  A name that is pointed at another address starts with none, because a project ID from one Geass means nothing on
+  another. When the token expires is saved with it.
 - **Output.** `Signed in to <url> as <user> (<access>)`, where access is `admin`, `read-only, with logs`, `read-only`
-  or `project token for <project>/<environment>`. With `--json`: `{"context", "url", "user", "role"}`.
+  or `project token for <project>/<environment>`. With `--json`: `{"context", "url", "user", "role"}`, and
+  `expiresAt` when the token expires.
 
 **API calls:** `POST /auth/device`, `POST /auth/token` (repeated), `GET /me`. The first two need no token.
 **Needs:** nothing to start. An admin signed in to the dashboard must approve the code. A token given with `--token`
@@ -194,7 +208,7 @@ echo "$TOKEN" | geass login --url https://geass.example.com --token-stdin --name
 
 ### `geass logout`
 
-Forgets the token, user and role of the current login (or the one chosen with `--context` or `$GEASS_CONTEXT`). The
+Forgets the token, user, role and expiry of the current login (or the one chosen with `--context` or `$GEASS_CONTEXT`). The
 address and the project and environment defaults stay.
 
 ```text
@@ -218,11 +232,15 @@ geass whoami
 token:CLI: geass CLI on laptop on https://geass.example.com
 access: read-only, with logs
 can change things: no
+expires: 2026-11-11 09:00 UTC (in 30 days)
 ```
 
+The `expires` line says when the token stops working and how long is left (`in 30 days`, `in 5 hours`, `in under a
+minute`, or `expired 2d ago`), or `never` for a token with no expiry.
+
 With `--json` it prints the identity returned by the API: `username`, `role`, `scope` (`workspace` or `project`),
-`project` and `environment` (project tokens only), `canMutate`, `canReadSensitive` and `authentication` (`token`).
-The token's expiry is not in this output. Read it with `geass api GET /me`, which includes `expiresAt`.
+`project` and `environment` (project tokens only), `canMutate`, `canReadSensitive`, `authentication` (`token`) and
+`expiresAt` (absent for a token that never expires).
 
 **API calls:** `GET /me`. **Needs:** any signed-in token.
 
@@ -239,7 +257,8 @@ geass v0.2.0
 api v1
 ```
 
-The `api` line appears only when an address is known and the token is accepted. Without a login the command prints
+The `api` line appears only when an address is known and the token is accepted. The saved token is sent only to the
+address it was saved for. Without a login the command prints
 only the first line, with exit 0. A command line built without a release tag reports `dev`. With `--json`:
 `{"cli": "...", "api": "..."}`.
 
@@ -258,12 +277,13 @@ geass config get-contexts
 ```
 
 ```text
-   NAME                 URL                          USER                            PROJECT        ENVIRONMENT
-*  geass.example.com    https://geass.example.com    token:CLI: geass CLI on laptop  proj-1a2b3c4d  production
-   staging.example.com  https://staging.example.com  -                               -              -
+   NAME                 URL                          USER                            PROJECT        ENVIRONMENT  EXPIRES
+*  geass.example.com    https://geass.example.com    token:CLI: geass CLI on laptop  proj-1a2b3c4d  production   2026-11-11
+   staging.example.com  https://staging.example.com  -                               -              -            -
 ```
 
-With `--json` it prints the whole configuration with each token replaced by `(saved)`.
+`EXPIRES` is the day the token expires, as `geass login` saw it, followed by `(expired)` once that day has passed, or `-`
+when it was not recorded or the token never expires. With `--json` it prints the whole configuration with each token replaced by `(saved)`.
 
 #### `geass config use-context NAME`
 
@@ -356,7 +376,9 @@ api   failed  0/1    Failed     -                        Kaniko completed withou
 | `MESSAGE` | Why the service is not ready, when it says. |
 
 With `--json` it prints `{"items": [...]}`. Each item has `name`, `project`, `environment`, `state`, `message`,
-`url`, `ready`, `pendingChanges`, `replicas` (`desired`, `ready`, `available`), `sleeping`, `build` (`name`, `phase`,
+`url`, `ready`, `pendingChanges`, `replicas` (`desired`, `ready`, `available`), `sleeping`, `scaleToZero` (for a service
+that asked to sleep when idle: `idleSeconds`, `maxReplicas`, and `active` and `message` once the cluster has said),
+`build` (`name`, `phase`,
 `failureReason`, `sourceRevision`, `ciState`, `startedAt`, `completedAt`) and `lastAttempt` (`id`, `phase`,
 `startedAt`, `completedAt`, `summary`, `errors`).
 
@@ -401,6 +423,27 @@ geass deploy web --wait
 geass deploy -p proj-1a2b3c4d -e production --wait
 ```
 
+### `geass apps deployments`
+
+Lists a service's deployments, newest first.
+
+```text
+geass apps deployments APP
+```
+
+```text
+ID         PHASE     AGE  TRIGGER  ACTOR      CHANGE
+web-7x2kq  Recorded  3h   -        Dashboard  Deploy nginx:1.27
+web-4m8zp  Recorded  3d   push     GitHub     Deploy acme/web@main
+```
+
+The newest entry is the one running. `ID` is what `geass rollback APP DEPLOYMENT` takes. A rollback adds an entry of its
+own. Empty columns show `-`. With `--json` it prints `{"items": [...]}`, each item with `id`, `phase`, `image`,
+`commit`, `trigger`, `actor`, `changeTitle`, `createdAt`, `startedAt` and `completedAt`. A service that was never
+deployed lists nothing.
+
+**API calls:** `GET /apps/{name}/deployments`. **Needs:** any signed-in token (a project token for its own services).
+
 ### `geass logs`
 
 Shows a service's recent logs, or follows them (also `geass apps logs`).
@@ -412,26 +455,24 @@ geass logs APP [-f] [--tail N] [--since DURATION] [--level LEVEL] [--search TEXT
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `-f`, `--follow` | boolean | `false` | Keep following new lines, across restarts. Ends with Ctrl-C, which exits `0`. |
-| `--tail` | integer | `200` | How many recent lines to start with. The API accepts 1 to 1000. |
+| `--tail` | integer | `200` | How many of the newest lines to show. The API accepts 1 to 1000. See below. |
 | `--since` | string | none | Only lines newer than this long ago, such as `15m` or `2h`. Go duration syntax, up to 7 days: write `48h`, not `2d`. |
 | `--level` | string | none | Only lines of this level: `error`, `warn`, `info` or `debug`. |
 | `--search` | string | none | Only lines containing this text, up to 200 characters. |
 
 Each line prints as `HH:MM:SS <pod suffix> <text>`, in UTC. The pod suffix is the last part of the pod's name, so
 `web-6d9c7b8f5-x2k4p` shows as `x2k4p`. With `--json`, each line is a JSON object with `t`, `service`, `pod`,
-`container`, `line` and `level`.
+`container`, `line` and `level`. When nothing matches, `No log lines matched.` is printed on standard error and
+standard output stays empty.
 
-:::caution
-At this version, `geass logs APP` without `-f` prints nothing even when the service has logs: the command reads the
-lines under the key `logs`, and the API answers under `lines`. `geass logs APP -f` is not affected, and `--tail` and
-`--since` apply to it too. To read recent lines without following, use `geass api GET /projects/PROJECT/logs -q
-environment=ENV -q service=APP`, which prints them under `lines`.
-:::
+`--tail` counts the newest lines in all, oldest first. The dashboard reads that many from the end of each copy's log
+before it applies `--level` and `--search`, so a filter looks through the most recent lines only: with `--tail 200`,
+`--level error` finds the errors among each copy's last 200 lines. Raise `--tail` (up to 1000) to look further back.
+`--level warn` also shows errors. With `-f`, `--tail` is how many recent lines to start each copy with.
 
-**API calls:** `GET /apps/{name}/status` then `GET /projects/{project}/logs` with `environment`, `service`, `tail`,
-`since`, `q` and `level`; with `-f`, one `GET /apps/{name}/logs/stream` (server-sent events) with the same filters.
-**Needs:** Read only, with logs, or Full access. With `-f`, a project token also works. Without `-f`, a project token
-gets `403`. A **Read only** (viewer) token gets `403` for both.
+**API calls:** `GET /apps/{name}/logs` with `tail`, `since`, `q` and `level`; with `-f`, one
+`GET /apps/{name}/logs/stream` (server-sent events) with the same filters. **Needs:** Read only, with logs, Full access,
+or a project token (for its own services). A **Read only** (viewer) token gets `403`.
 
 ```bash
 geass logs web -f --level error --since 15m
@@ -505,7 +546,7 @@ geass scale APP [REPLICAS] [--sleep-after DURATION | --always-on]
 | `--always-on` | boolean | `false` | Keep the service running instead of sleeping when idle. |
 
 `REPLICAS` is a whole number from 0 to 1000. The two flags cannot be used together. With only `APP` you must give a
-flag. Scaling and sleeping take effect at once, with no deploy.
+flag. Scaling takes effect at once, with no deploy. So does the sleep setting, once the cluster has accepted it.
 
 ```text
 $ geass scale web 3
@@ -517,12 +558,24 @@ web stays running
 ```
 
 `--sleep-after` only works when the serverless add-on is on in the cluster settings and the service has a public
-host, and not together with CPU autoscaling. The command saves the setting and prints success in any case. If the
-service cannot sleep, it stays running: read `resource.details.scaleToZero` in `geass apps get APP` to see `active` and
-the reason. See [Scale to zero](/docs/guides/scale-to-zero/).
+host, and not together with CPU autoscaling. The command saves the setting and then waits up to 10 seconds for the
+cluster to say whether the service can sleep. It prints `APP sleeps after ...` only when it can. When it cannot, the
+service stays running, the setting stays saved, and the command exits `1` and says why:
+
+```text
+$ geass scale web --sleep-after 10m
+Error: saved, but web cannot sleep when idle and stays running: The serverless add-on is not installed
+```
+
+If you gave `REPLICAS` too, it is applied before the command reports that. When the cluster has not answered within
+10 seconds, the message says so and points at `resource.details.scaleToZero`, where `active` and `message` give the
+state (`geass status APP --json` shows them as `scaleToZero`). A service that shows no request to sleep at all is waited
+for too, since the read can lag the change, and ends the wait the same way. `--always-on` needs no check. See
+[Scale to zero](/docs/guides/scale-to-zero/).
 
 **API calls:** `POST /apps/{name}/scale` with `{"replicas"}`; `PATCH /apps/{name}` with
-`{"scaleToZero": "on" | "off", "idleSeconds"}`. **Needs:** Full access or a project token.
+`{"scaleToZero": "on" | "off", "idleSeconds"}`, then `GET /apps/{name}/status` until `scaleToZero.active` is `true` or
+the wait ends. **Needs:** Full access or a project token.
 
 ### `geass rollback`
 
@@ -537,8 +590,8 @@ geass rollback APP [DEPLOYMENT] [--wait]
 | `--wait` | boolean | `false` | Wait until the service is ready (10 minutes at most) and print its status. |
 
 With no `DEPLOYMENT`, the command goes to the deployment before the newest one. With fewer than two deployments it
-stops with `APP has no earlier deployment to go back to` (exit 3). The command line has no command that lists
-deployment ids. Read them with `geass api GET /apps/APP/deployments`: the `id` of each item is what `DEPLOYMENT` takes.
+stops with `APP has no earlier deployment to go back to` (exit 3). List the ids with
+[`geass apps deployments APP`](#geass-apps-deployments): the `ID` of each row is what `DEPLOYMENT` takes.
 
 Rolling back deploys at once and records a new deployment, so running `geass rollback APP` again goes to the entry
 before that one, not further back. Pass an id to choose. Functions cannot be rolled back (the API answers `functions
@@ -564,7 +617,7 @@ geass apps create NAME (--image IMAGE | --repo OWNER/NAME | --function FILE) [fl
 | `--runtime` | string | `bun` | The function's runtime: `bun`, `node` or `python`. |
 | `--mode` | string | `http` | The function's mode: `http` (a program that serves HTTP) or `event` (a handler). |
 | `--port` | integer | none | The port it serves on. Without it the API uses 8080. |
-| `--deploy` | boolean | `false` | Deploy it straight away instead of saving a draft. Does not deploy at this version, see below. |
+| `--deploy` | boolean | `false` | Deploy it straight away instead of saving a draft. |
 
 It needs `--project` and `--environment` (or their defaults) and exactly one of `--image`, `--repo` and
 `--function`; if you give several, the first in that order wins. `--runtime` and `--mode` apply only to `--function`.
@@ -576,16 +629,20 @@ geass apps create api -p proj-1a2b3c4d -e production --repo acme/storefront --br
 geass apps create hook -p proj-1a2b3c4d -e production --function hook.mjs --runtime node --mode event
 ```
 
-:::caution
-At this version every service the API creates is saved as a draft, even with `--deploy`, although the command then
-prints `Created NAME and started deploying it`. Run `geass deploy NAME` to deploy it. Creating a service from a
-repository also needs the project to be linked to GitHub, which you do in the dashboard
+Without `--deploy` the service is saved as a draft and the command prints ``Created NAME as a draft. Deploy it with `geass deploy NAME`.`` With `--deploy` it is deployed as it is saved and the command prints `Created NAME and started
+deploying it`. Follow it with `geass status NAME`, or `geass deploy NAME --wait` once it exists. The deploy is checked
+before anything is saved: a cluster with no room for the service refuses the command and leaves no draft behind. The
+command prints that only when the answer says the service was deployed. A Geass older than the command line ignores
+`--deploy` and saves a draft: the command then exits `1`, saying that it did not deploy the service and to run
+`geass deploy NAME`.
+
+Creating a service from a repository also needs the project to be linked to GitHub, which you do in the dashboard
 ([GitHub and builds](/docs/guides/github-and-builds/)). With `--deploy`, a missing link is an error. As a draft it is
 accepted without one.
-:::
 
-**API calls:** `POST /apps` with `project`, `environment`, `name`, `draft`, `source` (`image`, `git` or `function`),
-`image` or `repository` and `branch` or `runtime`, `code` and `mode`, and `port`. **Needs:** Full access.
+**API calls:** `POST /apps` with `project`, `environment`, `name`, either `draft` (without `--deploy`) or `deploy`
+(with it), `source` (`image`, `git` or `function`), `image` or `repository` and `branch` or `runtime`, `code` and
+`mode`, and `port`. **Needs:** Full access.
 
 ### `geass apps delete`
 
@@ -832,8 +889,10 @@ geass nodes tag NODE [--region REGION] [--zone ZONE] [--tags TAG,...] [--reserve
 
 This replaces everything the node had. A region, zone or tag you leave out is removed. A name is lowercase letters,
 numbers and hyphens, up to 40 characters, and a node can have 16 tags. The command prints `Updated NODE. Running
-workloads are not moved: one that restarts only returns to a node that matches.` It does not print the warnings the
-API returns. To see them, call `geass api POST /nodes/NODE/placement` yourself.
+workloads are not moved: one that restarts only returns to a node that matches.` Then it prints each warning the API
+returns on standard error, as `warning: ...`. They say what the change leaves to do or watch for, such as a tag that is
+now a compliance tag while work that does not belong is still running on the node, or a project that has no node left
+to restart on. A change with nothing to warn about prints none.
 
 ```bash
 geass nodes tag worker-2 --region eu --tags hipaa --compliance hipaa
@@ -947,7 +1006,7 @@ geass mcp [--read-only] [--allow-delete] [--listen ADDRESS]
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. |
+| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. An admin token still gets `database_connection`, which only reads. |
 | `--allow-delete` | boolean | `false` | Also offer the tool that permanently deletes resources. |
 | `--listen` | string | none | Serve MCP over HTTP at this address, such as `127.0.0.1:8765`, instead of standard input and output. |
 
@@ -970,12 +1029,13 @@ The command line is built on [Cobra](https://cobra.dev), which adds these:
 
 ## Configuration values are visible
 
-:::caution
+:::note
 Plain configuration (`geass env set` without `--secret`) is not secret, and the API returns it. Secrets are returned
 by name only, and `spec.secretData` in `geass apps get` has its values emptied. But `geass env list --json` and
 `geass apps get` (with a Full access token) print plain configuration values (`config` and `spec.configData`), and
 `spec.env` lists literal environment variables with their values. `geass env list` without `--json` prints names
-only. Store anything sensitive as a secret.
+only. Store anything sensitive as a secret. The help of `geass env` and the MCP tools `get_app` and `list_variables`
+say the same.
 :::
 
 ## Related

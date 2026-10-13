@@ -236,10 +236,11 @@ func projectTokenRoute(method, path string) (tokenRoute, bool) {
 	return tokenRoute{}, false
 }
 
-// projectTokenV1Route is the part of the v1 API a project token can read that has no dashboard route to go
-// through. What the dashboard also offers (logs, metrics, variables) is reached by its dashboard path, which
-// the adapter rewrites v1 requests to before they get here, so the list above covers those too. A mutation
-// was rewritten before it got here as well.
+// projectTokenV1Route is the part of the v1 API a project token can read that is answered by v1 itself rather
+// than by a dashboard route (a service's logs among them, which v1 gives as structured lines). What the
+// dashboard also offers (metrics, variables) is reached by its dashboard path, which the adapter rewrites v1
+// requests to before they get here, so the list above covers those too. A mutation was rewritten before it
+// got here as well.
 func projectTokenV1Route(method, path string) (tokenRoute, bool) {
 	if method != http.MethodGet && method != http.MethodHead {
 		return tokenRoute{}, false
@@ -250,7 +251,7 @@ func projectTokenV1Route(method, path string) (tokenRoute, bool) {
 		return tokenRoute{}, true
 	case len(parts) >= 2 && parts[0] == kindApps:
 		switch strings.Join(parts[2:], "/") {
-		case "", "status", "deployments", "logs/stream":
+		case "", "status", "deployments", "logs", "logs/stream":
 			return tokenRoute{app: parts[1]}, true
 		}
 	}

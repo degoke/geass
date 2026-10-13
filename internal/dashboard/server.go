@@ -947,7 +947,14 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	environment := geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
 	source := r.FormValue("source")
 	draft := formDraftRequested(r)
-	if !draft && project != "" && strings.TrimSpace(r.FormValue("name")) == "" && image == "" && source != "git" {
+	// deploy asks for the service to be deployed as soon as it is saved, the field a settings save takes to deploy
+	// at once. Without it a new service is saved as a draft and waits for a deploy, whatever draft says.
+	deployNow := formFlagSet(r, formDeploy)
+	if deployNow && draft {
+		redirectFormError(w, r, formProjectFallback(r, "/apps"), "A draft is not deployed: ask for a draft or for a deploy, not both")
+		return
+	}
+	if !draft && !deployNow && project != "" && strings.TrimSpace(r.FormValue("name")) == "" && image == "" && source != "git" {
 		draft = true
 	}
 	fallback = formProjectFallback(r, "/apps")
@@ -1070,6 +1077,11 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	app.Spec.Deploy.Enabled = false
 	initializeAppPendingChanges(app)
+	// A deploy is refused before anything is saved when the cluster has no room, as it is for a deploy of a draft:
+	// otherwise the caller would be left with a draft it did not ask for.
+	if deployNow && s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(app), s.appPlacement(r.Context(), app)) {
+		return
+	}
 	if err := s.Client.Create(r.Context(), app); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			redirectFormError(w, r, fallback, "app already exists")
@@ -1078,7 +1090,25 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
+	if deployNow {
+		s.deployCreatedApp(w, r, app, fallback)
+		return
+	}
 	redirectAfterResourceCreate(w, r, project, string(environment), "apps", name)
+}
+
+// deployCreatedApp deploys a service that has just been saved, and answers the request that created it. When the
+// deploy fails the service is left as the draft it was saved as, and the answer says so.
+func (s *Server) deployCreatedApp(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp, fallback string) {
+	if err := s.deployApp(r.Context(), app); err != nil {
+		redirectFormError(w, r, fallback, "The service was saved as a draft, but deploying it failed. Deploy it again from its page")
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": app.Name, "kind": "apps", "deployed": true})
+		return
+	}
+	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", app.Name, "deployments")
 }
 
 func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassApp) (string, error) {
@@ -1171,31 +1201,39 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 	if s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(app), s.appPlacement(r.Context(), app)) {
 		return
 	}
+	if err := s.deployApp(r.Context(), app); err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeAppPendingJSON(w, app)
+		return
+	}
+	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
+}
+
+// deployApp deploys a service: it marks the service deployed, so the operator starts running it, and starts the
+// provision attempt and records the deployment that the service's history shows. The caller has already checked
+// that the request may deploy and that the cluster has room.
+func (s *Server) deployApp(ctx context.Context, app *geassv1alpha1.GeassApp) error {
 	markDeployed := func() error {
 		app.Spec.Deploy.Enabled = true
 		clearAppPendingChanges(app)
 		return platform.SetLastDeployedSpec(app)
 	}
 	if err := markDeployed(); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+		return err
 	}
-	if err := s.updateReapplying(r.Context(), app, markDeployed); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+	if err := s.updateReapplying(ctx, app, markDeployed); err != nil {
+		return err
 	}
-	_ = s.startProvisionAttempt(r.Context(), client.ObjectKeyFromObject(app), app)
-	deploymentName, err := s.recordDeployment(r.Context(), app)
+	_ = s.startProvisionAttempt(ctx, client.ObjectKeyFromObject(app), app)
+	deploymentName, err := s.recordDeployment(ctx, app)
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+		return err
 	}
-	s.attachAppProvisionAttemptRefs(r.Context(), name, deploymentName, s.latestAppBuildName(r.Context(), app))
-	if isHXRequest(r) || isJSONRequest(r) {
-		writeAppPendingJSON(w, app)
-		return
-	}
-	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
+	s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app))
+	return nil
 }
 
 func (s *Server) appFromForm(name, image string, r *http.Request) *geassv1alpha1.GeassApp {
@@ -1547,6 +1585,39 @@ func resourceNamespaceForApp(app geassv1alpha1.GeassApp) (string, error) {
 	return platform.ProjectNamespace(app.Spec.Project, string(app.Spec.Environment))
 }
 
+// connectionReference is one environment variable an app gets from a resource's connection Secret.
+type connectionReference struct {
+	envName   string
+	secretKey string
+}
+
+// bucketConnectionReferences is what an app needs to use a bucket. A bucket's Secret holds no ready-made
+// connection URL, only these four values, so each becomes a variable.
+var bucketConnectionReferences = []connectionReference{
+	{"S3_ENDPOINT", platform.ConnectionKeyEndpoint},
+	{"S3_ACCESS_KEY_ID", platform.ConnectionKeyAccessKey},
+	{"S3_SECRET_ACCESS_KEY", platform.ConnectionKeySecretKey},
+	{"S3_BUCKET", platform.ConnectionKeyBucket},
+}
+
+// handSetVariable returns the name of the first reference variable the service already has as a value someone
+// set: a plain environment variable or an entry in its variables. Adding the reference would replace it, or
+// override it, without anyone noticing. A variable that is itself a reference to a Secret is replaced, which is
+// how a second database or bucket takes the place of the first.
+func handSetVariable(app *geassv1alpha1.GeassApp, references []connectionReference) string {
+	for _, reference := range references {
+		if _, set := app.Spec.ConfigData[reference.envName]; set {
+			return reference.envName
+		}
+		for _, env := range app.Spec.Env {
+			if env.Name == reference.envName && (env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil) {
+				return reference.envName
+			}
+		}
+	}
+	return ""
+}
+
 func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -1560,7 +1631,8 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "overview")
 	resourceName := strings.TrimSpace(r.FormValue("name"))
 	kind := r.FormValue("kind")
-	secretName, envName := "", ""
+	secretName := ""
+	var references []connectionReference
 	if kind == "database" {
 		var db geassv1alpha1.GeassDatabase
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: resourceName, Namespace: systemNamespace}, &db); err != nil {
@@ -1568,11 +1640,12 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			return
 		}
 		secretName = db.Status.ConnectionSecret
+		envName := "DATABASE_URL"
 		if db.Spec.Engine == geassv1alpha1.DatabaseEngineRedis {
 			envName = "REDIS_URL"
-		} else {
-			envName = "DATABASE_URL"
 		}
+		// A database Secret holds a ready-made connection URL.
+		references = []connectionReference{{envName, platform.ConnectionKeyURI}}
 	}
 	if kind == "object-store" || kind == "object-stores" {
 		var store geassv1alpha1.GeassObjectStore
@@ -1580,19 +1653,21 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			http.NotFound(w, r)
 			return
 		}
-		secretName, envName = store.Status.ConnectionSecret, "S3_ENDPOINT"
+		secretName = store.Status.ConnectionSecret
+		references = bucketConnectionReferences
 	}
 	if secretName == "" {
 		redirectFormError(w, r, fallback, "resource is not ready")
 		return
 	}
-	for i := range app.Spec.Env {
-		if app.Spec.Env[i].Name == envName {
-			app.Spec.Env = append(app.Spec.Env[:i], app.Spec.Env[i+1:]...)
-			break
-		}
+	if name := handSetVariable(&app, references); name != "" {
+		redirectFormError(w, r, fallback, name+" is already set on this service. Remove it from Variables first, then add the reference.")
+		return
 	}
-	app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: "uri"}}})
+	for _, reference := range references {
+		app.Spec.Env = slices.DeleteFunc(app.Spec.Env, func(env corev1.EnvVar) bool { return env.Name == reference.envName })
+		app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: reference.envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: reference.secretKey}}})
+	}
 	markAppPendingChange(&app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), &app); err != nil {
 		redirectFormInternalError(w, r, fallback)
@@ -1644,8 +1719,11 @@ func formHasValue(r *http.Request, keys ...string) bool {
 	return false
 }
 
-func formDraftRequested(r *http.Request) bool {
-	switch strings.ToLower(strings.TrimSpace(r.FormValue("draft"))) {
+func formDraftRequested(r *http.Request) bool { return formFlagSet(r, "draft") }
+
+// formFlagSet reports whether a yes-or-no field is set: a checked box ("on"), or true, 1 or yes.
+func formFlagSet(r *http.Request, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.FormValue(key))) {
 	case "on", "true", "1", "yes":
 		return true
 	default:
@@ -2715,13 +2793,13 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(store, bucket); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		store.Spec.Buckets = []string{bucket}
 	} else if strings.TrimSpace(r.FormValue("draft")) == "" {
-		if err := platform.ValidBucketName(name); err != nil {
+		if err := validateBucketNameForStore(store, name); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
@@ -3017,7 +3095,7 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 		store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(&store, bucket); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}

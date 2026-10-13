@@ -80,7 +80,7 @@ func writeV1Error(w http.ResponseWriter, status int, message string) {
 }
 
 // v1Router serves the endpoints that exist only in v1. A GET it does not know is passed on to the dashboard's
-// route of the same name (see v1ReadPath), so logs, metrics and the rest need not be written twice.
+// route of the same name (see v1ReadPath), so metrics, variables and the rest need not be written twice.
 func (s *Server) v1Router() *http.ServeMux {
 	s.v1Once.Do(func() {
 		mux := http.NewServeMux()
@@ -95,6 +95,7 @@ func (s *Server) v1Router() *http.ServeMux {
 		}
 		mux.HandleFunc("GET /api/v1/apps/{name}/status", s.v1AppStatus)
 		mux.HandleFunc("GET /api/v1/apps/{name}/deployments", s.v1AppDeployments)
+		mux.HandleFunc("GET /api/v1/apps/{name}/logs", s.v1AppLogs)
 		mux.HandleFunc("GET /api/v1/apps/{name}/logs/stream", s.v1AppLogStream)
 		mux.HandleFunc("GET /api/v1/databases/{name}/connection", s.v1Connection(kindDatabases))
 		mux.HandleFunc("GET /api/v1/logical-databases/{name}/connection", s.v1Connection(kindLogicalDatabases))
@@ -104,7 +105,7 @@ func (s *Server) v1Router() *http.ServeMux {
 }
 
 // v1ReadPath is the dashboard route that serves a v1 read that v1 itself does not: the same path without the
-// version, so GET /api/v1/apps/web/logs is GET /api/apps/web/logs.
+// version, so GET /api/v1/apps/web/metrics is GET /api/apps/web/metrics.
 func v1ReadPath(path string) string { return "/api/" + strings.TrimPrefix(path, v1Prefix) }
 
 func (s *Server) v1Version(w http.ResponseWriter, _ *http.Request) {
@@ -412,6 +413,11 @@ func (s *Server) v1AppStatus(w http.ResponseWriter, r *http.Request) {
 		"state": view.State, "message": view.Message, "url": app.Status.URL, "pendingChanges": view.PendingChanges,
 		"ready": view.State == stateReady,
 	}
+	// Whether a service that asked to sleep when idle can is the operator's to say, and a caller that has just asked
+	// reads it here, in the one read it already makes, instead of loading every resource for it.
+	if sleep, ok := view.Details["scaleToZero"]; ok {
+		status["scaleToZero"] = sleep
+	}
 	if namespace, err := resourceNamespaceForApp(*app); err == nil {
 		var deploy appsv1.Deployment
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: app.Name, Namespace: namespace}, &deploy); err == nil {
@@ -486,25 +492,49 @@ func (s *Server) v1AppForCaller(w http.ResponseWriter, r *http.Request) (*geassv
 	return app, true
 }
 
-// v1AppLogStream follows a service's logs as server-sent events: recent lines first, then new ones as they
-// are written, across restarts and new pods. It is the project's stream narrowed to one service.
-func (s *Server) v1AppLogStream(w http.ResponseWriter, r *http.Request) {
+// v1AppLogRequest checks that the caller may read a service's logs and returns the project's log request
+// narrowed to that service. The environment and the service are set here, over anything the caller sent, so
+// a project token cannot read past its own service.
+func (s *Server) v1AppLogRequest(w http.ResponseWriter, r *http.Request) (*geassv1alpha1.GeassApp, *http.Request, bool) {
 	if !s.v1Caller(r).canReadSensitive() {
 		writeV1Error(w, http.StatusForbidden, "viewer role cannot access this")
-		return
+		return nil, nil, false
 	}
 	app, ok := s.v1AppForCaller(w, r)
 	if !ok {
-		return
+		return nil, nil, false
 	}
-	stream := r.Clone(r.Context())
-	query := stream.URL.Query()
+	narrowed := r.Clone(r.Context())
+	query := narrowed.URL.Query()
 	query.Set(formEnvironment, string(app.Spec.Environment))
 	query.Set("service", app.Name)
-	streamURL := *r.URL
-	streamURL.RawQuery = query.Encode()
-	stream.URL = &streamURL
-	s.handleAPIProjectLogStream(w, stream, app.Spec.Project)
+	narrowedURL := *r.URL
+	narrowedURL.RawQuery = query.Encode()
+	narrowed.URL = &narrowedURL
+	return app, narrowed, true
+}
+
+// v1AppLogs reads a service's recent logs. It is the project's logs narrowed to one service, so it answers the
+// way the project does (and the stream below does): {"lines": [...]} with one entry per line, carrying its
+// time, pod, container, text and level, for the tail, since, q and level filters to act on. The tail is the
+// newest lines across the service's copies, and the answer names no service but this one. The dashboard's
+// own route of the same name answers a block of text, which a program should not have to take apart.
+func (s *Server) v1AppLogs(w http.ResponseWriter, r *http.Request) {
+	app, narrowed, ok := s.v1AppLogRequest(w, r)
+	if !ok {
+		return
+	}
+	s.writeProjectLogs(w, narrowed, app.Spec.Project, app.Name)
+}
+
+// v1AppLogStream follows a service's logs as server-sent events: recent lines first, then new ones as they
+// are written, across restarts and new pods. It is the project's stream narrowed to one service.
+func (s *Server) v1AppLogStream(w http.ResponseWriter, r *http.Request) {
+	app, narrowed, ok := s.v1AppLogRequest(w, r)
+	if !ok {
+		return
+	}
+	s.handleAPIProjectLogStream(w, narrowed, app.Spec.Project)
 }
 
 // ---- connection details ----

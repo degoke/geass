@@ -137,18 +137,15 @@ geass status echo
 geass scale echo 2
 geass env set echo APP_ENV=production --deploy --wait
 
-# Watch the container output until you press Ctrl-C.
+# Read the latest container output, then watch it until you press Ctrl-C.
+geass logs echo --tail 20
 geass logs echo -f
 
 # Step 9: clean up. It asks first; a script has to add --yes.
 geass apps delete echo --yes
 ```
 
-`geass apps create` saves a draft, the same as **Add resource**, and nothing runs until `geass deploy`. `geass deploy echo --wait` prints a line on standard error each time the service changes and ends with a status table. It exits with `0` when the service is ready, `5` if the deploy failed, saying why, and `6` if it was not ready within 10 minutes (`--timeout` changes that). `geass status` shows `-` as the URL when the service has no hostname: use step 7 to give it one, or the `port-forward` in the same step, whose Service is named `echo`. `geass logs` needs **Full access** or a **Read only, with logs** token.
-
-:::caution
-Two commands misbehave at this version. `geass apps create --deploy` still saves a draft, even though it prints `Created echo and started deploying it`, so run `geass deploy echo` after it, as above. And `geass logs echo` without `-f` prints nothing, even when the service has logs, so use `-f`.
-:::
+`geass apps create` saves a draft, the same as **Add resource**, and nothing runs until `geass deploy`. `geass deploy echo --wait` prints a line on standard error each time the service changes and ends with a status table. It exits with `0` when the service is ready, `5` if the deploy failed, saying why, and `6` if it was not ready within 10 minutes (`--timeout` changes that). `geass status` shows `-` as the URL when the service has no hostname: use step 7 to give it one, or the `port-forward` in the same step, whose Service is named `echo`. `geass logs` needs **Full access** or a **Read only, with logs** token, and `geass apps create echo ... --deploy` saves and deploys in one command, which `geass deploy` after a plain create does in two.
 
 See [Command line](/docs/guides/command-line/) for the rest of the commands and [CLI commands](/docs/reference/cli/) for every flag.
 

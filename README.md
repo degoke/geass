@@ -226,8 +226,11 @@ geass env set web LOG_LEVEL=debug --deploy --wait
 geass status -p shop -e production
 ```
 
-Every command takes `--json`, uses distinct exit codes (3 not found, 4 not allowed, 5 deploy failed, 6 timed out), and
-asks before deleting unless you pass `--yes`. For scripts, set `GEASS_URL` and `GEASS_TOKEN` instead of signing in.
+Commands that print data (lists, statuses, logs, details) take `--json`; commands that change something report on
+standard error and by exit code. Every command uses distinct exit codes (3 not found, 4 not allowed, 5 deploy failed,
+6 timed out), and deleting asks first unless you pass `--yes`. For scripts, set `GEASS_URL` and `GEASS_TOKEN` instead
+of signing in. A saved login is only ever sent to the address it was made for, so `--url` never carries a token to
+another Geass.
 
 Everything the command line does is the JSON API under `/api/v1` (`GET /api/v1/openapi.json` describes it). Send
 `Authorization: Bearer <token>`. Tokens come from the dashboard (**Settings → Tokens**) or from `geass login`:
@@ -247,7 +250,8 @@ claude mcp add geass -- geass mcp          # or: geass mcp --listen 127.0.0.1:87
 
 The agent acts as your token and is only shown the tools it may use: a read-only token cannot even see a tool that
 deploys. `--read-only` limits it further, deleting needs `--allow-delete`, and secret values and database passwords
-are never returned by any tool.
+are never returned by any tool. Plain configuration is not secret and is returned as it is: keep anything sensitive in
+a secret.
 
 ## License
 

@@ -50,13 +50,6 @@ database backups there. Geass supports three things with it:
   port, user and password you give it and builds the connection Secret. It never creates, resizes or deletes an RDS
   instance. Treat it as "attach an existing database".
 
-:::caution
-In the current code a project bucket, whether on AWS S3 or on MinIO, never gets past `Resource is configured and waiting for deployment`: the
-controller decides whether a store is deployed from `status.connectionSecret`, and only a successful provision writes that. Until this is fixed,
-the bucket part of an AWS connection cannot be used from the dashboard, the API or `kubectl`. Backups and RDS attachments are not affected. See
-[GeassObjectStore](/docs/reference/resources/geass-object-store/). The rest of this section describes what the code does once a bucket is provisioned.
-:::
-
 ### Permissions the AWS key needs
 
 Geass signs S3 and IAM calls itself (there is no AWS SDK in the operator). These are all the calls it makes with the

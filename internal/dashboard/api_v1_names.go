@@ -8,8 +8,9 @@ const (
 	kindObjectStores     = "object-stores"
 	kindLogicalDatabases = "logical-databases"
 
-	// pathNameParam is the {name} of a v1 route.
-	pathNameParam = "name"
+	// pathNameParam is the {name} of a v1 route, and pathEnvironments the segment that holds a project's environments.
+	pathNameParam    = "name"
+	pathEnvironments = "environments"
 
 	formProject     = "project"
 	formEnvironment = "environment"

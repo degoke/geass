@@ -229,7 +229,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `PATCH /projects/{name}` | Admin | `displayName`, `environments` (list), `region` | `{"ok": true}` |
 | `DELETE /projects/{name}` | Admin | `confirmName`* (the display name) | `{"ok": true}` |
 | `POST /projects/{name}/deploy` | Admin | `environment`* | `{"ok": true, "deployed": 2}` |
-| `POST /projects/{name}/environments` | Admin | `environment`* | Does not work; see the caution below |
+| `POST /projects/{name}/environments` | Admin | `environment`* | `{"ok": true}`; an environment that exists is a `400` |
 | `POST /projects/{name}/compliance` | Admin | `requiredTags` (list, up to 8; an empty list clears them) | `{"ok": true, "requiredTags": ["hipaa"]}` |
 | `GET /projects/{name}/compliance` | Any | none | `{"requiredTags", "region", "databases": [{"name", "compliant", "missing"}], "openNodes"}`: where the project falls short of its tags |
 | `POST /projects/{name}/network` | Admin | `isolation`* (`Project` or `None`), `allowFromProjects` (list, up to 20) | `{"ok": true}` |
@@ -239,12 +239,6 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /projects/{name}/logs/stream` | Observer | the same query | The same as server-sent events |
 | `GET /projects/{name}/logs/history` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `limit` | Stored history. A project that requires node tags gets `{"available": false, ...}`: its history is not kept |
 
-:::caution
-The documented operation `POST /api/v1/projects/{name}/environments` always fails with a `404`. The dashboard route it forwards to has
-no handler under that name. To add an environment, call `POST /api/v1/projects/{name}/environments/create` with `environment`, which
-reaches the working route `POST /api/projects/{name}/environments/create`.
-:::
-
 #### Services
 
 A service is a `GeassApp`. `{name}` is its resource name.
@@ -252,7 +246,7 @@ A service is a `GeassApp`. `{name}` is its resource name.
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
 | `GET /apps` | Any, project token | `?project=`, `?environment=` | `{"items": [summary, ...]}`. A project token sees only its own environment |
-| `POST /apps` | Admin | `project`*, `environment`*, `source` (`image`, `git` or `function`; an image when left out), `name`, `image`, `repository`, `branch`, `runtime`, `code`, `mode` (`http` or `event`), `functionTriggers` (list), `port`, `draft`; the other fields of [Create and change](#create-and-change) | `{"ok": true, "name": "storefront", "kind": "apps"}`. The service is a draft: call a deploy next |
+| `POST /apps` | Admin | `project`*, `environment`*, `source` (`image`, `git` or `function`; an image when left out), `name`, `image`, `repository`, `branch`, `runtime`, `code`, `mode` (`http` or `event`), `functionTriggers` (list), `port`, `draft` (`true`: save a draft), `deploy` (`true`, `on`, `1` or `yes`: deploy it as it is saved; `draft` is read the same way); the other fields of [Create and change](#create-and-change) | `{"ok": true, "name": "storefront", "kind": "apps"}`. The service is a draft unless `deploy` is true, so call a deploy next. With `deploy` the answer also has `"deployed": true`. `draft` and `deploy` together are a `400` however they are spelled, and a cluster with no room refuses a `deploy` before anything is saved |
 | `GET /apps/{name}` | Any, project token | none | `{"resource", "spec", "status"}`. Callers who cannot change things get the redacted spec; secret values are blank for everyone |
 | `PATCH /apps/{name}` | Admin, project token | `image`, `port`, `cpu`, `memory`, `replicas`, `deploy` (`true` deploys straight away), `functionCode`, `functionRuntime`, `functionMode`, `functionTriggers` (list; an empty string removes them all), `scaleToZero` (`"on"` or `"off"`), `idleSeconds`, `scaleToZeroMax`; the other fields of [Create and change](#create-and-change) | The pending state; see [Create and change](#create-and-change) |
 | `DELETE /apps/{name}` | Admin | `confirmName`* | `{"ok": true}` |
@@ -268,15 +262,15 @@ A service is a `GeassApp`. `{name}` is its resource name.
 | `POST /apps/{name}/config/delete` | Admin, project token | `key`* | The same |
 | `POST /apps/{name}/secrets/set` | Admin, project token | `key`*, `value`* | `{"ok": true, "secrets": ["STRIPE_API_KEY"], "pending": ["variables"]}`; never returns values |
 | `POST /apps/{name}/secrets/delete` | Admin, project token | `key`* | The same |
-| `GET /apps/{name}/variables` | Observer, project token | none | `{"secrets": [names], "sharedVariableRefs", "env": [{"name", "kind"}], "config": {...}}`. Secrets and attached references are names only; the plain `config` comes with its values, whatever the OpenAPI summary says |
-| `GET /apps/{name}/logs` | Observer, project token | none | The last 200 lines of each pod: `{"lines": "# pod-name\n..."}` |
+| `GET /apps/{name}/variables` | Observer, project token | none | `{"secrets": [names], "sharedVariableRefs", "env": [{"name", "kind"}], "config": {...}}`. Secrets and attached references are names only; the plain `config` comes with its values, because plain configuration is not secret |
+| `GET /apps/{name}/logs` | Observer, project token | `?tail=` (1 to 1000, default 200: the newest lines across the service's pods, each of which is read for that many first), `since`, `q`, `level`, `previous` (`true` also reads each pod's run before its last restart) | `{"lines": [{"t", "service", "pod", "container", "line", "level", "previous"}], "services", "truncated", "note"}`: the service's recent log lines, oldest first, one entry each. It is the project's logs narrowed to the service, so the `environment` and `service` query fields are ignored, and `services` holds only this service's name. `level` and `q` look through the `tail` newest lines of each pod |
 | `GET /apps/{name}/logs/stream` | Observer, project token | `?level=`, `since`, and the other log query fields | A server-sent event stream of the service's log lines, recent ones first and then new ones, across restarts |
 | `GET /apps/{name}/runtime` | Observer, project token | none | `{"pods": [{"name", "phase", "container"}]}` |
 | `GET /apps/{name}/metrics` | Any, project token | `?window=` | Series; see [Metrics and logs](#metrics-and-logs) |
 
 `GET /apps/{name}/status` returns what a program needs to wait for a deploy without reading five resources: `name`, `project`,
 `environment`, `state` (`ready`, `pending`, `failed`, `draft` or `deleting`), `message`, `url`, `pendingChanges` (a count), `ready`,
-`replicas` (`desired`, `ready`, `available`), `sleeping` (present, and true, for a service that sleeps when idle and has no copies running), `build`
+`replicas` (`desired`, `ready`, `available`), `sleeping` (present, and true, for a service that sleeps when idle and has no copies running), `scaleToZero` (for a service that asked to sleep when idle: `idleSeconds`, `maxReplicas`, and `active` and `message` once the operator has said whether it does), `build`
 (`name`, `phase`, `failureReason`, `sourceRevision`, `ciState`, `startedAt`, `completedAt`) and `lastAttempt` (`id`, `phase`,
 `startedAt`, `completedAt`, `summary`, `errors`). `build` and `lastAttempt` are left out when there is none. Any caller can read it,
 including a viewer, so the build's failure reason and source revision, which the redacted overview keeps from viewers, are visible
@@ -424,6 +418,9 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" $GEASS/api/v1/apps/sto
 { "ok": true, "pending": [], "deployed": true, "title": "", "detail": "", "button": "" }
 ```
 
+To deploy as the service is saved, add `"deploy": true` to the body of the first call and leave out the second. The answer
+is then `{ "ok": true, "name": "storefront", "kind": "apps", "deployed": true }`.
+
 ```bash title="Wait for a deploy to finish"
 while true; do
   status=$(curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" $GEASS/api/v1/apps/storefront/status) || break
@@ -463,6 +460,11 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: appl
 ```
 
 Geass keeps the last 12 deploy records for each service. A project token can list them on `/api/v1`, so it can roll back too.
+
+```bash title="A service's recent errors (works for a project token)"
+curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" "$GEASS/api/v1/apps/storefront/logs?level=error&tail=100" \
+  | jq -r '.lines[] | "\(.t) \(.pod) \(.line)"'
+```
 
 ```bash title="Errors in the last hour (needs an observer or admin token)"
 curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
@@ -638,7 +640,7 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
 | `POST /api/apps/{app}/display-name` | `displayName` | Sets the label shown in the dashboard |
-| `POST /api/apps/{app}/attach` | `name` (a database or bucket), `kind` (`database` or `object-store`) | Adds `DATABASE_URL` (`REDIS_URL` for Redis) or `S3_ENDPOINT` as a reference to the resource's connection Secret |
+| `POST /api/apps/{app}/attach` | `name` (a database or bucket), `kind` (`database` or `object-store`) | Adds `DATABASE_URL` (`REDIS_URL` for Redis), or for a bucket `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET`, as references to the resource's connection Secret. Answers `400` when the service already has a plain or configured variable of that name |
 | `POST /api/apps/{app}/networking/delete` | `confirmName` | Clears the host and TLS |
 | `POST /api/apps/{app}/shared-variables/save` | `sharedVariable` (repeat) | Selects which shared variables the service receives |
 
@@ -735,10 +737,6 @@ connection (PlanetScale creates the database and a login itself, as a MySQL or P
 
 #### Buckets
 
-:::caution
-Project buckets currently stay at "waiting for deployment" after a deploy. See [GeassObjectStore](/docs/reference/resources/geass-object-store/).
-:::
-
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
 | `POST /api/object-stores/create` | `project`, `environment`, `name`, `placement` (`InCluster` or `External`), `engine` (`MinIO` or `S3`), `region`, `createBucket`, `connectionRef`, `bucket`, `draft` | Creates a draft bucket. Pass `cluster=on` (with `region`, `runOnTags`, `name`) to create the cluster's MinIO server instead |
@@ -769,7 +767,7 @@ These need Prometheus (and, for history, the logging add-on) to be installed. Se
 | `GET /api/databases/{db}/metrics` | Viewer | `window` | Series for a database |
 | `GET /api/cluster/metrics` | Viewer | `window` | Series for the whole cluster |
 | `GET /api/operator/metrics` | Viewer | `window` | Series for the operator itself |
-| `GET /api/apps/{app}/logs` | Observer, project token | none | The last 200 lines of each pod: `{"lines":"# pod-name\n..."}` |
+| `GET /api/apps/{app}/logs` | Observer, project token | none | The dashboard's own route: the last 200 lines of each pod as one block of text, `{"lines":"# pod-name\n..."}`. `/api/v1/apps/{name}/logs` answers structured lines instead |
 | `GET /api/apps/{app}/runtime` | Observer, project token | none | `{"pods":[{"name","phase","container"}]}` |
 | `GET /api/projects/{project}/logs` | Observer | `environment`, `service`, `q`, `level`, `since`, `tail`, `previous` | Merged live logs |
 | `GET /api/projects/{project}/logs/stream` | Observer | same | The same as server-sent events, following new lines |

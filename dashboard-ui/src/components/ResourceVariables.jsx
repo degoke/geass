@@ -371,7 +371,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
       <Modal opened={connectOpen} onClose={() => setConnectOpen(false)} title="Add reference" centered>
         <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            Adds the connection string as an environment variable (DATABASE_URL, REDIS_URL, or S3_ENDPOINT).
+            Adds the connection as environment variables: DATABASE_URL or REDIS_URL for a database, and S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET for a bucket.
           </Text>
           <Field label="Resource">
             <Select value={connectTarget} onChange={(event) => setConnectTarget(event.currentTarget.value)} aria-label="Resource to connect">
