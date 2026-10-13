@@ -102,6 +102,7 @@ spec:
 | `spec.addons.logging.retentionDays` | integer (int32) | CRD default `7` | Minimum 1, maximum 90 | How long stored logs are kept. |
 | `spec.addons.serverless.enabled` | boolean | CRD default `false` | None | Installs KEDA and its HTTP add-on, so that services can [sleep when idle](/docs/guides/scale-to-zero/). It is opt-in: the installer does not set it. It also lets the K3s Traefik route to a Service that is only a name (a `HelmChartConfig` named `traefik`, created only when none exists). Turning it off stops the operator managing it and never uninstalls KEDA. |
 | `spec.network.multiSite` | boolean | `false` | None | The nodes are at different providers and reach each other over the internet. See [Network mode](#network-mode). |
+| `spec.k3s.version` | string | Optional. Empty by default. | Empty, or a K3s release such as `v1.36.5+k3s1`: `^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$`. At most 40 characters | The K3s release the **worker** nodes are brought to. When it is set and a worker runs an older one, the operator upgrades the workers one at a time over SSH: cordon, replace K3s, wait for the node to be ready on the new version, uncordon. It only moves workers to a version the control plane already runs, and it never touches the control plane, which the installer upgrades (`--k3s-version` sets this field for you). Empty means leave K3s alone. See [Upgrade Geass](/docs/operations/upgrading/#workers). |
 | `spec.defaultRegion` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 40 | The region of projects that do not choose one. Empty means such projects may run on any node. |
 
 :::note
@@ -117,8 +118,12 @@ With `spec.network.multiSite: true` the overlay network between nodes is encrypt
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `status.phase` | string | `Ready` when the cluster is ready. Empty otherwise. |
+| `status.release` | string | The Geass release of the operator that last reconciled the cluster, such as `v0.2.0`. The installer reads it before an update, to refuse a downgrade, and after it, to know that the new operator has taken over. Empty on a cluster whose operator has not been updated since releases were recorded. Shown as `RELEASE` by `kubectl get geasscluster`. |
+| `status.schemaVersion` | integer | The level of data migrations applied to what the cluster stores. An operator that knows of fewer migrations than this refuses to start. See [Upgrade Geass](/docs/operations/upgrading/#how-an-update-stays-safe). |
+| `status.k3s.controlPlaneVersion` | string | The oldest K3s version that a control plane node reports. Shown as `K3S`. |
+| `status.k3s.upgrade` | object | Progress of an upgrade of the workers to `spec.k3s.version`: `phase` (`WaitingForControlPlane`, `Waiting`, `Upgrading`, `Complete`, `Failed`), `targetVersion`, `currentNode`, `step`, `startedAt` and a `message` that says what it is doing or why it is not. Absent while `spec.k3s.version` is empty. |
 | `status.reconcileRetry` | object | Failure counters (`reconcileFailures`, `reconcileFailureStarted`, `reconcileFailureGeneration`). |
-| `status.conditions` | list | `Ready`, `AddonsReady` and, while cert-manager is on, `ClusterIssuerReady`. |
+| `status.conditions` | list | `Ready`, `AddonsReady`, `ClusterIssuerReady` while cert-manager is on and, while `spec.k3s.version` is set, `K3sUpgraded`: `True` once every worker runs that version, otherwise `False` with the phase of `status.k3s.upgrade` as its reason (so `kubectl wait --for=condition=K3sUpgraded` works). |
 
 | Condition | Reason | Status | Meaning |
 | --- | --- | --- | --- |
@@ -169,7 +174,7 @@ Everything else is `kubectl`. The dashboard does not toggle add-ons or edit `ser
 
 ## Editing by hand
 
-It is safe to edit the add-on toggles, `defaultRegion` and `serverURL` with `kubectl`. The operator applies the change on its next pass.
+It is safe to edit the add-on toggles, `defaultRegion`, `serverURL` and `k3s.version` with `kubectl`. The operator applies the change on its next pass.
 
 ```bash title="Set the address workers join"
 kubectl -n geass-system patch geasscluster default --type merge \
@@ -179,7 +184,8 @@ kubectl -n geass-system patch geasscluster default --type merge \
 - Do not delete the cluster. It has no finalizer and no owner references, so deleting it leaves the add-on HelmCharts and everything else running. Projects stop validating, because they need their cluster to exist and be `Ready`.
 - Do not change `spec.network.multiSite` on a running cluster.
 - Turning an add-on off removes its HelmChart, which uninstalls the release. For logging that deletes the stored logs. For Longhorn and the serverless add-on it does nothing: take them out by hand if you really want them gone. For Longhorn, move every volume first. For serverless, switch each service's own sleep setting off first: the operator decides whether a service can sleep by whether KEDA's `HTTPScaledObject` kind exists in the cluster, so services keep sleeping after the add-on is switched off.
-- The controller does not rewrite the `GeassCluster` spec. It writes status.
+- The controller does not rewrite the `GeassCluster` spec. It writes status. An update run by the installer does not apply the cluster object again either: it only sets `spec.k3s.version` when you ask for a K3s upgrade.
+- To ask for another try of a worker upgrade that failed, annotate the cluster: `kubectl -n geass-system annotate geasscluster default geass.dev/retry-k3s-upgrade=now`. The operator removes the annotation when it has acted on it.
 
 ## What happens under the hood
 
@@ -201,6 +207,8 @@ Beyond the charts the cluster controller keeps these in place:
 - **A PodMonitor** `geass-ingress` in `monitoring`, so Prometheus scrapes Traefik and the request charts fill in.
 - **A ServiceMonitor and a PrometheusRule** named `geass-operator` in `monitoring`, while monitoring is on, so Prometheus scrapes the operator's own metrics and holds six alerts on them. See [Logs, metrics and terminal](/docs/guides/observability/#metrics-and-alerts-for-the-operator).
 - **The serverless add-on**, while `spec.addons.serverless.enabled` is true: the HelmCharts `geass-keda` and `geass-keda-http` (KEDA 2.21.0 and the HTTP add-on 0.16.0, installed into `keda`) and, when none exists, a `HelmChartConfig` `traefik` in `kube-system` that sets `providers.kubernetesIngress.allowExternalNameServices: true`. They install in that order, and the operator looks again every 20 seconds until both are up. A `traefik` configuration that already exists is left alone, and the operator logs what to add to it.
+- **The K3s upgrade of the workers**, while `spec.k3s.version` is set. A separate controller does it, because a node's upgrade takes minutes of SSH and the cluster controller has one worker. It cordons and uncordons nodes with the annotation `geass.dev/k3s-upgrade-cordon`, writes `status.k3s`, and does nothing to a worker that has no `GeassNode` (so no SSH key). See [Upgrade Geass](/docs/operations/upgrading/#workers).
+- **The release and the schema level**, written to `status.release` and `status.schemaVersion` at the start of every reconcile, and the ConfigMap `geass-schema` that the operator keeps in `geass-system` before any controller starts.
 - **The admission policy** `geass-required-node-tags`, a ValidatingAdmissionPolicy and its binding, created the first time a project requires node tags and never removed. See [Compliance node tags](/docs/guides/compliance-tags/).
 
 ```bash title="Inspect the cluster"
@@ -242,6 +250,10 @@ The `GeassCluster` is not `Ready`. See the cases above.
 ### HTTPS certificates are not issued
 
 Read the `ClusterIssuerReady` condition: `kubectl -n geass-system get geasscluster default -o jsonpath='{.status.conditions[?(@.type=="ClusterIssuerReady")]}'`. `ACMEEmailMissing` means no contact address is set: patch `spec.addons.certManager.acmeEmail` with a real address. `IssuerNotReady` carries cert-manager's reason, most often Let's Encrypt refusing the address (it rejects placeholder domains such as `example.com`). Then check `kubectl get clusterissuer letsencrypt-prod`. See [Domains and TLS](/docs/guides/domains-and-tls/).
+
+### A worker's K3s upgrade is `Failed` or `Waiting`
+
+`status.k3s.upgrade.message` says which node and why. `Waiting` is the upgrade holding back on purpose while a node is not ready, a replicated volume is degraded or a worker has not reported its K3s version yet: it goes on by itself when that is fixed. `Failed` stops at the node that did not come back ready on the new version, which stays cordoned. Look at the node (`kubectl describe node <name>`, `journalctl -u k3s-agent` on the machine), then annotate the cluster to try again. See [Upgrade Geass](/docs/operations/upgrading/#workers).
 
 ### A service cannot sleep and says `AddonNotInstalled`
 

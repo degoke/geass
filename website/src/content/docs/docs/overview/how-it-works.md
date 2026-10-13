@@ -92,7 +92,7 @@ Geass has no database of its own. All of it is in Kubernetes or on your servers'
 | Log history | VictoriaLogs: 7 days by default, at most 4 GiB |
 | Container images you build | The registry you configure |
 
-Geass does not back up the cluster's own state. K3s's embedded etcd takes snapshots on its defaults (twice a day, five kept, in the same data directory), so they do not protect you from losing the disk. Database backups to S3 are the only backups Geass makes. See [FAQ](/docs/overview/faq/#is-geass-itself-backed-up).
+Geass does not back up the cluster's own state on a schedule. K3s's embedded etcd takes snapshots on its defaults (twice a day, five kept, in the same data directory), so they do not protect you from losing the disk. The installer takes one more before it updates the cluster, so that an update can be undone: see [Upgrade Geass](/docs/operations/upgrading/#go-back). Database backups to S3 are the only backups of your data that Geass makes. See [FAQ](/docs/overview/faq/#is-geass-itself-backed-up).
 
 ## Namespaces and names
 
@@ -133,7 +133,7 @@ The same facts are available without `kubectl` access, through the API: `geass s
 ## Limits worth knowing
 
 - The control plane is a single server and a single operator. Losing that server stops the dashboard and all reconciliation. See [High availability](/docs/operations/high-availability/).
-- The operator image and the dashboard ship together. The only supported way to a new release is a new install. See [Upgrade Geass](/docs/operations/upgrading/).
+- The operator image and the dashboard ship together. A new release is installed by running its installer on the control plane, which updates the cluster in place. See [Upgrade Geass](/docs/operations/upgrading/).
 
 ## Related
 

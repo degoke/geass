@@ -44,8 +44,9 @@ main() {
 		exit 1
 	fi
 	chmod +x "$TMP"
-	# With set -e, a failed install ends this script with the installer's own exit status.
-	"$TMP"
+	# With set -e, a failed install ends this script with the installer's own exit status. What follows the script's
+	# name goes to the installer: curl ... | sudo sh -s -- --reinstall --yes
+	"$TMP" "$@"
 }
 
-main
+main "$@"

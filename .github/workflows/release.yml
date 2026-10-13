@@ -27,13 +27,13 @@ jobs:
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Build geass installer (amd64)
-        run: make build-geass GEASS_GOARCH=amd64
+        run: make build-geass GEASS_GOARCH=amd64 GEASS_VERSION="${GITHUB_REF_NAME}"
 
       - name: Rename amd64 binary
         run: mv bin/geass bin/geass-linux-amd64
 
       - name: Build geass installer (arm64)
-        run: make build-geass GEASS_GOARCH=arm64
+        run: make build-geass GEASS_GOARCH=arm64 GEASS_VERSION="${GITHUB_REF_NAME}"
 
       - name: Rename arm64 binary
         run: mv bin/geass bin/geass-linux-arm64

@@ -22,7 +22,8 @@ func (s *ImageImport) Run() error {
 	}
 
 	Logf(s.Name(), "Importing operator image from %s", path)
-	return runCommand(s.Name(), "k3s", "ctr", "image", "import", path)
+	_, err = sh.run(s.Name(), commandOptions{echoStdout: true, echoStderr: true}, "k3s", "ctr", "image", "import", path)
+	return err
 }
 
 func (s *ImageImport) imageTarPath() (path string, cleanup func(), err error) {

@@ -1027,6 +1027,33 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              scaleToZero:
+                description: |-
+                  ScaleToZero lets the service sleep when it is idle and wakes it on the next request. It replaces
+                  Replicas and Autoscaling as what decides how many copies run.
+                properties:
+                  enabled:
+                    description: Enabled turns scale to zero on.
+                    type: boolean
+                  idleSeconds:
+                    default: 300
+                    description: IdleSeconds is how long without a request before
+                      the service is stopped.
+                    format: int32
+                    maximum: 86400
+                    minimum: 30
+                    type: integer
+                  maxReplicas:
+                    default: 3
+                    description: MaxReplicas is how many copies it may scale up to
+                      under load.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               secretData:
                 additionalProperties:
                   type: string
@@ -1087,6 +1114,16 @@ spec:
                           port in the PORT environment variable.
                         maxLength: 262144
                         type: string
+                      mode:
+                        default: http
+                        description: |-
+                          Mode says what Code is. "http" (the default) is a program that serves HTTP itself. "event" is a
+                          handler, a function that is given an event for each request and returns the response, with Geass
+                          serving HTTP for it.
+                        enum:
+                        - http
+                        - event
+                        type: string
                       runtime:
                         description: Runtime selects the language runtime that executes
                           Code.
@@ -1095,6 +1132,44 @@ spec:
                         - node
                         - python
                         type: string
+                      triggers:
+                        description: |-
+                          Triggers call the function on a schedule. Each run is an HTTP request to the function, which wakes
+                          it first when it is asleep.
+                        items:
+                          description: GeassFunctionTrigger calls a function on a
+                            schedule.
+                          properties:
+                            name:
+                              description: Name identifies the trigger and names its
+                                CronJob.
+                              pattern: ^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$
+                              type: string
+                            path:
+                              description: Path is the path that is called. It defaults
+                                to /.
+                              maxLength: 256
+                              pattern: ^/.*$
+                              type: string
+                            payload:
+                              description: Payload is the JSON body of the request.
+                                It defaults to {"trigger":"cron","name":"<name>"}.
+                              maxLength: 4096
+                              type: string
+                            schedule:
+                              description: Schedule is a cron expression in UTC, such
+                                as "*/15 * * * *" or "@daily".
+                              maxLength: 100
+                              type: string
+                          required:
+                          - name
+                          - schedule
+                          type: object
+                        maxItems: 8
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
                     required:
                     - code
                     - runtime
@@ -1124,12 +1199,15 @@ spec:
                         x-kubernetes-map-type: atomic
                       context:
                         default: .
-                        description: Context is the build context relative to the
-                          repository root.
+                        description: |-
+                          Context is the build context (the root directory of the build) relative to the repository root. A
+                          leading slash means the repository root, and a path that leaves the repository is refused.
                         type: string
                       dockerfile:
                         default: Dockerfile
-                        description: Dockerfile is relative to Context.
+                        description: |-
+                          Dockerfile is the path of the Dockerfile, relative to Context. A path that already starts with
+                          Context is taken as relative to the repository root.
                         type: string
                       repository:
                         type: string
@@ -1138,7 +1216,10 @@ spec:
                           selected commit.
                         type: boolean
                       watchPatterns:
-                        description: WatchPatterns limits webhook-triggered builds.
+                        description: |-
+                          WatchPatterns limits webhook-triggered builds to pushes that change a file they select. They are
+                          gitignore-style, matched from the repository root, and a "!" pattern takes files back out. Empty means
+                          every push to the branch builds.
                         items:
                           type: string
                         type: array
@@ -1181,7 +1262,7 @@ spec:
             description: GeassAppStatus defines the observed state of GeassApp.
             properties:
               activeBuild:
-                description: ActiveBuild references the current Git build.
+                description: ActiveBuild references the Git build whose image is deployed.
                 type: string
               conditions:
                 description: conditions represent the current state of the GeassApp
@@ -1244,6 +1325,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentBuild:
+                description: |-
+                  CurrentBuild references the Git build for the service's current settings. A build is named by a hash of
+                  its settings, so a service that goes back to earlier settings uses an older build than the newest: this
+                  is the one a push or a rebuild runs again, and it can be one that is not deployed yet.
+                type: string
               dnsMessage:
                 type: string
               dnsName:
@@ -1355,8 +1442,9 @@ spec:
                     type: integer
                 type: object
               resolvedImage:
-                description: ResolvedImage is the immutable digest used by the active
-                  deployment.
+                description: |-
+                  ResolvedImage is the image the active deployment runs: for a Git source, the repository the build
+                  pushed to at the digest it pushed (repository@sha256:...), which a node can pull.
                 type: string
               rolloutPaused:
                 type: boolean
@@ -1859,8 +1947,12 @@ spec:
               cancelRequested:
                 type: boolean
               ciChecks:
+                description: |-
+                  CIChecks are the names of the checks that ran. At most MaxCIChecks are kept: a monorepo can run
+                  hundreds, and a status that grows with the repository is not one to store in etcd.
                 items:
                   type: string
+                maxItems: 50
                 type: array
               ciState:
                 type: string
@@ -1926,8 +2018,13 @@ spec:
               failureReason:
                 type: string
               image:
+                description: Image is the destination the build pushes to, as it was
+                  told to (spec.registry).
                 type: string
               imageDigest:
+                description: |-
+                  ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
+                  it, and the digest recorded when that run ends is the one its own pod reports.
                 type: string
               jobRef:
                 type: string
@@ -2122,6 +2219,12 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
+    - jsonPath: .status.release
+      name: Release
+      type: string
+    - jsonPath: .status.k3s.controlPlaneVersion
+      name: K3s
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -2213,6 +2316,18 @@ spec:
                         - full
                         type: string
                     type: object
+                  serverless:
+                    description: Serverless controls scale to zero.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled installs KEDA and the HTTP add-on. It is opt-in: it adds a few small pods, and changes the
+                          ingress controller's settings so it can route to the add-on. Services can then ask to scale to zero.
+                          Turning it off stops services from scaling to zero but never uninstalls KEDA: services that were asleep are
+                          woken and run normally.
+                        type: boolean
+                    type: object
                 type: object
               defaultRegion:
                 description: |-
@@ -2221,6 +2336,22 @@ spec:
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              k3s:
+                description: K3s says which K3s release the nodes should run.
+                properties:
+                  version:
+                    description: |-
+                      Version is the K3s release the worker nodes are brought to, such as v1.36.5+k3s1. When it is set and a
+                      worker runs something else, the operator upgrades the workers one at a time: it cordons the node, replaces
+                      K3s on it over SSH, waits for it to be ready on the new version and uncordons it, and stops at the first
+                      that does not come back. Workers are only moved to the version the control plane already runs, because an
+                      agent must not be newer than its server, and the operator never touches the control plane itself: it is
+                      upgraded by running the installer on that machine with --k3s-version, which also sets this field.
+                      Left empty, the operator leaves K3s on every node alone.
+                    maxLength: 40
+                    pattern: ^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$
+                    type: string
+                type: object
               network:
                 description: Network says how the nodes reach each other.
                 properties:
@@ -2321,6 +2452,43 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              k3s:
+                description: K3s is what the cluster's nodes run and how an upgrade
+                  of the workers is going.
+                properties:
+                  controlPlaneVersion:
+                    description: ControlPlaneVersion is the oldest K3s version that
+                      a control plane node reports.
+                    type: string
+                  upgrade:
+                    description: Upgrade is the progress of an upgrade of the workers
+                      to spec.k3s.version.
+                    properties:
+                      currentNode:
+                        description: CurrentNode is the worker being upgraded, while
+                          one is.
+                        type: string
+                      message:
+                        description: Message says what the upgrade is doing, or why
+                          it is not.
+                        type: string
+                      phase:
+                        description: Phase says how the upgrade is going.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the current node's upgrade
+                          began, which is what its time limit counts from.
+                        format: date-time
+                        type: string
+                      step:
+                        description: Step is how far the current node has got.
+                        type: string
+                      targetVersion:
+                        description: TargetVersion is the version the workers are
+                          being brought to.
+                        type: string
+                    type: object
+                type: object
               phase:
                 description: Phase is the current phase of the GeassCluster.
                 type: string
@@ -2344,6 +2512,19 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              release:
+                description: |-
+                  Release is the Geass release of the operator that last reconciled this cluster, such as v0.2.0. The
+                  installer reads it before an update, to refuse a downgrade and to wait until the new operator reports
+                  itself. A cluster installed before releases were recorded has none until its operator is updated.
+                type: string
+              schemaVersion:
+                description: |-
+                  SchemaVersion is the level of data migrations that have been applied to what this cluster stores.
+                  An operator that knows of fewer migrations than this refuses to start, so that an older release can
+                  never reconcile data that a newer one has changed.
+                format: int32
+                type: integer
             type: object
         required:
         - spec
@@ -2512,6 +2693,13 @@ spec:
                 required:
                 - enabled
                 type: object
+              clusterSize:
+                description: |-
+                  ClusterSize is the PlanetScale cluster size (for example PS_10) a created database is
+                  provisioned with. The sizes PlanetScale offers for an engine are listed by the dashboard API at
+                  /api/planetscale/cluster-sizes. It applies when the database is created; changing it
+                  afterwards does not resize the database.
+                type: string
               connectionRef:
                 description: ConnectionRef identifies a GeassCloudConnection used
                   for PlanetScale or AWS.
@@ -3846,6 +4034,11 @@ spec:
                       description: GeassNodeTag is a free-form label on a node, such
                         as "storage" or "gpu".
                       properties:
+                        compliance:
+                          description: |-
+                            Compliance marks the tag as a compliance boundary, such as "hipaa". A compliance tag is always
+                            reserved, so nothing but the projects that require it can land on the node.
+                          type: boolean
                         name:
                           description: Name is the tag, a lowercase DNS label.
                           maxLength: 40
@@ -3977,8 +4170,10 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               lastHeartbeatTime:
-                description: LastHeartbeatTime is the last time the node was observed
-                  healthy.
+                description: |-
+                  LastHeartbeatTime is no longer updated. Kubelet keeps a heartbeat on the Kubernetes node (its Ready
+                  condition and node lease), and rewriting one here once a minute for every node cost a write and an
+                  event for nothing that read it.
                 format: date-time
                 type: string
               message:
@@ -4708,6 +4903,7 @@ spec:
                   maxLength: 63
                   pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                   type: string
+                maxItems: 100
                 minItems: 1
                 type: array
               githubConnectionRef:
@@ -4779,6 +4975,18 @@ spec:
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              requiredTags:
+                description: |-
+                  RequiredTags are node tags every workload of this project must run on, such as "hipaa". A node
+                  needs all of them. Unlike a service's own runOn tags, these apply to everything the project
+                  runs: services, databases, buckets, builds, and the jobs that back up and restore them.
+                items:
+                  maxLength: 40
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: set
               sharedVariables:
                 description: SharedVariables are environment-scoped values available
                   to project services.
@@ -4946,6 +5154,7 @@ spec:
                   - name
                   - namespace
                   type: object
+                maxItems: 100
                 type: array
               pullRequests:
                 description: PullRequests are the open pull request environments.
@@ -5528,6 +5737,19 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingadmissionpolicies
+  - validatingadmissionpolicybindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - apps
   resources:
   - deployments
@@ -5656,7 +5878,28 @@ rules:
 - apiGroups:
   - helm.cattle.io
   resources:
+  - helmchartconfigs
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - helm.cattle.io
+  resources:
   - helmcharts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - http.keda.sh
+  resources:
+  - httpscaledobjects
   verbs:
   - create
   - delete
@@ -5678,6 +5921,7 @@ rules:
   - monitoring.coreos.com
   resources:
   - podmonitors
+  - prometheusrules
   - servicemonitors
   verbs:
   - create
@@ -5809,6 +6053,19 @@ subjects:
   name: geass-controller-manager
   namespace: geass-system
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: geass-metrics-reader-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: geass-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: geass-kube-prometheus-stac-prometheus
+  namespace: monitoring
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -5862,6 +6119,11 @@ spec:
     matchLabels:
       app.kubernetes.io/name: geass
       control-plane: controller-manager
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
   template:
     metadata:
       annotations:
@@ -5885,6 +6147,9 @@ spec:
         - --dashboard-bind-address=:8085
         command:
         - /manager
+        env:
+        - name: GOMEMLIMIT
+          value: 400MiB
         image: controller:latest
         livenessProbe:
           httpGet:
@@ -5919,6 +6184,12 @@ spec:
             drop:
             - ALL
           readOnlyRootFilesystem: true
+        startupProbe:
+          failureThreshold: 144
+          httpGet:
+            path: /healthz
+            port: 8086
+          periodSeconds: 5
         volumeMounts: []
       securityContext:
         runAsNonRoot: true

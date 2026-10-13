@@ -8,7 +8,7 @@ The installer turns one Linux server into a Geass control plane. It checks the m
 ## Before you start
 
 - A server that meets the [requirements](/docs/getting-started/requirements/): Linux on `amd64` or `arm64`, 2 GiB of memory, 10 GiB free on `/`, root access, outbound HTTPS.
-- A machine that does not run anything you need. If K3s is already installed, the installer removes it first. See [Run the installer again](#run-the-installer-again).
+- A machine that has no K3s on it. On a machine that already runs Geass the installer updates it instead, keeping its data, and on a machine with some other K3s it stops and tells you why: it deletes a cluster only when you pass `--reinstall`. See [Run the installer again](#run-the-installer-again).
 - A real email address for Let's Encrypt, if you want HTTPS certificates. It is optional for the install itself. See [HTTPS certificates](#https-certificates).
 
 ## Install
@@ -42,7 +42,13 @@ Each step prints `→ <name>` when it starts and `✓ <name>` when it finishes. 
 curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh | sudo env GEASS_VERSION=v0.1.0 sh
 ```
 
-Replace `v0.1.0` with a tag from the project's Releases page. Geass does not record the release you installed anywhere in the cluster, so write the tag down.
+Replace `v0.1.0` with a tag from the project's Releases page. The cluster records the release that its operator runs: `sudo k3s kubectl -n geass-system get geasscluster` shows it in the `RELEASE` column, and the update refuses to go to an older one. See [Upgrade Geass](/docs/operations/upgrading/).
+
+To build the cluster on a specific K3s release instead of the current stable one, pass `GEASS_K3S_VERSION` (the full name, such as `v1.36.5+k3s1`):
+
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo env GEASS_K3S_VERSION=v1.36.5+k3s1 sh
+```
 
 ## HTTPS certificates
 
@@ -93,8 +99,8 @@ The installer runs these steps in order. The names are the ones it prints.
 
 | # | Step | What it does |
 | --- | --- | --- |
-| 1 | `system checks` | Requires Linux, `amd64` or `arm64`, a server with 2 GB of memory (at least 1700 MiB of `MemTotal`, which is what a machine sold as 2 GB reports) and 10 GiB free on `/`. It also checks `GEASS_ACME_EMAIL` when you set it, and with `GEASS_MULTI_SITE` it validates the public address and tests that WireGuard works |
-| 2 | `remove existing installation` | Uninstalls K3s when it finds an installation. See [Run the installer again](#run-the-installer-again) |
+| 1 | `system checks` | Requires Linux, `amd64` or `arm64`, a server with 2 GB of memory (at least 1700 MiB of `MemTotal`, which is what a machine sold as 2 GB reports) and 10 GiB free on `/`. It also checks `GEASS_ACME_EMAIL` and `GEASS_K3S_VERSION` when you set them, and with `GEASS_MULTI_SITE` it validates the public address and tests that WireGuard works |
+| 2 | `remove existing installation` | Does nothing on a bare machine. Uninstalls K3s only when you passed `--reinstall`, after a confirmation and a last etcd snapshot. See [Run the installer again](#run-the-installer-again) |
 | 3 | `configure firewall` | Opens 6443/tcp, 10250/tcp, the overlay port, and 80/tcp and 443/tcp for web traffic in the first active firewall it finds (`ufw`, `firewalld`, then `iptables`). With `iptables` it also saves the rules where the host restores them at boot, if it does. It runs after the old K3s is removed, so the rules it saves are the host's own and not the chains of a cluster being replaced. Prints a warning and continues when no firewall is active. See [Requirements](/docs/getting-started/requirements/#ports-and-firewall) |
 | 4 | `install node prerequisites` | Installs and enables the iSCSI initiator that Longhorn needs. Failure is logged and does not stop the install |
 | 5 | `install k3s (server)` | Writes `/etc/rancher/k3s/config.yaml`, downloads `https://get.k3s.io` and runs it with `INSTALL_K3S_EXEC="server --cluster-init"`: a K3s server with embedded etcd, using K3s's default release channel |
@@ -141,7 +147,7 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
       acmeEmail: "you@yourdomain.com"
 ```
 
-`spec.version` is a label that Geass does not use to pick a K3s version. `serverURL` is the address new workers are told to join. The installer fills it with this server's own address on its default route (the `10.0.0.5` above stands for yours), which is a private address on most cloud servers, or the public address with `GEASS_MULTI_SITE`. If the installer cannot find an address it stores `https://127.0.0.1:6443` and prints a warning, and the operator then joins workers on the control plane node's own address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). The cluster object does not turn on cert-manager or monitoring because both default to on, so the operator also installs them. With Longhorn and log collection, that is four add-ons, installed through K3s's Helm controller after the installer has exited. A fifth, the serverless add-on that lets services sleep when idle, is off: the installer never sets `spec.addons.serverless.enabled`. See [How Geass works](/docs/overview/how-it-works/) and [Sleep when idle](/docs/guides/scale-to-zero/).
+`spec.version` is a label that Geass does not use to pick a K3s version. The release the cluster runs is `status.release`, which the operator writes, and the K3s release the workers are to run is `spec.k3s.version`, which is empty until you or an update sets it. `serverURL` is the address new workers are told to join. The installer fills it with this server's own address on its default route (the `10.0.0.5` above stands for yours), which is a private address on most cloud servers, or the public address with `GEASS_MULTI_SITE`. If the installer cannot find an address it stores `https://127.0.0.1:6443` and prints a warning, and the operator then joins workers on the control plane node's own address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). The cluster object does not turn on cert-manager or monitoring because both default to on, so the operator also installs them. With Longhorn and log collection, that is four add-ons, installed through K3s's Helm controller after the installer has exited. A fifth, the serverless add-on that lets services sleep when idle, is off: the installer never sets `spec.addons.serverless.enabled`. See [How Geass works](/docs/overview/how-it-works/) and [Sleep when idle](/docs/guides/scale-to-zero/).
 
 ## Environment variables
 
@@ -149,13 +155,18 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 | --- | --- | --- | --- |
 | `GEASS_VERSION` | `install.sh` | Release tag whose installer binary is downloaded | `latest` |
 | `GEASS_REPO` | `install.sh` | GitHub `owner/name` to download releases from | `degoke/geass` |
+| `GEASS_K3S_VERSION` | installer | K3s release to build a new cluster on, such as `v1.36.5+k3s1`. A channel name is not accepted. On a machine that already runs Geass it is ignored, with a warning, so that a value left over from the install does not upgrade K3s: to upgrade the control plane, pass the `--k3s-version` option (see [Upgrade Geass](/docs/operations/upgrading/)) | the current `stable` release |
+| `GEASS_REINSTALL` | installer | `1`, `true`, `yes` or `on`. The same as `--reinstall`: delete the cluster on this machine and build a new one. See [Run the installer again](#run-the-installer-again) | off |
+| `GEASS_YES` | installer | `1`, `true`, `yes` or `on`. The same as `--yes`: do not ask for confirmation of a reinstall | off |
 | `GEASS_INSTALL_LOG` | installer | Path of the log file. Missing directories are created | `geass-install-<UTC time>.log` in the current directory |
 | `GEASS_INSTALL_TRACE` | installer | `1`, `true`, `yes` or `on` runs the K3s install script with `sh -x`, so the log shows every command in it | off |
 | `GEASS_ACME_EMAIL` | installer | Contact address for the cluster's Let's Encrypt account. Checked at the first step, then stored as `spec.addons.certManager.acmeEmail`. Without it Geass creates no certificate issuer. See [HTTPS certificates](#https-certificates) | none |
 | `GEASS_MULTI_SITE` | installer | `1`, `true`, `yes` or `on`. Builds a cluster whose nodes are at different providers. Needs `GEASS_NODE_EXTERNAL_IP` | off |
 | `GEASS_NODE_EXTERNAL_IP` | installer | This server's public IP address. Required with `GEASS_MULTI_SITE`, and must parse as an IP address | none |
 
-The installer passes its whole environment on to the K3s install script, so K3s's own `INSTALL_K3S_*` variables (for example `INSTALL_K3S_VERSION` to pin the K3s release) take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself and overrides yours. K3s selects its release channel when you set nothing: the `stable` channel at the moment you install.
+The installer passes its whole environment on to the K3s install script, so K3s's own `INSTALL_K3S_*` variables take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself and overrides yours, and sets `INSTALL_K3S_VERSION` when you pass `GEASS_K3S_VERSION`. K3s selects its release channel when you set nothing: the `stable` channel at the moment you install.
+
+The installer also takes options, which go after `-s --` when you pipe it: `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--version` and `--help`. The update options are described in [Upgrade Geass](/docs/operations/upgrading/#options).
 
 :::note
 By default `sudo` drops variables you set before it. Write `sudo env NAME=value sh`, not `NAME=value sudo sh`.
@@ -241,19 +252,38 @@ Multi-provider clusters are experimental. The project has run a four-node cluste
 
 ## Run the installer again
 
+The installer looks at the machine and does what it needs. It never deletes a cluster on its own account.
+
+| The machine has | The installer |
+| --- | --- |
+| No K3s | Builds a new cluster |
+| K3s with Geass in it | **Updates** it, keeping its data, after taking a snapshot. See [Upgrade Geass](/docs/operations/upgrading/) |
+| K3s without Geass, a K3s whose API server does not answer, or a K3s agent (a worker) | Stops, and says why. Nothing is changed |
+| Any of the above, and you passed `--reinstall` | Deletes the cluster and builds a new one |
+
+Running the installer again for the same release is safe: it checks, replaces nothing that has not changed and restarts nothing.
+
+### Reinstall
+
 :::danger
-Running the installer on a machine that already has K3s uninstalls that K3s first and installs a new cluster. It asks for no confirmation. It is a reinstall, not an upgrade, and everything in the old cluster is deleted.
+`--reinstall` uninstalls K3s from the machine and builds a new cluster. Everything in the old cluster is deleted.
 :::
 
-Step 2, `remove existing installation`, treats K3s as installed when any of these exist: `/usr/local/bin/k3s-uninstall.sh`, `/usr/local/bin/k3s-agent-uninstall.sh`, `/usr/local/bin/k3s`, `/etc/systemd/system/k3s.service` or `/etc/systemd/system/k3s-agent.service`. It then runs the first uninstall script it finds. K3s's own uninstall script removes `/etc/rancher/k3s`, the K3s data directory (`/var/lib/rancher/k3s` by default) and `/var/lib/kubelet`. The data directory holds the cluster's embedded etcd database and K3s's local-path volumes, so after a second run:
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- --reinstall
+```
+
+It says what it will delete and asks you to type `reinstall` on your terminal. A script with no terminal passes `--yes`. Before it removes anything it takes a last etcd snapshot of the old cluster into `/var/backups/geass`, outside K3s's own directories (nothing restores it for you, and a cluster that is broken may not be able to be snapshotted; the reinstall then goes on).
+
+Step 2, `remove existing installation`, treats K3s as installed when any of these exist: `/usr/local/bin/k3s-uninstall.sh`, `/usr/local/bin/k3s-agent-uninstall.sh`, `/usr/local/bin/k3s`, `/etc/systemd/system/k3s.service` or `/etc/systemd/system/k3s-agent.service`. It then runs the first uninstall script it finds. K3s's own uninstall script removes `/etc/rancher/k3s`, the K3s data directory (`/var/lib/rancher/k3s` by default) and `/var/lib/kubelet`. The data directory holds the cluster's embedded etcd database and K3s's local-path volumes, so after a reinstall:
 
 - Every project, service, database definition, secret, dashboard user, API token and connection of the old cluster is gone, and so is data on local-path volumes.
 - Workers joined to the old cluster keep running their agents but hold credentials of a cluster that no longer exists.
 - Things outside K3s's directories are untouched: S3 buckets and backups, DNS records, Cloudflare tunnels, IAM users and your provider's resources. Longhorn's data directory (`/var/lib/longhorn/` by default) is also left on disk, with nothing that refers to it.
 
-Use a second run to retry on a machine where an install failed part-way and nothing of value exists yet, or to rebuild a cluster you mean to replace. For updating a working cluster, read [Upgrade Geass](/docs/operations/upgrading/).
+Use a reinstall to retry on a machine where an install failed part-way and nothing of value exists yet, or to rebuild a cluster you mean to replace. For updating a working cluster, read [Upgrade Geass](/docs/operations/upgrading/).
 
-When K3s files exist but no uninstall script does, the installer stops with `existing k3s installation detected but no uninstall script found at /usr/local/bin/k3s-uninstall.sh or /usr/local/bin/k3s-agent-uninstall.sh`. Remove the leftover K3s files yourself and run it again.
+When K3s files exist but no uninstall script does, a reinstall stops with `existing k3s installation detected but no uninstall script found at /usr/local/bin/k3s-uninstall.sh or /usr/local/bin/k3s-agent-uninstall.sh`. Remove the leftover K3s files yourself and run it again.
 
 ## What happens under the hood
 
@@ -275,10 +305,11 @@ K3s runs as the `k3s` systemd service and starts at boot. In the cluster, the in
 | --- | --- | --- |
 | Namespace `geass-system` | | Geass's own objects and secrets live here |
 | 16 `geass.geass.dev` definitions and `helmcharts.helm.cattle.io` | | `kubectl get crd` |
-| Deployment `geass-controller-manager` | `geass-system` | One replica, container `manager`, required to run on the control plane. Image tag `geass-operator:v0.0.1` in release builds. Memory limit 512Mi, with `GOMEMLIMIT=400MiB` |
+| Deployment `geass-controller-manager` | `geass-system` | One replica, container `manager`, required to run on the control plane, and replaced by stopping the old pod before starting the new one. Image `geass-operator:<release tag>` in release builds. Memory limit 512Mi, with `GOMEMLIMIT=400MiB`. Its pod template carries the annotations `geass.dev/release` and `geass.dev/operator-image-sha256` |
 | Service `geass-geass-dashboard` | `geass-system` | `ClusterIP`, port 8085. The name has `geass-` twice because the manifest build prefixes every name |
 | Service `geass-controller-manager-metrics-service` | `geass-system` | Operator metrics, port 8443 |
 | Secret `geass-token` | `geass-system` | K3s join token |
+| ConfigMap `geass-schema` | `geass-system` | Made by the operator when it first starts: the release that last started and the data schema level, which the operator checks when it starts and refuses to run over data that is newer than it knows of. See [Upgrade Geass](/docs/operations/upgrading/#how-an-update-stays-safe) |
 | ClusterRoleBinding `geass-metrics-reader-prometheus` | cluster-wide | Lets the monitoring add-on's Prometheus read the operator's metrics. It names a service account that exists only once the monitoring add-on is installed |
 | GeassCluster `default` | `geass-system` | Shown above |
 
@@ -304,7 +335,7 @@ K3s runs as the `k3s` systemd service and starts at boot. In the cluster, the in
 
 **`k3s did not become ready within 5 minutes`.** K3s was installed but did not start. Check `sudo systemctl status k3s` and `sudo journalctl -u k3s`. Low memory is a common cause.
 
-**`operator did not become ready within 5 minutes`.** The installer prints `waiting...` with the rollout status every few seconds while it waits. Look at the pod: `sudo k3s kubectl -n geass-system describe pod -l control-plane=controller-manager`, then the logs command above. If you built the installer yourself and see `embedded operator image is empty`, rebuild it with `make build-geass`.
+**`the operator did not become ready within 5m0s`**, or **`the operator pod is not starting: ...`** (a pod that is crash looping or cannot pull its image is reported at once, without waiting the five minutes). The installer prints `waiting...` with the rollout status every few seconds while it waits. Look at the pod: `sudo k3s kubectl -n geass-system describe pod -l control-plane=controller-manager`, then the logs command above. If you built the installer yourself and see `embedded operator image is empty`, rebuild it with `make build-geass`.
 
 **`✗ apply GeassCluster CR failed: wait for GeassCluster CRD: ...`.** The definition was not established within 60 seconds. Check the operator pod and the API server, then run the installer again on this fresh machine.
 

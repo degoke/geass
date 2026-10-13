@@ -20,6 +20,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/apitokens"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/release"
 )
 
 // What v1 offers beyond the dashboard's own routes: resources one at a time and as lists, in a shape meant for
@@ -108,8 +109,10 @@ func (s *Server) v1Router() *http.ServeMux {
 // version, so GET /api/v1/apps/web/metrics is GET /api/apps/web/metrics.
 func v1ReadPath(path string) string { return "/api/" + strings.TrimPrefix(path, v1Prefix) }
 
+// v1Version says which API this is and which Geass release serves it. The release is what tells a person (and the command
+// line) that the two are out of step; api is the version of the API itself and changes far less often.
 func (s *Server) v1Version(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"api": "v1", pathNameParam: "geass"})
+	writeJSON(w, http.StatusOK, map[string]string{"api": "v1", pathNameParam: "geass", "release": release.Version})
 }
 
 func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {

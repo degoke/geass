@@ -16,6 +16,10 @@ import (
 
 type Provisioner interface {
 	Provision(ctx context.Context, in ProvisionInput) error
+	// Upgrade replaces K3s on a worker that is already part of the cluster with in.K3sVersion, keeping the node's name,
+	// its place in the cluster and everything on its disks, and restarts the agent. It needs the same fields as
+	// Provision. It is safe to run again on a node that is already on the version: it then only restarts the agent.
+	Upgrade(ctx context.Context, in ProvisionInput) error
 	// Drain uninstalls the k3s agent from the machine. It connects the way Provision does, so only the
 	// connection fields of in are used: Host, Port, User, PrivateKey and KnownHosts.
 	Drain(ctx context.Context, in ProvisionInput) error
@@ -94,6 +98,25 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// installK3sCommand installs the K3s agent at in.K3sVersion with the install script. Run over a node that already has
+// the agent it replaces the binary and restarts the service, which is how K3s is upgraded; the node's data, its
+// registration and its running containers are not touched.
+func installK3sCommand(in ProvisionInput) string {
+	return fmt.Sprintf(
+		`curl -sfL https://get.k3s.io | \
+ INSTALL_K3S_VERSION=%s \
+ INSTALL_K3S_EXEC="agent" \
+ K3S_URL=%s \
+ K3S_TOKEN=%s \
+ K3S_NODE_NAME=%s \
+ sh -`,
+		shellQuote(in.K3sVersion),
+		shellQuote(in.ServerURL),
+		shellQuote(in.Token),
+		shellQuote(in.NodeName),
+	)
+}
+
 func rootSteps(in ProvisionInput) []provisionStep {
 	steps := []provisionStep{
 		{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"},
@@ -112,21 +135,58 @@ func rootSteps(in ProvisionInput) []provisionStep {
 		steps = append(steps, provisionStep{name: "write-k3s-config", cmd: in.Config.writeConfigCommand()})
 	}
 	return append(steps,
-		provisionStep{name: "install-k3s", cmd: fmt.Sprintf(
-			`curl -sfL https://get.k3s.io | \
- INSTALL_K3S_VERSION=%s \
- INSTALL_K3S_EXEC="agent" \
- K3S_URL=%s \
- K3S_TOKEN=%s \
- K3S_NODE_NAME=%s \
- sh -`,
-			shellQuote(in.K3sVersion),
-			shellQuote(in.ServerURL),
-			shellQuote(in.Token),
-			shellQuote(in.NodeName),
-		)},
+		provisionStep{name: "install-k3s", cmd: installK3sCommand(in)},
 		provisionStep{name: "enable-k3s", cmd: "systemctl enable k3s-agent && systemctl start k3s-agent"},
 	)
+}
+
+// upgradeSteps are the commands that move a worker that is already in the cluster to a newer K3s. It does what
+// joining does, minus what a node that has joined already has (the iSCSI initiator, the firewall), and ends by checking
+// that the agent is running the version that was asked for: the install script exits as soon as it has restarted the
+// service, which is not the same as the node being back.
+func upgradeSteps(in ProvisionInput) []provisionStep {
+	steps := []provisionStep{
+		{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"},
+		// An unreachable cluster is the one thing that turns an upgrade into an outage: the new agent could not rejoin.
+		{name: "check-cluster-reachable", cmd: reachabilityCommand(in)},
+	}
+	if !in.Config.IsZero() {
+		steps = append(steps, provisionStep{name: "write-k3s-config", cmd: in.Config.writeConfigCommand()})
+	}
+	steps = append(steps,
+		provisionStep{name: "install-k3s", cmd: installK3sCommand(in)},
+		provisionStep{name: "check-k3s-version", cmd: agentVersionCheck(in.K3sVersion)},
+	)
+	for i := range steps {
+		steps[i].cmd = asRoot(in.User, steps[i].cmd)
+	}
+	return steps
+}
+
+// agentVersionCheck waits for the agent service to be running K3s at the version, up to two minutes.
+func agentVersionCheck(version string) string {
+	q := shellQuote(version)
+	return fmt.Sprintf(`for i in $(seq 1 60); do
+  if systemctl is-active --quiet k3s-agent && /usr/local/bin/k3s --version 2>/dev/null | grep -qF %[1]s; then exit 0; fi
+  sleep 2
+done
+printf 'the k3s agent is not running K3s %%s: %%s (see journalctl -u k3s-agent)\n' %[1]s "$(/usr/local/bin/k3s --version 2>&1 | head -1)" >&2
+exit 1`, q)
+}
+
+func (p *sshProvisioner) Upgrade(ctx context.Context, in ProvisionInput) error {
+	client, err := dial(ctx, in)
+	if err != nil {
+		return fmt.Errorf("ssh dial %s: %w", in.Host, err)
+	}
+	defer func() { _ = client.Close() }()
+
+	for _, step := range upgradeSteps(in) {
+		if err := runStep(ctx, client, step.name, step.cmd); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reachabilityCommand checks that the cluster's API answers from this node. k3s's /ping needs no

@@ -119,6 +119,21 @@ type GeassClusterNetworkSpec struct {
 	MultiSite bool `json:"multiSite,omitempty"`
 }
 
+// GeassClusterK3sSpec says which K3s release the cluster's nodes should run.
+type GeassClusterK3sSpec struct {
+	// Version is the K3s release the worker nodes are brought to, such as v1.36.5+k3s1. When it is set and a
+	// worker runs something else, the operator upgrades the workers one at a time: it cordons the node, replaces
+	// K3s on it over SSH, waits for it to be ready on the new version and uncordons it, and stops at the first
+	// that does not come back. Workers are only moved to the version the control plane already runs, because an
+	// agent must not be newer than its server, and the operator never touches the control plane itself: it is
+	// upgraded by running the installer on that machine with --k3s-version, which also sets this field.
+	// Left empty, the operator leaves K3s on every node alone.
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$`
+	// +optional
+	Version string `json:"version,omitempty"`
+}
+
 // GeassClusterSpec defines the desired state of GeassCluster.
 type GeassClusterSpec struct {
 	// Version is the version of the GeassCluster.
@@ -144,6 +159,10 @@ type GeassClusterSpec struct {
 	// +kubebuilder:validation:MaxLength=40
 	// +optional
 	DefaultRegion string `json:"defaultRegion,omitempty"`
+
+	// K3s says which K3s release the nodes should run.
+	// +optional
+	K3s GeassClusterK3sSpec `json:"k3s,omitempty"`
 }
 
 type ClusterPhase string
@@ -151,6 +170,72 @@ type ClusterPhase string
 const (
 	ClusterPhaseReady ClusterPhase = "Ready"
 )
+
+// K3sUpgradePhase is how far an upgrade of the workers' K3s has got.
+type K3sUpgradePhase string
+
+const (
+	// K3sUpgradeWaitingForControlPlane: workers are behind spec.k3s.version, but the control plane is not on
+	// it yet, and a worker must not run a newer K3s than its server.
+	K3sUpgradeWaitingForControlPlane K3sUpgradePhase = "WaitingForControlPlane"
+	// K3sUpgradeWaiting: the next worker is not started because the cluster is not in a state that it is safe
+	// to take a node out of: a node is not ready or a replicated volume is not healthy. Message says which.
+	K3sUpgradeWaiting K3sUpgradePhase = "Waiting"
+	// K3sUpgradeUpgrading: a worker is being upgraded, CurrentNode.
+	K3sUpgradeUpgrading K3sUpgradePhase = "Upgrading"
+	// K3sUpgradeComplete: every worker runs the target version.
+	K3sUpgradeComplete K3sUpgradePhase = "Complete"
+	// K3sUpgradeFailed: a worker did not come back on the target version. The operator stops there, leaving that
+	// node cordoned, and goes no further until the target changes or the node is fixed.
+	K3sUpgradeFailed K3sUpgradePhase = "Failed"
+)
+
+// K3sUpgradeNodeStep is where the worker that is being upgraded has got to, so that an operator that restarts
+// part-way carries on from there.
+type K3sUpgradeNodeStep string
+
+const (
+	K3sUpgradeStepCordoned  K3sUpgradeNodeStep = "Cordoned"
+	K3sUpgradeStepInstalled K3sUpgradeNodeStep = "Installed"
+)
+
+// GeassK3sUpgradeStatus is the progress of bringing the workers to spec.k3s.version.
+type GeassK3sUpgradeStatus struct {
+	// Phase says how the upgrade is going.
+	// +optional
+	Phase K3sUpgradePhase `json:"phase,omitempty"`
+
+	// TargetVersion is the version the workers are being brought to.
+	// +optional
+	TargetVersion string `json:"targetVersion,omitempty"`
+
+	// CurrentNode is the worker being upgraded, while one is.
+	// +optional
+	CurrentNode string `json:"currentNode,omitempty"`
+
+	// Step is how far the current node has got.
+	// +optional
+	Step K3sUpgradeNodeStep `json:"step,omitempty"`
+
+	// StartedAt is when the current node's upgrade began, which is what its time limit counts from.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// Message says what the upgrade is doing, or why it is not.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// GeassClusterK3sStatus is what the cluster runs, and the state of an upgrade of it.
+type GeassClusterK3sStatus struct {
+	// ControlPlaneVersion is the oldest K3s version that a control plane node reports.
+	// +optional
+	ControlPlaneVersion string `json:"controlPlaneVersion,omitempty"`
+
+	// Upgrade is the progress of an upgrade of the workers to spec.k3s.version.
+	// +optional
+	Upgrade *GeassK3sUpgradeStatus `json:"upgrade,omitempty"`
+}
 
 // GeassClusterStatus defines the observed state of GeassCluster.
 type GeassClusterStatus struct {
@@ -166,12 +251,30 @@ type GeassClusterStatus struct {
 	// ReconcileRetry tracks provision retries before reconciliation gives up.
 	// +optional
 	ReconcileRetry GeassReconcileRetryStatus `json:"reconcileRetry,omitempty"`
+
+	// Release is the Geass release of the operator that last reconciled this cluster, such as v0.2.0. The
+	// installer reads it before an update, to refuse a downgrade and to wait until the new operator reports
+	// itself. A cluster installed before releases were recorded has none until its operator is updated.
+	// +optional
+	Release string `json:"release,omitempty"`
+
+	// SchemaVersion is the level of data migrations that have been applied to what this cluster stores.
+	// An operator that knows of fewer migrations than this refuses to start, so that an older release can
+	// never reconcile data that a newer one has changed.
+	// +optional
+	SchemaVersion int32 `json:"schemaVersion,omitempty"`
+
+	// K3s is what the cluster's nodes run and how an upgrade of the workers is going.
+	// +optional
+	K3s GeassClusterK3sStatus `json:"k3s,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Release",type=string,JSONPath=`.status.release`
+// +kubebuilder:printcolumn:name="K3s",type=string,JSONPath=`.status.k3s.controlPlaneVersion`
 
 // GeassCluster is the Schema for the geassclusters API.
 type GeassCluster struct {

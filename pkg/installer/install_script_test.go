@@ -13,7 +13,7 @@ import (
 // runInstallScript runs scripts/install.sh with a stand-in for curl, so nothing is downloaded, and its own
 // temporary directory, so what it leaves behind can be looked at. fakeCurl is the body of the stand-in; it
 // receives curl's arguments, and the file to write the download to is the one after -o.
-func runInstallScript(t *testing.T, script, fakeCurl string) (exitCode int, stdout, stderr string, leftover []string) {
+func runInstallScript(t *testing.T, script, fakeCurl string, args ...string) (exitCode int, stdout, stderr string, leftover []string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the install scripts are for Linux")
@@ -25,7 +25,7 @@ func runInstallScript(t *testing.T, script, fakeCurl string) (exitCode int, stdo
 	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte("#!/bin/sh\n"+fakeCurl), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", filepath.Join("..", "..", "scripts", script))
+	cmd := exec.Command("sh", append([]string{filepath.Join("..", "..", "scripts", script)}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+tmp, "GEASS_VERSION=v9.9.9")
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
@@ -90,5 +90,23 @@ func TestInstallShCleansUpTheInstallerItDownloadedAndKeepsItsExitStatus(t *testi
 	}
 	if len(leftover) != 0 {
 		t.Errorf("the downloaded installer was left in the temporary directory: %v", leftover)
+	}
+}
+
+// Whatever follows the script's name goes to the installer, so that `curl ... | sudo sh -s -- --reinstall --yes` can
+// say what it wants: the installer no longer assumes it, because deleting a cluster is not a default.
+func TestInstallShPassesItsArgumentsToTheInstaller(t *testing.T) {
+	const fakeCurlEchoingArgs = `while [ $# -gt 0 ]; do
+	if [ "$1" = "-o" ]; then out="$2"; fi
+	shift
+done
+printf '#!/bin/sh\necho "args:$*"\n' > "$out"
+`
+	code, stdout, stderr, _ := runInstallScript(t, "install.sh", fakeCurlEchoingArgs, "--k3s-version", "v1.36.5+k3s1", "--force")
+	if code != 0 {
+		t.Fatalf("exit status = %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "args:--k3s-version v1.36.5+k3s1 --force") {
+		t.Errorf("the installer did not receive the script's arguments:\n%s", stdout)
 	}
 }

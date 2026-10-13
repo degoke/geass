@@ -37,29 +37,11 @@ func (s *WaitForOperator) deploymentName() string {
 	if name := strings.TrimSpace(s.DeploymentName); name != "" {
 		return name
 	}
-	return "geass-controller-manager"
+	return operatorDeployment
 }
 
+// Run waits for the operator of a cluster that was just built. It is the same wait as the one that an update makes
+// (waitForOperatorRollout), so a pod that is crash looping or cannot pull its image is reported at once, with why.
 func (s *WaitForOperator) Run() error {
-	deployment := s.deploymentName()
-	deadline := time.Now().Add(5 * time.Minute)
-	kubeEnv := append(os.Environ(), k3sKubeconfigEnv)
-	Logf(s.Name(), "Waiting for deployment/%s rollout until %s", deployment, deadline.UTC().Format(time.RFC3339))
-	for time.Now().Before(deadline) {
-		out, err := combinedOutputCommandWithOptions(s.Name(), commandOptions{
-			env:    kubeEnv,
-			envLog: []string{k3sKubeconfigEnv},
-		}, "k3s", "kubectl",
-			"rollout", "status", "deployment/"+deployment,
-			"-n", "geass-system", "--timeout=60s",
-		)
-		if err == nil {
-			Logf(s.Name(), "Operator rollout completed")
-			return nil
-		}
-		fmt.Printf("  waiting... %s\n", strings.TrimSpace(string(out)))
-		Logf(s.Name(), "Operator rollout still pending")
-		time.Sleep(5 * time.Second)
-	}
-	return fmt.Errorf("operator did not become ready within 5 minutes")
+	return waitForOperatorRollout(s.Name(), s.deploymentName(), 5*time.Minute)
 }

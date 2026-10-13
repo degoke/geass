@@ -70,6 +70,8 @@ The installer will:
 
 Installation logs are written to disk; the path is printed when the installer starts.
 
+To update a running cluster, run the installer of the release you want on the control plane. It updates in place: it keeps the cluster and its data, takes an etcd snapshot first, and refuses a downgrade. It deletes a cluster only when you pass `--reinstall`. Add `--k3s-version` to upgrade K3s as well (one minor version at a time; the operator then upgrades the workers). See [Upgrade Geass](https://rungeass.com/docs/operations/upgrading/).
+
 ### HTTPS certificates
 
 Geass gets certificates for the dashboard and for your services from [Let's Encrypt](https://letsencrypt.org/), through
