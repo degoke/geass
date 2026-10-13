@@ -1,6 +1,6 @@
 ---
 title: "Upgrade Geass"
-description: "Update a running cluster to a new Geass release, and K3s with it, without rebuilding it: what the installer checks, snapshots and keeps, how workers follow, and how to go back."
+description: "Update a running cluster to a new Geass release, and K3s with it, without rebuilding it: what the installer checks and keeps, how workers follow, rolling back."
 ---
 
 Run the installer of the release you want on the control plane. When the machine already runs Geass, the installer updates it: it keeps the cluster, its data and its settings, takes a snapshot of the cluster's etcd first, replaces the Geass custom resource definitions and the operator, and waits until the new operator has taken over. It never removes K3s unless you tell it to with `--reinstall`.
