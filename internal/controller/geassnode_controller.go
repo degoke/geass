@@ -81,6 +81,12 @@ func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.Update(ctx, &node)
 	}
 
+	if node.Status.Phase != geassv1alpha1.NodePhaseFailed {
+		if err := r.dropRetryAnnotation(ctx, &node); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	clusterNS := node.Spec.ClusterRef.Namespace
 	if clusterNS == "" {
 		clusterNS = node.Namespace
@@ -193,7 +199,7 @@ func (r *GeassNodeReconciler) reconcileWorker(
 		return r.setFailed(ctx, node, "ssh key secret ref is required for worker nodes")
 	}
 
-	sshKey, err := r.resolveSSHKey(ctx, *node.Spec.SSHKeySecretRef, node.Namespace)
+	creds, err := r.resolveSSHCredentials(ctx, *node.Spec.SSHKeySecretRef, node.Namespace)
 	if err != nil {
 		return r.setFailed(ctx, node, "ssh key: "+err.Error())
 	}
@@ -205,7 +211,7 @@ func (r *GeassNodeReconciler) reconcileWorker(
 
 	switch node.Status.Phase {
 	case "", geassv1alpha1.NodePhasePending:
-		return r.provision(ctx, node, cluster, sshKey, token)
+		return r.provision(ctx, node, cluster, creds, token)
 
 	case geassv1alpha1.NodePhaseJoining:
 		return r.checkJoined(ctx, node)
@@ -246,24 +252,49 @@ func (r *GeassNodeReconciler) reconcileControlPlane(
 	return ctrl.Result{}, nil
 }
 
+// handleRetry starts over a node that is Failed when the geass.dev/retry annotation asks for it. The phase
+// lives in the status, which a plain Update of the node does not write, so it goes through the status
+// client; the annotation is removed afterwards with a patch, which cannot conflict. In that order a failure
+// part-way leaves the node retrying with the annotation still on it, which the next reconcile drops
+// (dropRetryAnnotation), rather than losing a request the user made.
 func (r *GeassNodeReconciler) handleRetry(
 	ctx context.Context,
 	node *geassv1alpha1.GeassNode,
 ) (ctrl.Result, error) {
-	if _, ok := node.Annotations[nodeRetryAnnotKey]; ok {
-		node.Status.Phase = geassv1alpha1.NodePhasePending
-		delete(node.Annotations, nodeRetryAnnotKey)
-		_ = r.Update(ctx, node)
-		return ctrl.Result{Requeue: true}, nil
+	if _, ok := node.Annotations[nodeRetryAnnotKey]; !ok {
+		return ctrl.Result{}, nil
 	}
-	return ctrl.Result{}, nil
+	if _, err := platform.PatchStatus(ctx, r.Client, node, func() {
+		node.Status.Phase = geassv1alpha1.NodePhasePending
+		node.Status.Message = ""
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+	base := node.DeepCopy()
+	delete(node.Annotations, nodeRetryAnnotKey)
+	if err := r.Patch(ctx, node, client.MergeFrom(base)); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+// dropRetryAnnotation removes the geass.dev/retry annotation from a node that is not Failed. It asks for a
+// retry of a failure, and there is none to retry, so left in place it would restart the node by itself the
+// next time it fails, without anyone having asked for that.
+func (r *GeassNodeReconciler) dropRetryAnnotation(ctx context.Context, node *geassv1alpha1.GeassNode) error {
+	if _, ok := node.Annotations[nodeRetryAnnotKey]; !ok {
+		return nil
+	}
+	base := node.DeepCopy()
+	delete(node.Annotations, nodeRetryAnnotKey)
+	return client.IgnoreNotFound(r.Patch(ctx, node, client.MergeFrom(base)))
 }
 
 func (r *GeassNodeReconciler) provision(
 	ctx context.Context,
 	node *geassv1alpha1.GeassNode,
 	cluster *geassv1alpha1.GeassCluster,
-	sshKey []byte,
+	creds sshCredentials,
 	token string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -280,17 +311,24 @@ func (r *GeassNodeReconciler) provision(
 		sshPort = 22
 	}
 
-	k3sVersion, err := workerK3sVersion(ctx, r.Client, cluster)
+	controlPlane, err := controlPlaneNodes(ctx, r.Client)
 	if err != nil {
 		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+	}
+	k3sVersion := workerK3sVersion(controlPlane, cluster)
+	serverURL := workerServerURL(cluster, controlPlane)
+	if serverURL != cluster.Spec.ServerURL {
+		log.Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
+			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
 	}
 	err = r.SSH.Provision(ctx, ssh.ProvisionInput{
 		Host:       node.Spec.EIP,
 		Port:       sshPort,
 		User:       node.Spec.SSHUser,
-		PrivateKey: sshKey,
+		PrivateKey: creds.privateKey,
+		KnownHosts: creds.knownHosts,
 		K3sVersion: k3sVersion,
-		ServerURL:  cluster.Spec.ServerURL,
+		ServerURL:  serverURL,
 		Token:      token,
 		NodeName:   node.Name,
 		Config: ssh.NewAgentConfig(ssh.AgentOptions{
@@ -375,9 +413,16 @@ func (r *GeassNodeReconciler) handleDeletion(
 	}
 
 	if node.Spec.SSHKeySecretRef != nil && node.Spec.SSHKeySecretRef.Name != "" {
-		sshKey, err := r.resolveSSHKey(ctx, *node.Spec.SSHKeySecretRef, node.Namespace)
+		creds, err := r.resolveSSHCredentials(ctx, *node.Spec.SSHKeySecretRef, node.Namespace)
 		if err == nil {
-			if drainErr := r.SSH.Drain(ctx, node.Spec.EIP, sshKey, node.Spec.SSHUser); drainErr != nil {
+			drainErr := r.SSH.Drain(ctx, ssh.ProvisionInput{
+				Host:       node.Spec.EIP,
+				Port:       node.Spec.SSHPort,
+				User:       node.Spec.SSHUser,
+				PrivateKey: creds.privateKey,
+				KnownHosts: creds.knownHosts,
+			})
+			if drainErr != nil {
 				logf.FromContext(ctx).Error(drainErr, "Could not drain node during deletion", "node", node.Name)
 			}
 		}
@@ -416,11 +461,18 @@ func (r *GeassNodeReconciler) setFailed(
 	return ctrl.Result{}, r.Status().Update(ctx, node)
 }
 
-func (r *GeassNodeReconciler) resolveSSHKey(
+// sshCredentials is what a node's SSH key secret gives the provisioner: the key to log in with, and,
+// optionally, the host keys the machine may present.
+type sshCredentials struct {
+	privateKey []byte
+	knownHosts []byte
+}
+
+func (r *GeassNodeReconciler) resolveSSHCredentials(
 	ctx context.Context,
 	ref corev1.SecretReference,
 	defaultNS string,
-) ([]byte, error) {
+) (sshCredentials, error) {
 	ns := ref.Namespace
 	if ns == "" {
 		ns = defaultNS
@@ -428,16 +480,16 @@ func (r *GeassNodeReconciler) resolveSSHKey(
 
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
-		return nil, err
+		return sshCredentials{}, err
 	}
 
 	for _, key := range []string{"ssh-privatekey", "id_rsa", "private-key", "key"} {
 		if v, ok := secret.Data[key]; ok {
-			return v, nil
+			return sshCredentials{privateKey: v, knownHosts: secret.Data[ssh.KnownHostsSecretKey]}, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no private key found in secret %s/%s", ns, ref.Name)
+	return sshCredentials{}, fmt.Errorf("no private key found in secret %s/%s", ns, ref.Name)
 }
 
 func (r *GeassNodeReconciler) resolveToken(

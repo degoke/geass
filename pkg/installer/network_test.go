@@ -74,7 +74,7 @@ func TestWorkersJoinAMultiSiteClusterOnItsPublicAddress(t *testing.T) {
 func TestMultiSiteOpensTheWireGuardPortInsteadOfVXLAN(t *testing.T) {
 	ports := func(network Network) map[string]bool {
 		found := map[string]bool{}
-		for _, p := range k3sPorts(network) {
+		for _, p := range controlPlanePorts(network) {
 			found[p.port+"/"+p.protocol] = true
 		}
 		return found

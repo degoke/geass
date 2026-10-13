@@ -32,15 +32,9 @@ export function ProjectWorkspaceShell({
 
   return (
     <div className={stackOpen ? "rw-project-workspace rw-drawer-stack-open" : "rw-project-workspace"}>
-      <WorkspacePage project={project} data={data} environment={environment} reload={reload} />
+      <WorkspacePage project={project} data={data} environment={environment} />
       {drawerOpen ? (
         <>
-          <button
-            type="button"
-            className={stackOpen ? "rw-resource-drawer-overlay rw-resource-drawer-overlay-stacked" : "rw-resource-drawer-overlay"}
-            aria-label="Close resource panel"
-            onClick={closeDrawer}
-          />
           <ResourceDetailDrawer
             project={project}
             data={data}

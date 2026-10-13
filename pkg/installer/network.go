@@ -57,13 +57,49 @@ func (n Network) Validate() error {
 	return nil
 }
 
-// ServerURL is the address workers join the cluster on. A multi-site cluster's workers are elsewhere,
-// so it is the control plane's public address; otherwise the loopback default applies.
+// ServerURL is the address workers join the cluster on when the network dictates it. A multi-site
+// cluster's workers are elsewhere, so it is the control plane's public address. Otherwise it is empty and
+// the caller uses this machine's own address on the network the workers share with it: see
+// controlPlaneAddress.
 func (n Network) ServerURL() string {
 	if n.MultiSite && n.ExternalIP != "" {
-		return "https://" + net.JoinHostPort(n.ExternalIP, "6443")
+		return serverURLFor(n.ExternalIP)
 	}
 	return ""
+}
+
+func serverURLFor(host string) string {
+	return "https://" + net.JoinHostPort(host, platform.ClusterAPIPort)
+}
+
+// controlPlaneAddress is this machine's address on the network workers will reach it over: the source
+// address the kernel picks for traffic leaving by the default route. That is also the address k3s
+// registers the node under, so it is in the API server's certificate. It is a private address on a cloud
+// VM, and the public one on a server that has its public address on the interface.
+//
+// Connecting a UDP socket sends nothing: it only makes the kernel choose a route and a source address.
+func controlPlaneAddress() (string, error) {
+	var lastErr error
+	for _, probe := range []struct{ network, target string }{
+		{"udp4", "192.0.2.1:9"},     // TEST-NET-1: never routed anywhere, so nothing real is contacted
+		{"udp6", "[2001:db8::1]:9"}, // documentation prefix, for a host with only IPv6
+	} {
+		conn, err := net.Dial(probe.network, probe.target)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		udp, ok := conn.LocalAddr().(*net.UDPAddr)
+		_ = conn.Close()
+		if !ok || udp.IP.IsLoopback() || udp.IP.IsUnspecified() || udp.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		return udp.IP.String(), nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable address on the default route")
+	}
+	return "", lastErr
 }
 
 // ServerConfig is the k3s server's configuration file.

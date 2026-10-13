@@ -138,7 +138,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       : { image })}
                 >
                   {fn ? (
-                    <ResourceSettingsBlock title="Function runtime" description="The language runtime that runs your code. Edit the code itself in the Source Code tab.">
+                    <ResourceSettingsBlock title="Function runtime" description="The language runtime that runs your code. Edit the code itself in the Code tab.">
                       <SettingsPanel>
                         <Field label="Runtime">
                           <Select value={functionRuntime} onChange={(event) => setFunctionRuntime(event.currentTarget.value)} aria-label="Function runtime">

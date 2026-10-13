@@ -1,0 +1,35 @@
+---
+import dashboard from "../../assets/dashboard.webp";
+import { docsUrl } from "../../lib/site";
+---
+  <section class="hero grid-bg" id="top">
+    <div class="hero-inner">
+      <ul class="chips" aria-label="Highlights">
+        <li>self-hosted</li>
+        <li>VPS and bare metal</li>
+        <li>source-available</li>
+      </ul>
+      <h1>
+        <span class="mark">Absolute command</span><br />over servers you already own.
+      </h1>
+      <p class="positioning">One cloud to manage them all.</p>
+      <p class="lede">
+        Your own cloud on your own servers, from VPS to bare metal. Ship apps and databases, scale across machines
+        and connect your other clouds, all in one place, with no lock-in.
+      </p>
+      <div class="actions">
+        <a class="btn btn-primary" href="#install">Install Geass</a>
+        <a class="btn btn-secondary" href={docsUrl}>Read the docs</a>
+      </div>
+    </div>
+
+    <figure class="frame">
+      <img
+        src={dashboard.src}
+        width="1440"
+        height="900"
+        alt="The Geass dashboard: a project's canvas of apps, a function, databases and a bucket with their status, the environments across the top with a Deploy changes button, and the selected database's details on the right."
+        fetchpriority="high"
+      />
+    </figure>
+  </section>

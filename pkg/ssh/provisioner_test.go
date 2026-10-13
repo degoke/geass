@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/degoke/geass/pkg/platform"
@@ -30,5 +31,30 @@ func TestProvisionStepsInstallIscsiBeforeJoiningTheCluster(t *testing.T) {
 	}
 	if steps[index["install-k3s"]].optional {
 		t.Fatal("install-k3s must stay required")
+	}
+}
+
+// The values in the install command come from the cluster, a Secret and a node's own report, and the command
+// runs as root, so none may be read by the shell as anything but one word.
+func TestTheInstallCommandQuotesEveryValueThatCameFromOutsideTheOperator(t *testing.T) {
+	steps := provisionSteps(ProvisionInput{
+		K3sVersion: "v1.30.0+k3s1;id", ServerURL: "https://10.0.0.1$(id):6443", Token: "t'oken", NodeName: "n&n",
+	})
+	var install string
+	for _, step := range steps {
+		if step.name == "install-k3s" {
+			install = step.cmd
+		}
+	}
+
+	for _, want := range []string{
+		`INSTALL_K3S_VERSION='v1.30.0+k3s1;id'`,
+		`K3S_URL='https://10.0.0.1$(id):6443'`,
+		`K3S_TOKEN='t'\''oken'`,
+		`K3S_NODE_NAME='n&n'`,
+	} {
+		if !strings.Contains(install, want) {
+			t.Errorf("install command should contain %s:\n%s", want, install)
+		}
 	}
 }
