@@ -11,7 +11,7 @@ Geass installs on one Linux server and grows by adding more. This page lists wha
 | --- | --- | --- |
 | CPU architecture | `amd64` (x86_64) or `arm64` (aarch64) | Yes |
 | Operating system | Linux | Yes (Linux only, no distribution check) |
-| Memory | 2048 MiB total | Yes |
+| Memory | A server with 2 GB: at least 1700 MiB of total memory as the kernel reports it | Yes |
 | Disk | 10 GiB free on the filesystem that holds `/` | Yes |
 | Privileges | root, or a user that can run `sudo` | No (the install fails when it cannot write to `/etc`) |
 | Network | Outbound HTTPS to the hosts listed below | No |
@@ -21,7 +21,7 @@ Release builds exist for `linux/amd64` and `linux/arm64`. The `install.sh` scrip
 
 ## Memory and disk
 
-The memory check reads `MemTotal` from `/proc/meminfo` and requires at least 2048 MiB. The kernel reports a little less than the size your provider advertises, so a plan sold as "2 GB" can be rejected with `insufficient memory`. Check before you install:
+The memory check reads `MemTotal` from `/proc/meminfo` and requires at least 1700 MiB. The kernel reports less than the size your provider advertises, because it reserves memory for itself, for firmware and, on Red Hat family systems, for a crash kernel. A plan sold as "2 GB" usually reports between about 1.7 and 1.95 GiB, so it passes, and a 1 GB plan, which reports about 950 MiB, does not. Check before you install:
 
 ```bash
 grep MemTotal /proc/meminfo
@@ -73,7 +73,7 @@ Open these between the machines, in the provider's firewall or security group an
 | Port | Where | Purpose | Opened by the installer |
 | --- | --- | --- | --- |
 | 22/tcp | From you to every server, and from the control plane to each new worker | SSH. Geass joins workers over SSH | No |
-| 80/tcp and 443/tcp | From the internet to the nodes that serve web traffic | The ingress controller (Traefik, which K3s installs) for your services and the dashboard domain. Let's Encrypt also needs 80/tcp to validate a hostname before it issues a certificate | No |
+| 80/tcp and 443/tcp | From the internet to the nodes that serve web traffic | The ingress controller (Traefik, which K3s installs) for your services and the dashboard domain. Let's Encrypt also needs 80/tcp to validate a hostname before it issues a certificate | Yes, on the control plane |
 | 6443/tcp | To the control plane, from every worker. In a multi-site cluster, from every node including the control plane itself | Kubernetes API | Yes, on the control plane |
 | 10250/tcp | Between nodes | kubelet, used for container metrics | Yes, on the control plane |
 | 8472/udp | Between nodes | VXLAN overlay network (default network mode) | Yes, on the control plane |
@@ -81,30 +81,25 @@ Open these between the machines, in the provider's firewall or security group an
 
 ### What the installer opens
 
-The installer looks for an active host firewall in this order: `ufw`, `firewalld`, then `iptables` (active when the `INPUT` chain has a `DROP` policy or any rule). For the first one it finds, it opens 6443/tcp, 10250/tcp and the overlay port (8472/udp, or 51820/udp for a multi-site cluster):
+The installer looks for an active host firewall on the control plane in this order: `ufw`, `firewalld`, then `iptables` (active when the `INPUT` chain has a `DROP` policy or any rule). For the first one it finds, it opens 6443/tcp, 10250/tcp, the overlay port (8472/udp, or 51820/udp for a multi-site cluster), and 80/tcp and 443/tcp, which carry your services, the dashboard's domain and Let's Encrypt's validation:
 
 - `ufw`: `ufw allow <port>/<protocol>`.
 - `firewalld`: `firewall-cmd --permanent --add-port=...`, then `firewall-cmd --reload`.
-- `iptables`: meant to be `iptables -A INPUT -p <protocol> --dport <port> -j ACCEPT`, skipped when the rule already exists. See the second caution below: at present it skips every rule that is missing.
+- `iptables`: `iptables -w -I INPUT <position> -p <protocol> --dport <port> -j ACCEPT` (`-A INPUT ...` when it is appended), skipped when `iptables -C` says the rule already exists, so running the installer again adds nothing twice. `-w` makes iptables wait for the lock, and is left out on an iptables too old to know it. The rule goes just ahead of the first catch-all `REJECT` or `DROP` in the chain, because many hosts that filter with `iptables` end `INPUT` with one (the default on Oracle Cloud and Red Hat images), and a rule after it would never match. Rules of yours that come before it, such as a blocked source or a port you closed on purpose, still come first and still win. When the chain has no catch-all, the rule is appended.
 
 If it finds no active firewall it prints a warning that starts `No active host firewall detected; skipping port configuration` and lists the ports to open yourself if you add a firewall later.
 
-:::caution
-The installer opens only the three ports above, and only on the control plane. It does not open 80 or 443, so your services are unreachable from the internet until you open them. It does not change a provider firewall or security group. It does not configure the firewall of workers. The only exception is a multi-site cluster, where joining a worker opens 51820/udp and 10250/tcp, and only with `ufw` or `firewalld`.
-
-The rules it adds accept traffic from any source. If your server has a public address, restrict 6443 and 10250 to your other nodes in the provider's firewall. An `iptables` rule is appended to the end of the `INPUT` chain, so a `REJECT` or `DROP` rule earlier in the chain still wins, and the rule is not saved across reboots.
-:::
-
-:::caution
-When the only active firewall is plain `iptables`, the installer does not open the ports. Its test for an existing rule runs `iptables -C` and reads the reply `Bad rule (does a matching rule exist in that chain?)` as "the rule is already there". `iptables -C` prints that reply when the rule is missing, so the installer logs `iptables rule already present` and adds nothing. Add the rules yourself before you join workers (use 51820/udp instead of 8472/udp for a multi-site cluster):
+`ufw` and `firewalld` keep their rules across reboots. For `iptables` the installer saves the rules only when it added one, and only where the host already restores them at boot: it writes the current ruleset (`iptables-save`) over `/etc/iptables/rules.v4` (`iptables-persistent`, Debian and Ubuntu) or `/etc/sysconfig/iptables` (`iptables-services`, Red Hat family) when that file exists. On a host that restores nothing, it prints a warning that starts `The iptables rules that open the ports are not saved`, and the ports close again at the next reboot. It does not install a persistence package or create the file, because that would change how the machine's firewall is managed. Install one and save the rules yourself:
 
 ```bash
-sudo iptables -A INPUT -p tcp --dport 6443 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 10250 -j ACCEPT
-sudo iptables -A INPUT -p udp --dport 8472 -j ACCEPT
+sudo apt-get install iptables-persistent   # Debian, Ubuntu
+sudo netfilter-persistent save
 ```
 
-These rules are lost on reboot unless you save them with your distribution's tooling. With `ufw` or `firewalld` the installer works as described.
+:::caution
+The installer changes only the host firewall of the control plane. It does not change a provider firewall or security group, so the ports above must also be open there. It does not configure the firewall of workers. The only exception is a multi-site cluster, where joining a worker opens 51820/udp and 10250/tcp, and only with `ufw` or `firewalld`.
+
+The rules it adds accept traffic from any source. If your server has a public address, restrict 6443 and 10250 to your other nodes in the provider's firewall. An `iptables` rule goes behind your own rules and ahead of a catch-all `REJECT` or `DROP` at the end, so a rule of yours that blocks a source or a port still wins, but the catch-all no longer blocks these ports. Delete the rule if you meant to block them.
 :::
 
 ## DNS
@@ -138,7 +133,7 @@ The `geass` command line is optional. Its install script needs `curl` and `sh` o
 
 ```bash
 uname -m                      # x86_64 or aarch64
-grep MemTotal /proc/meminfo   # at least 2097152 kB
+grep MemTotal /proc/meminfo   # at least 1740800 kB
 df -h /                       # at least 10G available
 command -v curl awk           # both must print a path
 sudo -n true && echo "sudo ok"
@@ -146,13 +141,13 @@ sudo -n true && echo "sudo ok"
 
 ## Troubleshooting
 
-**`insufficient memory: ... MB (2048 MB required)`.** The machine has less than 2048 MiB of total memory as the kernel reports it. Use a larger plan.
+**`insufficient memory: ... MB (a server with 2 GB is needed, which the kernel reports as at least 1700 MB)`.** The machine has less than 1700 MiB of total memory as the kernel reports it, which is a plan below 2 GB. Use a larger plan.
 
 **`insufficient disk space on /: ... MB (10240 MB required)`.** Free space on the root filesystem. Remove files or grow the disk. The check counts free space on `/`, even when you later mount data elsewhere.
 
 **`unsupported architecture`.** Geass ships for `amd64` and `arm64` only.
 
-**The installer finishes but the dashboard is unreachable from the internet.** Ports 80 and 443 are closed. The installer does not open them.
+**The installer finishes but the dashboard is unreachable from the internet.** Ports 80 and 443 are probably closed in the provider's firewall or security group, which the installer cannot change. It opens them only in an active host firewall on the control plane. The dashboard is also not published until you configure a domain.
 
 ## Related
 

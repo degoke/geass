@@ -36,7 +36,7 @@ metadata:
   namespace: geass-system
 spec:
   version: v1
-  serverURL: https://127.0.0.1:6443
+  serverURL: https://10.0.0.5:6443
   tokenSecretRef:
     name: geass-token
     namespace: geass-system
@@ -89,7 +89,7 @@ spec:
 | Field | Type | Required or default | Validation | Meaning |
 | --- | --- | --- | --- | --- |
 | `spec.version` | string | Required | None | A label for the Geass cluster. The installer writes `v1`. It is not a K3s version and Geass does not use it to install anything. The one exception: when a worker joins and no control plane node reports a K3s version, Geass uses this value, but only if it looks like a K3s release such as `v1.31.4+k3s1`. |
-| `spec.serverURL` | string | Required | None | The address workers join, for example `https://203.0.113.10:6443`. The installer writes `https://127.0.0.1:6443` for a default install, which only the control plane can reach. Set it before you add a worker: see [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). A multi-site install writes the public address instead. |
+| `spec.serverURL` | string | Required | None | The address workers join, for example `https://203.0.113.10:6443`. The installer writes the control plane's own address on its default route (`https://10.0.0.5:6443`, a private address on most cloud servers), and a multi-site install writes the public address instead. A loopback address (`127.0.0.1`, `localhost`, `::1`) is never used to join a worker: Geass uses the address the control plane node registered under. Set `serverURL` only to use a different address: see [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). |
 | `spec.tokenSecretRef` | SecretReference | Required | None | The Secret that holds the K3s join token. A standard Kubernetes `name` and `namespace` pair. The installer writes `geass-token` in `geass-system`. The token is read from the key `token`, then `value`, then `k3s-token`. |
 | `spec.tokenSecretRef.name` | string | Optional | None | Name of the Secret. |
 | `spec.tokenSecretRef.namespace` | string | Optional. Defaults to the cluster's namespace. | None | Namespace of the Secret. |
@@ -231,9 +231,9 @@ Longhorn needs the iSCSI initiator on every node. The installer and the worker j
 
 Read the add-on that failed: `AddonsReady` still carries the last error. Fix the cause, then change a field in the spec so that `metadata.generation` changes. The controller resumes when the generation changes. Saving the same values again does not change it.
 
-### A worker cannot join: `cannot reach the cluster API at https://127.0.0.1:6443`
+### A worker cannot join: `cannot reach the cluster API at <url>`
 
-`spec.serverURL` is still the installer's default. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join).
+The rest of the message says why: a refused connection or a timeout means 6443/tcp is closed between the worker and the control plane, and a loopback address means `spec.serverURL` is `127.0.0.1` and no control plane node has an address to use instead. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join).
 
 ### Projects say `project "<project>" cluster "<cluster>" is not ready`
 

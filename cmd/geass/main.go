@@ -35,9 +35,9 @@ func main() {
 	applyCluster := &installer.ClusterCRApply{Network: network, ACMEEmail: acmeEmail}
 
 	steps := []installer.Step{
-		checks, // OS, memory, disk, arch, the ACME email, and WireGuard for multi-site
-		&installer.FirewallSetup{Network: network}, // open 6443, 10250 and the overlay port when a host firewall is active
-		&installer.RemoveExistingInstall{},         // uninstall k3s if already present
+		checks,                             // OS, memory, disk, arch, the ACME email, and WireGuard for multi-site
+		&installer.RemoveExistingInstall{}, // uninstall k3s if already present, before the firewall step saves rules
+		&installer.FirewallSetup{Network: network}, // open the cluster, overlay and web ports when a host firewall is active
 		&installer.NodePrerequisites{},             // iSCSI initiator, which Longhorn needs on every node
 		&installer.K3sInstall{Network: network},    // download get.k3s.io installer and run server mode
 		&installer.WaitForK3s{},                    // poll until /etc/rancher/k3s/k3s.yaml exists

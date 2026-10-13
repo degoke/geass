@@ -17,13 +17,19 @@ import (
 )
 
 type recordingProvisioner struct {
-	drained  []string
-	drainErr error
+	drained     []string
+	drainInputs []ssh.ProvisionInput
+	drainErr    error
+	provisioned []ssh.ProvisionInput
 }
 
-func (p *recordingProvisioner) Provision(context.Context, ssh.ProvisionInput) error { return nil }
-func (p *recordingProvisioner) Drain(_ context.Context, host string, _ []byte, _ string) error {
-	p.drained = append(p.drained, host)
+func (p *recordingProvisioner) Provision(_ context.Context, in ssh.ProvisionInput) error {
+	p.provisioned = append(p.provisioned, in)
+	return nil
+}
+func (p *recordingProvisioner) Drain(_ context.Context, in ssh.ProvisionInput) error {
+	p.drained = append(p.drained, in.Host)
+	p.drainInputs = append(p.drainInputs, in)
 	return p.drainErr
 }
 
@@ -108,4 +114,27 @@ func TestTheControlPlaneNodeIsNeverRemoved(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, nodeExists(t, c, "w3"))
 	require.Empty(t, provisioner.drained)
+}
+
+// Removal used to connect on port 22 whatever spec.sshPort said, and to every machine without checking who
+// answered.
+func TestRemovalConnectsOnTheNodesSSHPortAndChecksItsHostKey(t *testing.T) {
+	spec := workerSpec()
+	spec.SSHPort = 2222
+	r, node, c, provisioner := removalFixture(t, spec, "w3")
+	var secret corev1.Secret
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "key", Namespace: "geass-system"}, &secret))
+	secret.Data[ssh.KnownHostsSecretKey] = []byte("203.0.113.9 ssh-ed25519 AAAA\n")
+	require.NoError(t, c.Update(context.Background(), &secret))
+
+	_, err := r.handleDeletion(context.Background(), node)
+
+	require.NoError(t, err)
+	require.Len(t, provisioner.drainInputs, 1)
+	in := provisioner.drainInputs[0]
+	require.Equal(t, 2222, in.Port)
+	require.Equal(t, "203.0.113.9", in.Host)
+	require.Equal(t, "ubuntu", in.User)
+	require.Equal(t, []byte("k"), in.PrivateKey)
+	require.Equal(t, []byte("203.0.113.9 ssh-ed25519 AAAA\n"), in.KnownHosts)
 }

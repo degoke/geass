@@ -118,7 +118,7 @@ func TestEveryJoinChecksTheClusterIsReachableFirst(t *testing.T) {
 	check := steps[indexOf(names, "check-cluster-reachable")]
 	require.False(t, check.optional, "a node that cannot reach the cluster must not be left restarting k3s forever")
 	require.Contains(t, check.cmd, "https://203.0.113.1:6443/ping")
-	require.Contains(t, check.cmd, "open TCP 6443")
+	require.Contains(t, check.cmd, "TCP 6443 is open to this node")
 	require.NotContains(t, check.cmd, "UDP 51820", "the single-site hint does not mention the overlay port")
 }
 

@@ -178,9 +178,10 @@ the public internet once you publish the dashboard.
 | 80/tcp, 443/tcp | Apps and the dashboard through Traefik. Let's Encrypt validates hostnames on 80 | The internet, if you publish services |
 | 22/tcp | SSH, used to join servers and for your own access | You, and the control plane toward workers |
 
-The installer opens 6443, 10250 and the overlay port in the host firewall if it finds an active one (`ufw`, `firewalld` or
-`iptables`), without limiting the source address. Restrict them to your node addresses in your provider's firewall or
-security group. The operator also serves health probes on 8086 and, in the installed manifest, metrics on 8443 (HTTPS,
+The installer opens 6443, 10250, the overlay port, 80 and 443 in the host firewall of the control plane if it finds an
+active one (`ufw`, `firewalld` or `iptables`), without limiting the source address. An `iptables` rule goes behind your own
+rules and ahead of a catch-all `REJECT` or `DROP` at the end of the `INPUT` chain, so a block of yours still wins. Restrict 6443 and 10250 to
+your node addresses in your provider's firewall or security group. The operator also serves health probes on 8086 and, in the installed manifest, metrics on 8443 (HTTPS,
 protected by Kubernetes authentication and authorization); both stay inside the cluster. The operator's manifest includes a
 ClusterRoleBinding (`metrics-reader-prometheus` in `config/rbac`) that gives the monitoring add-on's Prometheus service account
 (`geass-kube-prometheus-stac-prometheus` in `monitoring`) the `metrics-reader` role, which is what lets Prometheus scrape the operator's
@@ -334,8 +335,10 @@ to the whole cluster. Per-bucket AWS keys given to apps reach only their own buc
 ## SSH and joining servers
 
 Geass joins a server by connecting over SSH as root or a sudoer, with a private key in a Secret you reference. It does not
-verify the server's SSH host key, so it cannot tell if the address now points at a different machine. Join only servers
-whose network path you trust, use a key made for this purpose, and prefer a private network. The K3s join token in `geass-token` lets
+verify the server's SSH host key unless you pin it, so by default it cannot tell if the address now points at a different
+machine. Put the machine's host key in the same Secret under `known_hosts` (see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)) and
+Geass refuses any other machine before it sends a command or the join token. Without it, join only servers whose network
+path you trust. Use a key made for this purpose, and prefer a private network. The K3s join token in `geass-token` lets
 any machine that can reach port 6443 join the cluster, so guard it like a password.
 
 ## Auditing

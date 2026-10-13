@@ -532,8 +532,9 @@ Geass does not create virtual machines and has no API integration with any serve
   [Multi-provider clusters](/docs/operations/multi-provider/).
 
 :::caution
-When Geass connects over SSH to join a server it does not verify the server's host key. Join only servers you trust
-the network path to, and see [Security](/docs/operations/security/).
+When Geass connects over SSH to join a server it does not verify the server's host key unless you pin it with a
+`known_hosts` entry in the SSH key Secret: see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended).
+Without one, join only servers you trust the network path to, and see [Security](/docs/operations/security/).
 :::
 
 ## Where secrets are stored

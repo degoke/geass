@@ -47,7 +47,13 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
 echo "Downloading ${URL}"
-curl -sfL "$URL" -o "$TMP"
+# -f fails on an HTTP error instead of saving the error page, -S still prints why curl failed.
+if ! curl -fsSL "$URL" -o "$TMP"; then
+	echo "Could not download ${URL}" >&2
+	echo "Check that the release exists (GEASS_VERSION is ${VERSION}) and has a geass-cli-${OS}-${ARCH} file," >&2
+	echo "and that this machine can reach github.com over HTTPS." >&2
+	exit 1
+fi
 chmod +x "$TMP"
 mv "$TMP" "$DIR/geass"
 

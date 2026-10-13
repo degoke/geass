@@ -1,0 +1,94 @@
+package installer
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// runInstallScript runs scripts/install.sh with a stand-in for curl, so nothing is downloaded, and its own
+// temporary directory, so what it leaves behind can be looked at. fakeCurl is the body of the stand-in; it
+// receives curl's arguments, and the file to write the download to is the one after -o.
+func runInstallScript(t *testing.T, script, fakeCurl string) (exitCode int, stdout, stderr string, leftover []string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install scripts are for Linux")
+	}
+	if arch := runtime.GOARCH; arch != "amd64" && arch != "arm64" {
+		t.Skipf("install.sh does not support %s", arch)
+	}
+	bin, tmp := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte("#!/bin/sh\n"+fakeCurl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", filepath.Join("..", "..", "scripts", script))
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+tmp, "GEASS_VERSION=v9.9.9")
+	var out, errBuf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errBuf
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(tmp)
+	for _, entry := range entries {
+		leftover = append(leftover, entry.Name())
+	}
+	return exitCode, out.String(), errBuf.String(), leftover
+}
+
+const fakeCurlFails = `echo "curl: (22) The requested URL returned error: 404" >&2
+exit 22
+`
+
+// A fake download whose "installer" ends with the status in $FAKE_STATUS-less form: it prints a line and
+// exits 7, so the status the script ends with can be told from a status of its own.
+const fakeCurlInstaller = `while [ $# -gt 0 ]; do
+	if [ "$1" = "-o" ]; then out="$2"; fi
+	shift
+done
+printf '#!/bin/sh\necho installer-ran\nexit 7\n' > "$out"
+`
+
+// The download used to fail with no message at all: curl ran silent, set -e ended the script, and all that
+// was left was the line that said it had started.
+func TestAFailedDownloadSaysWhatFailedAndLeavesNothingBehind(t *testing.T) {
+	for _, script := range []string{"install.sh", "install-cli.sh"} {
+		t.Run(script, func(t *testing.T) {
+			code, _, stderr, leftover := runInstallScript(t, script, fakeCurlFails)
+
+			if code == 0 {
+				t.Fatal("a failed download must fail the script")
+			}
+			for _, want := range []string{"curl: (22)", "Could not download", "v9.9.9", "github.com"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr should mention %q:\n%s", want, stderr)
+				}
+			}
+			if len(leftover) != 0 {
+				t.Errorf("temporary files left behind: %v", leftover)
+			}
+		})
+	}
+}
+
+// exec replaced the shell with the installer, so the cleanup trap never ran and the downloaded binary stayed
+// in the temporary directory for good.
+func TestInstallShCleansUpTheInstallerItDownloadedAndKeepsItsExitStatus(t *testing.T) {
+	code, stdout, stderr, leftover := runInstallScript(t, "install.sh", fakeCurlInstaller)
+
+	if !strings.Contains(stdout, "installer-ran") {
+		t.Fatalf("the downloaded installer was not run:\nstdout: %s\nstderr: %s", stdout, stderr)
+	}
+	if code != 7 {
+		t.Errorf("exit status = %d, want the installer's own (7), so a failed install is a failed script", code)
+	}
+	if len(leftover) != 0 {
+		t.Errorf("the downloaded installer was left in the temporary directory: %v", leftover)
+	}
+}

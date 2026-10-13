@@ -39,18 +39,16 @@ func clusterVersion(v string) *geassv1alpha1.GeassCluster {
 func TestAWorkerInstallsTheVersionTheControlPlaneRunsNotTheGeassClusterVersion(t *testing.T) {
 	c := versionClient(t, versionNode("cp", "v1.36.5+k3s1", true), versionNode("w1", "v1.30.0+k3s1", false))
 
-	got, err := workerK3sVersion(context.Background(), c, clusterVersion("v1"))
+	got := mustVersion(t, c, clusterVersion("v1"))
 
-	require.NoError(t, err)
 	require.Equal(t, "v1.36.5+k3s1", got, "from the control plane; a worker's own older version is not what the cluster runs")
 }
 
 func TestWithSeveralControlPlanesTheOldestWins(t *testing.T) {
 	c := versionClient(t, versionNode("a", "v1.36.5+k3s1", true), versionNode("b", "v1.35.9+k3s2", true), versionNode("c", "v1.36.1+k3s1", true))
 
-	got, err := workerK3sVersion(context.Background(), c, clusterVersion("v1"))
+	got := mustVersion(t, c, clusterVersion("v1"))
 
-	require.NoError(t, err)
 	require.Equal(t, "v1.35.9+k3s2", got, "an agent must never be newer than any server it may talk to; 1.35.9 is older than 1.36.1 though it sorts after it as text")
 }
 
@@ -67,7 +65,7 @@ func TestNothingKnownLeavesTheChoiceToK3sRatherThanInventingARelease(t *testing.
 
 func mustVersion(t *testing.T, c client.Client, cluster *geassv1alpha1.GeassCluster) string {
 	t.Helper()
-	got, err := workerK3sVersion(context.Background(), c, cluster)
+	nodes, err := controlPlaneNodes(context.Background(), c)
 	require.NoError(t, err)
-	return got
+	return workerK3sVersion(nodes, cluster)
 }
