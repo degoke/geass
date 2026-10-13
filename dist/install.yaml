@@ -4287,11 +4287,19 @@ spec:
                     type: boolean
                 type: object
               engine:
-                description: Engine is the object store engine to provision.
+                description: |-
+                  Engine is the object store engine to provision. For a bucket in the cluster it is the engine of the
+                  cluster's object storage server. It is chosen once: the server's volume, logins and config belong to the engine
+                  it was set up with, so changing it means deleting the object storage and setting it up again.
                 enum:
-                - MinIO
+                - SeaweedFS
+                - Garage
                 - S3
                 type: string
+                x-kubernetes-validations:
+                - message: engine cannot be changed; delete the object storage and
+                    set it up again
+                  rule: self == oldSelf
               environment:
                 description: Environment is the project environment. Required when
                   Project is set.
@@ -4300,22 +4308,22 @@ spec:
                 type: string
               placement:
                 default: InCluster
-                description: Placement selects in-cluster MinIO or an external S3
-                  provider.
+                description: Placement selects the cluster's own object storage server
+                  or an external S3 provider.
                 enum:
                 - InCluster
                 - External
                 type: string
               project:
                 description: Project is the owning project. Leave empty for the cluster
-                  MinIO server.
+                  object storage server.
                 type: string
               region:
                 description: Region is the AWS region for external buckets.
                 type: string
               resources:
                 description: Resources is the CPU and memory assigned to the in-cluster
-                  MinIO server.
+                  object storage server.
                 properties:
                   claims:
                     description: |-
@@ -4375,7 +4383,7 @@ spec:
                 type: object
               runOn:
                 description: |-
-                  RunOn asks for nodes with particular tags. The cluster MinIO server has no project, so
+                  RunOn asks for nodes with particular tags. The cluster object storage server has no project, so
                   this is the only way to choose where it runs.
                 properties:
                   tags:
@@ -4390,11 +4398,20 @@ spec:
                     x-kubernetes-list-type: set
                 type: object
               serverRegion:
-                description: ServerRegion is where the cluster MinIO server runs.
-                  Project buckets follow their project instead.
+                description: ServerRegion is where the cluster object storage server
+                  runs. Project buckets follow their project instead.
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              storageSize:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  StorageSize is the size of the cluster object storage server's volume. Left unset it is 10Gi. It can
+                  be raised later where the cluster's storage can be resized, and never lowered. Only the server has one.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
             required:
             - engine
             type: object
