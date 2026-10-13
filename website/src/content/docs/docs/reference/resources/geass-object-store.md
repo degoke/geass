@@ -9,10 +9,6 @@ A `GeassObjectStore` is object storage. It takes one of three shapes. With no `s
 
 For the task-oriented view, see [Object storage](/docs/guides/object-storage/).
 
-:::caution
-In this release a `GeassObjectStore` that has a `spec.project` (a bucket on MinIO, or an S3 bucket) does not get past the message `Resource is configured and waiting for deployment`, even after you deploy it. The API and the command line list it as `pending` with that message. The controller decides whether a store is deployed from `status.connectionSecret`, and Geass only writes that Secret name after a first successful provision. A store that was never provisioned therefore never starts. The cluster-wide MinIO server has no project and is not affected. Until this is fixed, project buckets cannot become `Ready`. The sections below describe how the resource is meant to behave once past that point.
-:::
-
 ## Summary
 
 | Property | Value |
@@ -116,7 +112,7 @@ spec:
 | `spec.connectionRef.name` | string | CRD default `""` | None | Name of the connection. |
 | `spec.region` | string | Optional | None | AWS region for an S3 store. When empty Geass uses the connection's region, then the `region` key of its Secret, then `us-east-1`. |
 | `spec.createBucket` | boolean | `false` | None | S3 stores only. Geass creates the named buckets when they do not exist. It also deletes them when the store is deleted. |
-| `spec.buckets` | array of strings | Optional. A project store needs at least one to deploy. | Max 32 items. Each 3 to 63 characters, pattern `^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`. CEL: `self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))`, message "bucket names must not be formatted as an IP address or contain consecutive periods". | The buckets. The first one is the `bucket` key of the connection Secret. The dashboard manages a single bucket. |
+| `spec.buckets` | array of strings | Optional. A project store needs at least one to deploy. | Max 32 items. Each 3 to 63 characters, pattern `^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`. CEL: `self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))`, message "bucket names must not be formatted as an IP address or contain consecutive periods". | The buckets. A bucket on MinIO is stored on the server as `<project>.<environment>.<name>`, and the first stored name is the `bucket` key of the connection Secret. The dashboard manages a single bucket. |
 | `spec.resources` | ResourceRequirements | Optional. Defaults to 250m CPU and 512Mi memory. | None | CPU and memory for the cluster MinIO server. Ignored for project buckets. |
 | `spec.deploy.enabled` | boolean | `false` | None | Gates provisioning of a project bucket, but only when the resource carries the `geass.dev/deploy-workflow: "true"` annotation. The cluster MinIO server is never gated. |
 | `spec.runOn.tags` | array of strings | Optional | Max 8 items, each matching `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` and at most 40 characters, set semantics | Node tags the cluster MinIO server must run on. Read once, when it is first set up. A project that requires node tags can keep buckets on the server only when these cover them. |
@@ -151,10 +147,10 @@ The messages you can see:
 
 | Message | Cause |
 | --- | --- |
-| `Resource is configured and waiting for deployment` | A draft. Project stores also show it because of the caution at the top of this page. |
+| `Resource is configured and waiting for deployment` | A draft: a project store with the `geass.dev/deploy-workflow: "true"` annotation and `spec.deploy.enabled: false`. Nothing is created for it until you deploy. |
 | `Configure the bucket name in settings, then deploy` | `spec.buckets` is empty. |
 | `Set up the MinIO server in cluster settings first` | The cluster MinIO server does not exist or is not `Ready`. |
-| `This MinIO server does not run on nodes tagged <tags>, which the project requires` | The project's `spec.requiredTags` include a tag that the MinIO server is not placed on (its `geass.dev/node-placement` has it in neither `tags` nor `required`). The message counts as a failure. A new project bucket does not get this far while the defect described at the top of this page applies. |
+| `This MinIO server does not run on nodes tagged <tags>, which the project requires` | The project's `spec.requiredTags` include a tag that the MinIO server is not placed on (its `geass.dev/node-placement` has it in neither `tags` nor `required`). The message counts as a failure. |
 | `cluster MinIO credentials are unavailable` | The server's root Secret is missing or empty. |
 | `Installing MinIO chart` | Helm is installing or upgrading the MinIO chart. |
 | `Service is starting`, `Starting service`, `Service failed to start` | The MinIO pod is starting or failing. |
@@ -163,6 +159,7 @@ The messages you can see:
 | `external buckets require an AWS connection` | The connection's provider is not `AWS`. |
 | `cloud connection "<name>" was not found`, `... is scoped to project "<project>"`, `... must be scoped to a project` | The connection is not usable by this project. |
 | `bucket name "<name>" must be 3-63 characters` and similar | A bucket name is not a legal S3 name. |
+| `bucket name "<name>" is too long: on the MinIO server it is stored as "<project>.<environment>.<name>" ...` | A project bucket on MinIO is stored behind its project and environment, and the whole name has to be 63 characters or fewer. The message gives the longest name that fits. |
 | `AWS S3 <status>: <body>` | AWS refused a call. |
 | `unsupported engine "<engine>"` | `spec.engine` is not `MinIO` or `S3`. |
 
@@ -195,11 +192,9 @@ They call `GET /api/v1/object-stores` and `GET /api/v1/object-stores/{name}`. `d
 
 ## Connection Secret
 
-Geass writes `<name>-connection` with four keys: `endpoint`, `accessKey`, `secretKey` and `bucket` (the first entry of `spec.buckets`, or the resource name). For the cluster server the keys are the MinIO root credentials, in `geass-system`. For a project bucket they are credentials of its own, in `<project>-<environment>`.
+Geass writes `<name>-connection` with four keys: `endpoint`, `accessKey`, `secretKey` and `bucket` (the first entry of `spec.buckets`, or the resource name). For a bucket on MinIO the value is the name as stored on the server, `<project>.<environment>.<name>`. For the cluster server the keys are the MinIO root credentials, in `geass-system`. For a project bucket they are credentials of its own, in `<project>-<environment>`.
 
-:::caution
-A bucket's connection Secret has no `uri` key. The **Add reference** action on a service's **Variables** tab always reads the key `uri`, and sets the variable `S3_ENDPOINT` from it. For a bucket that key does not exist, so a service that gets its `S3_ENDPOINT` this way fails to start with a missing-key error. Read `endpoint`, `accessKey`, `secretKey` and `bucket` from the Secret yourself.
-:::
+A bucket's connection Secret has no `uri` key. The **Add reference** action on a service's **Variables** tab adds four variables for a bucket: `S3_ENDPOINT` from `endpoint`, `S3_ACCESS_KEY_ID` from `accessKey`, `S3_SECRET_ACCESS_KEY` from `secretKey` and `S3_BUCKET` from `bucket`. It refuses, naming the variable, when the service already has one of those names set by hand.
 
 ## Editing by hand
 
@@ -209,6 +204,7 @@ You can create and edit a `GeassObjectStore` with `kubectl`.
 - The server's storage is fixed at 10Gi in the chart values. There is no field for it.
 - Do not rename a bucket after it exists. Geass would create the new name and leave the old bucket, and the credentials, behind.
 - On delete, Geass runs the finalizer. For a MinIO bucket it deletes the bucket and its login. For an S3 store it deletes the IAM user, and when `createBucket` is `true` it empties and deletes the bucket too.
+- Just before it first creates a bucket or a user, Geass sets the annotation `geass.dev/provisioning-started: "true"` on a project store. A store with it, or with a connection Secret, may own resources outside the cluster, so deleting it tries to clean them up even if it never became ready. For a store that never had a connection Secret that cleanup is best effort: a failure is logged and the deletion still completes. Do not edit the annotation.
 - Deleting the cluster MinIO server is refused while project buckets exist: Geass returns the error `delete project buckets before removing the MinIO server: <names>` and the resource stays in `Terminating`.
 
 :::danger
@@ -226,7 +222,7 @@ With `spec.createBucket: true`, deleting an S3 `GeassObjectStore` empties the bu
 
 ### A bucket on MinIO
 
-1. Geass creates each bucket on the server with the root credentials.
+1. Geass creates each bucket on the server with the root credentials, under its stored name `<project>.<environment>.<name>`.
 2. It writes `<name>-connection` into the project's namespace with generated credentials: the access key is the store's name and the secret key is random.
 3. It stores the same credentials in the Secret `<name>-minio-user` in `geass-system`.
 4. It re-renders the `geass-minio` HelmChart. The chart creates a MinIO user for the store and a policy named `geass-<name>` that allows only that store's buckets.
@@ -259,9 +255,9 @@ kubectl -n storefront-production get secret uploads-connection \
 
 ## Troubleshooting
 
-### `Resource is configured and waiting for deployment` after you deployed a bucket
+### `Resource is configured and waiting for deployment`
 
-This is the defect described in the caution at the top of the page. The dashboard keeps showing the bucket as waiting. The cluster MinIO server is not affected. The controller only continues once `status.connectionSecret` is set, which it does after a first successful provision; writing that field by hand would be an unsupported edit of `status`, and it has not been tried.
+The bucket is a draft. Geass creates nothing for a draft until you deploy it. Fill in **Name** on the **Settings** tab, save, then select **Deploy changes** in the project's top bar. After a deploy the message moves on to `Installing MinIO chart` (MinIO) and then to ready. If it stays at this message after a deploy, check that `spec.deploy.enabled` is `true`.
 
 ### `Configure the bucket name in settings, then deploy`
 

@@ -237,7 +237,8 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
 		Expect(chart.Annotations[platform.HelmStaleJobUIDAnnotation]).To(BeEmpty())
 
-		Expect(createdPath).To(Equal("/uploads"))
+		// Buckets on the shared MinIO server are stored behind the project environment.
+		Expect(createdPath).To(Equal("/payments.dev.uploads"))
 		secret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "assets-connection", Namespace: testDevTargetNS}, secret)).To(Succeed())
 		projectAccess := string(secret.Data[platform.ConnectionKeyAccessKey])
@@ -261,7 +262,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("lookup"))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("required"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("accessKey: \"assets\""))
-		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
+		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::payments.dev.uploads"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("secretKey: \""))
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())

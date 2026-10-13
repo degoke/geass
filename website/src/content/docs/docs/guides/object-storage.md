@@ -5,10 +5,6 @@ description: "Create buckets on the cluster's MinIO server or in your own AWS S3
 
 A bucket is a place to keep files that your apps read and write over the S3 API: uploads, exports, static assets. Geass offers two kinds. An in-cluster bucket lives on a MinIO server that Geass runs on your nodes. An AWS S3 bucket lives in your own AWS account, and Geass creates a restricted IAM user for it. Each bucket resource belongs to one project environment and has its own credentials.
 
-:::caution
-**New project buckets do not finish provisioning in this build.** After you deploy a bucket, in-cluster or AWS S3, it never reaches **Ready**. Its Ready condition keeps the message "Resource is configured and waiting for deployment", and the dashboard shows **Unavailable**. `geass stores list` shows it as `pending` with the same message. The operator treats a bucket that has no connection secret yet as not deployed, so the first provisioning pass never runs. This holds whether you create the bucket in the dashboard, with the REST API, with the command line or with a manifest. The cluster MinIO server itself is not affected. The rest of this page describes what Geass does once a bucket is provisioned, and how to check for this problem under [Troubleshooting](#troubleshooting).
-:::
-
 ## The two kinds of bucket
 
 | | In-cluster bucket | AWS S3 bucket |
@@ -16,6 +12,7 @@ A bucket is a place to keep files that your apps read and write over the S3 API:
 | Stored on | The cluster's MinIO server, one 10 GiB volume | Your AWS account |
 | Needs first | The MinIO server set up under **Settings**, **Object storage** | An AWS connection scoped to the project |
 | Credentials | A MinIO user named after the bucket resource, limited to its bucket | An IAM user `geass-<resource ID>`, limited to its bucket |
+| Name it has there | `<project ID>.<environment>.<name>` | The name you set |
 | Endpoint apps use | `http://geass-minio.geass-system.svc:9000` | `https://s3.<region>.amazonaws.com` |
 | Size limit | The server's 10 GiB volume, shared by every bucket | Whatever your AWS account allows |
 | Geass-managed copies or backups | None | None (use AWS features such as versioning if you need them) |
@@ -74,8 +71,12 @@ If you deploy a draft whose bucket you never named, **Deploy changes** uses the 
 
 A bucket name has 3 to 63 characters: lowercase letters, numbers, dots and hyphens. It must start and end with a letter or number, must not contain two dots in a row, and must not look like an IP address.
 
+Every project's in-cluster buckets live on one MinIO server, where bucket names are global. So Geass stores an in-cluster bucket under `<project ID>.<environment>.<name>`, for example `proj-1a2b3c4d.production.uploads`. The parts are joined with dots because a project ID or an environment cannot contain one, so no two combinations ever give the same name. Two projects, or two environments of one project, that both name a bucket `uploads` get two separate buckets, and each one's user can reach only its own. Use path-style addressing, as for any in-cluster bucket. The `bucket` key of the bucket's Secret holds the name as stored, so have your app read it from there. **Add reference** does.
+
+The prefix counts towards the 63 characters. A project whose ID and environment take 25 characters, such as `proj-1a2b3c4d.production.`, leaves 38 for the name you set. Geass refuses a longer name when you save it and says what the limit is.
+
 :::caution
-Names on the cluster MinIO server are shared by every project, and Geass does not add a prefix. Two bucket resources that use the same name point at the same bucket, each one's user can read and write it, and deleting either resource deletes the bucket for both. Choose a name that is unique across the cluster, for example `acme-storefront-uploads`. AWS bucket names are global across all AWS accounts, so pick a unique name there too.
+AWS bucket names are global across all AWS accounts, and Geass does not add a prefix to them. Choose a name that is unique to you, for example `acme-storefront-uploads`.
 :::
 
 ### Create a bucket with the REST API
@@ -137,7 +138,7 @@ Find the project's ID in the address of its pages (`/projects/proj-1a2b3c4d`).
 
 A project can require compliance node tags, such as `hipaa`, so that everything it runs stays on nodes you marked. See [Compliance node tags](/docs/guides/compliance-tags/). The cluster MinIO server belongs to no project, so a project's tags do not place it. The server is placed once, when it is first set up, with its own region and **Run on** tags, and it does not move afterwards. The setup page has no field for them. Send `region` and `runOnTags` when you create the server through the API, as shown under [Set up the MinIO server](#set-up-the-minio-server). Geass checks that a node in that region carries each tag.
 
-A project that requires tags can keep buckets on the server only when the server runs on nodes with every one of them. A bucket on a server that does not run there is refused with "This MinIO server does not run on nodes tagged hipaa, which the project requires", and the refusal counts as a failure. The check is part of provisioning, so with the problem described at the top of this page a new project bucket does not reach it.
+A project that requires tags can keep buckets on the server only when the server runs on nodes with every one of them. A bucket on a server that does not run there is refused with "This MinIO server does not run on nodes tagged hipaa, which the project requires", and the refusal counts as a failure. The check is part of provisioning.
 
 The server's volume uses the cluster's default storage class. On K3s that is `local-path`, which keeps the volume on the node its pod runs on, so a server placed on the tagged nodes keeps its data there. See [Storage and volumes](/docs/guides/storage/). A server that runs on compliance nodes is not reserved for the projects that require the tag: Geass checks only that the project's tags are on the server.
 
@@ -152,13 +153,20 @@ When a bucket is ready, Geass writes a Secret named `<resource ID>-connection` i
 | `endpoint` | The S3 endpoint, as in the table above |
 | `accessKey` | For an in-cluster bucket, the bucket resource's ID. For AWS, the IAM user's access key ID |
 | `secretKey` | The matching secret. Generated once and kept |
-| `bucket` | The bucket name. With several names in `buckets`, the first |
+| `bucket` | The bucket name as stored: for an in-cluster bucket `<project ID>.<environment>.<name>`. With several names in `buckets`, the first |
 
 The credentials are limited to the bucket (or buckets) the resource names. For an in-cluster bucket, Geass never gives an app the MinIO root credentials. They stay in `cluster-minio-root` in `geass-system`. Use path-style addressing in your S3 client with an in-cluster bucket, because the MinIO server is not configured with a bucket domain.
 
-:::caution
-The dashboard's **Add reference** action for a bucket does not give an app usable credentials. It adds a variable named `S3_ENDPOINT` that reads the key `uri` from the bucket's Secret, and bucket Secrets have no `uri` key (only the four keys above). An app that uses this reference fails to start with a missing-key error. Add the four values yourself instead: open the app's **Variables** tab, use **New Variable** with **Secret** switched on, and copy each value from the Secret.
-:::
+The **Add reference** action on an app's **Variables** tab adds all four values for a bucket as variables that read the Secret, so the app gets the endpoint, the keys and the stored bucket name together:
+
+| Variable | Reads |
+| --- | --- |
+| `S3_ENDPOINT` | `endpoint` |
+| `S3_ACCESS_KEY_ID` | `accessKey` |
+| `S3_SECRET_ACCESS_KEY` | `secretKey` |
+| `S3_BUCKET` | `bucket` |
+
+Adding the reference again replaces these variables when they were added the same way. If the service already has a variable with one of these names that someone set by hand, a plain environment variable or one under **Variables**, Geass refuses and names it, so remove that variable first. Deploy the app afterwards. See [Environment variables](/docs/guides/environment-variables/#reference-a-database-or-bucket).
 
 Read the values:
 
@@ -201,7 +209,7 @@ Open the bucket's **Settings**, then **Delete bucket**, type its resource ID and
 Geass does not record whether it created an AWS bucket or found it already in your account. With **Create bucket in AWS** on, deleting the resource deletes the bucket and everything in it, even a bucket that existed before. Turn the switch off for a bucket you want to keep.
 :::
 
-A bucket you never deployed is removed without touching MinIO or AWS, because Geass created nothing yet.
+A bucket you never deployed is removed without touching MinIO or AWS, because Geass created nothing yet. For a bucket that was deployed but never became ready, Geass tries to remove whatever it had already created, such as the bucket on MinIO or the bucket and IAM user in AWS. That cleanup is best effort: if it fails, for example because the AWS key lacks a permission, the deletion still completes and the leftovers stay where they are. One that stopped before it created anything, for example because the MinIO server was not set up, is removed without calling MinIO or AWS. A bucket that has been ready is different: its deletion waits until the cleanup succeeds. If you saved a new name and did not deploy it, Geass removes the bucket that was deployed, not the new name.
 
 Delete a project's buckets and wait for them to disappear before you delete the project. Deleting a project also deletes its AWS connections, and Geass needs the connection to clean up an AWS bucket's user.
 
@@ -248,9 +256,10 @@ The full schema is in the [resource reference](/docs/reference/resources/overvie
 
 - The cluster MinIO server is a `GeassObjectStore` with no project, in `geass-system`. It is named `cluster-minio` unless you chose another name through the API. Geass installs MinIO as a `HelmChart` named `geass-minio` (chart 5.4.0, standalone mode) in `kube-system` with its Service and pod in `geass-system`. The chart pins the images `minio/minio:RELEASE.2025-02-18T16-25-55Z` and `minio/mc:RELEASE.2025-02-21T16-00-46Z`.
 - Its root credentials are in the Secret `<server name>-root` (`cluster-minio-root` by default) in `geass-system`.
-- For each in-cluster bucket, Geass creates the bucket with the root credentials, then a user and a policy named `geass-<resource ID>` that allow only that bucket. The user's key is kept in `<resource ID>-minio-user` in `geass-system`. Geass re-renders the MinIO chart values to add the user, so you see "Installing MinIO chart" briefly.
+- For each in-cluster bucket, Geass creates the bucket under its stored name with the root credentials, then a user and a policy named `geass-<resource ID>` that allow only that bucket. The user's key is kept in `<resource ID>-minio-user` in `geass-system`. Geass re-renders the MinIO chart values to add the user, so you see "Installing MinIO chart" briefly.
 - For each AWS bucket, Geass optionally creates the bucket, then the IAM user `geass-<resource ID>` with an inline policy named `geass-bucket`, and one access key. It reuses the stored key on later reconciles, so it does not create a new one each time. Geass changes no other bucket setting: it sends only the create request, so AWS's defaults for a new bucket apply.
 - The connection Secret `<resource ID>-connection` lives in the project environment's namespace.
+- Just before it first creates a bucket or a user, Geass sets the annotation `geass.dev/provisioning-started` on the resource. It is how deleting a bucket that never became ready knows there is something to remove. Do not edit it.
 
 ```bash
 kubectl get geassobjectstores -n geass-system
@@ -262,8 +271,11 @@ kubectl get pods -n geass-system
 
 ## Troubleshooting
 
-**A bucket shows "Unavailable" with the message "Resource is configured and waiting for deployment" after you deployed it.**
-This is the provisioning problem in the caution at the top. Check the message with the second command above. The bucket's `status.connectionSecret` is empty, and the operator will not provision a bucket in that state in this build. Nothing in the dashboard changes this.
+**A bucket shows "Draft" with the message "Resource is configured and waiting for deployment".**
+The bucket is still a draft, or has not been deployed. Set its **Name** in **Settings**, **Bucket**, save, then select **Deploy changes** in the project's top bar. Geass creates nothing for a draft. Once you deploy, the message changes to "Installing MinIO chart" for an in-cluster bucket and then to ready. Check the message with the second command above.
+
+**"bucket name ... is too long: on the MinIO server it is stored as ...".**
+An in-cluster bucket is stored behind its project ID and environment, and the two together have to fit in 63 characters. The message says how many characters the name can have. Shorten the name in **Settings**, **Bucket** and save.
 
 **"Set up the MinIO server in cluster settings first" or "Turn on object storage in Platform settings, then try again."**
 There is no cluster MinIO server, or it is not ready. Set it up under **Settings**, **Object storage** and wait for **Active**.

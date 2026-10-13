@@ -1547,6 +1547,39 @@ func resourceNamespaceForApp(app geassv1alpha1.GeassApp) (string, error) {
 	return platform.ProjectNamespace(app.Spec.Project, string(app.Spec.Environment))
 }
 
+// connectionReference is one environment variable an app gets from a resource's connection Secret.
+type connectionReference struct {
+	envName   string
+	secretKey string
+}
+
+// bucketConnectionReferences is what an app needs to use a bucket. A bucket's Secret holds no ready-made
+// connection URL, only these four values, so each becomes a variable.
+var bucketConnectionReferences = []connectionReference{
+	{"S3_ENDPOINT", platform.ConnectionKeyEndpoint},
+	{"S3_ACCESS_KEY_ID", platform.ConnectionKeyAccessKey},
+	{"S3_SECRET_ACCESS_KEY", platform.ConnectionKeySecretKey},
+	{"S3_BUCKET", platform.ConnectionKeyBucket},
+}
+
+// handSetVariable returns the name of the first reference variable the service already has as a value someone
+// set: a plain environment variable or an entry in its variables. Adding the reference would replace it, or
+// override it, without anyone noticing. A variable that is itself a reference to a Secret is replaced, which is
+// how a second database or bucket takes the place of the first.
+func handSetVariable(app *geassv1alpha1.GeassApp, references []connectionReference) string {
+	for _, reference := range references {
+		if _, set := app.Spec.ConfigData[reference.envName]; set {
+			return reference.envName
+		}
+		for _, env := range app.Spec.Env {
+			if env.Name == reference.envName && (env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil) {
+				return reference.envName
+			}
+		}
+	}
+	return ""
+}
+
 func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -1560,10 +1593,8 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "overview")
 	resourceName := strings.TrimSpace(r.FormValue("name"))
 	kind := r.FormValue("kind")
-	secretName, envName := "", ""
-	// Database Secrets hold a ready-made connection URL under "uri". Bucket Secrets have no URL, so a bucket
-	// reference reads the S3 endpoint.
-	secretKey := platform.ConnectionKeyURI
+	secretName := ""
+	var references []connectionReference
 	if kind == "database" {
 		var db geassv1alpha1.GeassDatabase
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: resourceName, Namespace: systemNamespace}, &db); err != nil {
@@ -1571,11 +1602,12 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			return
 		}
 		secretName = db.Status.ConnectionSecret
+		envName := "DATABASE_URL"
 		if db.Spec.Engine == geassv1alpha1.DatabaseEngineRedis {
 			envName = "REDIS_URL"
-		} else {
-			envName = "DATABASE_URL"
 		}
+		// A database Secret holds a ready-made connection URL.
+		references = []connectionReference{{envName, platform.ConnectionKeyURI}}
 	}
 	if kind == "object-store" || kind == "object-stores" {
 		var store geassv1alpha1.GeassObjectStore
@@ -1583,19 +1615,21 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			http.NotFound(w, r)
 			return
 		}
-		secretName, envName, secretKey = store.Status.ConnectionSecret, "S3_ENDPOINT", platform.ConnectionKeyEndpoint
+		secretName = store.Status.ConnectionSecret
+		references = bucketConnectionReferences
 	}
 	if secretName == "" {
 		redirectFormError(w, r, fallback, "resource is not ready")
 		return
 	}
-	for i := range app.Spec.Env {
-		if app.Spec.Env[i].Name == envName {
-			app.Spec.Env = append(app.Spec.Env[:i], app.Spec.Env[i+1:]...)
-			break
-		}
+	if name := handSetVariable(&app, references); name != "" {
+		redirectFormError(w, r, fallback, name+" is already set on this service. Remove it from Variables first, then add the reference.")
+		return
 	}
-	app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: secretKey}}})
+	for _, reference := range references {
+		app.Spec.Env = slices.DeleteFunc(app.Spec.Env, func(env corev1.EnvVar) bool { return env.Name == reference.envName })
+		app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: reference.envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: reference.secretKey}}})
+	}
 	markAppPendingChange(&app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), &app); err != nil {
 		redirectFormInternalError(w, r, fallback)
@@ -2713,13 +2747,13 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(store, bucket); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
 		store.Spec.Buckets = []string{bucket}
 	} else if strings.TrimSpace(r.FormValue("draft")) == "" {
-		if err := platform.ValidBucketName(name); err != nil {
+		if err := validateBucketNameForStore(store, name); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}
@@ -3015,7 +3049,7 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 		store.Spec.ConnectionRef = &corev1.LocalObjectReference{Name: ref}
 	}
 	if bucket := strings.TrimSpace(r.FormValue("bucket")); bucket != "" {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(&store, bucket); err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return
 		}

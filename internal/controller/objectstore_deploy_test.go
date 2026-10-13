@@ -28,6 +28,8 @@ const (
 	deployTestProject = "payments"
 	deployTestBucket  = "uploads"
 	deployTestStore   = "assets"
+	// deployTestMinIOBucket is what deployTestBucket is called on the MinIO server: project and environment first.
+	deployTestMinIOBucket = "payments.dev.uploads"
 )
 
 // requestLog records the requests a stubbed S3 or IAM endpoint received, safe for a server goroutine.
@@ -55,21 +57,31 @@ func minioStub(t *testing.T) (*httptest.Server, *requestLog) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.add(r.Method + " " + r.URL.Path)
 		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`<ListBucketResult></ListBucketResult>`))
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv, log
 }
 
-// awsTransport answers the S3 and IAM calls the AWS bucket path makes, whatever host they were sent to.
-type awsTransport struct{ log *requestLog }
+// awsTransport answers the S3 and IAM calls the AWS bucket path makes, whatever host they were sent to. failIAM
+// names an IAM action that answers with a server error.
+type awsTransport struct {
+	log     *requestLog
+	failIAM string
+}
 
 func (a awsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	respond := func(body string) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: req}, nil
+	respond := func(status int, body string) (*http.Response, error) {
+		return &http.Response{StatusCode: status, Status: http.StatusText(status), Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: req}, nil
 	}
-	if req.Method == http.MethodPut {
-		a.log.add("S3 PUT " + req.URL.Host)
-		return respond("")
+	if req.URL.Host != "iam.amazonaws.com" {
+		a.log.add("S3 " + req.Method + " " + req.URL.Host)
+		if req.Method == http.MethodGet {
+			return respond(http.StatusOK, `<ListBucketResult></ListBucketResult>`)
+		}
+		return respond(http.StatusOK, "")
 	}
 	raw, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -81,10 +93,15 @@ func (a awsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	action := form.Get("Action")
 	a.log.add("IAM " + action)
-	if action == "CreateAccessKey" {
-		return respond(`<CreateAccessKeyResponse><CreateAccessKeyResult><AccessKey><AccessKeyId>AKIATEST</AccessKeyId><SecretAccessKey>iam-secret</SecretAccessKey></AccessKey></CreateAccessKeyResult></CreateAccessKeyResponse>`)
+	switch action {
+	case a.failIAM:
+		return respond(http.StatusInternalServerError, `<ErrorResponse><Error><Code>ServiceFailure</Code><Message>try later</Message></Error></ErrorResponse>`)
+	case "CreateAccessKey":
+		return respond(http.StatusOK, `<CreateAccessKeyResponse><CreateAccessKeyResult><AccessKey><AccessKeyId>AKIATEST</AccessKeyId><SecretAccessKey>iam-secret</SecretAccessKey></AccessKey></CreateAccessKeyResult></CreateAccessKeyResponse>`)
+	case "ListAccessKeys":
+		return respond(http.StatusOK, `<ListAccessKeysResponse><ListAccessKeysResult></ListAccessKeysResult></ListAccessKeysResponse>`)
 	}
-	return respond("<Response/>")
+	return respond(http.StatusOK, "<Response/>")
 }
 
 func objectStoreDeployScheme(t *testing.T) *runtime.Scheme {
@@ -112,11 +129,16 @@ func newObjectStoreReconciler(t *testing.T, httpClient *http.Client, objects ...
 // for it yet, so status.connectionSecret is empty.
 func deployedProjectBucket(t *testing.T, spec geassv1alpha1.GeassObjectStoreSpec) *geassv1alpha1.GeassObjectStore {
 	t.Helper()
+	return deployedBucketIn(t, deployTestStore, deployTestProject, spec)
+}
+
+func deployedBucketIn(t *testing.T, name, project string, spec geassv1alpha1.GeassObjectStoreSpec) *geassv1alpha1.GeassObjectStore {
+	t.Helper()
 	store := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: deployTestStore, Namespace: platform.SystemNamespace, Finalizers: []string{objectStoreFinalizer}},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Finalizers: []string{objectStoreFinalizer}},
 		Spec:       spec,
 	}
-	store.Spec.Project = deployTestProject
+	store.Spec.Project = project
 	store.Spec.Environment = geassv1alpha1.EnvironmentDev
 	platform.InitializePendingCreated(&store.ObjectMeta)
 	store.Spec.Deploy.Enabled = true
@@ -217,11 +239,11 @@ func TestDeployedMinIOProjectBucketIsProvisioned(t *testing.T) {
 	require.True(t, platform.IsConditionTrue(status.Conditions, platform.ConditionReady), readyConditionMessage(status.Conditions))
 	require.Equal(t, deployTestStore+"-connection", status.ConnectionSecret)
 	require.Equal(t, projectNamespaceName(t), status.TargetNamespace)
-	require.Contains(t, requests.all(), "PUT /"+deployTestBucket, "the bucket is created on the MinIO server")
+	require.Contains(t, requests.all(), "PUT /"+deployTestMinIOBucket, "the bucket is created on the MinIO server")
 
 	var connection corev1.Secret
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: deployTestStore + "-connection", Namespace: projectNamespaceName(t)}, &connection))
-	require.Equal(t, deployTestBucket, secretValue(&connection, platform.ConnectionKeyBucket))
+	require.Equal(t, deployTestMinIOBucket, secretValue(&connection, platform.ConnectionKeyBucket), "apps read the stored name from the Secret")
 	require.Equal(t, s3.URL, secretValue(&connection, platform.ConnectionKeyEndpoint))
 	require.NotEmpty(t, secretValue(&connection, platform.ConnectionKeyAccessKey))
 	require.NotEmpty(t, secretValue(&connection, platform.ConnectionKeySecretKey))
@@ -244,12 +266,12 @@ func TestDeployedMinIOProjectBucketProgressesWhileTheChartInstalls(t *testing.T)
 	require.False(t, platform.IsConditionTrue(status.Conditions, platform.ConditionReady))
 	require.Contains(t, readyConditionMessage(status.Conditions), "Installing MinIO chart")
 	require.Empty(t, status.ConnectionSecret, "the connection is published once provisioning has finished")
-	require.Contains(t, requests.all(), "PUT /"+deployTestBucket)
+	require.Contains(t, requests.all(), "PUT /"+deployTestMinIOBucket)
 	var userSecret corev1.Secret
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: minioUserSecretName(deployTestStore), Namespace: platform.SystemNamespace}, &userSecret))
 	var chart helmv1.HelmChart
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: platform.ClusterMinIOChartName, Namespace: platform.HelmChartNamespace}, &chart))
-	require.Contains(t, chart.Spec.ValuesContent, "arn:aws:s3:::"+deployTestBucket, "the bucket's policy is rendered into the chart")
+	require.Contains(t, chart.Spec.ValuesContent, "arn:aws:s3:::"+deployTestMinIOBucket, "the bucket's policy is rendered into the chart")
 	require.Contains(t, chart.Spec.ValuesContent, `policy: "geass-`+deployTestStore+`"`)
 
 	for _, obj := range installedMinIOChart() {
@@ -272,31 +294,8 @@ func TestDeployedMinIOProjectBucketProgressesWhileTheChartInstalls(t *testing.T)
 func TestDeployedAWSProjectBucketIsProvisioned(t *testing.T) {
 	ctx := context.Background()
 	requests := &requestLog{}
-	project, cluster := readyProjectCluster(deployTestProject, "dev")
-	connection := &geassv1alpha1.GeassCloudConnection{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws", Namespace: platform.SystemNamespace},
-		Spec: geassv1alpha1.GeassCloudConnectionSpec{
-			Provider:  geassv1alpha1.CloudProviderAWS,
-			Project:   deployTestProject,
-			SecretRef: corev1.LocalObjectReference{Name: "aws-creds"},
-		},
-	}
-	creds := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-creds", Namespace: platform.SystemNamespace},
-		Data: map[string][]byte{
-			platform.SecretKeyAccessKeyID:     []byte("AKIAROOT"),
-			platform.SecretKeySecretAccessKey: []byte("root-secret"),
-		},
-	}
-	store := deployedProjectBucket(t, geassv1alpha1.GeassObjectStoreSpec{
-		Engine:        geassv1alpha1.ObjectStoreEngineS3,
-		Placement:     geassv1alpha1.ObjectStorePlacementExternal,
-		ConnectionRef: &corev1.LocalObjectReference{Name: "aws"},
-		Region:        "eu-north-1",
-		CreateBucket:  true,
-		Buckets:       []string{"acme-uploads"},
-	})
-	r, c := newObjectStoreReconciler(t, &http.Client{Transport: awsTransport{log: requests}}, project, cluster, connection, creds, store)
+	store, objects := awsBucketFixtures(t)
+	r, c := newObjectStoreReconciler(t, &http.Client{Transport: awsTransport{log: requests}}, objects...)
 
 	_, err := r.Reconcile(ctx, reconcileRequest(store))
 	require.NoError(t, err)
@@ -353,7 +352,7 @@ func TestProvisionedProjectBucketWithPendingEditsRunsItsDeployedSpec(t *testing.
 	_, err := r.Reconcile(ctx, reconcileRequest(store))
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"PUT /" + deployTestBucket}, requests.all())
+	require.Equal(t, []string{"PUT /" + deployTestMinIOBucket}, requests.all())
 	status := readyStoreStatus(t, c)
 	require.True(t, platform.IsConditionTrue(status.Conditions, platform.ConditionReady), readyConditionMessage(status.Conditions))
 }
@@ -397,5 +396,5 @@ func TestLegacyProjectBucketWithoutConnectionSecretIsProvisioned(t *testing.T) {
 
 	status := readyStoreStatus(t, c)
 	require.True(t, platform.IsConditionTrue(status.Conditions, platform.ConditionReady), readyConditionMessage(status.Conditions))
-	require.Contains(t, requests.all(), "PUT /"+deployTestBucket)
+	require.Contains(t, requests.all(), "PUT /"+deployTestMinIOBucket)
 }

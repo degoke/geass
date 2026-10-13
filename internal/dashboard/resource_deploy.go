@@ -208,8 +208,8 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 			return deployed, err
 		}
 		if len(buckets) == 0 {
-			if err := platform.ValidBucketName(store.Name); err != nil {
-				return deployed, fmt.Errorf("set a bucket name for %s before deploying", store.Name)
+			if err := validateBucketNameForStore(store, store.Name); err != nil {
+				return deployed, fmt.Errorf("set a bucket name for %s before deploying: %w", store.Name, err)
 			}
 		}
 		markDeployed := func() error {
@@ -238,9 +238,22 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 func objectStoreBucketNamesFromSpec(store *geassv1alpha1.GeassObjectStore) ([]string, error) {
 	buckets := store.Spec.Buckets
 	for _, bucket := range buckets {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(store, bucket); err != nil {
 			return nil, err
 		}
 	}
 	return buckets, nil
+}
+
+// validateBucketNameForStore reports whether bucket can be a bucket of this store. An in-cluster bucket also has
+// to fit behind its project environment, because that is the name it is stored under on the shared MinIO server.
+func validateBucketNameForStore(store *geassv1alpha1.GeassObjectStore, bucket string) error {
+	if err := platform.ValidBucketName(bucket); err != nil {
+		return err
+	}
+	if platform.ObjectStoreOnSharedMinIO(store) {
+		_, err := platform.InClusterBucketName(store.Spec.Project, string(store.Spec.Environment), bucket)
+		return err
+	}
+	return nil
 }

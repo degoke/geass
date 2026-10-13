@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -104,4 +105,48 @@ func TestDeployChangesKeepsTheBucketNameWhenTheWriteConflicts(t *testing.T) {
 	snapshot, ok := platform.UnmarshalLastDeployed[geassv1alpha1.GeassObjectStoreSpec](deployed.Annotations)
 	require.True(t, ok)
 	require.Equal(t, []string{"sleepy-coral"}, snapshot.Buckets)
+}
+
+// An in-cluster bucket is stored on the shared MinIO server as <project>.<environment>.<name>, so a name that
+// fits on its own can be too long once the prefix is added. It is refused when it is saved, with the limit.
+func TestInClusterBucketNameThatDoesNotFitItsProjectIsRefusedUpFront(t *testing.T) {
+	ctx := context.Background()
+	tooLong := strings.Repeat("a", 60)
+	draft := unnamedBucketDraft("sleepy-coral")
+	c, _ := storeClient(t, false, draft)
+	srv := &Server{Client: c}
+
+	rec := httptest.NewRecorder()
+	srv.handleObjectStoreRoutes(rec, withAdminSession(t, srv, postForm("/object-stores/sleepy-coral/update", url.Values{"bucket": {tooLong}})))
+	require.NotEqual(t, http.StatusOK, rec.Code, "the settings save is refused: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "too long")
+	var saved geassv1alpha1.GeassObjectStore
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(draft), &saved))
+	require.Empty(t, saved.Spec.Buckets, "nothing was saved")
+
+	// The same name is fine for an AWS bucket, whose names are global to AWS and are not prefixed.
+	aws := unnamedBucketDraft("calm-river")
+	aws.Spec.Engine = geassv1alpha1.ObjectStoreEngineS3
+	aws.Spec.Placement = geassv1alpha1.ObjectStorePlacementExternal
+	c, _ = storeClient(t, false, aws)
+	srv = &Server{Client: c}
+	rec = httptest.NewRecorder()
+	srv.handleObjectStoreRoutes(rec, withAdminSession(t, srv, postForm("/object-stores/calm-river/update", url.Values{"bucket": {tooLong}})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// A draft named after its resource ID deploys under that name, which has to fit too.
+func TestDeployChangesRefusesADefaultBucketNameThatDoesNotFit(t *testing.T) {
+	draft := unnamedBucketDraft(strings.Repeat("a", 60))
+	c, _ := storeClient(t, false, draft)
+	srv := &Server{Client: c}
+
+	rec := httptest.NewRecorder()
+	srv.handleProjectRoutes(rec, withAdminSession(t, srv, postForm("/projects/"+testProjectName+"/deploy", url.Values{"environment": {"dev"}})))
+
+	require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "too long")
+	var stored geassv1alpha1.GeassObjectStore
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(draft), &stored))
+	require.False(t, stored.Spec.Deploy.Enabled, "an unfit bucket is not deployed")
 }
