@@ -49,8 +49,8 @@ dashboard generates a name like `morning-beach`, and a display label can be kept
 
 **Draft and deploy.** Creating a service, database or bucket saves a draft. Editing a running one saves a pending change. Nothing is
 applied until a deploy call, except settings Geass treats as live: a service's replica count, autoscaling and sleep-when-idle
-settings, its host and TLS settings, metrics scraping and rollout flags, and a database's backup settings. (`logs.retentionHours`
-and `source.git.watchPatterns` are also on that list, but no controller reads them.) A function's schedules are not live: they
+settings, its host and TLS settings, metrics scraping and rollout flags, and a database's backup settings. (`source.git.watchPatterns` is
+also on that list: a push reads it at once. `logs.retentionHours` is too, but nothing reads it.) A function's schedules are not live: they
 start with the next deploy. See [Projects and environments](/docs/guides/projects-and-environments/).
 
 **Who can call what.** There are four kinds of caller:
@@ -633,8 +633,8 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/deploy` | none | Deploys the service |
 | `POST /api/apps/{app}/scale` | `replicas` (0 to 1000) | Changes the replica count at once, without a deploy |
 | `POST /api/apps/{app}/rollback` | `revision` (a `GeassDeployment` name) | Redeploys an earlier revision: an image service gets the earlier image, a Git service only gets the earlier replica count, and a function cannot be rolled back |
-| `POST /api/apps/{app}/build` | none | Starts a repository build. It works on builds labelled `geass.dev/app`, which the operator's own builds do not carry; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
-| `POST /api/apps/{app}/build/cancel` | none | Cancels that build |
+| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its current build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
+| `POST /api/apps/{app}/build/cancel` | none | Cancels the current build while it is waiting or running. A build that has finished answers an error |
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
 | `POST /api/apps/{app}/display-name` | `displayName` | Sets the label shown in the dashboard |
@@ -684,9 +684,8 @@ See [Functions](/docs/guides/functions/).
 
 `applied` is `none` (nothing changed), `live` (everything took effect already), `deploy` (a change waits for a deploy) or `deployed`
 (the save was a deploy, with `deploy=on`). `title`, `detail` and `button` are the dashboard's own wording and may change.
-`deploy` answers with the same fields except `applied` and `liveChanged`. `update` accepts `context` and `watchPatterns` for a
-repository service, but builds ignore the context (they always build from the repository root) and push webhooks ignore watch
-patterns, so neither has any effect today.
+`deploy` answers with the same fields except `applied` and `liveChanged`. `update` accepts `context` (the root directory of the build) and `watchPatterns` (which pushes build, one pattern per line)
+for a repository service. A `context` or `dockerfile` that leaves the repository is refused.
 
 #### Variables and secrets
 
@@ -816,6 +815,9 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/cloudflare/save` | `apiToken`, `accountId`, `zoneId`, `zoneName`, `zonesJson`, `keepExisting` | Connects Cloudflare |
 | `POST /api/settings/cloudflare/refresh`, `/clear` | none | Re-reads zones, or disconnects |
 | `GET /api/settings/cloudflare` | none | `{"connected","ready"}`; admins also get account, zone and tunnel IDs |
+| `POST /api/settings/registry/save` | `repository`, `username`, `password`, `keepExisting` | Sets the registry that repository builds push to. The login is optional: both `username` and `password`, or neither. It is stored as the Secret `platform-registry` in `geass-system`. `keepExisting=on` keeps the stored login when only the repository changes |
+| `POST /api/settings/registry/clear` | none | Removes the registry and its login |
+| `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |
 | `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project |
 
 Details of the last group are in [Cloud connections](/docs/guides/connections/).

@@ -55,7 +55,7 @@ spec:
 
 ### A Git service
 
-A Git service is built in the cluster with Kaniko and then deployed. It needs a [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) and a registry that the cluster can push to and pull from. The registry comes from `spec.build.registry` or from the platform configuration.
+A Git service is built in the cluster with Kaniko and then deployed. It needs a [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) and a registry that the cluster can push to and pull from. The registry comes from `spec.build.registry` or from the platform configuration. Geass has no registry of its own: a service without one waits with `no container registry is set for builds`.
 
 ```yaml title="storefront-api.yaml"
 apiVersion: geass.geass.dev/v1alpha1
@@ -267,10 +267,10 @@ Required fields are marked. Every other field is optional. Fields that are stand
 | `spec.source.git.repository` | string | none | Required, and must not be empty on deploy | The GitHub repository as `owner/name`. |
 | `spec.source.git.branch` | string | none | Required, and must not be empty on deploy | The branch to build. |
 | `spec.source.git.commit` | string | empty | none | Pins the build to one commit. When empty, each build resolves the head of `branch`. The dashboard never sets it. |
-| `spec.source.git.dockerfile` | string | `Dockerfile` | none | The Dockerfile path passed to Kaniko. |
-| `spec.source.git.context` | string | `.` | none | Stored and copied to the build, but not used. See the caution below. |
+| `spec.source.git.dockerfile` | string | `Dockerfile` | none | The Dockerfile path, relative to `context`. A path that already starts with `context` is taken as relative to the repository root, and a leading slash is ignored. |
+| `spec.source.git.context` | string | `.` | A path that leaves the repository is refused when the service is deployed | The root directory of the build: Kaniko builds in `/workspace/<context>`. A leading slash means the repository root, and `.` or empty is the root itself. The dashboard calls this field **Root directory**. |
 | `spec.source.git.waitForCI` | boolean | `false` | none | Waits until every GitHub check run of the commit has completed successfully before building. |
-| `spec.source.git.watchPatterns` | list of strings | empty | none | Stored, but nothing reads it. See the caution below. |
+| `spec.source.git.watchPatterns` | list of strings | empty | none | Which pushes build. Gitignore-style patterns, matched from the repository root against the files the push changed; `!` takes files back out. A push builds only when it changes a file they select. Empty means every push builds. A live setting: it applies the moment it is saved. The dashboard calls this field **Watch paths**. |
 | `spec.source.function.runtime` | string | none | Required. `bun`, `node` or `python` | The language runtime. |
 | `spec.source.function.code` | string | none | Required. 262144 characters at most | The program. In `http` mode it must serve HTTP on `PORT`. In `event` mode it must export a handler. |
 | `spec.source.function.mode` | string | `http` | `http` or `event` | What `code` is. `http` is a program that serves HTTP itself. `event` is a handler, a function that is given an event for each request and returns the response, with Geass serving HTTP for it. |
@@ -280,13 +280,9 @@ Required fields are marked. Every other field is optional. Fields that are stand
 | `spec.source.function.triggers[].path` | string | `/` | Starts with `/`. 256 characters at most | The path that is called. |
 | `spec.source.function.triggers[].payload` | string | `{"trigger":"cron","name":"<name>"}` | Valid JSON. 4096 characters at most | The JSON body of the request. |
 
-:::caution
-`spec.source.git.context` is not used. The Kaniko build always uses the whole repository as its context, and the Dockerfile path is relative to the repository root. In a monorepo, set `dockerfile` to the full path, for example `apps/api/Dockerfile`. The dashboard calls this field **Root directory**.
+For a monorepo, set `context` to the folder of the service (`apps/api`) and keep `dockerfile` relative to it (`Dockerfile`). A `dockerfile` that is written in full from the repository root (`apps/api/Dockerfile`) still works. `watchPatterns` decide which pushes rebuild the service. They apply to pushes only: a deploy, and a change to a build setting, build regardless. See [Root directory and Watch paths](/docs/guides/github-and-builds/#root-directory-and-watch-paths) for the patterns.
 
-`spec.source.git.watchPatterns` is not evaluated. The dashboard shows it as **Watch paths**, but webhook builds do not look at it.
-:::
-
-A Git service resolves the branch to a commit through the GitHub API, clones it with the connection's token and builds the image from the Dockerfile. When the build succeeds, the Deployment runs the image digest that the build recorded. See [GeassBuild](/docs/reference/resources/geass-build/) for the build lifecycle and [GitHub and builds](/docs/guides/github-and-builds/) for the guide.
+A Git service resolves the branch to a commit through the GitHub API, clones it with the connection's token and builds the image from the Dockerfile. When the build succeeds, the Deployment runs the repository the build pushed to, at the digest the build recorded (`<repository>@sha256:…`). See [GeassBuild](/docs/reference/resources/geass-build/) for the build lifecycle and [GitHub and builds](/docs/guides/github-and-builds/) for the guide.
 
 #### Functions
 
@@ -426,8 +422,8 @@ The operator creates only one Service port, named `http`. The ServiceMonitor end
 | `spec.build.command` | list of strings | empty | none | Replaces the image's entrypoint. For a function it replaces the command Geass runs, which in `event` mode is the shim. |
 | `spec.build.args` | list of strings | empty | none | Replaces the image's arguments. |
 | `spec.build.workingDir` | string | empty | none | The container's working directory. |
-| `spec.build.registry.repository` | string | empty | none | The destination image reference for Git builds. When empty, the operator uses `spec.registry.repository` of the platform configuration. |
-| `spec.build.registry.credentialRef.name` | string | none | none | The Secret that holds registry credentials for the build. When empty, the platform configuration's credentials are used. |
+| `spec.build.registry.repository` | string | empty | none | The destination image reference for Git builds, used as written. When empty, the operator uses `spec.registry.repository` of the platform configuration. When neither is set, the service waits with `no container registry is set for builds`. |
+| `spec.build.registry.credentialRef.name` | string | none | none | The Secret that holds registry credentials for the build. When empty and the service uses the platform's repository, the platform configuration's credentials are used. The nodes pull the image with a copy of the credential, the Secret `<app>-registry-pull` in the environment namespace. |
 | `spec.build.cache` | boolean | `false` | none | Passes `--cache=true` to Kaniko. |
 | `spec.build.argsFrom` | list of `corev1.LocalObjectReference` | empty | none | Stored, but nothing reads it. |
 
@@ -464,8 +460,9 @@ The dashboard only edits the HTTP readiness probe, through **Healthcheck path**.
 | --- | --- | --- |
 | `status.targetNamespace` | string | The namespace the workload runs in. |
 | `status.url` | string | The public URL, built from `spec.ingress.host`, the scheme and the path. Empty when there is no host. |
-| `status.resolvedImage` | string | For Git services, the image digest recorded by the latest successful build. When set, the Deployment runs this value instead of `spec.source.image`. It is the bare `sha256:…` value the build recorded, with no repository in front of it. See [GitHub and builds](/docs/guides/github-and-builds/#how-a-build-runs). |
+| `status.resolvedImage` | string | For Git services, the image of the latest successful build: the repository the build pushed to, without its tag, at the digest it recorded (`<repository>@sha256:…`). When set, the Deployment runs this value instead of `spec.source.image`. See [GitHub and builds](/docs/guides/github-and-builds/#how-a-build-runs). |
 | `status.activeBuild` | string | The name of the [GeassBuild](/docs/reference/resources/geass-build/) whose image is deployed. |
+| `status.currentBuild` | string | The name of the build for the service's current settings, which a push or a rebuild runs again. It is not always the newest, or the one that is deployed. |
 | `status.dnsName` | string | The value of `spec.ingress.host`. |
 | `status.traefikTarget` | string | The address of the Ingress, when Kubernetes reports one. |
 | `status.dnsVerified` | boolean | Always `true` when `dnsVerification` is off. When it is on, `true` if the host resolves from the operator. |
@@ -615,6 +612,7 @@ For a deployed service the operator maintains these objects in the environment n
 | ConfigMap | `<app>-config` | `spec.configData`, when set. |
 | ConfigMap | `<app>-function` | The function's code, for functions. In `event` mode it also holds the shim. |
 | Secret | `<app>-secret` | The service's secret values, when set. |
+| Secret | `<app>-registry-pull` | Git services only, when the build uses a registry credential: a copy of it, which the Deployment pulls the built image with. |
 | Secret | `<app>-trigger` | A function's schedule token (key `token`), for a function in `event` mode or with triggers. |
 | CronJob | `<app>-<trigger name>-<8 characters>` | One per trigger of a function. Labelled `geass.dev/function-trigger=<trigger name>`. |
 | Service | `<app>-wake` | Only when the service sleeps when idle. An `ExternalName` Service for the scale-to-zero proxy, which the Ingress points at. |
@@ -623,7 +621,7 @@ For a deployed service the operator maintains these objects in the environment n
 
 In `geass-system` the service owns the [GeassBuild](/docs/reference/resources/geass-build/) objects named `<app>-build-<hash>` and the [GeassDeployment](/docs/reference/resources/geass-deployment/) `<app>-active`. Those two have owner references to the service. The objects in the namespace do not, because Kubernetes does not allow an owner in another namespace, so the operator removes them itself.
 
-The objects carry the labels `geass.dev/managed-by=geass`, `geass.dev/kind=GeassApp`, `geass.dev/name=<app>`, `geass.dev/system-namespace=geass-system`, `geass.dev/project=<project>` and `geass.dev/environment=<environment>`. The builds in `geass-system` carry `geass.dev/kind=GeassBuild` and the `<app>-active` record carries `geass.dev/kind=GeassDeployment`, with the same `geass.dev/name`. Pods also carry `app.kubernetes.io/name=<app>` and `app.kubernetes.io/managed-by=geass`. Inside the cluster the service answers on `<app>.<namespace>.svc.cluster.local:<port>`.
+The objects carry the labels `geass.dev/managed-by=geass`, `geass.dev/kind=GeassApp`, `geass.dev/name=<app>`, `geass.dev/system-namespace=geass-system`, `geass.dev/project=<project>` and `geass.dev/environment=<environment>`. The builds in `geass-system` carry `geass.dev/kind=GeassBuild` and also `geass.dev/app=<app>`, which is how the push webhook, the build actions and the status read find them. The `<app>-active` record carries `geass.dev/kind=GeassDeployment`, with the same `geass.dev/name`. Pods also carry `app.kubernetes.io/name=<app>` and `app.kubernetes.io/managed-by=geass`. Inside the cluster the service answers on `<app>.<namespace>.svc.cluster.local:<port>`.
 
 The operator reconciles a service when the service changes, and when its Deployment's desired or available replica counts change, so the service's state follows its pods. It writes `status` only when the status changed.
 
@@ -657,7 +655,7 @@ kubectl get geassdeployments -n geass-system -l geass.dev/app=storefront-web
 
 **`The service cannot start: app is <reason>`.** A container of the service is stuck. The dashboard shows **Unavailable**, and after the retry limit (see [Conditions](#conditions)) **Failed** with `ProvisionFailed`. Fix the cause, then click **Retry** or change the spec. By reason:
 
-- `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName`: the image name is wrong, or the registry needs a pull Secret. `spec.source.image.pullSecret` must name a Secret in the environment namespace, not in `geass-system`. For a Git service, check the value of `status.resolvedImage` and that the nodes can pull from your registry.
+- `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName`: the image name is wrong, or the registry needs a pull Secret. `spec.source.image.pullSecret` must name a Secret in the environment namespace, not in `geass-system`. For a Git service, `status.resolvedImage` is `<repository>@sha256:…`: check that the Secret `<app>-registry-pull` exists in the environment namespace (it is made when the build uses a credential) and that the credential can pull from that repository.
 - `CreateContainerConfigError` or `CreateContainerError`: a ConfigMap or Secret named in `env` or `envFrom`, or a key in it, does not exist in the environment namespace.
 - `CrashLoopBackOff`: the process exits. Read `kubectl logs --previous` and the **Deploy Logs**.
 
@@ -665,9 +663,9 @@ kubectl get geassdeployments -n geass-system -l geass.dev/app=storefront-web
 
 **`source.git.connectionRef, repository, and branch are required`.** A Git service was deployed with an empty connection, repository or branch. This error fails at once, without retries. Connect the project to GitHub, choose a repository, then deploy again.
 
-**`Git source is waiting for a successful build` does not go away.** Read the build: `kubectl get geassbuilds -n geass-system -l geass.dev/name=<app>`. See [GeassBuild](/docs/reference/resources/geass-build/#troubleshooting).
+**`Git source is waiting for a successful build` does not go away.** Read the build: `kubectl get geassbuilds -n geass-system -l geass.dev/app=<app>`. See [GeassBuild](/docs/reference/resources/geass-build/#troubleshooting).
 
-**A push to GitHub does not rebuild the service.** The push webhook finds an app's builds by the label `geass.dev/app`. The builds the operator creates carry `geass.dev/name` instead. Run `kubectl get geassbuilds -n geass-system -l geass.dev/app=<app>`. If it returns nothing, the webhook answers `"triggered":0` and starts no build. Re-run the build by hand as described in [GeassBuild](/docs/reference/resources/geass-build/#re-run-a-build).
+**A push to GitHub does not rebuild the service.** The webhook answers `"triggered":0` when no service matched. The service has to be deployed, build the pushed branch of the pushed repository, not pin a commit, watch a file the push changed (`watchPatterns`), and already have a build: `kubectl get geassbuilds -n geass-system -l geass.dev/app=<app>`. See [A push does not trigger a build](/docs/guides/github-and-builds/#troubleshooting). To build by hand, see [GeassBuild](/docs/reference/resources/geass-build/#re-run-a-build).
 
 **A sleeping service never wakes, or never sleeps.** Read the `ScaleToZero` condition: `kubectl get geassapp <app> -n geass-system -o jsonpath='{.status.conditions[?(@.type=="ScaleToZero")]}'`. A reason other than `Active` means the service runs always on. See [Sleep when idle](/docs/guides/scale-to-zero/#troubleshooting).
 

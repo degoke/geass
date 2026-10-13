@@ -243,14 +243,14 @@ There is one, named `platform`, in `geass-system`. See [GeassPlatformConfig](/do
 | `githubAppRef` | The Secret holding the GitHub App | **Settings** → **Connectors** → GitHub |
 | `prometheusURL` | Where to query metrics | `kubectl` only |
 | `defaultClusterRef` | The cluster new projects use when there are several | `kubectl` only |
-| `registry.repository`, `registry.credentialRef` | The image destination and pull Secret for repository builds when a service sets none | `kubectl` only |
+| `registry.repository`, `registry.credentialRef` | The image destination and login for repository builds when a service sets none. The login is also what the nodes pull the built image with | The REST API (`/api/settings/registry/save`) or `kubectl`. The dashboard has no form for it yet |
 | `defaultDomain`, `traefikAccessLogs` | Present in the schema; no code reads them | Not used |
 
 :::caution
 For repository builds, the registry value is passed to Kaniko as the destination image exactly as written. Geass does not add a service
 name or a tag, so every service that uses the platform default pushes to the same image reference. Set `build.registry.repository` on each
-service instead, with a tag. When neither is set, a build pushes to `registry.geass.dev/<project>/<service>:<revision>`, a registry you do not
-control. See [GitHub and builds](/docs/guides/github-and-builds/).
+service instead, with a tag. When neither is set, a repository service waits with `no container registry is set for builds`: Geass has
+no registry of its own. See [GitHub and builds](/docs/guides/github-and-builds/#set-the-registry).
 :::
 
 Changes apply as soon as the controller sees them. Verifying a new dashboard domain polls every 5 seconds for 15 minutes, then every
@@ -335,10 +335,8 @@ For a service, database or bucket, Geass applies some edits at once and holds th
 Variables and secrets always need a deploy. See [Projects and environments](/docs/guides/projects-and-environments/).
 
 :::note
-Two of the live settings do nothing yet. The spec fields `logs.retentionHours` and `source.git.watchPatterns` are accepted and
-saved, but no controller reads them: push webhooks ignore watch patterns, and nothing enforces the log retention. The same is
-true of `source.git.context` and `build.argsFrom`: builds always use the repository root as their context and take no build
-arguments from Secrets.
+One of the live settings does nothing yet. The spec field `logs.retentionHours` is accepted and saved, but nothing enforces the
+log retention. The same is true of `build.argsFrom`: builds take no build arguments from Secrets.
 :::
 
 ## Versions Geass pins

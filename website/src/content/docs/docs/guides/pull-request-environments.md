@@ -65,11 +65,11 @@ Then Geass:
 
 Later events for the same pull request only create pieces that are missing. They do not change what exists.
 
-:::caution
-New commits on the pull request's branch do not update the copy. A push event does not start a build today (see
-[Branch deploys and push triggers](/docs/guides/github-and-builds/#branch-deploys-and-push-triggers)), and the
-`synchronize` event only creates what is missing. The copy runs the branch as it was when its services were first built.
-:::
+New commits on the pull request's branch update the copy. GitHub sends a `push` event for each push, and Geass re-runs the
+build of every repository service in the copy, because they follow the pull request's branch. The services roll to the new
+image when their builds succeed. See [Branch deploys and push triggers](/docs/guides/github-and-builds/#branch-deploys-and-push-triggers).
+The `synchronize` event that comes with the push only creates what is missing, and does not change what exists. A
+service's **Watch paths** apply here too, so a push that changes only files outside them does not rebuild it.
 
 ### Naming
 
@@ -148,8 +148,8 @@ curl -X POST https://geass.example.com/api/projects/proj-1a2b3c4d/pr-environment
   base environment with two services at 0.25 CPU
   and 256 MB each, and a Postgres database at 0.25 CPU and 512 MB with a 10 GiB volume, costs 0.75 CPU, 1 GB of memory
   and a 10 GiB volume for each pull request. Five open pull requests take 3.75 CPU, 5 GB and 50 GiB of volumes.
-- Every repository service in a copy is built once when the environment is created. Builds run in `geass-system` and use
-  the cluster too.
+- Every repository service in a copy is built when the environment is created, and again for each push to the pull
+  request's branch. Builds run in `geass-system` and use the cluster too.
 - The usual capacity check that stops **Deploy changes** does not run for these copies. A service that does not fit
   reports **Unavailable** with a capacity message instead. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 - Pull requests from forks never get an environment.
