@@ -61,7 +61,7 @@ Choose the option that matches where your DNS lives.
 save the domain in part 3, so the certificate request can succeed on the first try.
 
 **DNS at Cloudflare.** Connect Cloudflare under **Settings** → **Connectors** → **Cloudflare** with a token for your zone
-(see [Cloud connections](/docs/guides/connections/#cloudflare)). Geass creates the dashboard record for you in part 3.
+(see [Connect Cloudflare](/docs/guides/connectors/cloudflare/)). Geass creates the dashboard record for you in part 3.
 
 ## 3. Set the platform domain
 

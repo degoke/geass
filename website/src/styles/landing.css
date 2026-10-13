@@ -219,21 +219,6 @@ ul {
   text-align: center;
 }
 
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  font: 400 12px/1 var(--mono);
-  color: #c8c8c8;
-}
-
-.chips li {
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  background: var(--void);
-}
-
 h1 {
   font-size: clamp(42px, 6.3vw, 86px);
   font-weight: 600;
@@ -526,6 +511,20 @@ h3 {
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+}
+
+/* Docs links under the diagram. */
+.topo-docs {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.topo-docs a,
+.steps p a {
+  color: var(--green);
+  text-underline-offset: 0.2em;
 }
 
 /* ---------- get started ---------- */
@@ -1031,6 +1030,10 @@ h3 {
   font-size: 11.5px;
 }
 
+/*
+ * Hidden with the "In practice" block in components/landing/Agents.astro (commented out there). Restore the
+ * block and these rules together, including the three responsive rules marked "stories" further down.
+
 .stories-head {
   display: flex;
   flex-direction: column;
@@ -1079,6 +1082,7 @@ h3 {
   color: var(--green);
   font-weight: 400;
 }
+*/
 
 .msg.tool code {
   padding: 5px 9px;
@@ -1235,6 +1239,18 @@ h3 {
   font-size: 12px;
 }
 
+.footer .mono a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 0.2em;
+}
+
+.footer .mono a:hover {
+  color: var(--green);
+  text-decoration-color: currentColor;
+}
+
 /* ---------- small screens ---------- */
 
 @media (max-width: 1020px) {
@@ -1246,9 +1262,7 @@ h3 {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .stories {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  /* stories (hidden): .stories { grid-template-columns: repeat(2, minmax(0, 1fr)); } */
 }
 
 @media (max-width: 900px) {
@@ -1298,14 +1312,12 @@ h3 {
 
   .steps,
   .guards,
-  .bento,
-  .stories {
+  .bento {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .stories-head {
-    margin-top: 56px;
-  }
+  /* stories (hidden): add .stories to the one-column list above, and restore this rule:
+     .stories-head { margin-top: 56px; } */
 
   .nodes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1400,6 +1412,22 @@ h3 {
 
 /* Docs link in the install section. */
 .reqs a {
+  color: var(--green);
+  text-underline-offset: 0.2em;
+}
+
+/* Docs links at the foot of each feature tile. */
+.tile .tile-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font: 400 12px/1.7 var(--mono);
+}
+
+.tile-docs a {
   color: var(--green);
   text-underline-offset: 0.2em;
 }

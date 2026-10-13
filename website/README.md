@@ -13,34 +13,80 @@ pnpm dev        # http://localhost:4321
 pnpm build      # static output in dist/ (also builds the search index)
 pnpm preview    # serve dist/
 pnpm links      # check every internal link and heading anchor in dist/ (run after pnpm build)
+pnpm seo        # check canonical URLs, titles, link-preview tags, structured data and the sitemap in dist/
+pnpm icons      # rebuild favicon.ico and apple-touch-icon.png from the brand SVGs (rarely needed)
 ```
 
 ## Deploy
 
-Publish `dist/` to any static host (GitHub Pages, Cloudflare Pages, Netlify, an object store). Set the public
-address at build time so canonical links, the sitemap and the Open Graph image are absolute:
+The site is served from **https://rungeass.com** (the landing page at `/`, the docs at `/docs/`). Publish `dist/` to
+any static host (Cloudflare Pages, Netlify, GitHub Pages, an object store behind a CDN):
 
 ```bash
-SITE_URL=https://example.com pnpm build
+pnpm install --frozen-lockfile
+pnpm build      # writes dist/
+pnpm links      # internal links and anchors
+pnpm seo        # search and sharing tags, structured data, sitemap
+```
+
+`astro.config.mjs` holds the public address. Every absolute URL comes from it: canonical links, `og:url`, the
+link-preview image, the structured data, `sitemap-index.xml`, `robots.txt` and `llms.txt`. To build for another
+address (a staging host, say), set it at build time. `pnpm seo` then checks against whatever the build used:
+
+```bash
+SITE_URL=https://staging.example.com pnpm build
 # only if the site lives under a sub-path:
 SITE_URL=https://example.com SITE_BASE=/geass/ pnpm build
 ```
 
-Without `SITE_URL` the site still builds, but link scrapers will ignore the relative `og:image`.
+Docs pages that link to each other use absolute paths such as `/docs/guides/databases/`, so a `SITE_BASE`
+sub-path deployment needs those links rewritten. Serve the site from the root of its domain.
+
+### What the build produces for search
+
+- A canonical URL, `og:` and `twitter:` tags, and JSON-LD on every page. The landing page describes the product
+  (`WebSite` and `SoftwareApplication`); each docs page has breadcrumbs and a `TechArticle` (see
+  `src/route-middleware.ts`).
+- `sitemap-index.xml` and `sitemap-0.xml` (every page except the 404), and `robots.txt` pointing at them.
+- `llms.txt`, a plain-text map of the docs for AI assistants, generated from the docs collection.
+- A custom 404 page that is marked `noindex`.
+- `favicon.ico`, `favicon.svg` and `apple-touch-icon.png`.
+- `_headers`, which Cloudflare Pages and Netlify read for security headers and long-lived caching of `/_astro/*`.
+  Other hosts ignore it; set the same headers in their own configuration.
+
+### After the first deploy
+
+- Serve one host: redirect `www.rungeass.com` to `rungeass.com` (or the reverse, and change `site` to match), and
+  redirect `http` to `https`, at the host or DNS provider. The canonical links name `https://rungeass.com`.
+- Add the domain to Google Search Console and Bing Webmaster Tools, then submit
+  `https://rungeass.com/sitemap-index.xml`.
+- Check a link preview with the platform's own debugger, for example the LinkedIn Post Inspector, since scrapers
+  cache the card they first see.
+- Set the GitHub repository's **Website** field to `https://rungeass.com`.
+
+When you add or reword a page, keep its `title` unique and its `description` between 50 and 160 characters: `pnpm seo`
+fails on a missing, duplicate or over-long one.
 
 ## Layout
 
 ```
 astro.config.mjs               Starlight config and the docs sidebar (add new pages here)
 src/pages/index.astro          Landing page, assembled from src/components/landing/*
-src/layouts/Landing.astro      Head, fonts, meta and the shared page frame for the landing page
+src/layouts/Landing.astro      Head, fonts, meta, structured data and the shared page frame for the landing page
+src/route-middleware.ts        Adds the link-preview image and structured data to every docs page
+src/pages/robots.txt.ts        robots.txt, built from the site address
+src/pages/llms.txt.ts          llms.txt, built from the docs collection
+src/lib/site.ts                Site name, links, absolute-URL and JSON-LD helpers
 src/styles/landing.css         Landing page styles ("The Contract" tokens)
 src/styles/docs.css            Starlight theme overrides (same tokens)
 src/scripts/landing.js         Copy button and the tabbed demo
 src/content/docs/docs/**       The documentation (Markdown)
 src/assets/                    Logos, fonts, the dashboard screenshot, the Open Graph card
-public/favicon.svg             Favicon
+src/content/docs/404.md        The 404 page
+public/                        favicon.svg, favicon.ico, apple-touch-icon.png and _headers (copied as is)
 scripts/check-links.mjs        Internal link checker
+scripts/check-seo.mjs          Search and sharing tag checker
+scripts/make-icons.mjs         Builds favicon.ico and apple-touch-icon.png
 ```
 
 Brand art comes from `geass-brand/` (regenerate it with `geass-brand/tools/build_brand.py`, then copy the files

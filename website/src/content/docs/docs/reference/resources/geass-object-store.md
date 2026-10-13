@@ -288,6 +288,6 @@ AWS refused the call. The body names the cause. Common ones are `AccessDenied` (
 - [Object storage](/docs/guides/object-storage/)
 - [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/)
 - [GeassDatabase](/docs/reference/resources/geass-database/)
-- [Connections](/docs/guides/connections/)
+- [Connect AWS](/docs/guides/connectors/aws/)
 - [GeassProject](/docs/reference/resources/geass-project/)
 - [Resources overview](/docs/reference/resources/overview/)

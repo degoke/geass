@@ -62,7 +62,7 @@ The dashboard writes the Secret `<project>-github-token` with these keys:
 | `account` | The GitHub account that installed the app. |
 | `account_type` | `User` or `Organization`. |
 
-An installation token is short lived. Whenever Geass uses the connection, it asks GitHub for a new installation token with the platform GitHub App's credentials and writes it back into the `token` key. This needs the platform GitHub App to be configured. See [Connections](/docs/guides/connections/).
+An installation token is short lived. Whenever Geass uses the connection, it asks GitHub for a new installation token with the platform GitHub App's credentials and writes it back into the `token` key. This needs the platform GitHub App to be configured. See [Connect GitHub](/docs/guides/connectors/github/).
 
 ## Status
 
@@ -147,7 +147,7 @@ kubectl get secret storefront-github-token -n geass-system -o jsonpath='{.data.i
 ## Related
 
 - [GitHub and builds](/docs/guides/github-and-builds/)
-- [Connections](/docs/guides/connections/)
+- [Connect GitHub](/docs/guides/connectors/github/)
 - [GeassProject](/docs/reference/resources/geass-project/)
 - [GeassApp](/docs/reference/resources/geass-app/) and [GeassBuild](/docs/reference/resources/geass-build/)
 - [Pull request environments](/docs/guides/pull-request-environments/)

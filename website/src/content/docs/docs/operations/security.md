@@ -208,7 +208,7 @@ metrics. It binds nobody on a cluster without that add-on.
 
 Everything secret is a Kubernetes Secret: dashboard users and the session key, API token hashes, cloud connection keys,
 the Cloudflare token, the GitHub App key, app secrets and shared secrets, function schedule tokens, database passwords, the K3s join token
-(`geass-token`) and SSH keys. [Cloud connections](/docs/guides/connections/) lists the names.
+(`geass-token`) and SSH keys. [Cloud connectors](/docs/guides/connectors/) lists the names.
 
 - **At rest.** Geass does not encrypt Secrets, and the installer does not enable K3s secrets encryption, so they are stored
   in the cluster datastore like any other Secret. Anyone who can read the datastore, an etcd snapshot or the server's disk
@@ -339,7 +339,7 @@ loopback and link-local addresses always, and private ranges (RFC 1918 and share
 
 | Connection | What the credential can do | How to limit it |
 | --- | --- | --- |
-| AWS | Create and delete S3 buckets, and create and delete IAM users named `geass-*` | Use the policy in [Cloud connections](/docs/guides/connections/#permissions-the-aws-key-needs); restrict S3 resources to a name prefix |
+| AWS | Create and delete S3 buckets, and create and delete IAM users named `geass-*` | Use the policy in [Connect AWS](/docs/guides/connectors/aws/#permissions-the-aws-key-needs); restrict S3 resources to a name prefix |
 | PlanetScale | Create databases, branch passwords and Postgres roles in the organization, delete the logins Geass made, and read cluster sizes | Use a token limited to what Geass needs |
 | Cloudflare | Edit DNS in the zone, edit tunnels in the account | Scope the token to one zone |
 | GitHub App | Read contents, metadata and pull requests of the repositories where it is installed | Install it only on the repositories you deploy |
@@ -388,7 +388,7 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 4. Use project tokens in CI, give every token an expiration, store it in your CI's secret store, and revoke tokens you no longer use.
    Do not put an admin workspace token in CI. Give monitoring scripts and AI agents an `observer` token, one for each, and never an
    admin token unless the agent has to change things.
-5. Give AWS a dedicated IAM user with the policy from [Cloud connections](/docs/guides/connections/), and rotate the key.
+5. Give AWS a dedicated IAM user with the policy from [Connect AWS](/docs/guides/connectors/aws/#permissions-the-aws-key-needs), and rotate the key.
    Scope the Cloudflare token to one zone and install the GitHub App on only the repositories you deploy.
 6. Restrict 6443, 10250 and the overlay port to your node addresses in your provider's firewall. Open 80 and 443 to the
    internet only if you publish services (certificates need 80), and limit 22 to the addresses you use.
@@ -429,7 +429,7 @@ Geass does not do these for you:
 - [Users and API tokens](/docs/guides/users-and-tokens/)
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [REST API](/docs/reference/rest-api/)
-- [Cloud connections](/docs/guides/connections/)
+- [Cloud connectors](/docs/guides/connectors/)
 - [Network isolation](/docs/guides/network-isolation/)
 - [Compliance tags](/docs/guides/compliance-tags/)
 - [Domains and TLS](/docs/guides/domains-and-tls/)

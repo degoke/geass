@@ -1,6 +1,6 @@
 import { list, resourceName } from "@/lib/api";
 
-export const DOCS_URL = "https://github.com/degoke/geass#readme";
+export const DOCS_URL = "https://rungeass.com/docs/";
 
 export const ACCOUNT_PRIMARY = [
   {
