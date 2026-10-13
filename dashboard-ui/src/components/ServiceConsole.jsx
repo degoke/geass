@@ -13,20 +13,20 @@ const SESSION_SECONDS = 300;
 const encoder = new TextEncoder();
 
 const THEME = {
-  background: "#0a0a0c",
-  foreground: "#d4d4d8",
-  cursor: "#888cf8",
-  cursorAccent: "#0a0a0c",
-  selectionBackground: "#888cf855",
-  black: "#17171a",
-  brightBlack: "#696972",
-  red: "#e66a6a",
-  green: "#59c77a",
+  background: "#000000",
+  foreground: "#d4d4d4",
+  cursor: "#7ce0a0",
+  cursorAccent: "#000000",
+  selectionBackground: "#7ce0a055",
+  black: "#151515",
+  brightBlack: "#8f8f8f",
+  red: "#ff8a8a",
+  green: "#7ce0a0",
   yellow: "#e0a455",
-  blue: "#888cf8",
+  blue: "#7aa2f7",
   magenta: "#b48cf8",
   cyan: "#6fd0d8",
-  white: "#d4d4d8",
+  white: "#d4d4d4",
 };
 
 function kubectlCommand(namespace, pod, container) {
@@ -74,7 +74,7 @@ export function ServiceConsole({ item, name, data }) {
     if (!mutable || !hostRef.current) return undefined;
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: '"Geist Mono Variable", "Geist Mono", ui-monospace, Menlo, monospace',
+      fontFamily: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace',
       fontSize: 13,
       scrollback: 5000,
       theme: THEME,

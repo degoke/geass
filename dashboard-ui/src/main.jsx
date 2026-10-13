@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import "@fontsource-variable/inter";
-import "@fontsource-variable/geist-mono";
+import "@fontsource-variable/space-grotesk";
+import "@fontsource-variable/jetbrains-mono";
 import "@mantine/core/styles.css";
 import "@mantine/code-highlight/styles.css";
 import "@mantine/notifications/styles.css";

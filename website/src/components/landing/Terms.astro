@@ -1,0 +1,40 @@
+---
+import logo from "../../assets/geass-logo.svg";
+---
+  <section class="terms grid-bg" id="terms" aria-labelledby="terms-title">
+    <div class="contract">
+      <div class="contract-head">
+        <h2 id="terms-title">Terms of the contract</h2>
+        <span class="mono dim">Elastic License 2.0</span>
+      </div>
+      <div class="contract-cols">
+        <div>
+          <span class="eyebrow mono muted">YOU KEEP</span>
+          <ul>
+            <li>Your servers</li>
+            <li>Your data and backups</li>
+            <li>Your domain</li>
+            <li>Your bill</li>
+          </ul>
+        </div>
+        <div>
+          <span class="eyebrow mono">GEASS HANDLES</span>
+          <ul>
+            <li>Builds and deploys</li>
+            <li>Routing and domains</li>
+            <li>Backups and restores</li>
+            <li>Restarts and placement</li>
+          </ul>
+        </div>
+      </div>
+      <p class="fine">
+        Source-available under the Elastic License 2.0.
+        <a href="https://github.com/degoke/geass/blob/main/LICENSE">Read the license</a>.
+      </p>
+      <div class="contract-sign">
+        <img src={logo.src} alt="" height="34" width="129" />
+        <span class="line" aria-hidden="true"></span>
+        <a class="btn btn-primary" href="#install">Sign: install Geass</a>
+      </div>
+    </div>
+  </section>

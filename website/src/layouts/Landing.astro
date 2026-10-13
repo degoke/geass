@@ -1,0 +1,47 @@
+---
+import "../styles/fonts.css";
+import "../styles/landing.css";
+import favicon from "../assets/favicon.svg";
+import og from "../assets/og.png";
+import grotesk from "../assets/fonts/space-grotesk-latin-wght-normal.woff2?url";
+
+interface Props {
+  title: string;
+  description: string;
+  shareDescription: string;
+}
+
+const { title, description, shareDescription } = Astro.props;
+// Link scrapers ignore relative image paths, so the card is only absolute once SITE_URL is set.
+const ogImage = Astro.site ? new URL(og.src, Astro.site).href : og.src;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href={favicon.src} />
+    <link rel="preload" href={grotesk} as="font" type="font/woff2" crossorigin />
+    {canonical && <link rel="canonical" href={canonical} />}
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={shareDescription} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Geass: absolute command over servers you already own. One cloud to manage them all." />
+    {canonical && <meta property="og:url" content={canonical} />}
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <slot />
+  </body>
+</html>

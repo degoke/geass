@@ -1,0 +1,18 @@
+---
+import logo from "../../assets/geass-logo.svg";
+import { docsUrl } from "../../lib/site";
+---
+<header class="nav">
+  <a class="nav-brand" href="#top" aria-label="Geass home">
+    <img src={logo.src} alt="geass" height="26" width="98" />
+  </a>
+  <nav class="nav-links" aria-label="Main">
+    <a href="#cloud" class="nav-optional">One cloud</a>
+    <a href="#features" class="nav-optional">Features</a>
+    <a href="#agents" class="nav-optional">Agents</a>
+    <a href={docsUrl}>Docs</a>
+    <a href="https://github.com/degoke/geass/releases" class="nav-optional">Releases</a>
+    <a href="https://github.com/degoke/geass">GitHub</a>
+    <a href="#install" class="nav-cta">Install</a>
+  </nav>
+</header>
