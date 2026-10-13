@@ -11,8 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +42,26 @@ const (
 	dashboardPlaceholderPassword    = "CHANGE_ME"
 	dashboardLoginLockoutsSecretKey = "login-lockouts"
 )
+
+const (
+	// loginSourceFailureLimit is how many failed sign-ins one client address may cause within loginFailureWindow
+	// before it is refused for loginLockout. It sits well above loginFailureLimit: the per-username lock guards
+	// an account, this only slows a flood. It counts only clients Geass can tell apart (see loginSourceKey).
+	loginSourceFailureLimit = 20
+	// loginSourceMaxEntries bounds how many client addresses are remembered, in memory.
+	loginSourceMaxEntries = 4096
+	// loginLockoutMaxEntries bounds the records kept in the Secret. Only configured usernames are ever stored,
+	// so this is a backstop, not something a sign-in form can reach.
+	loginLockoutMaxEntries = 256
+)
+
+// dashboardDummyPasswordHash is a bcrypt hash, at the cost of the hashes Geass writes, of a password nobody
+// holds. A sign-in for a name that is not configured is compared against it, so it takes as long as one for a
+// name that is, and the time of a reply does not say which usernames exist.
+const dashboardDummyPasswordHash = "$2a$10$Q8UjcLp2ioi1VYVVp6qFZOkQUvAva4O.gEuTuXG/sUMWQMep1M//W"
+
+// loginSharedPeers is the shared address space (RFC 6598) that clusters and VPNs hand to pods and nodes.
+var loginSharedPeers = netip.MustParsePrefix("100.64.0.0/10")
 
 var errDashboardAuthUnconfigured = errors.New("dashboard credentials are not configured; set GEASS_DASHBOARD_PASSWORD or create Secret geass-dashboard-auth")
 
@@ -170,12 +193,8 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
-	locked, err := s.loginLocked(r, username)
-	if err != nil {
-		redirectFormError(w, r, "/", dashboardAuthUnavailable)
-		return
-	}
-	if locked {
+	source := loginSourceKey(r)
+	if s.loginSourceBlocked(source) {
 		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
@@ -185,8 +204,29 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := auth.lookup(username)
-	if user == nil || !passwordMatches(r.FormValue("password"), user.Password) {
-		if err := s.recordLoginFailure(r, username); err != nil {
+	// Every name costs one bcrypt comparison, a configured user's against its own hash and any other name's
+	// against a dummy, before anything else is decided: neither the time of the reply nor the lock tells a
+	// caller whether a name exists.
+	stored := dashboardDummyPasswordHash
+	if user != nil {
+		stored = user.Password
+	}
+	passwordOK := passwordMatches(r.FormValue("password"), stored)
+	// Only a configured user can have a lock, so any other name skips reading the stored lockouts.
+	if user != nil {
+		locked, err := s.loginLocked(r, user.Username)
+		if err != nil {
+			redirectFormError(w, r, "/", dashboardAuthUnavailable)
+			return
+		}
+		if locked {
+			redirectFormError(w, r, "/", "invalid username or password")
+			return
+		}
+	}
+	if user == nil || !passwordOK {
+		s.noteLoginSourceFailure(source)
+		if err := s.recordLoginFailure(r, user); err != nil {
 			redirectFormError(w, r, "/", dashboardAuthUnavailable)
 			return
 		}
@@ -819,8 +859,14 @@ func (s *Server) loginLocked(r *http.Request, username string) (bool, error) {
 	return loginAttemptLocked(stored), nil
 }
 
-func (s *Server) recordLoginFailure(r *http.Request, username string) error {
-	username = normalizeDashboardUsername(username)
+// recordLoginFailure counts a failed sign-in against the configured user it was for. user is nil for any other
+// name, and nothing is kept for it: a name typed into the form must never decide what the Secret, or the
+// operator's memory, holds.
+func (s *Server) recordLoginFailure(r *http.Request, user *dashboardUser) error {
+	if user == nil {
+		return nil
+	}
+	username := normalizeDashboardUsername(user.Username)
 	s.loginMu.Lock()
 	if s.loginFailures == nil {
 		s.loginFailures = map[string]loginAttempt{}
@@ -857,6 +903,135 @@ func (s *Server) clearLoginFailures(r *http.Request, username string) error {
 
 func loginAttemptLocked(attempt loginAttempt) bool {
 	return !attempt.LockedUntil.IsZero() && time.Now().Before(attempt.LockedUntil)
+}
+
+// loginAttemptExpired is whether a record can no longer change an outcome: its window has ended and any lock
+// has lifted, so the next failure would start a fresh window anyway.
+func loginAttemptExpired(attempt loginAttempt, now time.Time) bool {
+	return now.Sub(attempt.WindowStart) > loginFailureWindow && !now.Before(attempt.LockedUntil)
+}
+
+// loginSourceKey names the client a request came from, or is empty when the address says nothing about the
+// client. A private, loopback, link-local or shared-space peer is a proxy, a tunnel or the cluster itself, where
+// one address stands for every visitor, so limiting it would let anyone lock everybody out; those are left to
+// the per-username lock. An IPv4-mapped IPv6 address counts as the IPv4 one, and an IPv6 address as its /64.
+func loginSourceKey(r *http.Request) string {
+	addr, err := netip.ParseAddr(clientAddress(r))
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() || loginSharedPeers.Contains(addr) {
+		return ""
+	}
+	if addr.Is6() {
+		if prefix, err := addr.Prefix(64); err == nil {
+			return prefix.String()
+		}
+	}
+	return addr.String()
+}
+
+// loginSourceBlocked is whether the client with this key has failed too many sign-ins lately.
+func (s *Server) loginSourceBlocked(key string) bool {
+	if key == "" {
+		return false
+	}
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	return loginAttemptLocked(s.loginSources[key])
+}
+
+// noteLoginSourceFailure counts one failed sign-in against the client with this key. The table lives in memory
+// and is bounded, and a flood of fresh addresses cannot push a block out of it (see evictLoginSources). A client
+// that rotates through IPv6 /64 prefixes gets a fresh allowance for each, so this slows a flood without stopping
+// one: it is the per-username lock that protects an account.
+func (s *Server) noteLoginSourceFailure(key string) {
+	if key == "" {
+		return
+	}
+	now := time.Now()
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	if s.loginSources == nil {
+		s.loginSources = map[string]loginAttempt{}
+	}
+	attempt, tracked := s.loginSources[key]
+	if !tracked && len(s.loginSources) >= loginSourceMaxEntries {
+		evictLoginSources(s.loginSources, now)
+	}
+	if now.Sub(attempt.WindowStart) > loginFailureWindow {
+		attempt = loginAttempt{WindowStart: now}
+	}
+	attempt.Count++
+	if attempt.Count >= loginSourceFailureLimit {
+		attempt.LockedUntil = now.Add(loginLockout)
+	}
+	s.loginSources[key] = attempt
+}
+
+// evictLoginSources makes room in the full address table for one more client. It drops what has expired and, if
+// that is not enough, every client that is not blocked right now (their counts start over with their next
+// failure), and only then the block that ends soonest. Blocks are what the table is for, so a flood of fresh
+// addresses, each failing once, never costs a block.
+func evictLoginSources(sources map[string]loginAttempt, now time.Time) {
+	for key, attempt := range sources {
+		if loginAttemptExpired(attempt, now) {
+			delete(sources, key)
+		}
+	}
+	if len(sources) < loginSourceMaxEntries {
+		return
+	}
+	for key, attempt := range sources {
+		if !now.Before(attempt.LockedUntil) {
+			delete(sources, key)
+		}
+	}
+	if len(sources) < loginSourceMaxEntries {
+		return
+	}
+	soonest := ""
+	for key, attempt := range sources {
+		if soonest == "" || attempt.LockedUntil.Before(sources[soonest].LockedUntil) {
+			soonest = key
+		}
+	}
+	delete(sources, soonest)
+}
+
+// pruneLoginLockouts drops the stored records that no longer matter and then, if more than
+// loginLockoutMaxEntries remain, the ones whose window began longest ago, quiet records before locked ones so
+// that no lock is lost while one that is not locked can go instead. The record under keep is the one being
+// written and always stays.
+func pruneLoginLockouts(lockouts map[string]loginAttempt, keep string, now time.Time) {
+	for name, attempt := range lockouts {
+		if name != keep && loginAttemptExpired(attempt, now) {
+			delete(lockouts, name)
+		}
+	}
+	if len(lockouts) <= loginLockoutMaxEntries {
+		return
+	}
+	names := slices.Collect(maps.Keys(lockouts))
+	slices.SortFunc(names, func(a, b string) int {
+		lockedA, lockedB := now.Before(lockouts[a].LockedUntil), now.Before(lockouts[b].LockedUntil)
+		if lockedA != lockedB {
+			if lockedA {
+				return 1
+			}
+			return -1
+		}
+		return lockouts[a].WindowStart.Compare(lockouts[b].WindowStart)
+	})
+	for _, name := range names {
+		if len(lockouts) <= loginLockoutMaxEntries {
+			return
+		}
+		if name != keep {
+			delete(lockouts, name)
+		}
+	}
 }
 
 func (s *Server) loadLoginLockout(r *http.Request, username string) (loginAttempt, error) {
@@ -914,6 +1089,7 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 		} else {
 			lockouts[username] = attempt
 		}
+		pruneLoginLockouts(lockouts, username, time.Now())
 		payload, marshalErr := json.Marshal(lockouts)
 		if marshalErr != nil {
 			return marshalErr

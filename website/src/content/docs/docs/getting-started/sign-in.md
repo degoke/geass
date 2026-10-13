@@ -74,7 +74,7 @@ Once you are signed in, publish the dashboard on a domain from **Settings → Do
 
 The page shows the title **Sign in**, a **Username** field (pre-filled with `admin`), a **Password** field and a **Continue** button. Enter the user from your Secret.
 
-Sessions last 12 hours. Usernames are matched without regard to letter case and surrounding spaces. After five failed attempts for one username within a minute, that username is locked for one minute; the page still says `invalid username or password`. The lock is saved in the Secret, so it survives an operator restart.
+Sessions last 12 hours. Usernames are matched without regard to letter case and surrounding spaces. After five failed attempts for one username within a minute, that username is locked for one minute; the page still says `invalid username or password`. The lock is saved in the Secret, so it survives an operator restart. Only usernames in your Secret are recorded, and a record is dropped once its minute is over. Separately, a client that connects directly from a public address and fails 20 sign-ins within a minute is refused for a minute, with the same message. Behind a proxy or a tunnel every visitor arrives from one private address, so that limit does not apply there.
 
 To sign out, open the account menu at the top right (it shows your initial) and choose **Sign out**. Signing out ends every session of that user, in every browser, not only the current one.
 
@@ -116,7 +116,7 @@ The Secret `geass-dashboard-auth` in `geass-system` holds everything:
 | `users` | JSON array of `{"username", "password", "role"}` |
 | `session-key` | The key that signs session cookies. Geass generates it |
 | `session-epochs` | A counter per user, raised on sign-out. Geass manages it |
-| `login-lockouts` | Failed-attempt records. Geass manages it |
+| `login-lockouts` | Failed-attempt records, for your users only, expired ones removed. Geass manages it |
 
 Edit only `users` (and, to end all sessions, `session-key`). Usernames must be unique ignoring case.
 
@@ -171,7 +171,7 @@ Environment variables are a weaker choice. The password sits in plain text in th
 
 **`dashboard authentication is unavailable` when you press Continue.** Geass found no valid user. Check, in order: the Secret exists (`sudo k3s kubectl -n geass-system get secret geass-dashboard-auth`); `users` is valid JSON; every entry has a non-empty username and password; no password is `CHANGE_ME`; no role is other than `admin` or `viewer`; no two usernames are equal ignoring case. The same message appears when the Kubernetes API cannot be read.
 
-**`invalid username or password`.** The credentials do not match, or the username is locked after five failures. Wait a minute and try once more.
+**`invalid username or password`.** The credentials do not match, the username is locked after five failures, or, if you connect directly from a public address, that address has caused 20 failed sign-ins in the last minute. Wait a minute and try once more.
 
 **You sign in and return to the sign-in form.** The browser rejected the session cookie. Reach the dashboard on `localhost` or `127.0.0.1` through the tunnel, or on an HTTPS address.
 

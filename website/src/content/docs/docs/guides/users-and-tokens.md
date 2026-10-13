@@ -133,7 +133,10 @@ the Secret; Geass generates a new one and every old cookie stops working.
 
 Five failed sign-ins for one username within a minute lock that username for a minute. The reply is the same
 `invalid username or password` while locked. The counter is stored in the Secret key `login-lockouts`, so it survives
-an operator restart.
+an operator restart. Only your configured users get a record there, and a record is dropped once its minute is over. A
+client that connects directly from a public address and fails 20 sign-ins in a minute is also refused for a minute,
+whatever username it uses; that count is kept in memory. Behind a proxy or a tunnel every visitor arrives from one
+private address, so that limit does not apply there.
 
 ## API tokens
 
@@ -474,7 +477,7 @@ non-loopback address. Use HTTPS or `localhost`.
 **Nobody can sign in: "dashboard authentication is unavailable".** The Secret has no usable user, has duplicate usernames,
 still has only `CHANGE_ME`, or its `users` value is not valid JSON. Fix `users`.
 
-**A user is locked out.** Wait one minute after five failed attempts. The lock is counted per username, not per address.
+**A user is locked out.** Wait one minute after five failed attempts. The lock is counted per username, not per address. A separate limit of 20 failed sign-ins a minute applies to each client that connects directly from a public address; behind a proxy or a tunnel it does not apply.
 
 ## Related
 

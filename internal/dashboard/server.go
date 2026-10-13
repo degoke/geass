@@ -62,11 +62,14 @@ type Server struct {
 
 	planetScaleSizeCache planetScaleSizeCache
 
-	authMu        sync.Mutex
-	auth          *dashboardAuth
-	loginMu       sync.Mutex
-	tokenUsed     sync.Map // API token id -> time its last use was stored
+	authMu    sync.Mutex
+	auth      *dashboardAuth
+	loginMu   sync.Mutex
+	tokenUsed sync.Map // API token id -> time its last use was stored
+	// loginFailures is the per-username record and only ever holds configured users; loginSources counts failed
+	// sign-ins per client address and is bounded by loginSourceMaxEntries. Both are guarded by loginMu.
 	loginFailures map[string]loginAttempt
+	loginSources  map[string]loginAttempt
 	eventHub      *dashboardEventHub
 
 	// devices are the command-line sign-ins waiting to be approved.

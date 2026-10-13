@@ -36,7 +36,8 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 
 	secret := &corev1.Secret{}
 	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: systemNamespace}, secret)
-	if apierrors.IsNotFound(err) {
+	creating := apierrors.IsNotFound(err)
+	if creating {
 		secret = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: platform.PlatformCloudflareSecretName, Namespace: systemNamespace},
 			Type:       corev1.SecretTypeOpaque,
@@ -46,6 +47,11 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not load Cloudflare credentials")
 		return
 	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	// Everything below changes the Secret in memory only. It is written once, after Cloudflare has accepted
+	// the token: saving first would replace a working token with one that does not work.
 	if apiToken != "" {
 		secret.Data[platform.SecretKeyCloudflareAPIToken] = []byte(apiToken)
 	}
@@ -55,10 +61,6 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	}
 	if len(secret.Data[platform.SecretKeyCloudflareAPIToken]) == 0 {
 		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "API token is required")
-		return
-	}
-	if err := s.persistSecret(r.Context(), secret); err != nil {
-		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not save Cloudflare credentials")
 		return
 	}
 
@@ -90,8 +92,21 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	zoneRecords = platform.EnsureCloudflareZoneInList(zoneRecords, zoneID, zoneName)
 	platform.SetCloudflareZonesOnSecret(secret, zoneRecords)
 	secret.Data[platform.SecretKeyCloudflareZoneName] = []byte(zoneName)
-	if err := s.persistSecret(r.Context(), secret); err != nil {
-		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not save Cloudflare credentials")
+	// The Cloudflare calls above can take a while. The Secret is written as it was read, so a change made in
+	// the meantime (another save, a zone refresh, a disconnect) is a conflict to report, not something to
+	// overwrite with the older copy, and a Secret that was removed is not brought back.
+	var saveErr error
+	if creating {
+		saveErr = s.Client.Create(r.Context(), secret)
+	} else {
+		saveErr = s.Client.Update(r.Context(), secret)
+	}
+	if saveErr != nil {
+		message := "could not save Cloudflare credentials"
+		if apierrors.IsConflict(saveErr) || apierrors.IsAlreadyExists(saveErr) {
+			message = "Cloudflare credentials changed while saving — try again"
+		}
+		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, message)
 		return
 	}
 

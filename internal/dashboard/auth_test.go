@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -9,9 +10,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -257,6 +261,32 @@ func TestDashboardCookieSecureIgnoresForwardedHTTPOnPublicHost(t *testing.T) {
 	require.True(t, cookie.Secure)
 }
 
+func TestDashboardCookieSecureOnlyExemptsPlainHTTPToLoopback(t *testing.T) {
+	cookieFor := func(host string, mutate func(*http.Request)) *http.Cookie {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = host
+		if mutate != nil {
+			mutate(req)
+		}
+		return dashboardSessionCookie(req, "token", 60)
+	}
+	for _, host := range []string{"localhost:8085", "LOCALHOST:8085", "127.0.0.1:8085", "[::1]:8085"} {
+		require.False(t, cookieFor(host, nil).Secure, host)
+	}
+	// Anything that only looks like loopback, and every address that is not, gets the flag.
+	for _, host := range []string{"geass.example.com", "localhost.evil.example.com", "127.0.0.1.evil.example.com", "10.0.0.5:8085", "0.0.0.0:8085", ""} {
+		require.True(t, cookieFor(host, nil).Secure, host)
+	}
+	// HTTPS to loopback keeps the flag, whether this process terminated TLS or a proxy says it did.
+	require.True(t, cookieFor("127.0.0.1:8085", func(r *http.Request) { r.TLS = &tls.ConnectionState{} }).Secure)
+	require.True(t, cookieFor("127.0.0.1:8085", func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "https") }).Secure)
+	require.True(t, cookieFor("127.0.0.1:8085", func(r *http.Request) { r.Header.Set("Forwarded", "proto=https") }).Secure)
+	// Signing out clears the cookie with the same attributes it was set with.
+	logout := httptest.NewRequest(http.MethodGet, "/", nil)
+	logout.Host = "geass.example.com"
+	require.True(t, dashboardSessionCookie(logout, "", -1).Secure)
+}
+
 func TestDashboardAuthReloadsExistingSecretOnAlreadyExists(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("GEASS_DASHBOARD_USERNAME", "admin")
@@ -409,6 +439,363 @@ func TestDashboardLoginRateLimitIsPerUsername(t *testing.T) {
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "invalid username or password")
+}
+
+func dashboardLoginAttempt(srv *Server, username, password, remoteAddr string) *httptest.ResponseRecorder {
+	form := url.Values{"username": {username}, "password": {password}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.RemoteAddr = remoteAddr
+	rec := httptest.NewRecorder()
+	srv.handleAPI(rec, req)
+	return rec
+}
+
+// storedLoginLockouts is what the Secret holds for lockouts, and how many bytes that is.
+func storedLoginLockouts(t *testing.T, c client.Client) (map[string]loginAttempt, int) {
+	t.Helper()
+	secret := &corev1.Secret{}
+	require.NoError(t, c.Get(t.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret))
+	lockouts, err := parseDashboardLoginLockouts(secret)
+	require.NoError(t, err)
+	return lockouts, len(secret.Data[dashboardLoginLockoutsSecretKey])
+}
+
+func seedLoginLockouts(t *testing.T, secret *corev1.Secret, lockouts map[string]loginAttempt) {
+	t.Helper()
+	payload, err := json.Marshal(lockouts)
+	require.NoError(t, err)
+	secret.Data[dashboardLoginLockoutsSecretKey] = payload
+}
+
+func TestDashboardLoginFloodOfUnknownUsernamesDoesNotGrowSecret(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	// A first sign-in hashes the fixture password into the Secret, so the size below is a steady baseline.
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, "198.51.100.1:1000").Code)
+	_, baseline := storedLoginLockouts(t, srv.Client)
+
+	// Every unknown name costs a bcrypt comparison (so that it takes as long as a real one), which keeps this
+	// loop short. Before the fix each of these names left a record in the Secret and one in memory.
+	for i := range 60 {
+		// Spread over many addresses so it is the Secret logic, not the per-address limiter, that is tested.
+		remote := fmt.Sprintf("198.51.%d.%d:1000", i/250, i%250+1)
+		rec := dashboardLoginAttempt(srv, fmt.Sprintf("ghost-%d", i), "guess", remote)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "invalid username or password")
+	}
+
+	lockouts, size := storedLoginLockouts(t, srv.Client)
+	require.Empty(t, lockouts)
+	require.Equal(t, baseline, size)
+	srv.loginMu.Lock()
+	defer srv.loginMu.Unlock()
+	require.Empty(t, srv.loginFailures)
+	require.LessOrEqual(t, len(srv.loginSources), loginSourceMaxEntries)
+}
+
+func TestDashboardLoginForUnknownUsernameTakesAsLongAsAKnownOne(t *testing.T) {
+	cost, err := bcrypt.Cost([]byte(dashboardDummyPasswordHash))
+	require.NoError(t, err)
+	require.Equal(t, bcrypt.DefaultCost, cost, "the dummy hash must cost what the hashes Geass writes cost")
+
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	// The first sign-in hashes the fixture password; after it every comparison is a real bcrypt one.
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, "198.51.100.1:1000").Code)
+
+	// A bcrypt comparison at the default cost takes tens of milliseconds; the lookup alone takes microseconds.
+	// The bound is far below the first and far above the second, so it holds on a slow or a fast machine.
+	started := time.Now()
+	rec := dashboardLoginAttempt(srv, "nobody-by-this-name", "guess", "198.51.100.2:1000")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.GreaterOrEqual(t, time.Since(started), 5*time.Millisecond)
+}
+
+func TestDashboardLoginLockoutStoresOnlyConfiguredUsers(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, "ghost", "guess", "198.51.100.1:1000").Code)
+	require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, " ADMIN ", "guess", "198.51.100.1:1000").Code)
+
+	lockouts, _ := storedLoginLockouts(t, srv.Client)
+	require.Len(t, lockouts, 1)
+	require.Equal(t, 1, lockouts["admin"].Count)
+}
+
+func TestDashboardLoginLockoutSurvivesRestart(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	c := newFakeClient(secret)
+	first := &Server{Client: c}
+	for range loginFailureLimit {
+		require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(first, "admin", "guess", "198.51.100.1:1000").Code)
+	}
+
+	// A new Server has none of the in-memory state, only what the Secret kept.
+	second := &Server{Client: c}
+	rec := dashboardLoginAttempt(second, "admin", authFixtureAdminCred, "198.51.100.2:1000")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid username or password")
+	require.Empty(t, rec.Result().Cookies())
+}
+
+func TestDashboardLoginLockoutsDropExpiredRecords(t *testing.T) {
+	secret := dashboardUsersSecret(
+		dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin},
+		dashboardUser{Username: "viewer", Password: authFixtureViewerCred, Role: dashboardRoleViewer},
+	)
+	now := time.Now()
+	stale := now.Add(-time.Hour)
+	// The lock runs for an hour, so a run that stalls for a minute cannot turn it into an expired record.
+	seed := map[string]loginAttempt{"viewer": {Count: loginFailureLimit, WindowStart: now, LockedUntil: now.Add(time.Hour)}}
+	// What the Secret of an operator that met the old code can hold: a record per name an attacker tried.
+	for i := range 100 {
+		seed[fmt.Sprintf("ghost-%d", i)] = loginAttempt{Count: loginFailureLimit, WindowStart: stale, LockedUntil: stale.Add(loginLockout)}
+	}
+	seedLoginLockouts(t, secret, seed)
+	srv := &Server{Client: newFakeClient(secret)}
+
+	require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, "admin", "guess", "198.51.100.1:1000").Code)
+
+	lockouts, _ := storedLoginLockouts(t, srv.Client)
+	require.Len(t, lockouts, 2)
+	require.Contains(t, lockouts, "admin")
+	require.Contains(t, lockouts, "viewer")
+	// A lock that is still running is not the kind of record that gets dropped.
+	locked, err := srv.loginLocked(httptest.NewRequest(http.MethodPost, "/api/login", nil), "viewer")
+	require.NoError(t, err)
+	require.True(t, locked)
+}
+
+func TestDashboardLoginLockoutsAreCapped(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	// More records than the cap, all inside their window so none of them has expired: they began within the last
+	// second, which leaves a minute before the window ends. A higher number began later.
+	now := time.Now()
+	total := loginLockoutMaxEntries + 50
+	seed := map[string]loginAttempt{}
+	for i := range total {
+		seed[fmt.Sprintf("user-%03d", i)] = loginAttempt{Count: 1, WindowStart: now.Add(-time.Duration(total-i) * time.Millisecond)}
+	}
+	// The oldest record of all is a lock that is still running, and it must outlast the quiet records.
+	seed["locked-oldest"] = loginAttempt{Count: loginFailureLimit, WindowStart: now.Add(-time.Second), LockedUntil: now.Add(time.Hour)}
+	seedLoginLockouts(t, secret, seed)
+	srv := &Server{Client: newFakeClient(secret)}
+
+	require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, "admin", "guess", "198.51.100.1:1000").Code)
+
+	lockouts, _ := storedLoginLockouts(t, srv.Client)
+	require.Len(t, lockouts, loginLockoutMaxEntries)
+	require.Contains(t, lockouts, "admin")
+	require.Contains(t, lockouts, "locked-oldest")
+	// The record being written and the lock stay; the oldest of the quiet records are what goes.
+	require.NotContains(t, lockouts, "user-000")
+	require.NotContains(t, lockouts, "user-051")
+	require.Contains(t, lockouts, "user-052")
+	require.Contains(t, lockouts, fmt.Sprintf("user-%03d", total-1))
+}
+
+// pruneLoginLockouts takes the time as a parameter, so this one does not depend on the clock at all.
+func TestPruneLoginLockoutsKeepsLocksBeforeQuietRecords(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	lockouts := map[string]loginAttempt{
+		// Began before everything else, and is the only record that is locked.
+		"locked": {Count: loginFailureLimit, WindowStart: now.Add(-50 * time.Second), LockedUntil: now.Add(10 * time.Second)},
+		// The record being written: older than every quiet one below, and it stays all the same.
+		"writing": {Count: 1, WindowStart: now.Add(-45 * time.Second)},
+		// Past its window and no longer locked: gone whatever the cap is.
+		"expired": {Count: loginFailureLimit, WindowStart: now.Add(-time.Hour), LockedUntil: now.Add(-time.Hour + loginLockout)},
+	}
+	for i := range loginLockoutMaxEntries + 20 {
+		lockouts[fmt.Sprintf("quiet-%03d", i)] = loginAttempt{Count: 1, WindowStart: now.Add(-40*time.Second + time.Duration(i)*time.Millisecond)}
+	}
+
+	pruneLoginLockouts(lockouts, "writing", now)
+
+	require.Len(t, lockouts, loginLockoutMaxEntries)
+	require.NotContains(t, lockouts, "expired")
+	require.Contains(t, lockouts, "locked")
+	require.Contains(t, lockouts, "writing")
+	// 20 over the cap, plus the locked and the written one: 22 quiet records go, the oldest first.
+	require.NotContains(t, lockouts, "quiet-021")
+	require.Contains(t, lockouts, "quiet-022")
+}
+
+func TestDashboardLoginSourceLimit(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	const flooder = "203.0.113.9:4444"
+	for i := range loginSourceFailureLimit {
+		rec := dashboardLoginAttempt(srv, fmt.Sprintf("ghost-%d", i), "guess", flooder)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	}
+
+	// The address is refused now, even with the right password and whatever the username.
+	rec := dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, flooder)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid username or password")
+	require.Empty(t, rec.Result().Cookies())
+
+	// Another address is not affected.
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, "203.0.113.10:4444").Code)
+
+	// The refusal ends when the lock does.
+	key := loginSourceKey(&http.Request{RemoteAddr: flooder})
+	past := time.Now().Add(-time.Hour)
+	srv.loginMu.Lock()
+	srv.loginSources[key] = loginAttempt{Count: loginSourceFailureLimit, WindowStart: past, LockedUntil: past.Add(loginLockout)}
+	srv.loginMu.Unlock()
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, flooder).Code)
+}
+
+// A request that is refused because of its address must not count as another failure, or a visitor who tries
+// again every few seconds would keep the block alive for as long as they keep trying.
+func TestDashboardLoginSourceBlockIsNotExtendedByRefusedRequests(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	const flooder = "203.0.113.30:4444"
+	key := loginSourceKey(&http.Request{RemoteAddr: flooder})
+	now := time.Now()
+	blocked := loginAttempt{Count: loginSourceFailureLimit, WindowStart: now, LockedUntil: now.Add(time.Hour)}
+	srv.loginSources = map[string]loginAttempt{key: blocked}
+
+	for _, username := range []string{"ghost", "admin", "ghost", "admin"} {
+		rec := dashboardLoginAttempt(srv, username, authFixtureAdminCred, flooder)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "invalid username or password")
+		require.Empty(t, rec.Result().Cookies())
+	}
+
+	srv.loginMu.Lock()
+	defer srv.loginMu.Unlock()
+	require.Equal(t, map[string]loginAttempt{key: blocked}, srv.loginSources)
+}
+
+// Behind a proxy, a tunnel or the cluster's own ingress every visitor arrives from the same private address.
+// Limiting that address would let anyone lock everyone out, so it is not limited.
+func TestDashboardLoginSourceLimitIgnoresProxyPeers(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	const proxy = "10.42.0.9:4444"
+	for i := range loginSourceFailureLimit + 2 {
+		require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, fmt.Sprintf("ghost-%d", i), "guess", proxy).Code)
+	}
+
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, proxy).Code)
+	srv.loginMu.Lock()
+	defer srv.loginMu.Unlock()
+	require.Empty(t, srv.loginSources)
+}
+
+func TestDashboardLoginSourceLimitSparesOrdinaryMistakes(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	const office = "203.0.113.20:4444"
+	// A few mistyped names or passwords, then the right one: nobody is turned away for that.
+	for i := range loginFailureLimit - 1 {
+		require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(srv, fmt.Sprintf("typo-%d", i), "guess", office).Code)
+	}
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, office).Code)
+}
+
+func TestDashboardLoginSourceTableIsBounded(t *testing.T) {
+	// Public addresses, since a private one is never limited and so never enters the table.
+	source := func(i int) string {
+		return loginSourceKey(&http.Request{RemoteAddr: fmt.Sprintf("44.%d.%d.%d:1000", i>>16&255, i>>8&255, i&255)})
+	}
+	srv := &Server{}
+	for i := range loginSourceMaxEntries + 500 {
+		srv.noteLoginSourceFailure(source(i))
+		require.LessOrEqual(t, len(srv.loginSources), loginSourceMaxEntries)
+	}
+
+	// A full table of expired entries is swept, not wiped: what is still live survives.
+	swept := &Server{loginSources: map[string]loginAttempt{}}
+	stale := time.Now().Add(-time.Hour)
+	for i := range loginSourceMaxEntries {
+		swept.loginSources[source(i)] = loginAttempt{Count: 1, WindowStart: stale}
+	}
+	swept.noteLoginSourceFailure(source(loginSourceMaxEntries + 1))
+	require.Len(t, swept.loginSources, 1)
+}
+
+// A flood of fresh addresses, each failing once, fills the table. It must cost the flood its own counts and
+// never a block that is running, or the block could be shaken off by rotating through enough addresses.
+func TestDashboardLoginSourceTableKeepsBlocksThroughAFlood(t *testing.T) {
+	source := func(i int) string {
+		return loginSourceKey(&http.Request{RemoteAddr: fmt.Sprintf("44.%d.%d.%d:1000", i>>16&255, i>>8&255, i&255)})
+	}
+	now := time.Now()
+	srv := &Server{loginSources: map[string]loginAttempt{
+		source(0): {Count: loginSourceFailureLimit, WindowStart: now, LockedUntil: now.Add(time.Hour)},
+	}}
+	for i := 1; i < loginSourceMaxEntries+500; i++ {
+		srv.noteLoginSourceFailure(source(i))
+	}
+
+	require.True(t, srv.loginSourceBlocked(source(0)))
+	require.LessOrEqual(t, len(srv.loginSources), loginSourceMaxEntries)
+
+	// With nothing but blocks in a full table, the one that ends soonest makes room, and the bound still holds.
+	full := &Server{loginSources: map[string]loginAttempt{}}
+	for i := range loginSourceMaxEntries {
+		full.loginSources[source(i)] = loginAttempt{Count: loginSourceFailureLimit, WindowStart: now, LockedUntil: now.Add(time.Hour + time.Duration(i)*time.Second)}
+	}
+	full.noteLoginSourceFailure(source(loginSourceMaxEntries + 1))
+	require.Len(t, full.loginSources, loginSourceMaxEntries)
+	require.NotContains(t, full.loginSources, source(0))
+	require.Contains(t, full.loginSources, source(1))
+}
+
+// The limiter and the per-username record share loginMu; this is for `go test -race`, which can only find a
+// missed lock when goroutines really do run at once.
+func TestDashboardLoginStateIsSafeForConcurrentUse(t *testing.T) {
+	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
+	srv := &Server{Client: newFakeClient(secret)}
+	// Hash the fixture password once, so the goroutines below do not all race to upgrade it.
+	require.Equal(t, http.StatusOK, dashboardLoginAttempt(srv, "admin", authFixtureAdminCred, "198.51.100.250:1000").Code)
+
+	var wg sync.WaitGroup
+	for worker := range 16 {
+		wg.Go(func() {
+			for i := range 40 {
+				remote := fmt.Sprintf("192.0.%d.%d:1000", worker, i)
+				source := loginSourceKey(&http.Request{RemoteAddr: remote})
+				srv.noteLoginSourceFailure(source)
+				_ = srv.loginSourceBlocked(source)
+				// A few whole sign-ins as well; each costs a bcrypt comparison, so only a few.
+				if i%20 == 0 {
+					dashboardLoginAttempt(srv, fmt.Sprintf("ghost-%d-%d", worker, i), "guess", remote)
+				}
+			}
+		})
+	}
+	wg.Wait()
+
+	lockouts, _ := storedLoginLockouts(t, srv.Client)
+	require.Empty(t, lockouts)
+	srv.loginMu.Lock()
+	defer srv.loginMu.Unlock()
+	require.LessOrEqual(t, len(srv.loginSources), loginSourceMaxEntries)
+}
+
+func TestLoginSourceKey(t *testing.T) {
+	key := func(remote string) string { return loginSourceKey(&http.Request{RemoteAddr: remote}) }
+	require.Equal(t, key("192.0.2.7:80"), key("192.0.2.7:9999"))
+	require.NotEqual(t, key("192.0.2.7:80"), key("192.0.2.8:80"))
+	require.Equal(t, key("192.0.2.7:80"), key("[::ffff:192.0.2.7]:80"))
+	// One IPv6 subscriber holds a /64, so the addresses inside it are one source.
+	require.Equal(t, key("[2001:db8:1:2::1]:443"), key("[2001:db8:1:2:ffff:ffff:ffff:ffff]:443"))
+	require.NotEqual(t, key("[2001:db8:1:2::1]:443"), key("[2001:db8:1:3::1]:443"))
+	// Where one address stands for many visitors, or for the cluster itself, there is no client to name.
+	for _, remote := range []string{
+		"10.0.0.8:1", "172.16.4.4:1", "192.168.1.5:1", "[fd00::1]:1", "[::ffff:10.0.0.8]:1",
+		"127.0.0.1:1", "[::1]:1", "169.254.1.1:1", "[fe80::1%eth0]:1", "100.64.1.1:1", "0.0.0.0:1",
+		"", "not-an-address",
+	} {
+		require.Empty(t, key(remote), remote)
+	}
 }
 
 func TestDashboardHashesEnvUsersIntoSecret(t *testing.T) {

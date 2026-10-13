@@ -41,8 +41,23 @@ Geass checks the user's current role and epoch on every request. Signing out bum
 that user. The cookie is marked `Secure`, except when the request is plain HTTP to a loopback address.
 
 Five failed sign-ins for one username in a minute lock that username for a minute, and the reply is the same while
-locked. The counter lives in the Secret, so it survives restarts. The lock is per username, not per client address, so an
-attacker can keep a known username locked. Put a rate limit in front of the dashboard if that matters to you.
+locked. The counter lives in the Secret, so it survives restarts. Only usernames that are configured are recorded: a
+name that is not one of your users is counted against nothing but the client address below, so someone typing random
+names at the form cannot make the Secret grow. A record whose minute is over and whose lock has lifted is dropped the
+next time the Secret is written, and the Secret never keeps more than 256 records.
+
+A sign-in for a name that is not configured is checked against a dummy password hash, so it takes as long as one for a
+real user and the time of the reply does not reveal which names exist.
+
+The lock is per username, not per client address, so an attacker can keep a known username locked. On top of it, a
+client address that causes 20 failed sign-ins in a minute is refused for a minute, whatever username it tries. That count
+is kept in memory (it starts over when the operator restarts), and an IPv6 client counts as its `/64`. Geass sees only
+the address of whatever connects to it, so this limit applies only to a client that connects directly from a public
+address. Behind a reverse proxy, a Cloudflare Tunnel or the cluster's ingress, every visitor arrives from the same
+private address, and limiting it would let anyone lock everyone out; private, loopback, link-local and shared
+(`100.64.0.0/10`) addresses are therefore never limited by address, and there the per-username lock is the protection.
+A client that rotates through IPv6 `/64` prefixes gets a fresh allowance for each, so the limit slows a flood without
+stopping it. Put a rate limit in front of the dashboard if you need one that tells visitors apart.
 
 There is no two-factor authentication and no single sign-on. Use long unique passwords and restrict who can reach the
 dashboard.

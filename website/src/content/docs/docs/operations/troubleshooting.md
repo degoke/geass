@@ -125,7 +125,7 @@ Once a domain is set, check DNS and the ingress (`kubectl -n geass-system get in
 Geass could not load a login. The usual cause is that none exists: the installer does not create one. Create the Secret `geass-dashboard-auth` in `geass-system` with a `users` key (or set `GEASS_DASHBOARD_PASSWORD` on the operator). The sample is `config/samples/geass_dashboard_auth.yaml`. Geass refuses the placeholder password `CHANGE_ME`, so replace it, and hashes the real one at the first sign-in. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
 
 **Every sign-in says "invalid username or password".**
-Five wrong attempts for one user within a minute lock that user for a minute, and the message is the same while locked. Wait a minute and try once. If it still fails, read the users in the Secret.
+Five wrong attempts for one user within a minute lock that user for a minute, and the message is the same while locked. Twenty failed sign-ins from one client address within a minute refuse that address for a minute, with the same message. That limit applies only to clients that connect directly from a public address, not behind a proxy or a tunnel. Wait a minute and try once. If it still fails, read the users in the Secret.
 
 **Signing in works, then the dashboard asks for a sign-in again.**
 You opened it over plain HTTP at an address other than `localhost`. Geass marks its session cookie `Secure` everywhere except loopback, so the browser drops it. Use HTTPS, or the port forward above. A session lasts 12 hours.
