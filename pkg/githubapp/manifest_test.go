@@ -20,6 +20,7 @@ func TestNewGeassAppManifest(t *testing.T) {
 	require.Equal(t, []string{"https://geass.example.com/github/callback"}, manifest.CallbackURLs)
 	require.Equal(t, "read", manifest.DefaultPermissions["contents"])
 	require.Equal(t, "read", manifest.DefaultPermissions["pull_requests"], "pull request environments need to read pull requests")
+	require.Equal(t, "read", manifest.DefaultPermissions["checks"], "Wait for CI lists the check runs of a commit, which needs the Checks permission")
 	require.Equal(t, []string{"push", "pull_request"}, manifest.DefaultEvents)
 
 	raw, err := ManifestJSON(manifest)

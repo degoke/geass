@@ -82,6 +82,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "waiting for a successful build") {
 		return false
 	}
+	// A service with no registry to build into waits for one to be set, which is not a provisioning failure.
+	if strings.Contains(msg, "no container registry is set") {
+		return false
+	}
 	if strings.Contains(msg, "installing") && strings.Contains(msg, "chart") {
 		return false
 	}

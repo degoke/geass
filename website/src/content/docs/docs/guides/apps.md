@@ -53,7 +53,7 @@ moving tag such as `:stable` can keep running an old image. A pinned tag also ma
 5. Choose **Deploy changes**. Geass builds the image, pushes it to your registry, and runs it.
 
 How the build works, where the image goes, what to do when it fails and how to build a newer commit is in
-[GitHub and builds](/docs/guides/github-and-builds/). A push to the branch does not start a build today.
+[GitHub and builds](/docs/guides/github-and-builds/). A push to the branch starts a build.
 
 ## The service panel
 
@@ -157,12 +157,12 @@ the cluster. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 ### Build
 
 Only repository services have build settings. For a service that runs an image or a function, the section says there
-is nothing to build. The **Builder** block says Geass builds with BuildKit. The build Job runs Kaniko.
+is nothing to build. The **Builder** block says Geass builds with Kaniko.
 
 | Setting | Meaning | Default | Applies |
 | --- | --- | --- | --- |
-| **Dockerfile path** | The Dockerfile to build, relative to the repository. | `Dockerfile` | On deploy |
-| **Watch paths** | Gitignore-style rules, one per line, meant to limit which changes trigger a build. They are saved but not used today; see [GitHub and builds](/docs/guides/github-and-builds/#choose-a-repository). | Empty | Instantly |
+| **Dockerfile path** | The Dockerfile to build, relative to the root directory (the repository root when that is empty). | `Dockerfile` | On deploy |
+| **Watch paths** | Gitignore-style rules, one per line, that limit which pushes trigger a build; see [GitHub and builds](/docs/guides/github-and-builds/#root-directory-and-watch-paths). | Empty | Instantly |
 | **Use build cache** | Reuse image layers between builds. It is part of the build's identity, so changing it starts a new build. | Off | On deploy |
 
 ### Deploy
@@ -274,11 +274,9 @@ Other actions without a button are scaling (`POST /api/apps/{id}/scale` with `re
 (`POST /api/apps/{id}/retry-provision`). A project token can call them for the services of its environment. See
 [Users and API tokens](/docs/guides/users-and-tokens/) and the [REST API](/docs/reference/rest-api/).
 
-:::caution
-`POST /api/apps/{id}/build` and `/build/cancel` do not act on the build Geass made for a repository service. They look
-builds up by the label `geass.dev/app`, which that build does not carry. See
+`POST /api/apps/{id}/build` builds a repository service's branch again, by putting its current build back to the start, and
+`POST /api/apps/{id}/build/cancel` cancels that build while it is waiting or running. A project token can call both. See
 [Build a new commit](/docs/guides/github-and-builds/#build-a-new-commit).
-:::
 
 ## From the command line or an agent
 

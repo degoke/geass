@@ -49,7 +49,7 @@ itself:
 | Annotation `geass.dev/last-deployed` | The spec as last deployed, as JSON |
 | Annotation `geass.dev/deploy-workflow` | `true` on resources the dashboard created; turns the gating on |
 | Annotation `geass.dev/deploy-revision` | Changes on every deploy so pods restart and pick up new variables |
-| Labels `geass.dev/project`, `geass.dev/environment`, and `geass.dev/app` or `geass.dev/name` | Tie records and workloads to what they belong to. `geass.dev/app` is on records the dashboard creates (deploy records, console sessions), `geass.dev/name` on objects the operator creates |
+| Labels `geass.dev/project`, `geass.dev/environment`, and `geass.dev/app` or `geass.dev/name` | Tie records and workloads to what they belong to. `geass.dev/app` is on records the dashboard creates (deploy records, console sessions) and on every build, `geass.dev/name` on objects the operator creates |
 | Annotation `geass.dev/required-tags` on a project environment's namespace | The node tags the project requires, sorted and comma-separated. The admission policy `geass-required-node-tags` reads it. Geass writes it from `spec.requiredTags` on the project |
 
 While a deployed resource has pending changes, the operator keeps running the last-deployed snapshot. A few settings that never replace pods

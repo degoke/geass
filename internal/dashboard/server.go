@@ -1235,7 +1235,7 @@ func (s *Server) deployApp(ctx context.Context, app *geassv1alpha1.GeassApp) err
 	if err != nil {
 		return err
 	}
-	s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app.Name))
+	s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app))
 	return nil
 }
 
@@ -1998,6 +1998,10 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			redirectFormError(w, r, fallback, "repository and branch are required")
 			return
 		}
+		if _, _, err := platform.BuildPaths("/workspace", app.Spec.Source.Git.Context, app.Spec.Source.Git.Dockerfile); err != nil {
+			redirectFormError(w, r, fallback, "the root directory and the Dockerfile path must stay inside the repository")
+			return
+		}
 	}
 	if p := strings.TrimSpace(r.FormValue("port")); p != "" {
 		var parsed int
@@ -2260,6 +2264,9 @@ func (s *Server) handleAppRollback(w http.ResponseWriter, r *http.Request, name 
 	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
 }
 
+// handleAppBuildAction runs the service's newest build again, or cancels it. It never makes a build: the
+// operator makes the build for a service's settings when the service is deployed, and one made here would
+// have a name nothing deploys.
 func (s *Server) handleAppBuildAction(w http.ResponseWriter, r *http.Request, name string, cancel bool) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) {
@@ -2271,37 +2278,35 @@ func (s *Server) handleAppBuildAction(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
-	var builds geassv1alpha1.GeassBuildList
-	if err := s.Client.List(r.Context(), &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: name}); err != nil {
+	build, err := s.currentBuild(r.Context(), app)
+	if err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
-	var build *geassv1alpha1.GeassBuild
-	if len(builds.Items) == 0 {
+	if build == nil {
 		if app.Spec.Source.Git == nil {
 			redirectFormError(w, r, fallback, "the app has no repository build")
 			return
 		}
-		build = &geassv1alpha1.GeassBuild{ObjectMeta: metav1.ObjectMeta{GenerateName: app.Name + "-build-", Namespace: systemNamespace, Labels: map[string]string{platform.LabelApp: name, platform.LabelProject: app.Spec.Project, platform.LabelEnvironment: string(app.Spec.Environment)}}, Spec: geassv1alpha1.GeassBuildSpec{App: name, Project: app.Spec.Project, Environment: app.Spec.Environment, Repository: app.Spec.Source.Git.Repository, Branch: app.Spec.Source.Git.Branch, Revision: app.Spec.Source.Git.Commit, ConnectionRef: &app.Spec.Source.Git.ConnectionRef, Dockerfile: app.Spec.Source.Git.Dockerfile, Context: app.Spec.Source.Git.Context, WaitForCI: app.Spec.Source.Git.WaitForCI, Registry: app.Spec.Build.Registry.Repository, CredentialRef: app.Spec.Build.Registry.CredentialRef, LogStoreRef: app.Spec.Logs.ArchiveStoreRef, Cache: app.Spec.Build.Cache}}
-		if err := s.Client.Create(r.Context(), build); err != nil {
+		redirectFormError(w, r, fallback, "the app has not been built yet: its build is made when it is deployed")
+		return
+	}
+	if cancel {
+		switch build.Status.Phase {
+		case "", geassv1alpha1.GeassBuildPending, geassv1alpha1.GeassBuildWaitingForCI, geassv1alpha1.GeassBuildRunning:
+		default:
+			// Cancelling a build that succeeded would take its image out from under the service: it is not Succeeded
+			// any more, so the service waits for a build and stops applying its settings.
+			redirectFormError(w, r, fallback, "the build has already finished, so there is nothing to cancel")
+			return
+		}
+		build.Status.CancelRequested = true
+		build.Status.Phase = geassv1alpha1.GeassBuildCancelled
+		if err := s.Client.Status().Update(r.Context(), build); err != nil {
 			redirectFormInternalError(w, r, fallback)
 			return
 		}
-	} else {
-		build = &builds.Items[0]
-	}
-	if cancel {
-		build.Status.CancelRequested = true
-		build.Status.Phase = geassv1alpha1.GeassBuildCancelled
-	} else {
-		build.Status.CancelRequested = false
-		build.Status.Phase = geassv1alpha1.GeassBuildPending
-		build.Status.FailureReason = ""
-		// Starting over: see retriggerBuild.
-		build.Status.StartedAt = nil
-		build.Status.CompletedAt = nil
-	}
-	if err := s.Client.Status().Update(r.Context(), build); err != nil {
+	} else if err := s.retriggerBuild(r.Context(), build); err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}

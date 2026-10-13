@@ -61,6 +61,8 @@ func NewGeassAppManifest(dashboardURL, appName string) AppManifest {
 		SetupURL:     base + "/github/callback",
 		Public:       false,
 		DefaultPermissions: map[string]string{
+			// Checks is what "Wait for CI" reads: GET /commits/{sha}/check-runs is refused without it.
+			"checks":        "read",
 			"contents":      "read",
 			"metadata":      "read",
 			"pull_requests": "read",

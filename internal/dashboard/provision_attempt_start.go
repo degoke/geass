@@ -50,16 +50,10 @@ func (s *Server) attachAppProvisionAttemptRefs(ctx context.Context, appName, dep
 	})
 }
 
-func (s *Server) latestAppBuildName(ctx context.Context, appName string) string {
-	var builds geassv1alpha1.GeassBuildList
-	if err := s.Client.List(ctx, &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: appName}); err != nil || len(builds.Items) == 0 {
+func (s *Server) latestAppBuildName(ctx context.Context, app *geassv1alpha1.GeassApp) string {
+	build, err := s.currentBuild(ctx, app)
+	if err != nil || build == nil {
 		return ""
 	}
-	latest := builds.Items[0]
-	for i := range builds.Items {
-		if builds.Items[i].CreationTimestamp.After(latest.CreationTimestamp.Time) {
-			latest = builds.Items[i]
-		}
-	}
-	return latest.Name
+	return build.Name
 }

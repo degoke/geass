@@ -289,17 +289,26 @@ A finished build's job, and with it its pod and log, is removed an hour after it
 | `failureReason` "GitHub API returned <status>" or "GitHub did not return a commit for branch …" | Geass turns the branch into a commit through GitHub before it builds, and reads the commit's checks when **Wait for CI** is on. The branch name, the GitHub connection's token, or its access to the repository is wrong. See [GitHub and builds](/docs/guides/github-and-builds/). |
 | The `git` container fails | The branch or repository name is wrong, or the connection cannot read a private repository. |
 | `failureReason` "kaniko Job failed" | The build itself failed. Read the `kaniko` log: a Dockerfile error, a wrong **Dockerfile path** or root directory, or a failed push. |
-| `failureReason` "Kaniko completed without an immutable image digest" | The build finished but Geass could not read the pushed image's digest from its log. Read the `kaniko` log for a push error. |
+| `failureReason` "Kaniko completed without an immutable image digest" | The build finished but Geass found no digest: the `kaniko` container's termination message was empty and its log has no `Pushed <repository>@sha256:…` line. Read the `kaniko` log for a push error. A build that failed this way before Geass read the termination message did push its image: run it again with a push or `POST /api/apps/<service>/build`. |
+| `failureReason` "no container registry is set for builds" | Neither the service nor the platform names a registry. See below. |
 
-:::caution
-Geass builds push to a registry that you configure, and the dashboard has no setting for it. Without one, the build pushes to `registry.geass.dev/<project>/<service>:<revision>`, an address you do not control and cannot sign in to, so the push fails. The destination comes from the service's `spec.build.registry.repository`, or, for every service, from `spec.registry.repository` on the `platform` object. The credentials are a Secret of type `kubernetes.io/dockerconfigjson` in `geass-system`, named in `credentialRef`:
+:::note
+Geass builds push to a registry that you configure, and Geass has none of its own. Without one the service does not build and shows `no container registry is set for builds`. The destination comes from the service's `spec.build.registry.repository`, or, for every service, from `spec.registry.repository` on the `platform` object. An admin sets the platform registry with the REST API (the dashboard has no form for it yet), which also stores the login as a Docker registry Secret:
+
+```bash
+curl --fail -X POST https://geass.example.com/api/settings/registry/save \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Accept: application/json" \
+  -d repository=ghcr.io/example/builds -d username=builder --data-urlencode password="$REGISTRY_TOKEN"
+```
+
+Or with `kubectl`, using a Secret of type `kubernetes.io/dockerconfigjson` in `geass-system`, named in `credentialRef`:
 
 ```bash
 kubectl -n geass-system patch geassplatformconfig platform --type merge \
   -p '{"spec":{"registry":{"repository":"ghcr.io/example/storefront","credentialRef":{"name":"registry-credentials"}}}}'
 ```
 
-The `platform` object exists once you have saved a dashboard domain or connected GitHub or Cloudflare; the patch fails before that. Geass passes the repository value to Kaniko as the image to push, so set it per service when different services need different images.
+The `platform` object exists once you have saved a dashboard domain or connected GitHub or Cloudflare; the patch fails before that. Geass passes the repository value to Kaniko as the image to push, so set it per service when different services need different images. The nodes pull the built image with a copy of the same login, kept as the Secret `<service>-registry-pull` in the environment namespace.
 :::
 
 ## Domains and certificates

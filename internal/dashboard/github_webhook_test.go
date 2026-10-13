@@ -90,12 +90,12 @@ func TestGitHubWebhookScopesByInstallation(t *testing.T) {
 		},
 	}
 	paymentsBuild := &geassv1alpha1.GeassBuild{
-		ObjectMeta: metav1.ObjectMeta{Name: "api-build", Namespace: platform.SystemNamespace, Labels: map[string]string{platform.LabelApp: "api"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "api-build", Namespace: platform.SystemNamespace, Labels: platform.GitBuildLabels(paymentsApp)},
 		Spec:       geassv1alpha1.GeassBuildSpec{App: "api", Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev},
 		Status:     geassv1alpha1.GeassBuildStatus{Phase: geassv1alpha1.GeassBuildSucceeded},
 	}
 	billingBuild := &geassv1alpha1.GeassBuild{
-		ObjectMeta: metav1.ObjectMeta{Name: "ledger-build", Namespace: platform.SystemNamespace, Labels: map[string]string{platform.LabelApp: "ledger"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "ledger-build", Namespace: platform.SystemNamespace, Labels: platform.GitBuildLabels(billingApp)},
 		Spec:       geassv1alpha1.GeassBuildSpec{App: "ledger", Project: "billing", Environment: geassv1alpha1.EnvironmentDev},
 		Status:     geassv1alpha1.GeassBuildStatus{Phase: geassv1alpha1.GeassBuildSucceeded},
 	}

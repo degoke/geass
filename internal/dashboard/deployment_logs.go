@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -193,19 +194,38 @@ func (s *Server) buildLogSection(ctx context.Context, buildName string) deployme
 		section.Lines += build.Status.LastLogLine
 	}
 	if s.Kube != nil {
-		podName := build.Name + "-kaniko"
-		pod, err := s.Kube.CoreV1().Pods(build.Namespace).Get(ctx, podName, metav1.GetOptions{})
-		if err == nil {
-			data, readErr := s.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "kaniko"}).Do(ctx).Raw()
-			if readErr == nil && len(data) > 0 {
-				section.Lines = string(data)
-			}
+		if output := s.buildPodOutput(ctx, &build); output != "" {
+			section.Lines = output
 		}
 	}
 	if section.Lines == "" {
 		section.Lines = fmt.Sprintf("Build %s (%s) — logs appear while the build runs or after it finishes.", buildName, build.Status.Phase)
 	}
 	return section
+}
+
+// buildPodOutput is the log of the pod that ran a build. The pods of a Job are named <job>-<random suffix>, so
+// they are found by the label every pod of a Job carries and not by a name. A Job retries a pod that failed,
+// so the newest pod is the last attempt. Its kaniko container has the build; when that never started because
+// the clone failed, the output of the git container is what says why.
+func (s *Server) buildPodOutput(ctx context.Context, build *geassv1alpha1.GeassBuild) string {
+	pods, err := s.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + build.Name + "-kaniko"})
+	if err != nil || len(pods.Items) == 0 {
+		return ""
+	}
+	slices.SortFunc(pods.Items, func(a, b corev1.Pod) int {
+		if c := b.CreationTimestamp.Compare(a.CreationTimestamp.Time); c != 0 {
+			return c
+		}
+		return strings.Compare(b.Name, a.Name)
+	})
+	for _, container := range []string{"kaniko", buildCloneContainer} {
+		data, err := s.Kube.CoreV1().Pods(build.Namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{Container: container}).Do(ctx).Raw()
+		if err == nil && len(data) > 0 {
+			return string(data)
+		}
+	}
+	return ""
 }
 
 func (s *Server) appDeployLogSection(ctx context.Context, app *geassv1alpha1.GeassApp, dep *geassv1alpha1.GeassDeployment, attempt *geassv1alpha1.GeassProvisionAttempt) deploymentLogSection {

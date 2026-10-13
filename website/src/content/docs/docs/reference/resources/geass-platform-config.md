@@ -60,12 +60,12 @@ Every field is optional. An empty `spec` is valid.
 | `spec.prometheusURL` | string | none | none | Where the dashboard queries metrics. Wins over the `GEASS_PROMETHEUS_URL` environment variable and the default service address. |
 | `spec.defaultClusterRef.name` | string | none | none | The cluster new projects use when more than one `GeassCluster` exists. With one cluster it is ignored. |
 | `spec.registry.repository` | string | none | none | The image destination for repository builds when a service sets no `build.registry.repository`. Used exactly as written. |
-| `spec.registry.credentialRef.name` | string | none | none | A Secret with the key `.dockerconfigjson` for that registry. |
+| `spec.registry.credentialRef.name` | string | none | none | A Secret with the key `.dockerconfigjson` for that registry. Builds push with it, and Geass copies it into a service's namespace for the nodes to pull the built image with. |
 | `spec.defaultDomain` | string | none | none | In the schema. No code reads it. |
 | `spec.traefikAccessLogs.enabled`, `.format`, `.networkLogEndpoint` | boolean, string, string | none | none | In the schema. No code reads them. See [GeassNetworkLog](/docs/reference/resources/geass-network-log/). |
 
 :::caution
-`spec.registry.repository` is the full destination image of every build that does not set its own, and Geass adds neither a service name nor a tag. Every service that relies on it pushes to the same reference. Set `build.registry.repository` on each service instead. Without any registry setting, a build pushes to `registry.geass.dev/<project>/<service>:<revision>`, which you do not control. See [GeassBuild](/docs/reference/resources/geass-build/).
+`spec.registry.repository` is the full destination image of every build that does not set its own, and Geass adds neither a service name nor a tag. Every service that relies on it pushes to the same reference. Set `build.registry.repository` on each service instead. Without any registry setting, a repository service waits with `no container registry is set for builds`: Geass has no registry of its own. See [GeassBuild](/docs/reference/resources/geass-build/).
 :::
 
 ## Status
@@ -115,7 +115,7 @@ While `CloudflareReady` is true, services without a host get a default one under
 | **Settings** → **Connectors** → **Cloudflare** → **Connect** | `cloudflareConnectionRef` (the Secret `platform-cloudflare`) and `cloudflareZoneID`. **Disconnect** clears both. |
 | **Settings** → **Connectors** → **GitHub** | `githubAppRef` (the Secret `platform-github-app`). **Remove GitHub App** clears it. |
 
-The dashboard has no screen for `prometheusURL`, `defaultClusterRef` or `registry`. Set those with `kubectl`.
+The dashboard has no screen for `prometheusURL`, `defaultClusterRef` or `registry`. Set the first two with `kubectl`. An admin can set `registry` with `POST /api/settings/registry/save` (see the [REST API](/docs/reference/rest-api/)), which stores the login as the Secret `platform-registry`, or with `kubectl`.
 
 ## Editing by hand
 

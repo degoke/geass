@@ -635,8 +635,8 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/deploy` | none | Deploys the service |
 | `POST /api/apps/{app}/scale` | `replicas` (0 to 1000) | Changes the replica count at once, without a deploy |
 | `POST /api/apps/{app}/rollback` | `revision` (a `GeassDeployment` name) | Redeploys an earlier revision: an image service gets the earlier image, a Git service only gets the earlier replica count, and a function cannot be rolled back |
-| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its newest build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
-| `POST /api/apps/{app}/build/cancel` | none | Cancels the newest build |
+| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its current build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
+| `POST /api/apps/{app}/build/cancel` | none | Cancels the current build while it is waiting or running. A build that has finished answers an error |
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
 | `POST /api/apps/{app}/display-name` | `displayName` | Sets the label shown in the dashboard |
