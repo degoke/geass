@@ -41,7 +41,7 @@ A resource is anything you deploy into an environment. The dashboard and the Kub
 | Function | A service whose source is one file of Bun (TypeScript), Node.js or Python code. It is a server, or an event handler, and it can run on schedules | `GeassApp` with a function source | [Functions](/docs/guides/functions/) |
 | Database | PostgreSQL, MySQL, Redis or SQLite in the cluster, or a record of an external database such as AWS RDS or PlanetScale | `GeassDatabase` | [Databases](/docs/guides/databases/) |
 | Logical database | A database of its own, with its own login, on a database server that already runs | `GeassLogicalDatabase` | [Shared database servers](/docs/guides/shared-database-servers/) |
-| Bucket | S3-style storage, in the cluster's MinIO or in AWS S3 | `GeassObjectStore` | [Object storage](/docs/guides/object-storage/) |
+| Bucket | S3-style storage, on the cluster's object storage server (SeaweedFS or Garage) or in AWS S3 | `GeassObjectStore` | [Object storage](/docs/guides/object-storage/) |
 
 You add a resource with **+ Add resource** or from **Templates**. A template is a ready-made set of resources that is added as drafts. See [Templates](/docs/guides/templates/). Every resource has an **ID**, generated when you create it and never changed, and a **display name** that you can edit. The ID is what you type to confirm a deletion, and what appears in Kubernetes names.
 
@@ -107,7 +107,7 @@ AWS and PlanetScale credentials are called **cloud connections** (`GeassCloudCon
 | **Domain** | The dashboard's public address. See [Connect a domain](/docs/getting-started/connect-domain/) |
 | **Connectors** | The four connectors above |
 | **Tokens** | Workspace API tokens |
-| **Object storage** | The in-cluster MinIO server that holds in-cluster buckets |
+| **Object storage** | The cluster's object storage server, SeaweedFS or Garage, that holds in-cluster buckets: choose it once, size its CPU, memory and volume, and make the volume bigger later |
 | **Databases** | Shared database servers |
 
 ## Roles and tokens

@@ -60,17 +60,6 @@ const (
 	MySQLChartVersion = "12.3.3"
 	MySQLReleaseChart = "mysql"
 
-	MinIOChartRepo    = "https://charts.min.io/"
-	MinIOChartVersion = "5.4.0"
-	MinIOReleaseChart = "minio"
-	// Quay often returns 401 for anonymous pulls; Docker Hub mirrors work on Kind and typical dev clusters.
-	MinIOImageRepository   = "minio/minio"
-	MinIOImageTag          = "RELEASE.2025-02-18T16-25-55Z"
-	MinIOMCImageRepository = "minio/mc"
-	MinIOMCImageTag        = "RELEASE.2025-02-21T16-00-46Z"
-	ClusterMinIOName       = "cluster-minio"
-	ClusterMinIOChartName  = "geass-minio"
-
 	// Logging: a Fluent Bit shipper on every node and a VictoriaLogs server that keeps what it ships.
 	LoggingTargetNS = "geass-logging"
 	// LogStoreChartName and LogShipperChartName are the HelmChart objects; the Helm releases are named the same.
@@ -90,8 +79,7 @@ const (
 	SQLiteImage = "rqlite/rqlite:8.36.16"
 
 	// BackupTransferImage moves MySQL and SQLite snapshots to and from the project's bucket. curl signs
-	// S3 requests itself (--aws-sigv4), so the image needs nothing else. The MinIO client that the MinIO
-	// chart uses was not chosen because the minio/* images are no longer reliably published.
+	// S3 requests itself (--aws-sigv4), so the image needs nothing else.
 	BackupTransferImage = "curlimages/curl:8.10.1"
 )
 

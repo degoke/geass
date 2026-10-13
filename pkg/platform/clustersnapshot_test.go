@@ -34,7 +34,7 @@ func TestClusterSnapshotFitsWorkload(t *testing.T) {
 		},
 	}
 	snap := ComputeClusterSnapshot([]corev1.Node{node}, []corev1.Pod{pod})
-	est := EstimateFromResources("MinIO server", DefaultDatabaseResources(), 1)
+	est := EstimateFromResources("Object storage server", DefaultDatabaseResources(), 1)
 	ok, msg := snap.Fits(est)
 	if ok {
 		t.Fatal("expected insufficient capacity")
@@ -69,7 +69,7 @@ func TestClusterSnapshotIgnoresSucceededPods(t *testing.T) {
 		},
 	}
 	snap := ComputeClusterSnapshot([]corev1.Node{node}, []corev1.Pod{pod})
-	est := EstimateFromResources("MinIO server", DefaultDatabaseResources(), 1)
+	est := EstimateFromResources("Object storage server", DefaultDatabaseResources(), 1)
 	ok, _ := snap.Fits(est)
 	if !ok {
 		t.Fatal("expected capacity when succeeded pods are ignored")

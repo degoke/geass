@@ -13,7 +13,7 @@ Geass has one high availability feature today: a database that runs as three ins
 | MySQL and Redis with **High availability** | Replicated, with no automatic failover | Geass asks for a primary with replicas and configures no failover. See [MySQL and Redis](#mysql-and-redis). |
 | Services | Only as far as replicas go | Replicas are not spread by any Geass rule. See [Services](#services). |
 | Control plane (K3s server, operator, dashboard) | **No** | One server, one operator. See [What is not highly available](#what-is-not-highly-available). |
-| Single-instance databases, MinIO, SQLite | No | One instance each. |
+| Single-instance databases, the object storage server, SQLite | No | One instance each. |
 
 ## Before you start
 
@@ -141,7 +141,7 @@ The control plane is a single point of failure. Geass installs one K3s server wi
 - **What keeps running.** Containers that are already running on other nodes generally keep running while the control plane is down, but nothing can be changed, restarted elsewhere or rescheduled until it returns.
 - **Recovery data for the cluster itself.** K3s takes its own etcd snapshots by default on the server's disk. That is a K3s feature that Geass does not configure, copy off the machine, or document restoring. Treat the control plane machine as something to protect with your provider's snapshots.
 - **Ingress and DNS.** Public traffic enters through the K3s Traefik on your nodes. A domain that points at one address is only as available as that machine. Geass does not manage failover between addresses.
-- **Object storage and monitoring.** The MinIO server, Prometheus and the log store each run one instance on one volume.
+- **Object storage and monitoring.** The object storage server (SeaweedFS or Garage), Prometheus and the log store each run one instance on one volume. With Longhorn the object storage server's volume has copies on other nodes (up to three), which protects its data when a node is lost but does not make the server highly available.
 - **A whole site.** A cluster spread over several providers is experimental (see [Nodes at more than one provider](/docs/operations/multi-provider/)), and its control plane still sits at one site.
 
 ## What happens under the hood

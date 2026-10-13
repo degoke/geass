@@ -42,7 +42,7 @@ func SanitizeProvisionMessage(message string) string {
 		return "Could not reach required platform services"
 	}
 	lower := strings.ToLower(msg)
-	if strings.Contains(lower, "minio") || strings.Contains(lower, "controller") ||
+	if strings.Contains(lower, "controller") ||
 		strings.Contains(lower, ".svc") || strings.Contains(lower, "dial tcp") ||
 		strings.Contains(lower, "namespace") || strings.Contains(lower, "helm") {
 		return "Object storage or platform services are not available"

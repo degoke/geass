@@ -12,8 +12,8 @@ Geass has no uninstall command. You remove it by deleting your resources from th
 | The operator, the dashboard, every Geass object, secrets, dashboard users, API tokens | Deleted | They live in the cluster's database, which K3s's uninstall script removes with its data directory |
 | Workloads and their namespaces | Deleted | |
 | The add-ons and what the operator created for them: KEDA and its HTTP add-on (the `keda` namespace), the operator's `ServiceMonitor` and `PrometheusRule`, the admission policy for compliance tags, and the `CronJob` objects of function schedules | Deleted | They are objects in the cluster's database. Geass itself never uninstalls KEDA or the admission policy, so only the cluster's removal takes them away |
-| Volumes on K3s's `local-path` storage (metrics, log history, the in-cluster MinIO server, and databases created without Longhorn) | Deleted | They are under K3s's data directory (`/var/lib/rancher/k3s` by default) |
-| Longhorn replica data (database volumes) | Left on disk | In Longhorn's data directory (`/var/lib/longhorn/` by default) on each node. Nothing refers to it any more. Remove it yourself |
+| Volumes on K3s's `local-path` storage (metrics, log history, and the in-cluster object storage server and databases created without Longhorn) | Deleted | They are under K3s's data directory (`/var/lib/rancher/k3s` by default) |
+| Longhorn replica data (database and object storage volumes) | Left on disk | In Longhorn's data directory (`/var/lib/longhorn/` by default) on each node. Nothing refers to it any more. Remove it yourself |
 | iSCSI initiator packages the installer added | Left | |
 | Firewall rules the installer added | Left | |
 | S3 buckets and IAM users of your **buckets** | Left, unless you deleted the bucket in Geass first | See [Buckets](#what-deleting-each-resource-does) |
@@ -54,14 +54,14 @@ Deleting a project does not delete the credentials Secrets of its connections. A
 | In-cluster database | The database server, its Service and connection Secrets. PostgreSQL and SQLite volumes go with it (Longhorn volumes use a `Delete` reclaim policy). Redis keeps no volume | Backups in S3, for 7 days, then they are purged while the operator runs. MySQL's volume claims: Geass does not delete them, so check `kubectl get pvc -n <project-id>-<environment>`; they go when the project's namespace is deleted |
 | External database (PlanetScale, AWS RDS) | Geass's own connection details | The database itself. Geass has no code to delete a PlanetScale or RDS database |
 | Logical database on a shared server | The database and its login on the shared server, within 3 minutes | |
-| In-cluster bucket (MinIO) | The buckets and the bucket's MinIO user | |
+| In-cluster bucket | The bucket with its objects, and the bucket's login on the object storage server | |
 | AWS S3 bucket created by Geass | The bucket with every object, version and unfinished upload, and the scoped IAM user with its access keys and policy | |
 | AWS S3 bucket attached from your account | The scoped IAM user with its keys and policy | The bucket and its contents |
 | Project | All of the above for the project, the project's namespaces and everything in them, its shared-variable and webhook secrets, its GitHub link, its API tokens and its cloud connections | The connection credentials Secrets. External resources whose cleanup needed a connection |
 
 A bucket or a database that was only a draft and never deployed has nothing outside the cluster to remove.
 
-The in-cluster MinIO server (**Settings → Object storage**) cannot be deleted while project buckets exist on it. A shared database server (**Settings → Databases**) cannot be deleted while databases are on it.
+The in-cluster object storage server, SeaweedFS or Garage (**Settings → Object storage**), cannot be deleted while project buckets exist on it. Deleting it deletes everything on its volume, and its network policy `geass-s3` with it. A shared database server (**Settings → Databases**) cannot be deleted while databases are on it.
 
 ## Step 2: disconnect connectors
 
@@ -138,7 +138,7 @@ sudo k3s kubectl -n geass-system logs deploy/geass-controller-manager -c manager
 
 ## Troubleshooting
 
-**A resource stays in `Deleting`.** Look in the operator log for the error it keeps retrying. Typical causes are an AWS connection that no longer exists, expired or revoked AWS credentials, or, for an in-cluster MinIO server, project buckets that still use it. Fix the cause and it finishes by itself. If you accept that the external resource will be left behind, remove the finalizer by hand. This stops the cleanup for good:
+**A resource stays in `Deleting`.** Look in the operator log for the error it keeps retrying. Typical causes are an AWS connection that no longer exists, expired or revoked AWS credentials, or, for the in-cluster object storage server, project buckets that still use it. Fix the cause and it finishes by itself. If you accept that the external resource will be left behind, remove the finalizer by hand. This stops the cleanup for good:
 
 ```bash
 sudo k3s kubectl -n geass-system patch geassobjectstore <name> --type merge -p '{"metadata":{"finalizers":null}}'

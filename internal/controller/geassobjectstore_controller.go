@@ -10,15 +10,14 @@ package controller
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
-	batchv1 "k8s.io/api/batch/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,16 +32,16 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/cloud"
-	"github.com/degoke/geass/pkg/helmchart"
-	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
 const objectStoreFinalizer = platform.FinalizerObjectStore
 
-var errClusterMinIOMissing = errors.New("set up the MinIO server in cluster settings first")
+// errClusterObjectStoreMissing is what a project bucket meets when the cluster has no object storage server.
+var errClusterObjectStoreMissing = platform.UserError(platform.MessageSetUpObjectStorage)
 
-// GeassObjectStoreReconciler reconciles a GeassObjectStore object.
+// GeassObjectStoreReconciler reconciles a GeassObjectStore object. A store with a project is a bucket, in AWS or
+// on the cluster's object storage server; a store with none is that server.
 type GeassObjectStoreReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -52,12 +51,15 @@ type GeassObjectStoreReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores/finalizers,verbs=update
-// +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
 
 func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -95,17 +97,14 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			return nil
 		}
 		if clusterServer {
-			attached, attachErr := r.attachedProjectMinIONames(ctx)
+			attached, attachErr := r.attachedProjectBucketNames(ctx)
 			if attachErr != nil {
 				return ctrl.Result{}, attachErr
 			}
 			if len(attached) > 0 {
-				return ctrl.Result{}, fmt.Errorf("delete project buckets before removing the MinIO server: %s", strings.Join(attached, ", "))
+				return ctrl.Result{}, fmt.Errorf("delete project buckets before removing the object storage server: %s", strings.Join(attached, ", "))
 			}
-			if err := helmchart.Delete(ctx, r.Client, platform.ClusterMinIOChartName); err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}); client.IgnoreNotFound(err) != nil {
+			if err := r.removeObjectStoreServer(ctx, &store); err != nil {
 				return ctrl.Result{}, err
 			}
 		} else if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal {
@@ -117,16 +116,6 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		} else {
 			if err := tolerate(r.deleteInClusterBuckets(ctx, deployedObjectStore(&store))); err != nil {
 				return ctrl.Result{}, err
-			}
-			if err := client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}})); err != nil {
-				return ctrl.Result{}, err
-			}
-			if platform.ObjectStoreInfrastructureActive(&store) {
-				if err := r.ensureClusterMinIOHelm(ctx); err != nil && !errors.Is(err, errClusterMinIOMissing) {
-					if err := tolerate(err); err != nil {
-						return ctrl.Result{}, err
-					}
-				}
 			}
 		}
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}))
@@ -159,17 +148,21 @@ func (r *GeassObjectStoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if objectStorePlacement(&store) == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
 		return r.reconcileExternal(ctx, &store, wsNS)
 	}
-	if store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO && store.Spec.Engine != "" {
-		return r.setNotReady(ctx, &store, fmt.Sprintf("unsupported engine %q", store.Spec.Engine))
-	}
 	if clusterServer {
-		return r.reconcileClusterMinIO(ctx, &store, log)
+		backend, ok := objectStoreBackendFor(store.Spec.Engine)
+		if !ok {
+			return r.setNotReady(ctx, &store, fmt.Sprintf("unsupported engine %q", store.Spec.Engine))
+		}
+		return r.reconcileClusterServer(ctx, &store, backend, log)
 	}
 	return r.reconcileProjectBucket(ctx, &store, wsNS)
 }
 
+// isClusterObjectStore says the store is the cluster's object storage server. It must agree with the dashboard and the
+// platform about that: a store with no project that is not one (an S3 or External one) must never be treated as the
+// server, because removing the server deletes its volume.
 func isClusterObjectStore(store *geassv1alpha1.GeassObjectStore) bool {
-	return strings.TrimSpace(store.Spec.Project) == ""
+	return platform.IsClusterObjectStoreServer(store)
 }
 
 func objectStorePlacement(store *geassv1alpha1.GeassObjectStore) geassv1alpha1.GeassObjectStorePlacement {
@@ -179,149 +172,8 @@ func objectStorePlacement(store *geassv1alpha1.GeassObjectStore) geassv1alpha1.G
 	return geassv1alpha1.ObjectStorePlacementInCluster
 }
 
-func minioRootSecretName(storeName string) string {
+func objectStoreRootSecretName(storeName string) string {
 	return storeName + "-root"
-}
-
-func minioUserSecretName(storeName string) string {
-	return storeName + "-minio-user"
-}
-
-func (r *GeassObjectStoreReconciler) reconcileClusterMinIO(ctx context.Context, store *geassv1alpha1.GeassObjectStore, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
-	if patched, err := r.ensureClusterMinIOResourceSpec(ctx, store); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	} else if patched {
-		return ctrl.Result{Requeue: true}, nil
-	}
-	accessKey, secretKey, err := r.ensureMinIORootSecret(ctx, store)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	placement, pinnedNow, err := r.clusterMinIOPlacement(ctx, store)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if pinnedNow {
-		// The chart is rendered from the stored server, so let it see the pin first.
-		return ctrl.Result{Requeue: true}, nil
-	}
-	res := clusterMinIOResources(store)
-	est := platform.EstimateFromResources("MinIO server", res, 1)
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOChartName, Namespace: platform.HelmChartNamespace}}, est, placement); !ok {
-		return r.setNotReady(ctx, store, msg)
-	}
-	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	ready, err := helmChartReady(ctx, r.Client, chart)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if !ready {
-		log.Info("Waiting for cluster MinIO HelmChart", "chart", platform.ClusterMinIOChartName)
-		return r.setNotReady(ctx, store, installingChartMessage("MinIO"))
-	}
-	workloadReady, waitMsg, err := clusterMinIOWorkloadReady(ctx, r.Client)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if !workloadReady {
-		log.Info("Waiting for cluster MinIO workload", "message", waitMsg)
-		return r.setNotReady(ctx, store, waitMsg)
-	}
-	endpoint := fmt.Sprintf("http://%s.%s.svc:9000", platform.ClusterMinIOChartName, platform.SystemNamespace)
-	if err := r.reconcileConnectionSecret(ctx, store, platform.SystemNamespace, endpoint, store.Name, accessKey, secretKey); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	return r.setReady(ctx, store, platform.SystemNamespace, endpoint, "Cluster MinIO server is ready")
-}
-
-func (r *GeassObjectStoreReconciler) ensureMinIORootSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore) (string, string, error) {
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioRootSecretName(store.Name), Namespace: platform.SystemNamespace}}
-	accessKey, secretKey := "", ""
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		applyGeassLabels(secret, store, "GeassObjectStore")
-		accessKey = firstNonEmpty(secretValue(secret, "rootUser"), secretValue(secret, platform.ConnectionKeyAccessKey))
-		secretKey = firstNonEmpty(secretValue(secret, "rootPassword"), secretValue(secret, platform.ConnectionKeySecretKey))
-		if accessKey == "" || secretKey == "" {
-			generatedAccess, err := randomCredential()
-			if err != nil {
-				return err
-			}
-			generatedSecret, err := randomCredential()
-			if err != nil {
-				return err
-			}
-			accessKey, secretKey = generatedAccess, generatedSecret
-		}
-		setSecretStrings(secret, map[string]string{
-			"rootUser":                      accessKey,
-			"rootPassword":                  secretKey,
-			platform.ConnectionKeyAccessKey: accessKey,
-			platform.ConnectionKeySecretKey: secretKey,
-		})
-		return setSameNamespaceOwner(store, secret, r.Scheme)
-	})
-	if err != nil {
-		return "", "", err
-	}
-	return accessKey, secretKey, nil
-}
-
-func (r *GeassObjectStoreReconciler) ensureClusterMinIOHelm(ctx context.Context) error {
-	server, err := r.clusterMinIO(ctx)
-	if err != nil {
-		return err
-	}
-	values, err := r.clusterMinIOValues(ctx, server)
-	if err != nil {
-		return err
-	}
-	spec := helmv1.HelmChartSpec{
-		Chart:           platform.MinIOReleaseChart,
-		Repo:            platform.MinIOChartRepo,
-		Version:         platform.MinIOChartVersion,
-		TargetNamespace: platform.SystemNamespace,
-		CreateNamespace: false,
-		ValuesContent:   values,
-	}
-	return helmchart.Ensure(ctx, r.Client, platform.ClusterMinIOChartName, spec)
-}
-
-// clusterMinIOPlacement decides, once, which nodes the cluster MinIO server runs on: its volume lives
-// there. The choice is the server's region (or the cluster default) and the tags it asks for, recorded
-// on the server like a database's. A server that was installed before placement existed stays where
-// it is. pinnedNow says the decision was just recorded.
-func (r *GeassObjectStoreReconciler) clusterMinIOPlacement(ctx context.Context, store *geassv1alpha1.GeassObjectStore) (placement platform.Placement, pinnedNow bool, err error) {
-	if pinned, ok := store.Annotations[platform.AnnotationNodePlacement]; ok {
-		return platform.ParsePlacement(pinned), false, nil
-	}
-	if store.Status.TargetNamespace == "" {
-		region := store.Spec.ServerRegion
-		if region == "" {
-			if region, err = platform.DefaultRegion(ctx, r.Client, ""); err != nil {
-				return platform.Placement{}, false, err
-			}
-		}
-		placement = platform.NewPlacement(region, store.Spec.RunOn.Tags)
-	}
-	latest := &geassv1alpha1.GeassObjectStore{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(store), latest); err != nil {
-		return platform.Placement{}, false, err
-	}
-	base := latest.DeepCopy()
-	if latest.Annotations == nil {
-		latest.Annotations = map[string]string{}
-	}
-	latest.Annotations[platform.AnnotationNodePlacement] = placement.Encode()
-	if err := r.Patch(ctx, latest, client.MergeFrom(base)); err != nil {
-		return platform.Placement{}, false, err
-	}
-	return placement, true, nil
 }
 
 func pinnedStorePlacement(store *geassv1alpha1.GeassObjectStore) platform.Placement {
@@ -329,163 +181,6 @@ func pinnedStorePlacement(store *geassv1alpha1.GeassObjectStore) platform.Placem
 		return platform.Placement{}
 	}
 	return platform.ParsePlacement(store.Annotations[platform.AnnotationNodePlacement])
-}
-
-// minioPlacementValues are the chart values that keep the MinIO server, and the chart's own setup
-// job, on the placement's nodes. The setup job only needs the region.
-func minioPlacementValues(p platform.Placement) string {
-	if p.IsZero() {
-		return ""
-	}
-	values := p.HelmValues(0)
-	if job := jobPlacement(p); !job.IsZero() {
-		values += "postJob:\n" + job.HelmValues(2)
-	}
-	return values
-}
-
-func clusterMinIOResources(server *geassv1alpha1.GeassObjectStore) corev1.ResourceRequirements {
-	if server != nil && len(server.Spec.Resources.Requests) > 0 {
-		return server.Spec.Resources
-	}
-	return platform.DefaultDatabaseResources()
-}
-
-func (r *GeassObjectStoreReconciler) ensureClusterMinIOResourceSpec(ctx context.Context, store *geassv1alpha1.GeassObjectStore) (bool, error) {
-	if store == nil || len(store.Spec.Resources.Requests) > 0 {
-		return false, nil
-	}
-	original := store.DeepCopy()
-	store.Spec.Resources = platform.DefaultDatabaseResources()
-	if err := r.Patch(ctx, store, client.MergeFrom(original)); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (r *GeassObjectStoreReconciler) clusterMinIOValues(ctx context.Context, server *geassv1alpha1.GeassObjectStore) (string, error) {
-	res := clusterMinIOResources(server)
-	var b strings.Builder
-	fmt.Fprintf(&b, `mode: standalone
-commonLabels:
-  %s: %s
-existingSecret: "%s"
-image:
-  repository: %s
-  tag: %s
-  pullPolicy: IfNotPresent
-mcImage:
-  repository: %s
-  tag: %s
-  pullPolicy: IfNotPresent
-resources:
-  requests:
-    cpu: %s
-    memory: %s
-  limits:
-    cpu: %s
-    memory: %s
-persistence:
-  size: 10Gi
-%s`, platform.LabelManagedBy, platform.ManagedByValue, minioRootSecretName(server.Name),
-		platform.MinIOImageRepository, platform.MinIOImageTag,
-		platform.MinIOMCImageRepository, platform.MinIOMCImageTag,
-		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
-		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory),
-		minioPlacementValues(pinnedStorePlacement(server)))
-	users, policies, err := r.minioBucketIdentities(ctx)
-	if err != nil {
-		return "", err
-	}
-	if len(users) == 0 {
-		b.WriteString("users: []\npolicies: []\n")
-		return b.String(), nil
-	}
-	b.WriteString("users:\n")
-	for _, user := range users {
-		fmt.Fprintf(&b, "  - accessKey: '{{ required \"MinIO user accessKey is missing\" (index (lookup \"v1\" \"Secret\" \"%s\" \"%s\").data \"%s\" | b64dec) }}'\n    existingSecret: \"%s\"\n    existingSecretKey: secretKey\n    policy: \"%s\"\n", platform.SystemNamespace, user.existingSecret, platform.ConnectionKeyAccessKey, user.existingSecret, user.policy)
-	}
-	b.WriteString("policies:\n")
-	for _, policy := range policies {
-		fmt.Fprintf(&b, "  - name: \"%s\"\n    statements:\n", policy.name)
-		for _, bucket := range policy.buckets {
-			fmt.Fprintf(&b, `      - effect: Allow
-        resources:
-          - "arn:aws:s3:::%s"
-        actions:
-          - "s3:GetBucketLocation"
-          - "s3:ListBucket"
-          - "s3:ListBucketMultipartUploads"
-      - effect: Allow
-        resources:
-          - "arn:aws:s3:::%s/*"
-        actions:
-          - "s3:GetObject"
-          - "s3:PutObject"
-          - "s3:DeleteObject"
-          - "s3:AbortMultipartUpload"
-          - "s3:ListMultipartUploadParts"
-`, bucket, bucket)
-		}
-	}
-	return b.String(), nil
-}
-
-type minioBucketUser struct {
-	existingSecret string
-	policy         string
-}
-
-type minioBucketPolicy struct {
-	name    string
-	buckets []string
-}
-
-func (r *GeassObjectStoreReconciler) minioBucketIdentities(ctx context.Context) ([]minioBucketUser, []minioBucketPolicy, error) {
-	var list geassv1alpha1.GeassObjectStoreList
-	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
-		return nil, nil, err
-	}
-	var users []minioBucketUser
-	var policies []minioBucketPolicy
-	for i := range list.Items {
-		store := &list.Items[i]
-		if isClusterObjectStore(store) || !store.DeletionTimestamp.IsZero() {
-			continue
-		}
-		if objectStorePlacement(store) == geassv1alpha1.ObjectStorePlacementExternal {
-			continue
-		}
-		if store.Spec.Engine != "" && store.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
-			continue
-		}
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}, secret); err != nil {
-			continue
-		}
-		secretKey := secretValue(secret, platform.ConnectionKeySecretKey)
-		if secretKey == "" {
-			continue
-		}
-		buckets, err := inClusterBucketNames(deployedObjectStore(store))
-		if err != nil {
-			// The store's own reconcile reports the name. It must not stop the chart values being rendered for
-			// every other store, and for the MinIO server itself.
-			continue
-		}
-		policyName := minioPolicyName(store.Name)
-		users = append(users, minioBucketUser{existingSecret: minioUserSecretName(store.Name), policy: policyName})
-		policies = append(policies, minioBucketPolicy{name: policyName, buckets: buckets})
-	}
-	return users, policies, nil
-}
-
-func minioPolicyName(storeName string) string {
-	return "geass-" + storeName
-}
-
-func isClusterMinIOHelmJob(name string) bool {
-	return strings.HasPrefix(name, "helm-install-"+platform.ClusterMinIOChartName)
 }
 
 // objectStoreBucketNames returns buckets explicitly configured on the spec (draft stores have none).
@@ -499,7 +194,7 @@ func objectStoreBucketNames(store *geassv1alpha1.GeassObjectStore) ([]string, er
 	return buckets, nil
 }
 
-// inClusterBucketNames are the names the store's buckets have on the cluster MinIO server: the names in the spec,
+// inClusterBucketNames are the names the store's buckets have on the cluster's object storage server: the names in the spec,
 // each behind the project environment, so that projects never share a bucket.
 func inClusterBucketNames(store *geassv1alpha1.GeassObjectStore) ([]string, error) {
 	buckets, err := objectStoreBucketNames(store)
@@ -516,7 +211,7 @@ func inClusterBucketNames(store *geassv1alpha1.GeassObjectStore) ([]string, erro
 }
 
 // deployedObjectStore is the store carrying the spec that was last deployed. A saved edit stays pending until it
-// is deployed, so what exists on MinIO or in AWS follows the deployed spec: that is what to grant access to and
+// is deployed, so what exists on the server or in AWS follows the deployed spec: that is what to grant access to and
 // what to remove. A store with nothing deployed keeps its own spec. With no edit pending it is the store itself,
 // so the result must be treated as read-only.
 func deployedObjectStore(store *geassv1alpha1.GeassObjectStore) *geassv1alpha1.GeassObjectStore {
@@ -566,195 +261,74 @@ func (r *GeassObjectStoreReconciler) reconcileProjectBucket(ctx context.Context,
 	if len(serverBuckets) == 0 {
 		return r.setNotReady(ctx, store, "Configure the bucket name in settings, then deploy")
 	}
-	server, err := r.clusterMinIO(ctx)
+	server, err := r.clusterObjectStore(ctx)
 	if err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
+	if _, ok := objectStoreBackendFor(server.Spec.Engine); !ok {
+		return r.setNotReady(ctx, store, fmt.Sprintf("unsupported engine %q", server.Spec.Engine))
+	}
+	// A server that is being removed takes no new buckets.
+	if !server.DeletionTimestamp.IsZero() {
+		return r.setNotReady(ctx, store, platform.MessageSetUpObjectStorage)
+	}
 	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) || server.Status.Endpoint == "" {
-		return r.setNotReady(ctx, store, "Set up the MinIO server in cluster settings first")
+		return r.setNotReady(ctx, store, platform.MessageObjectStorageStarting)
 	}
 	// A project that requires node tags must not keep its objects on a server that runs elsewhere.
-	if required, err := platform.ProjectRequiredTags(ctx, r.Client, store.Spec.Project); err == nil {
-		if message := platform.ComplianceMismatchMessage("MinIO server", pinnedStorePlacement(server), required); message != "" {
-			return r.setNotReady(ctx, store, message)
-		}
+	// If the project cannot be read the bucket waits: it must not be made on a server that may not be allowed.
+	required, err := platform.ProjectRequiredTags(ctx, r.Client, store.Spec.Project)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
 	}
-	rootSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
-		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
+	if message := platform.ComplianceMismatchMessage("object storage server", pinnedStorePlacement(server), required); message != "" {
+		return r.setNotReady(ctx, store, message)
 	}
-	accessKey := firstNonEmpty(secretValue(rootSecret, "rootUser"), secretValue(rootSecret, platform.ConnectionKeyAccessKey))
-	secretKey := firstNonEmpty(secretValue(rootSecret, "rootPassword"), secretValue(rootSecret, platform.ConnectionKeySecretKey))
-	if accessKey == "" || secretKey == "" {
-		return r.setNotReady(ctx, store, "cluster MinIO credentials are unavailable")
+	admin, err := r.bucketAdminFor(ctx, server)
+	if err != nil {
+		return r.setNotReady(ctx, store, err.Error())
 	}
-	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
 	if err := r.markProvisioningStarted(ctx, store); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	for _, bucket := range serverBuckets {
-		if err := s3.EnsureBucket(bucket); err != nil {
+		if err := admin.EnsureBucket(bucket); err != nil {
 			return r.setNotReady(ctx, store, err.Error())
 		}
 	}
-	userAccess, userSecret, err := r.ensureProjectBucketKeys(ctx, store, wsNS, server.Status.Endpoint, serverBuckets[0])
+	existing := &corev1.Secret{}
+	existingAccess, existingSecret := "", ""
+	if err := r.Get(ctx, client.ObjectKey{Name: store.Name + "-connection", Namespace: wsNS}, existing); err == nil {
+		existingAccess = secretValue(existing, platform.ConnectionKeyAccessKey)
+		existingSecret = secretValue(existing, platform.ConnectionKeySecretKey)
+	} else if !apierrors.IsNotFound(err) {
+		return r.setNotReady(ctx, store, err.Error())
+	}
+	userAccess, userSecret, err := admin.EnsureBucketUser(serverBuckets, store.Name, existingAccess, existingSecret)
 	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if err := r.ensureMinIOUserSecret(ctx, store, userAccess, userSecret); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	previousGeneration, previousJobUID := r.clusterMinIOHelmSnapshot(ctx)
-	if err := r.ensureClusterMinIOHelm(ctx); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if err := r.persistStaleMinIOHelmJob(ctx, previousGeneration, previousJobUID); err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	ready, err := r.clusterMinIOHelmReady(ctx)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if !ready {
-		return r.setNotReady(ctx, store, installingChartMessage("MinIO"))
-	}
-	workloadReady, waitMsg, err := clusterMinIOWorkloadReady(ctx, r.Client)
-	if err != nil {
-		return r.setNotReady(ctx, store, err.Error())
-	}
-	if !workloadReady {
-		return r.setNotReady(ctx, store, waitMsg)
-	}
-	if err := r.clearStaleMinIOHelmJob(ctx); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	if err := r.reconcileConnectionSecret(ctx, store, wsNS, server.Status.Endpoint, serverBuckets[0], userAccess, userSecret); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
-	return r.setReady(ctx, store, wsNS, server.Status.Endpoint, "Bucket is ready on the cluster MinIO server")
+	return r.setReady(ctx, store, wsNS, server.Status.Endpoint, "Bucket is ready on the cluster's object storage")
 }
 
-func (r *GeassObjectStoreReconciler) ensureProjectBucketKeys(ctx context.Context, store *geassv1alpha1.GeassObjectStore, wsNS, endpoint, bucket string) (string, string, error) {
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: store.Name + "-connection", Namespace: wsNS}}
-	accessKey, secretKey := "", ""
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		applyGeassLabels(secret, store, "GeassObjectStore")
-		accessKey = store.Name
-		secretKey = secretValue(secret, platform.ConnectionKeySecretKey)
-		if secretKey == "" {
-			generatedSecret, err := randomCredential()
-			if err != nil {
-				return err
-			}
-			secretKey = generatedSecret
-		}
-		setSecretStrings(secret, map[string]string{
-			platform.ConnectionKeyEndpoint:  endpoint,
-			platform.ConnectionKeyAccessKey: accessKey,
-			platform.ConnectionKeySecretKey: secretKey,
-			platform.ConnectionKeyBucket:    bucket,
-		})
-		return setSameNamespaceOwner(store, secret, r.Scheme)
-	})
-	return accessKey, secretKey, err
-}
-
-func (r *GeassObjectStoreReconciler) ensureMinIOUserSecret(ctx context.Context, store *geassv1alpha1.GeassObjectStore, accessKey, secretKey string) error {
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: minioUserSecretName(store.Name), Namespace: platform.SystemNamespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		applyGeassLabels(secret, store, "GeassObjectStore")
-		setSecretStrings(secret, map[string]string{
-			platform.ConnectionKeyAccessKey: accessKey,
-			platform.ConnectionKeySecretKey: secretKey,
-		})
-		return setSameNamespaceOwner(store, secret, r.Scheme)
-	})
-	return err
-}
-
-func (r *GeassObjectStoreReconciler) clusterMinIOHelmSnapshot(ctx context.Context) (int64, types.UID) {
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
+// bucketAdminFor returns the client that makes buckets and users on the cluster's object storage server,
+// logged in with the server's own credentials, which never leave the system namespace.
+func (r *GeassObjectStoreReconciler) bucketAdminFor(ctx context.Context, server *geassv1alpha1.GeassObjectStore) (bucketAdmin, error) {
+	if server.Status.Endpoint == "" {
+		return nil, platform.UserError(platform.MessageObjectStorageStarting)
+	}
+	root, err := r.objectStoreRoot(ctx, server)
 	if err != nil {
-		return 0, ""
+		return nil, err
 	}
-	if chart.Status.JobName == "" {
-		return chart.Generation, ""
+	backend, ok := objectStoreBackendFor(server.Spec.Engine)
+	if !ok {
+		return nil, fmt.Errorf("unsupported engine %q", server.Spec.Engine)
 	}
-	job := &batchv1.Job{}
-	if err := r.Get(ctx, client.ObjectKey{Name: chart.Status.JobName, Namespace: chart.Namespace}, job); err != nil {
-		return chart.Generation, ""
-	}
-	return chart.Generation, job.UID
-}
-
-func (r *GeassObjectStoreReconciler) persistStaleMinIOHelmJob(ctx context.Context, previousGeneration int64, previousJobUID types.UID) error {
-	if previousJobUID == "" {
-		return nil
-	}
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
-	if err != nil {
-		return err
-	}
-	if chart.Generation <= previousGeneration {
-		return nil
-	}
-	if chart.Annotations[platform.HelmStaleJobUIDAnnotation] == string(previousJobUID) {
-		return nil
-	}
-	latest := chart.DeepCopy()
-	if err := r.Get(ctx, client.ObjectKeyFromObject(chart), latest); err != nil {
-		return err
-	}
-	if latest.Annotations == nil {
-		latest.Annotations = map[string]string{}
-	}
-	latest.Annotations[platform.HelmStaleJobUIDAnnotation] = string(previousJobUID)
-	return r.Update(ctx, latest)
-}
-
-func (r *GeassObjectStoreReconciler) clusterMinIOHelmReady(ctx context.Context) (bool, error) {
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
-	if err != nil {
-		return false, err
-	}
-	ready, err := helmChartReady(ctx, r.Client, chart)
-	if err != nil || !ready {
-		return false, err
-	}
-	staleUID := ""
-	if chart.Annotations != nil {
-		staleUID = chart.Annotations[platform.HelmStaleJobUIDAnnotation]
-	}
-	if staleUID == "" {
-		return true, nil
-	}
-	job := &batchv1.Job{}
-	if err := r.Get(ctx, client.ObjectKey{Name: chart.Status.JobName, Namespace: chart.Namespace}, job); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if string(job.UID) == staleUID {
-		return false, nil
-	}
-	return job.Status.Succeeded > 0, nil
-}
-
-func (r *GeassObjectStoreReconciler) clearStaleMinIOHelmJob(ctx context.Context) error {
-	chart, err := helmchart.Get(ctx, r.Client, platform.ClusterMinIOChartName)
-	if err != nil {
-		return err
-	}
-	if chart.Annotations == nil || chart.Annotations[platform.HelmStaleJobUIDAnnotation] == "" {
-		return nil
-	}
-	latest := chart.DeepCopy()
-	if err := r.Get(ctx, client.ObjectKeyFromObject(chart), latest); err != nil {
-		return err
-	}
-	delete(latest.Annotations, platform.HelmStaleJobUIDAnnotation)
-	return r.Update(ctx, latest)
+	return backend.admin(r.HTTP, server.Status.Endpoint, root), nil
 }
 
 func (r *GeassObjectStoreReconciler) validateObjectStoreCloudConnection(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
@@ -827,56 +401,44 @@ func (r *GeassObjectStoreReconciler) deleteInClusterBuckets(ctx context.Context,
 		// merely shares the resource's name.
 		return nil
 	}
-	server, err := r.clusterMinIO(ctx)
+	server, err := r.clusterObjectStore(ctx)
 	if err != nil {
-		if errors.Is(err, errClusterMinIOMissing) {
+		if errors.Is(err, errClusterObjectStoreMissing) {
 			return nil
 		}
 		return err
 	}
-	if server.Status.Endpoint == "" {
-		return fmt.Errorf("cluster MinIO endpoint is unavailable")
+	admin, err := r.bucketAdminFor(ctx, server)
+	if err != nil {
+		return err
 	}
-	rootSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: minioRootSecretName(server.Name), Namespace: platform.SystemNamespace}, rootSecret); err != nil {
-		return fmt.Errorf("cluster MinIO credentials are unavailable: %w", err)
-	}
-	accessKey := firstNonEmpty(secretValue(rootSecret, "rootUser"), secretValue(rootSecret, platform.ConnectionKeyAccessKey))
-	secretKey := firstNonEmpty(secretValue(rootSecret, "rootPassword"), secretValue(rootSecret, platform.ConnectionKeySecretKey))
-	if accessKey == "" || secretKey == "" {
-		return fmt.Errorf("cluster MinIO credentials are unavailable")
-	}
-	s3 := &cloud.AWSClient{HTTP: r.HTTP, AccessKey: accessKey, SecretKey: secretKey, Endpoint: server.Status.Endpoint}
 	for _, bucket := range buckets {
-		if err := s3.DeleteBucket(bucket); err != nil {
+		if err := admin.DeleteBucket(bucket); err != nil {
 			return err
 		}
 	}
-	return nil
+	return admin.DeleteBucketUser(store.Name)
 }
 
-func (r *GeassObjectStoreReconciler) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
+// clusterObjectStore returns the cluster's object storage server, or errClusterObjectStoreMissing. A server that is
+// being removed is still the server until its finalizer is gone: a bucket deleted at that moment must still clean up
+// on it, or it would leave its bucket and login behind.
+func (r *GeassObjectStoreReconciler) clusterObjectStore(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
 	var list geassv1alpha1.GeassObjectStoreList
 	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
 		return nil, err
 	}
 	for i := range list.Items {
-		item := &list.Items[i]
-		if !isClusterObjectStore(item) {
-			continue
+		if platform.IsClusterObjectStoreServer(&list.Items[i]) {
+			return &list.Items[i], nil
 		}
-		if objectStorePlacement(item) == geassv1alpha1.ObjectStorePlacementExternal {
-			continue
-		}
-		if item.Spec.Engine != "" && item.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
-			continue
-		}
-		return item, nil
 	}
-	return nil, errClusterMinIOMissing
+	return nil, errClusterObjectStoreMissing
 }
 
-func (r *GeassObjectStoreReconciler) attachedProjectMinIONames(ctx context.Context) ([]string, error) {
+// attachedProjectBucketNames are the project buckets that live on the cluster's object storage server, which cannot
+// be removed while any of them exists.
+func (r *GeassObjectStoreReconciler) attachedProjectBucketNames(ctx context.Context) ([]string, error) {
 	var list geassv1alpha1.GeassObjectStoreList
 	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
 		return nil, err
@@ -888,9 +450,6 @@ func (r *GeassObjectStoreReconciler) attachedProjectMinIONames(ctx context.Conte
 			continue
 		}
 		if objectStorePlacement(item) == geassv1alpha1.ObjectStorePlacementExternal {
-			continue
-		}
-		if item.Spec.Engine != "" && item.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
 			continue
 		}
 		names = append(names, item.Name)
@@ -1010,14 +569,6 @@ func (r *GeassObjectStoreReconciler) setNotReady(ctx context.Context, store *gea
 	return result, nil
 }
 
-func randomCredential() (string, error) {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *GeassObjectStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	enqueueStores := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []ctrl.Request {
@@ -1034,17 +585,13 @@ func (r *GeassObjectStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&geassv1alpha1.GeassObjectStore{}).
-		Watches(&helmv1.HelmChart{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			return obj.GetName() == platform.ClusterMinIOChartName
+		// The server's network policy is put back if it is changed or deleted by hand.
+		Owns(&networkingv1.NetworkPolicy{}).
+		// The server coming up, or going down, changes whether the buckets that wait for it can be made.
+		Watches(&appsv1.Deployment{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+			return obj.GetNamespace() == platform.SystemNamespace && obj.GetName() == platform.ObjectStoreServerName
 		}))).
-		Watches(&batchv1.Job{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			return obj.GetNamespace() == platform.HelmChartNamespace && isClusterMinIOHelmJob(obj.GetName())
-		}))).
-		Watches(&corev1.Pod{}, enqueueStores, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			pod, ok := obj.(*corev1.Pod)
-			return ok && isClusterMinIOWorkloadPod(pod)
-		}))).
-		// A project changing its region or required tags changes which MinIO server it may use.
+		// A project changing its region or required tags changes which server it may use.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, project client.Object) []ctrl.Request {
 			var list geassv1alpha1.GeassObjectStoreList
 			if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {

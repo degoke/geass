@@ -238,6 +238,10 @@ You need three ready nodes that are not cordoned, and a readiness report that sa
 
 A new database waits for Longhorn to create its storage. After 15 minutes of Longhorn not being ready, it reports "Storage is unavailable". See [Volumes do not attach](#volumes-do-not-attach).
 
+### The object storage server sits at "Storage is starting", then "Storage is unavailable"
+
+The server waits for Longhorn to create its volume, as a new database does, and reports "Storage is unavailable" after 15 minutes of Longhorn not being ready. A server placed in a region or on tags can also wait without a limit for the storage class of that region or those tags. See [Volumes do not attach](#volumes-do-not-attach) and [Object storage](/docs/guides/object-storage/#troubleshooting).
+
 ### A database stays "Deleting"
 
 When a database has backups, deleting it first takes one last backup, so the data can be restored for seven days. Geass waits for it, at most 10 minutes, and then removes the database even if the backup has not finished. If it is still there after that, inspect what holds it:
@@ -436,7 +440,7 @@ Postgres backs up continuously. MySQL and SQLite take a copy daily, between 02:0
 
 ## Volumes do not attach
 
-Database storage uses Longhorn, which needs the iSCSI initiator (`iscsid`) on every node. Signs of trouble: a database at "Storage is starting" or "Storage is unavailable", a pod `Pending` with a volume error, or the cluster not ready with `AddonsReady` false.
+Database storage, and the object storage server's, use Longhorn, which needs the iSCSI initiator (`iscsid`) on every node. Signs of trouble: a database or the object storage server at "Storage is starting" or "Storage is unavailable", a pod `Pending` with a volume error, or the cluster not ready with `AddonsReady` false.
 
 ```bash
 kubectl get storageclass

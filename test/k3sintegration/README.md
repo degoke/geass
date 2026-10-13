@@ -6,6 +6,7 @@ installs the add-ons), its Traefik, and a current Kubernetes. A kind cluster has
 ```bash
 eval "$(make -s k3s-up)"      # starts rancher/k3s in Docker, installs the CRDs, and sets KUBECONFIG
 make test-k3s-serverless      # scale to zero and function schedules, end to end (about 15 minutes the first time)
+make test-k3s-objectstorage   # the cluster's object storage, SeaweedFS and Garage (about 10 minutes the first time)
 make k3s-down                 # removes it
 ```
 
@@ -18,3 +19,11 @@ sleeping and waking on a request, a schedule waking it and proving itself with i
 able to pretend to be a schedule, and the function being put back to always running.
 
 `TestHelmChart*` need `K3S_INTEGRATION=true` and the same cluster.
+
+`TestObjectStorageOnK3s` does the same for the cluster's object storage, once for SeaweedFS and once for Garage.
+It checks that the server comes up hardened, that its network policy is enforced (k3s enforces them, a kind cluster
+does not), that a pod in a project reaches the S3 port and nothing else, that each project's app can use its own
+bucket and no other, that the data and the logins survive the server's pod being replaced, that a volume is not
+resized where its class cannot be, that a removed bucket takes its login with it, and that the server refuses to go
+while a bucket is on it and removes everything it made when it does. The test process is outside the cluster, so it
+reaches the server through a port-forward it keeps pointed at the server's current pod.

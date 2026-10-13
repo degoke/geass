@@ -92,13 +92,14 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "configure the bucket name") {
 		return false
 	}
-	if strings.Contains(msg, "set up the minio server") {
+	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
 		return false
 	}
-	if strings.Contains(msg, "cluster minio credentials") {
+	if strings.Contains(msg, strings.ToLower(MessageObjectStorageCredentials)) {
 		return false
 	}
-	if strings.Contains(msg, "is starting") || strings.Contains(msg, "starting minio") {
+	// A server and the databases that start slowly say "... is starting".
+	if strings.Contains(msg, "is starting") {
 		return false
 	}
 	if strings.Contains(msg, "postgres database is starting") {

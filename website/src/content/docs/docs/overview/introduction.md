@@ -21,7 +21,7 @@ Geass is source-available under the Elastic License 2.0. It is not a hosted serv
 - **Start from a template**, or save your own. See [Templates](/docs/guides/templates/).
 - **Run databases**: PostgreSQL, MySQL, Redis and SQLite in the cluster, with [shared database servers](/docs/guides/shared-database-servers/) for many small databases, and connect apps to external databases you host elsewhere, such as AWS RDS or PlanetScale. See [Databases](/docs/guides/databases/).
 - **Back up** Postgres, MySQL and SQLite databases to a bucket in your own AWS account. Postgres is backed up continuously, so you can restore it to any recent moment; MySQL and SQLite are copied daily. Restores create a new database, and a deleted database stays restorable for 7 days. See [Backups and restore](/docs/guides/backups-and-restore/).
-- **Store files** in buckets, either on an in-cluster MinIO server or in AWS S3. See [Object storage](/docs/guides/object-storage/).
+- **Store files** in buckets, either on an in-cluster object storage server (SeaweedFS or Garage) or in AWS S3. See [Object storage](/docs/guides/object-storage/).
 - **Resize database volumes** on Longhorn storage. See [Storage](/docs/guides/storage/).
 - **Publish on your domain.** Give a service a hostname, or connect Cloudflare and let Geass assign one, publish it through a Cloudflare Tunnel and create its DNS record. Certificates for HTTPS come from Let's Encrypt. See [Domains and TLS](/docs/guides/domains-and-tls/).
 - **Scale and place.** Set replicas and CPU autoscaling, and tag servers with a region, a site and tags to decide where workloads run. See [Scaling and placement](/docs/guides/scaling-and-placement/).

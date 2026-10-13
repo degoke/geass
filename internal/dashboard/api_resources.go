@@ -129,9 +129,17 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 			info.PlanetScaleAvailable = true
 		}
 	}
+	for _, server := range platform.ObjectStoreServers() {
+		info.ObjectStorageServers = append(info.ObjectStorageServers, objectStorageServer{
+			Engine: string(server.Engine), Label: server.Label, CPU: server.CPU, Memory: server.Memory,
+		})
+	}
 	for i := range data.ObjectStores.Items {
-		if isClusterMinIO(&data.ObjectStores.Items[i]) {
-			info.MinIOAvailable = true
+		if server := &data.ObjectStores.Items[i]; isClusterObjectStore(server) {
+			info.ObjectStorageEngine = string(server.Spec.Engine)
+			_, installable := platform.ObjectStoreServerFor(server.Spec.Engine)
+			info.ObjectStorageAvailable = installable
+			info.ObjectStorageResizable = classAllowsExpansion(s.storageClasses(ctx).forObjectStore(server))
 			break
 		}
 	}
@@ -145,6 +153,8 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 	classes := s.storageClasses(ctx)
 	info.StorageExpandable = classes.newVolumeExpandable()
 	info.DefaultStorage = platform.DatabaseStorageDefaults()
+	// The cluster's object storage server has a volume too, which is sized the same way.
+	info.DefaultStorage["objectstore"] = platform.ObjectStoreServerVolumeSize
 	for i := range data.Databases.Items {
 		db := &data.Databases.Items[i]
 		hasVolume := db.Spec.Deploy.Enabled &&
@@ -301,90 +311,21 @@ func clusterObjectStoreAPIResource(path, suffix string) string {
 	return strings.Trim(name, "/")
 }
 
-func clusterMinIOPodLabelSelector() string {
-	return "app.kubernetes.io/instance=" + platform.ClusterMinIOChartName
+func podBelongsToClusterObjectStore(pod *corev1.Pod) bool {
+	return pod != nil && pod.Labels[platform.K8sLabelAppName] == platform.ObjectStoreServerName
 }
 
-func podBelongsToClusterMinIO(pod *corev1.Pod) bool {
-	if pod == nil {
-		return false
-	}
-	if pod.Labels["app.kubernetes.io/instance"] == platform.ClusterMinIOChartName {
-		return true
-	}
-	if pod.Labels["release"] == platform.ClusterMinIOChartName {
-		return true
-	}
-	if pod.Labels["app"] == "minio" && strings.Contains(pod.Name, platform.ClusterMinIOChartName) {
-		return true
-	}
-	if pod.Labels[platform.LabelManagedBy] == platform.ManagedByValue && strings.HasPrefix(pod.Name, platform.ClusterMinIOChartName) {
-		return true
-	}
-	if strings.HasPrefix(pod.Name, platform.ClusterMinIOChartName) {
-		return true
-	}
-	return false
-}
-
-func (s *Server) discoverClusterMinIOPods(ctx context.Context) ([]corev1.Pod, error) {
+func (s *Server) discoverClusterObjectStorePods(ctx context.Context) ([]corev1.Pod, error) {
 	if s.Kube == nil {
 		return nil, fmt.Errorf("kubernetes client is not configured")
 	}
-	seen := map[string]struct{}{}
-	var pods []corev1.Pod
-	add := func(items []corev1.Pod) {
-		for i := range items {
-			pod := items[i]
-			if !podBelongsToClusterMinIO(&pod) {
-				continue
-			}
-			if _, ok := seen[pod.Name]; ok {
-				continue
-			}
-			seen[pod.Name] = struct{}{}
-			pods = append(pods, pod)
-		}
-	}
-	ns := platform.SystemNamespace
-	selectors := []string{
-		clusterMinIOPodLabelSelector(),
-		"release=" + platform.ClusterMinIOChartName,
-		"app.kubernetes.io/name=minio",
-		"app=minio",
-	}
-	for _, selector := range selectors {
-		list, err := s.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			continue
-		}
-		add(list.Items)
-	}
-	if len(pods) == 0 {
-		list, err := s.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, err
-		}
-		add(list.Items)
-	}
-	return pods, nil
-}
-
-func (s *Server) appendClusterMinIOHelmInstallLogs(ctx context.Context, out *strings.Builder) {
-	if s.Kube == nil {
-		return
-	}
-	prefix := "helm-install-" + platform.ClusterMinIOChartName
-	list, err := s.Kube.CoreV1().Pods(platform.HelmChartNamespace).List(ctx, metav1.ListOptions{})
+	list, err := s.Kube.CoreV1().Pods(platform.SystemNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: platform.K8sLabelAppName + "=" + platform.ObjectStoreServerName,
+	})
 	if err != nil {
-		return
+		return nil, err
 	}
-	for _, pod := range list.Items {
-		if !strings.HasPrefix(pod.Name, prefix) {
-			continue
-		}
-		s.appendPodLogs(ctx, platform.HelmChartNamespace, &pod, out)
-	}
+	return list.Items, nil
 }
 
 func (s *Server) appendPodLogs(ctx context.Context, namespace string, pod *corev1.Pod, out *strings.Builder) {
@@ -415,18 +356,18 @@ func (s *Server) appendPodLogs(ctx context.Context, namespace string, pod *corev
 	}
 }
 
-func (s *Server) clusterMinIOFromAPI(w http.ResponseWriter, r *http.Request, name string) (*geassv1alpha1.GeassObjectStore, bool) {
-	if name != platform.ClusterMinIOName {
-		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "object store not found"})
-		return nil, false
-	}
-	store, err := s.clusterMinIO(r.Context())
+func (s *Server) clusterObjectStoreFromAPI(w http.ResponseWriter, r *http.Request, name string) (*geassv1alpha1.GeassObjectStore, bool) {
+	store, err := s.clusterObjectStore(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load object store"})
 		return nil, false
 	}
-	if store == nil || !isClusterMinIO(store) {
+	if store == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "cluster object storage is not set up"})
+		return nil, false
+	}
+	if store.Name != name {
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "object store not found"})
 		return nil, false
 	}
 	return store, true
@@ -434,14 +375,14 @@ func (s *Server) clusterMinIOFromAPI(w http.ResponseWriter, r *http.Request, nam
 
 func (s *Server) handleAPIClusterObjectStoreLogs(w http.ResponseWriter, r *http.Request) {
 	name := clusterObjectStoreAPIResource(r.URL.Path, "/logs")
-	if _, ok := s.clusterMinIOFromAPI(w, r, name); !ok {
+	if _, ok := s.clusterObjectStoreFromAPI(w, r, name); !ok {
 		return
 	}
 	if s.Kube == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"lines": "Logs are unavailable right now. Try again in a moment."})
 		return
 	}
-	pods, err := s.discoverClusterMinIOPods(r.Context())
+	pods, err := s.discoverClusterObjectStorePods(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load logs"})
 		return
@@ -451,11 +392,8 @@ func (s *Server) handleAPIClusterObjectStoreLogs(w http.ResponseWriter, r *http.
 		s.appendPodLogs(r.Context(), platform.SystemNamespace, &pods[i], &out)
 	}
 	if out.Len() == 0 {
-		s.appendClusterMinIOHelmInstallLogs(r.Context(), &out)
-	}
-	if out.Len() == 0 {
 		if len(pods) == 0 {
-			out.WriteString("No object storage workloads were found yet. Logs appear after the service starts or during install.")
+			out.WriteString("No object storage workloads were found yet. Logs appear after the service starts.")
 		} else {
 			out.WriteString("The service is running but has not written logs recently. Refresh again in a moment.")
 		}
@@ -465,29 +403,28 @@ func (s *Server) handleAPIClusterObjectStoreLogs(w http.ResponseWriter, r *http.
 
 func (s *Server) handleAPIClusterObjectStoreRuntime(w http.ResponseWriter, r *http.Request) {
 	name := clusterObjectStoreAPIResource(r.URL.Path, "/runtime")
-	store, ok := s.clusterMinIOFromAPI(w, r, name)
+	store, ok := s.clusterObjectStoreFromAPI(w, r, name)
 	if !ok {
 		return
 	}
 	payload := map[string]any{
-		"pods":       []map[string]string{},
-		"endpoint":   strings.TrimSpace(store.Status.Endpoint),
-		"consoleURL": fmt.Sprintf("http://%s-console.%s.svc:9001", platform.ClusterMinIOChartName, platform.SystemNamespace),
-		"namespace":  platform.SystemNamespace,
-		"chart":      platform.ClusterMinIOChartName,
+		"pods":      []map[string]string{},
+		"endpoint":  strings.TrimSpace(store.Status.Endpoint),
+		"engine":    string(store.Spec.Engine),
+		"namespace": platform.SystemNamespace,
 	}
 	if s.Kube == nil {
 		writeJSON(w, http.StatusOK, payload)
 		return
 	}
-	pods, err := s.discoverClusterMinIOPods(r.Context())
+	pods, err := s.discoverClusterObjectStorePods(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{dashboardLiteralError: "could not load runtime"})
 		return
 	}
 	items := make([]map[string]string, 0, len(pods))
 	for _, pod := range pods {
-		container := "minio"
+		container := "server"
 		if len(pod.Spec.Containers) > 0 {
 			container = pod.Spec.Containers[0].Name
 		}

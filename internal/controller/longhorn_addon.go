@@ -334,3 +334,24 @@ func nodeSchedulingChanged() predicate.Predicate {
 		},
 	}
 }
+
+// objectStoreServerPlaced lets through the moment the cluster's object storage server is placed, which is when its
+// volume's storage class is known and may need making. It ignores every bucket, and everything else the server does.
+func objectStoreServerPlaced() predicate.Predicate {
+	placed := func(obj client.Object) bool {
+		store, ok := obj.(*geassv1alpha1.GeassObjectStore)
+		if !ok || !platform.IsClusterObjectStoreServer(store) {
+			return false
+		}
+		_, pinned := store.Annotations[platform.AnnotationNodePlacement]
+		return pinned
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return placed(e.Object) },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return placed(e.ObjectNew) && e.ObjectOld.GetAnnotations()[platform.AnnotationNodePlacement] != e.ObjectNew.GetAnnotations()[platform.AnnotationNodePlacement]
+		},
+	}
+}

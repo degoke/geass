@@ -43,7 +43,7 @@ Three different numbers describe a workload. The page uses the first for capacit
 A node can look full on this page while its CPU is idle, because services reserved the room. A node can also be busy while the page shows spare capacity, if a pod runs without requests. Use the page to decide whether something new fits, and the charts to see whether the machines are working hard.
 
 :::note
-Sizes you pick in the dashboard are 0.1, 0.25, 0.5, 1 or 2 CPU and 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB. A service defaults to 0.1 CPU and 128 MB. A Postgres, MySQL, Redis or MinIO server defaults to 0.25 CPU and 512 MB per instance, and SQLite to 0.1 CPU and 128 MB. Through a manifest you can set any request.
+Sizes you pick in the dashboard are 0.1, 0.25, 0.5, 1 or 2 CPU and 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB. A service defaults to 0.1 CPU and 128 MB. A Postgres, MySQL or Redis server defaults to 0.25 CPU and 512 MB per instance, and SQLite to 0.1 CPU and 128 MB. The cluster's object storage server defaults to 0.25 CPU and 512 MB with SeaweedFS, which idles at about 60 MB of memory, and to 0.1 CPU and 256 MB with Garage, which idles at about 6 MB, and its volume defaults to 10 GiB, which you can choose when you set it up and make bigger later. Through a manifest you can set any request.
 :::
 
 ## Summary

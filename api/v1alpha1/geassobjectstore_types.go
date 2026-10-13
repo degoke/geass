@@ -10,17 +10,22 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GeassObjectStoreEngine identifies the object store engine type.
-// +kubebuilder:validation:Enum=MinIO;S3
+// +kubebuilder:validation:Enum=SeaweedFS;Garage;S3
 type GeassObjectStoreEngine string
 
 const (
-	ObjectStoreEngineMinIO GeassObjectStoreEngine = "MinIO"
-	ObjectStoreEngineS3    GeassObjectStoreEngine = "S3"
+	// ObjectStoreEngineSeaweedFS and ObjectStoreEngineGarage are the servers Geass runs in the cluster.
+	// Which one the cluster uses is chosen once, when the cluster's object storage is set up.
+	ObjectStoreEngineSeaweedFS GeassObjectStoreEngine = "SeaweedFS"
+	ObjectStoreEngineGarage    GeassObjectStoreEngine = "Garage"
+	// ObjectStoreEngineS3 is a bucket in the customer's AWS account.
+	ObjectStoreEngineS3 GeassObjectStoreEngine = "S3"
 )
 
 // GeassObjectStorePlacement selects in-cluster or external object storage.
@@ -34,7 +39,7 @@ const (
 
 // GeassObjectStoreSpec defines the desired state of GeassObjectStore.
 type GeassObjectStoreSpec struct {
-	// Project is the owning project. Leave empty for the cluster MinIO server.
+	// Project is the owning project. Leave empty for the cluster object storage server.
 	// +optional
 	Project string `json:"project,omitempty"`
 	// Environment is the project environment. Required when Project is set.
@@ -43,11 +48,14 @@ type GeassObjectStoreSpec struct {
 	// +optional
 	Environment GeassEnvironment `json:"environment,omitempty"`
 
-	// Engine is the object store engine to provision.
-	// +kubebuilder:validation:Enum=MinIO;S3
+	// Engine is the object store engine to provision. For a bucket in the cluster it is the engine of the
+	// cluster's object storage server. It is chosen once: the server's volume, logins and config belong to the engine
+	// it was set up with, so changing it means deleting the object storage and setting it up again.
+	// +kubebuilder:validation:Enum=SeaweedFS;Garage;S3
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="engine cannot be changed; delete the object storage and set it up again"
 	Engine GeassObjectStoreEngine `json:"engine"`
 
-	// Placement selects in-cluster MinIO or an external S3 provider.
+	// Placement selects the cluster's own object storage server or an external S3 provider.
 	// +kubebuilder:validation:Enum=InCluster;External
 	// +kubebuilder:default=InCluster
 	// +optional
@@ -74,20 +82,25 @@ type GeassObjectStoreSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.all(b, !b.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$') && !b.contains('..'))",message="bucket names must not be formatted as an IP address or contain consecutive periods"
 	Buckets []string `json:"buckets,omitempty"`
 
-	// Resources is the CPU and memory assigned to the in-cluster MinIO server.
+	// Resources is the CPU and memory assigned to the in-cluster object storage server.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// StorageSize is the size of the cluster object storage server's volume. Left unset it is 10Gi. It can
+	// be raised later where the cluster's storage can be resized, and never lowered. Only the server has one.
+	// +optional
+	StorageSize *resource.Quantity `json:"storageSize,omitempty"`
 
 	// Deploy gates bucket provisioning until the user deploys from the dashboard.
 	// +optional
 	Deploy GeassDeploySpec `json:"deploy,omitempty"`
 
-	// RunOn asks for nodes with particular tags. The cluster MinIO server has no project, so
+	// RunOn asks for nodes with particular tags. The cluster object storage server has no project, so
 	// this is the only way to choose where it runs.
 	// +optional
 	RunOn GeassWorkloadPlacement `json:"runOn,omitempty"`
 
-	// ServerRegion is where the cluster MinIO server runs. Project buckets follow their project instead.
+	// ServerRegion is where the cluster object storage server runs. Project buckets follow their project instead.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	// +optional

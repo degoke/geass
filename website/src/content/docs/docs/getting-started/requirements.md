@@ -58,9 +58,9 @@ The server needs to reach these hosts over HTTPS during and after installation. 
 | `get.k3s.io`, `update.k3s.io` | K3s installer script and the K3s release channel |
 | `charts.jetstack.io`, `prometheus-community.github.io`, `charts.longhorn.io`, `victoriametrics.github.io`, `fluent.github.io` | Helm charts for the add-ons the installer enables |
 | `acme-v02.api.letsencrypt.org` | cert-manager registers the cluster's ACME account and requests certificates. Only once the `letsencrypt-prod` issuer exists, which needs `GEASS_ACME_EMAIL` |
-| `cloudnative-pg.github.io`, `charts.min.io`, `charts.bitnami.com` | Charts installed on demand: PostgreSQL (CloudNativePG), in-cluster object storage (MinIO), MySQL and Redis |
+| `cloudnative-pg.github.io`, `charts.bitnami.com` | Charts installed on demand: PostgreSQL (CloudNativePG), MySQL and Redis |
 | `kedacore.github.io` | The charts for the serverless add-on (KEDA and its HTTP add-on). Only if you turn it on, to let services sleep when idle |
-| Container registries that those charts and your own images use | Pulling images |
+| Container registries that those charts, the in-cluster object storage server (SeaweedFS or Garage, which Geass runs from a pinned image rather than a chart) and your own images use | Pulling images |
 | `api.github.com`, `api.cloudflare.com`, AWS (S3 and IAM), `api.planetscale.com` | Only for the connectors you set up |
 | `api.ipify.org`, then `ifconfig.me` | Only when Geass needs the server's public IP for dashboard DNS and no node reports one |
 

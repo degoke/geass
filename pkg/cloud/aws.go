@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -27,7 +28,8 @@ const (
 	iamActionDeleteUser       = "DeleteUser"
 )
 
-// AWSClient performs a small set of signed S3 and IAM operations without an SDK.
+// AWSClient performs a small set of signed S3 and IAM operations without an SDK. With Endpoint set it talks
+// to any S3-compatible server instead of AWS.
 type AWSClient struct {
 	HTTP        *http.Client
 	AccessKey   string
@@ -35,6 +37,33 @@ type AWSClient struct {
 	Region      string
 	Endpoint    string
 	IAMEndpoint string
+	// BucketActions and ObjectActions are the S3 actions a bucket user's policy allows on the bucket and on
+	// the objects in it. Empty means the AWS set; a server that does not know every AWS action name sets its own.
+	BucketActions, ObjectActions []string
+	// RenewMissingKey makes EnsureBucketUser check that a stored access key still exists and issue a new one
+	// when it does not. A server that was reset has forgotten its users, and unlike AWS it can be.
+	RenewMissingKey bool
+}
+
+// The S3 actions a bucket user may use on AWS: everything an app needs on its own bucket, and nothing that
+// changes the bucket itself or reaches another.
+var (
+	awsBucketActions = []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads", "s3:ListBucketVersions"}
+	awsObjectActions = []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"}
+)
+
+func (c *AWSClient) bucketActions() []string {
+	if len(c.BucketActions) > 0 {
+		return c.BucketActions
+	}
+	return awsBucketActions
+}
+
+func (c *AWSClient) objectActions() []string {
+	if len(c.ObjectActions) > 0 {
+		return c.ObjectActions
+	}
+	return awsObjectActions
 }
 
 func (c *AWSClient) httpClient() *http.Client {
@@ -105,7 +134,16 @@ func (c *AWSClient) EnsureBucketUser(buckets []string, userName, existingAccess,
 		return "", "", err
 	}
 	if strings.TrimSpace(existingAccess) != "" && strings.TrimSpace(existingSecret) != "" {
-		return existingAccess, existingSecret, nil
+		if !c.RenewMissingKey {
+			return existingAccess, existingSecret, nil
+		}
+		keys, err := c.iamListAccessKeys(userName)
+		if err != nil {
+			return "", "", err
+		}
+		if slices.Contains(keys, existingAccess) {
+			return existingAccess, existingSecret, nil
+		}
 	}
 	return c.iamCreateAccessKey(userName)
 }
@@ -631,11 +669,12 @@ func (c *AWSClient) iamListAccessKeys(userName string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// IAM lists the keys as <member> elements inside AccessKeyMetadata, as every IAM server answers.
 	var parsed struct {
 		Result struct {
 			Keys []struct {
 				AccessKeyID string `xml:"AccessKeyId"`
-			} `xml:"AccessKeyMetadata"`
+			} `xml:"AccessKeyMetadata>member"`
 		} `xml:"ListAccessKeysResult"`
 	}
 	if err := xml.Unmarshal(payload, &parsed); err != nil {
@@ -688,12 +727,12 @@ func (c *AWSClient) iamPutUserPolicy(userName string, buckets []string) error {
 		policy.Statement = append(policy.Statement,
 			statement{
 				Effect:   "Allow",
-				Action:   []string{"s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads", "s3:ListBucketVersions"},
+				Action:   c.bucketActions(),
 				Resource: []string{"arn:aws:s3:::" + bucket},
 			},
 			statement{
 				Effect:   "Allow",
-				Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
+				Action:   c.objectActions(),
 				Resource: []string{"arn:aws:s3:::" + bucket + "/*"},
 			},
 		)

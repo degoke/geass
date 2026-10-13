@@ -123,7 +123,7 @@ An in-cluster database runs on nodes in its project's region, and on nodes with 
 - The nodes are chosen once, when the database is first provisioned, and recorded on the database in the annotation `geass.dev/node-placement`. Its volumes live there, so later changes to the project's region, the default region or the tags do not move it. The **Run on** choice in the database's **Settings** closes after the first deploy.
 - The number of instances comes from **High availability**, not from a replica field. See [High availability](/docs/operations/high-availability/).
 
-Choose a database's size under **Settings**. Postgres, MySQL, Redis and MinIO servers default to 0.25 CPU and 512 MB for each instance; SQLite defaults to 0.1 CPU and 128 MB.
+Choose a database's size under **Settings**. Postgres, MySQL and Redis servers default to 0.25 CPU and 512 MB for each instance; SQLite defaults to 0.1 CPU and 128 MB. The cluster's object storage server is not a database: it defaults to 0.25 CPU and 512 MB with SeaweedFS and 0.1 CPU and 256 MB with Garage, and you choose its size, and the size of its volume (10 GiB by default), when you set it up (see [Object storage](/docs/guides/object-storage/)).
 
 ## Regions, sites and tags on nodes
 
@@ -256,7 +256,7 @@ Geass turns these rules into a node selector and tolerations on the pods:
 | Builds from a Git repository | The project | The project's required tags only | The build job runs in the project's region. |
 | Schedules of a function | The project | The project's required tags only | The same as builds. |
 | Shared database servers | The server's own **Region**, or the default | `runOnTags` through the API; the setup dialog has no field for it | A project can use a server only in its own region, and, when the project requires tags, only a server that runs on nodes with all of them. |
-| The cluster MinIO server | Chosen when it is set up | Chosen when it is set up | Decided once. |
+| The cluster object storage server | Chosen when it is set up | Chosen when it is set up | Decided once. Its volume's copies follow them. |
 | Geass itself, monitoring, storage | Not placed | No | The operator is kept on the control plane node. |
 
 Running pods are never moved. A pod that restarts goes back only to a node that matches, so a change to a node's labels takes effect as pods restart or are redeployed.
@@ -267,6 +267,8 @@ With the Longhorn storage add-on (the installer turns it on), a database in a re
 
 A database of a project that requires tags gets the class `geass-tagged-<hash>` instead. Its copies stay on nodes in the region that carry every required tag, which Geass tracks with a Longhorn node tag `geass-tag-<tag>`. Once any node is a compliance node, Geass also tags every other Longhorn node `geass-general` and makes the global and regional classes name that tag, so other projects' copies are never placed on a compliance node. See [Compliance node tags](/docs/guides/compliance-tags/).
 
+The cluster object storage server is placed the same way, once, with its own region and tags, and its volume follows: with Longhorn, copies in its region (`geass-replicated-<region>`), or on the nodes that carry its tags (`geass-tagged-<hash>`), so its data is never replicated onto other nodes. See [Object storage](/docs/guides/object-storage/#where-the-servers-data-is-kept).
+
 A new database in a region waits with "Storage is starting" until every node in the region (or, for required tags, every node that carries them) has a ready Longhorn manager and the class exists. Without Longhorn, volumes use the cluster's default storage class and stay on the node where the database first ran. See [Storage](/docs/guides/storage/).
 
 ## The capacity check
@@ -275,8 +277,8 @@ Before it creates a workload, Geass compares what the workload reserves with wha
 
 ### Where the check runs
 
-- **In the dashboard**, when you deploy a pending change to a service or database, redeploy a service, roll one back, restore a database from a backup, set up a shared database server or the MinIO server, or change the MinIO server's size. The request fails with the message below. Creating a draft is not checked; the check runs when you deploy it.
-- **In the operator**, when it creates a service's Deployment, a Postgres cluster, a MySQL or Redis release, a SQLite database or the MinIO server. If it does not fit, the resource's `Ready` condition carries the message. It checks only creation: a workload that already exists is never refused, so a healthy service on a full cluster stays up.
+- **In the dashboard**, when you deploy a pending change to a service or database, redeploy a service, roll one back, restore a database from a backup, set up a shared database server or the object storage server, or change the object storage server's size. The request fails with the message below. Creating a draft is not checked; the check runs when you deploy it.
+- **In the operator**, when it creates a service's Deployment, a Postgres cluster, a MySQL or Redis release, a SQLite database or the object storage server. If it does not fit, the resource's `Ready` condition carries the message. It checks only creation: a workload that already exists is never refused, so a healthy service on a full cluster stays up.
 
 Scaling replicas, autoscaling and draft services are not checked. A scale-up beyond the free capacity leaves the new pods waiting in `Pending`. Look at the **Usage** page before you raise replicas.
 
@@ -297,7 +299,7 @@ It is arithmetic over the whole pool, not a simulation of the scheduler. A workl
 | "The node in the eu region is reserved for other work, so this service has nowhere to run. Add a node, or release a node from its reservation" | Every matching node is reserved for a tag the workload does not ask for. | Switch the reservation off in **Edit**, ask for the tag, or add a node. |
 | "This service needs about … Add larger nodes there" and "The eu region currently has … available. Add nodes there before creating it" | The regional versions of the first two messages. | The same fixes, within the region. |
 
-The word "service" is the workload's kind, so you may read "PostgreSQL database" or "MinIO server" instead.
+The word "service" is the workload's kind, so you may read "PostgreSQL database" or "Object storage server" instead.
 
 When the operator refuses, the dashboard shows the resource as **Unavailable**. For the first and third messages it adds the hint "There isn't enough capacity for this size. Choose a smaller size or add capacity in Platform settings." For the others it shows a generic line such as "This service isn't available yet. Check Platform settings or your configuration.", so read the exact message in the `Ready` condition:
 

@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	WorkloadService  = "service"
-	WorkloadPostgres = "postgres"
-	WorkloadMySQL    = "mysql"
-	WorkloadSQLite   = "sqlite"
-	WorkloadRedis    = "redis"
-	WorkloadMinIO    = "minio"
-	WorkloadBucket   = "bucket"
-	WorkloadLogical  = "logical"
-	WorkloadExternal = "external"
+	WorkloadService     = "service"
+	WorkloadPostgres    = "postgres"
+	WorkloadMySQL       = "mysql"
+	WorkloadSQLite      = "sqlite"
+	WorkloadRedis       = "redis"
+	WorkloadObjectStore = "objectstore"
+	WorkloadBucket      = "bucket"
+	WorkloadLogical     = "logical"
+	WorkloadExternal    = "external"
 )
 
 // WorkloadEstimate is an approximate CPU and memory request for a Geass resource.
@@ -44,15 +44,15 @@ type workloadDefaults struct {
 }
 
 var workloadCatalog = map[string]workloadDefaults{
-	WorkloadService:  {label: "service", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
-	WorkloadPostgres: {label: "PostgreSQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
-	WorkloadMySQL:    {label: "MySQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
-	WorkloadSQLite:   {label: "SQLite database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
-	WorkloadRedis:    {label: "Redis database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 3},
-	WorkloadMinIO:    {label: "MinIO server", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 1},
-	WorkloadBucket:   {label: "bucket", cpuMilli: 0, memBytes: 0, haCount: 1},
-	WorkloadLogical:  {label: "logical database", cpuMilli: 0, memBytes: 0, haCount: 1},
-	WorkloadExternal: {label: "external resource", cpuMilli: 0, memBytes: 0, haCount: 1},
+	WorkloadService:     {label: "service", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
+	WorkloadPostgres:    {label: "PostgreSQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
+	WorkloadMySQL:       {label: "MySQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
+	WorkloadSQLite:      {label: "SQLite database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
+	WorkloadRedis:       {label: "Redis database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 3},
+	WorkloadObjectStore: {label: "object storage server", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 1},
+	WorkloadBucket:      {label: "bucket", cpuMilli: 0, memBytes: 0, haCount: 1},
+	WorkloadLogical:     {label: "logical database", cpuMilli: 0, memBytes: 0, haCount: 1},
+	WorkloadExternal:    {label: "external resource", cpuMilli: 0, memBytes: 0, haCount: 1},
 }
 
 // DefaultAppResources is the request/limit set applied to services that omit one.

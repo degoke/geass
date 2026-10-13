@@ -132,7 +132,7 @@ The tags should be compliance tags on the nodes that carry them (`spec.placement
 - every node in the region that carries a tag is reserved for it;
 - every in-cluster database of the project that is already provisioned runs on nodes with the tags you are adding.
 
-A change made with `kubectl` skips these checks. A project that requires tags also gets the annotation `geass.dev/required-tags` on its namespaces, the logs of those namespaces are not shipped to the shared log store, and a database on a shared server, or a bucket on the MinIO server, is refused unless that server runs on nodes with all the tags. See [Compliance node tags](/docs/guides/compliance-tags/) for the whole picture and its limits.
+A change made with `kubectl` skips these checks. A project that requires tags also gets the annotation `geass.dev/required-tags` on its namespaces, the logs of those namespaces are not shipped to the shared log store, and a database on a shared server, or a bucket on the object storage server, is refused unless that server runs on nodes with all the tags. See [Compliance node tags](/docs/guides/compliance-tags/) for the whole picture and its limits.
 
 ### Shared variables
 

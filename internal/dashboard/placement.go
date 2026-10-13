@@ -539,7 +539,7 @@ func (s *Server) runOnTagsFromForm(w http.ResponseWriter, r *http.Request, fallb
 	return tags, true, true
 }
 
-// pinnedStorePlacementOf is where the cluster MinIO server was placed when it was first set up.
+// pinnedStorePlacementOf is where the cluster's object storage server was placed when it was first set up.
 func pinnedStorePlacementOf(store *geassv1alpha1.GeassObjectStore) platform.Placement {
 	return platform.ParsePlacement(store.Annotations[platform.AnnotationNodePlacement])
 }

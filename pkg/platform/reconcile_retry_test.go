@@ -34,7 +34,7 @@ func TestApplyNotReady_failFastOnPermanentError(t *testing.T) {
 func TestApplyNotReady_transientNetworkErrorsKeepRetrying(t *testing.T) {
 	for _, message := range []string{
 		`Get "https://10.96.0.1:443/api/v1/namespaces": dial tcp 10.96.0.1:443: connect: connection refused`,
-		"dial tcp: lookup minio: no such host",
+		"dial tcp: lookup geass-s3: no such host",
 		"dial tcp 10.0.0.4:9000: connect: no route to host",
 		`secrets is forbidden: User "system:serviceaccount:geass-system:manager" cannot get resource`,
 	} {

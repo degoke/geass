@@ -1,12 +1,15 @@
+# The cluster's object storage server. Run one, and choose its engine: SeaweedFS (broad S3 coverage) or Garage
+# (small and light). Every project's in-cluster buckets live on it.
 apiVersion: geass.geass.dev/v1alpha1
 kind: GeassObjectStore
 metadata:
-  name: cluster-minio
+  name: cluster-s3
   namespace: geass-system
 spec:
-  engine: MinIO
+  engine: SeaweedFS
   placement: InCluster
 ---
+# A bucket for a project. In the cluster it takes the engine of the server above.
 apiVersion: geass.geass.dev/v1alpha1
 kind: GeassObjectStore
 metadata:
@@ -15,6 +18,7 @@ metadata:
 spec:
   project: payments
   environment: dev
-  engine: MinIO
+  engine: SeaweedFS
+  placement: InCluster
   buckets:
     - assets

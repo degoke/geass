@@ -2,13 +2,13 @@ export function workloadKind(type, kind) {
   if (type === "service") return "service";
   if (kind === "logical") return "logical";
   if (kind === "planetscale" || kind === "awsdb" || kind === "s3") return "external";
-  if (kind === "minio") return "bucket";
+  if (kind === "cluster") return "bucket";
   return kind;
 }
 
 export function defaultSizeForKind(type, kind) {
   if (kind === "sqlite" || type === "service") return { cpu: "100m", memory: "128Mi" };
-  if (["postgres", "mysql", "redis", "minio"].includes(kind) || type === "database") return { cpu: "250m", memory: "512Mi" };
+  if (["postgres", "mysql", "redis"].includes(kind) || type === "database") return { cpu: "250m", memory: "512Mi" };
   return { cpu: "100m", memory: "128Mi" };
 }
 

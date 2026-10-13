@@ -1,4 +1,5 @@
 import { resourceName } from "@/lib/api";
+import { isObjectStoreEngine } from "@/lib/object-storage";
 
 export function appHref(project, name, environment) {
   return `/projects/${project}/apps/${name}?environment=${environment}`;
@@ -11,7 +12,7 @@ export function resourceHref(project, environment, item, kind) {
   if (kind === "Service") return `/projects/${slug}/apps/${name}?environment=${environment}`;
   if (kind === "Logical DB") return `/projects/${slug}/logical-databases/${name}?environment=${environment}`;
   if (engine || kind === "Database" || kind === "Bucket" || kind === "Redis") {
-    const segment = item.spec?.engine === "MinIO" || item.spec?.engine === "S3" ? "object-stores" : "databases";
+    const segment = isObjectStoreEngine(engine) ? "object-stores" : "databases";
     return `/projects/${slug}/${segment}/${name}?environment=${environment}`;
   }
   return `/projects/${slug}`;

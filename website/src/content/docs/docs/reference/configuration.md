@@ -309,6 +309,7 @@ kubectl -n geass-system get geasscluster default \
 | Pull request environments | At most 25 open; default 5 |
 | New service size | 0.1 CPU and 128 MB; allowed CPU 100m, 250m, 500m, 1, 2; allowed memory 128Mi to 4Gi |
 | New database size | 250m CPU, 512Mi memory; 10Gi volume (1Gi for SQLite) |
+| New object storage server size | 250m CPU, 512Mi memory for SeaweedFS, 100m and 256Mi for Garage; 10Gi volume, at least 1Gi, raised later and never lowered |
 | Autoscaling | Target CPU 50 percent by default |
 | Replica count | 0 to 1000 |
 | Sleep when idle | Idle time 30 seconds to 24 hours, 300 seconds by default; 1 to 100 copies when awake, 3 by default |
@@ -354,7 +355,9 @@ You cannot choose other versions from the dashboard.
 | Fluent Bit (chart) | 0.58.3 | `geass-logging` |
 | MySQL (Bitnami chart) | 12.3.3 | the project environment |
 | Redis (Bitnami chart) | 20.7.1 | the project environment |
-| MinIO (chart) | 5.4.0, image `RELEASE.2025-02-18T16-25-55Z` | `geass-system` (cluster server) |
+| SeaweedFS (image, no chart), for in-cluster object storage | 4.48 | `geass-system` (cluster server) |
+| Garage (image, no chart), for in-cluster object storage | v2.4.1 | `geass-system` (cluster server) |
+| alpine/socat (image), the port forwarder next to SeaweedFS | 1.8.1.1 | `geass-system` (cluster server) |
 | rqlite for SQLite databases | 8.36.16 | the project environment |
 | KEDA (chart), for sleep when idle | 2.21.0 | `keda` |
 | KEDA HTTP add-on (chart), for sleep when idle | 0.16.0 | `keda` |

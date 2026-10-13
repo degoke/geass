@@ -31,7 +31,7 @@ func unnamedBucketDraft(name string) *geassv1alpha1.GeassObjectStore {
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
 			Project:     testProjectName,
 			Environment: geassv1alpha1.EnvironmentDev,
-			Engine:      geassv1alpha1.ObjectStoreEngineMinIO,
+			Engine:      geassv1alpha1.ObjectStoreEngineSeaweedFS,
 			Placement:   geassv1alpha1.ObjectStorePlacementInCluster,
 		},
 	}
@@ -107,7 +107,7 @@ func TestDeployChangesKeepsTheBucketNameWhenTheWriteConflicts(t *testing.T) {
 	require.Equal(t, []string{"sleepy-coral"}, snapshot.Buckets)
 }
 
-// An in-cluster bucket is stored on the shared MinIO server as <project>.<environment>.<name>, so a name that
+// An in-cluster bucket is stored on the cluster's object storage server as <project>.<environment>.<name>, so a name that
 // fits on its own can be too long once the prefix is added. It is refused when it is saved, with the limit.
 func TestInClusterBucketNameThatDoesNotFitItsProjectIsRefusedUpFront(t *testing.T) {
 	ctx := context.Background()

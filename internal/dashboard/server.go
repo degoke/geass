@@ -2682,37 +2682,45 @@ func (s *Server) handleDatabaseUpdate(w http.ResponseWriter, r *http.Request, na
 
 // --- Object stores ---
 
-func clusterMinIOResourcesFromStore(store *geassv1alpha1.GeassObjectStore) corev1.ResourceRequirements {
+func clusterObjectStoreResourcesFromStore(store *geassv1alpha1.GeassObjectStore) corev1.ResourceRequirements {
 	if store != nil && len(store.Spec.Resources.Requests) > 0 {
 		return store.Spec.Resources
 	}
-	return platform.DefaultDatabaseResources()
+	engine := geassv1alpha1.GeassObjectStoreEngine("")
+	if store != nil {
+		engine = store.Spec.Engine
+	}
+	return platform.DefaultObjectStoreResources(engine)
 }
 
-func isClusterMinIO(store *geassv1alpha1.GeassObjectStore) bool {
-	if store == nil || strings.TrimSpace(store.Spec.Project) != "" {
-		return false
-	}
-	if store.Spec.Placement == geassv1alpha1.ObjectStorePlacementExternal || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
-		return false
-	}
-	return store.Spec.Engine == "" || store.Spec.Engine == geassv1alpha1.ObjectStoreEngineMinIO
+// isClusterObjectStore reports whether the store is the cluster's object storage server, as opposed to a bucket.
+func isClusterObjectStore(store *geassv1alpha1.GeassObjectStore) bool {
+	return platform.IsClusterObjectStoreServer(store)
 }
 
-func (s *Server) clusterMinIO(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
+// clusterObjectStore returns the cluster's object storage server, or nil when there is none.
+func (s *Server) clusterObjectStore(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
 	var list geassv1alpha1.GeassObjectStoreList
 	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
 		return nil, err
 	}
 	for i := range list.Items {
-		if isClusterMinIO(&list.Items[i]) {
+		if isClusterObjectStore(&list.Items[i]) {
 			return &list.Items[i], nil
 		}
 	}
 	return nil, nil
 }
 
-func (s *Server) attachedProjectMinIONames(ctx context.Context) ([]string, error) {
+// isClusterObjectStoreName reports whether name is the name of the cluster's object storage server. Its name is
+// not fixed: it is whatever the server was made with.
+func (s *Server) isClusterObjectStoreName(ctx context.Context, name string) bool {
+	store, err := s.clusterObjectStore(ctx)
+	return err == nil && store != nil && store.Name == name
+}
+
+// attachedProjectBucketNames are the project buckets on the cluster's object storage server.
+func (s *Server) attachedProjectBucketNames(ctx context.Context) ([]string, error) {
 	var list geassv1alpha1.GeassObjectStoreList
 	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
 		return nil, err
@@ -2720,13 +2728,10 @@ func (s *Server) attachedProjectMinIONames(ctx context.Context) ([]string, error
 	var names []string
 	for i := range list.Items {
 		item := &list.Items[i]
-		if isClusterMinIO(item) || !item.DeletionTimestamp.IsZero() || strings.TrimSpace(item.Spec.Project) == "" {
+		if isClusterObjectStore(item) || !item.DeletionTimestamp.IsZero() || strings.TrimSpace(item.Spec.Project) == "" {
 			continue
 		}
 		if item.Spec.Placement == geassv1alpha1.ObjectStorePlacementExternal || item.Spec.Engine == geassv1alpha1.ObjectStoreEngineS3 {
-			continue
-		}
-		if item.Spec.Engine != "" && item.Spec.Engine != geassv1alpha1.ObjectStoreEngineMinIO {
 			continue
 		}
 		names = append(names, item.Name)
@@ -2743,7 +2748,7 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	placement := parseObjectStorePlacement(r.FormValue("placement"))
 	engine := parseObjectStoreEngine(r.FormValue("engine"), r.FormValue("placement"))
 	if r.FormValue("cluster") == "on" || r.FormValue("cluster") == "true" {
-		s.handleClusterMinIOCreate(w, r)
+		s.handleClusterObjectStoreCreate(w, r)
 		return
 	}
 	fallback = formProjectFallback(r, "/object-stores")
@@ -2765,15 +2770,21 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if placement != geassv1alpha1.ObjectStorePlacementExternal && engine != geassv1alpha1.ObjectStoreEngineS3 {
-		server, err := s.clusterMinIO(r.Context())
+		server, err := s.clusterObjectStore(r.Context())
 		if err != nil {
 			redirectFormInternalError(w, r, fallback)
 			return
 		}
 		if server == nil {
-			redirectFormError(w, r, fallback, "set up the MinIO server in cluster settings first")
+			redirectFormError(w, r, fallback, platform.MessageSetUpObjectStorage)
 			return
 		}
+		if _, ok := platform.ObjectStoreServerFor(server.Spec.Engine); !ok {
+			redirectFormError(w, r, fallback, "this cluster's object storage engine is not supported")
+			return
+		}
+		// A bucket in the cluster is on whichever server the cluster has.
+		engine = server.Spec.Engine
 	}
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
@@ -2817,18 +2828,28 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	redirectAfterResourceCreate(w, r, project, r.FormValue("environment"), "object-stores", name)
 }
 
-func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleClusterObjectStoreCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/object-storage"
-	existing, err := s.clusterMinIO(r.Context())
+	existing, err := s.clusterObjectStore(r.Context())
 	if err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	if existing != nil {
-		redirectFormError(w, r, fallback, "MinIO server is already set up")
+		redirectFormError(w, r, fallback, "Cluster object storage is already set up")
 		return
 	}
-	res, err := resourcesFromForm(r, platform.DefaultDatabaseResources())
+	engine, err := platform.ParseObjectStoreServerEngine(r.FormValue("engine"))
+	if err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	res, err := resourcesFromForm(r, platform.DefaultObjectStoreResources(engine))
+	if err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
+	storageSize, err := requestedObjectStorage(r.FormValue("storageSize"), nil, nil)
 	if err != nil {
 		redirectFormUserError(w, r, fallback, err)
 		return
@@ -2848,26 +2869,27 @@ func (s *Server) handleClusterMinIOCreate(w http.ResponseWriter, r *http.Request
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1), platform.NewPlacement(effectiveRegion, tags)) {
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("Object storage server", res, 1), platform.NewPlacement(effectiveRegion, tags)) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		name = platform.ClusterMinIOName
+		name = platform.ClusterObjectStoreName
 	}
 	store := &geassv1alpha1.GeassObjectStore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:       geassv1alpha1.ObjectStoreEngineMinIO,
+			Engine:       engine,
 			Placement:    geassv1alpha1.ObjectStorePlacementInCluster,
 			Resources:    res,
+			StorageSize:  storageSize,
 			ServerRegion: region,
 			RunOn:        geassv1alpha1.GeassWorkloadPlacement{Tags: tags},
 		},
 	}
 	if err := s.Client.Create(r.Context(), store); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			redirectFormError(w, r, fallback, "MinIO server is already set up")
+			redirectFormError(w, r, fallback, "Cluster object storage is already set up")
 			return
 		}
 		redirectFormInternalError(w, r, fallback)
@@ -2917,11 +2939,11 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	case "console":
 		if len(parts) == 3 && parts[2] == "create" {
-			s.handleClusterMinIOConsoleCreate(w, r, name)
+			s.handleClusterObjectStoreConsoleCreate(w, r, name)
 			return
 		}
 		if len(parts) == 3 && parts[2] == "stream" {
-			s.handleClusterMinIOConsoleStream(w, r, name)
+			s.handleClusterObjectStoreConsoleStream(w, r, name)
 			return
 		}
 	default:
@@ -2929,18 +2951,13 @@ func (s *Server) handleObjectStoreRoutes(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (s *Server) handleClusterMinIOConsoleCreate(w http.ResponseWriter, r *http.Request, name string) {
+func (s *Server) handleClusterObjectStoreConsoleCreate(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/object-storage"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
 		return
 	}
-	if name != platform.ClusterMinIOName {
+	if !s.isClusterObjectStoreName(r.Context(), name) {
 		http.NotFound(w, r)
-		return
-	}
-	store, err := s.clusterMinIO(r.Context())
-	if err != nil || store == nil || !isClusterMinIO(store) {
-		redirectFormError(w, r, fallback, "cluster object storage is not set up")
 		return
 	}
 	target := strings.SplitN(strings.TrimSpace(r.FormValue("target")), "|", 2)
@@ -2958,7 +2975,7 @@ func (s *Server) handleClusterMinIOConsoleCreate(w http.ResponseWriter, r *http.
 		return
 	}
 	pod, err := s.Kube.CoreV1().Pods(platform.SystemNamespace).Get(r.Context(), target[0], metav1.GetOptions{})
-	if err != nil || pod.Status.Phase != corev1.PodRunning || !podBelongsToClusterMinIO(pod) {
+	if err != nil || pod.Status.Phase != corev1.PodRunning || !podBelongsToClusterObjectStore(pod) {
 		redirectFormError(w, r, fallback, "pod is not running")
 		return
 	}
@@ -2969,7 +2986,7 @@ func (s *Server) handleClusterMinIOConsoleCreate(w http.ResponseWriter, r *http.
 		}
 	}
 	if !allowed {
-		redirectFormError(w, r, fallback, "container is not part of the MinIO pod")
+		redirectFormError(w, r, fallback, "container is not part of the object storage pod")
 		return
 	}
 	actor := "dashboard"
@@ -3004,8 +3021,8 @@ func (s *Server) handleClusterMinIOConsoleCreate(w http.ResponseWriter, r *http.
 	redirect(w, r, fallback)
 }
 
-func (s *Server) handleClusterMinIOConsoleStream(w http.ResponseWriter, r *http.Request, name string) {
-	if name != platform.ClusterMinIOName {
+func (s *Server) handleClusterObjectStoreConsoleStream(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.isClusterObjectStoreName(r.Context(), name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -3062,18 +3079,28 @@ func (s *Server) handleObjectStoreUpdate(w http.ResponseWriter, r *http.Request,
 		http.NotFound(w, r)
 		return
 	}
-	if isClusterMinIO(&store) {
+	if isClusterObjectStore(&store) {
 		fallback := "/object-storage"
 		if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
-			res, err := resourcesFromForm(r, clusterMinIOResourcesFromStore(&store))
+			res, err := resourcesFromForm(r, clusterObjectStoreResourcesFromStore(&store))
 			if err != nil {
 				redirectFormUserError(w, r, fallback, err)
 				return
 			}
-			if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("MinIO server", res, 1), pinnedStorePlacementOf(&store)) {
+			if s.rejectIfNoCapacityForPlacement(w, r, fallback, platform.EstimateFromResources("Object storage server", res, 1), pinnedStorePlacementOf(&store)) {
 				return
 			}
 			store.Spec.Resources = res
+		}
+		if formHasValue(r, "storageSize") {
+			size, err := requestedObjectStorage(r.FormValue("storageSize"), &store, s.storageClasses(r.Context()).forObjectStore(&store))
+			if err != nil {
+				redirectFormUserError(w, r, fallback, err)
+				return
+			}
+			if size != nil {
+				store.Spec.StorageSize = size
+			}
 		}
 		if err := s.Client.Update(r.Context(), &store); err != nil {
 			redirectFormInternalError(w, r, fallback)
@@ -3155,14 +3182,14 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 	}
-	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterMinIO(store) {
-		attached, err := s.attachedProjectMinIONames(r.Context())
+	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterObjectStore(store) {
+		attached, err := s.attachedProjectBucketNames(r.Context())
 		if err != nil {
 			redirectFormInternalError(w, r, listPath)
 			return
 		}
 		if len(attached) > 0 {
-			redirectFormError(w, r, listPath, "delete project buckets before removing the MinIO server")
+			redirectFormError(w, r, listPath, "delete project buckets before removing the object storage server")
 			return
 		}
 	}
@@ -3171,7 +3198,7 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	s.notifyResourceMutation(obj, "delete")
-	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterMinIO(store) {
+	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterObjectStore(store) {
 		redirect(w, r, "/object-storage")
 		return
 	}
@@ -3245,11 +3272,13 @@ func parseObjectStorePlacement(value string) geassv1alpha1.GeassObjectStorePlace
 	return geassv1alpha1.ObjectStorePlacementInCluster
 }
 
+// parseObjectStoreEngine is the engine a bucket asks for: AWS S3, or empty for a bucket in the cluster, which is
+// on whichever server the cluster has and takes that server's engine.
 func parseObjectStoreEngine(engine, placement string) geassv1alpha1.GeassObjectStoreEngine {
 	if strings.EqualFold(engine, string(geassv1alpha1.ObjectStoreEngineS3)) || parseObjectStorePlacement(placement) == geassv1alpha1.ObjectStorePlacementExternal {
 		return geassv1alpha1.ObjectStoreEngineS3
 	}
-	return geassv1alpha1.ObjectStoreEngineMinIO
+	return ""
 }
 
 func generatedResourceName(value string) string {

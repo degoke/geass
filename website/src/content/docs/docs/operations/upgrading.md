@@ -29,7 +29,7 @@ Running a newer installer on a machine that already has K3s uninstalls K3s first
   | KEDA (`geass-keda`), only with the serverless add-on | `2.21.0` |
   | KEDA HTTP add-on (`geass-keda-http`), only with the serverless add-on | `0.16.0` |
 
-  A new Geass version that raises a pin makes the add-on upgrade itself, which restarts its pods. MinIO, MySQL, Redis and other images and charts are pinned the same way.
+  A new Geass version that raises a pin makes the add-on upgrade itself, which restarts its pods. The SeaweedFS and Garage images that the in-cluster object storage server runs from, MySQL, Redis and other images and charts are pinned the same way.
 
 ## Your options
 

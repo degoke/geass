@@ -143,7 +143,7 @@ Add `quiet-river` to the allow list of `morning-beach` and repeat. The same call
 
 ## What happens under the hood
 
-The project controller writes and keeps these objects. If you edit or delete one by hand, the controller puts it back.
+The project controller writes and keeps the first four of these objects, and the object store controller keeps `geass-s3`. If you edit or delete one by hand, its controller puts it back.
 
 | Policy | Namespace | What it does |
 | --- | --- | --- |
@@ -151,6 +151,7 @@ The project controller writes and keeps these objects. If you edit or delete one
 | `geass-block-cloud-metadata` | Each project environment | Selects every pod. Allows egress to every pod and to `0.0.0.0/0` except `169.254.0.0/16`. Always present, even when isolation is `None`. |
 | `geass-restrict-metrics-store` | `monitoring` | Selects only the Prometheus pods. Allows ingress only from the same namespace and `geass-system`. Created when monitoring is on. |
 | `geass-restrict-log-store` | `geass-logging` | Selects every pod. Allows ingress only from the same namespace, `geass-system` and `monitoring`. Created when the logging add-on is on. |
+| `geass-s3` | `geass-system` | Selects only the pod of the cluster's object storage server. Allows ingress to the S3 port (8333 for SeaweedFS, 3900 for Garage) from every namespace, to Garage's admin port 3903 only from `geass-system`, and to no other port. Created with the server and deleted with it. |
 
 The isolation policy finds a project's namespaces by their `geass.dev/project` label. The project controller adds the label back if it is missing. The metadata policy lists every namespace's pods as well as the address range on purpose: a rule that named only addresses would cut pods off from cluster DNS and from other services on some network plugins.
 
@@ -162,9 +163,10 @@ Geass restricts only the Prometheus pods in `monitoring`, not the whole namespac
 
 - **Outbound traffic.** Only the cloud metadata range is blocked. Services can reach the internet and every other service that accepts them.
 - **Shared database servers.** They run in `geass-system`, which has no isolation policy, so every project's pods can open a connection to them. Each project gets its own database and its own login, and a login can reach only its own database. See [Shared database servers](/docs/guides/shared-database-servers/).
-- **The platform namespaces.** `geass-system`, `kube-system`, `monitoring`, `cnpg-system` and `keda` can reach every project. Geass adds no rule in front of the dashboard, the operator or the add-ons other than the metrics and log stores.
+- **The object storage server.** Its S3 port is open to every namespace, whatever a project's isolation, because that is how apps reach their buckets. Each project's login can reach only its own bucket. The policy `geass-s3` limits the server to its ports. See [Object storage](/docs/guides/object-storage/).
+- **The platform namespaces.** `geass-system`, `kube-system`, `monitoring`, `cnpg-system` and `keda` can reach every project. Geass adds no rule in front of the dashboard, the operator or the add-ons other than the metrics and log stores and the object storage server.
 - **Traffic between pods of one project.** Everything inside a project, across environments, is open.
-- **Ports.** Rules cover whole services. There are no per-port rules.
+- **Ports.** Project rules cover whole services. There are no per-port rules for a project. The one exception is the object storage server's policy, which lists ports.
 
 ## Troubleshooting
 

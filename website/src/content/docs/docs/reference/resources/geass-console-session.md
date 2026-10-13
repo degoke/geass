@@ -56,9 +56,9 @@ status:
 
 | Field | Type | Default | Validation | Meaning |
 | --- | --- | --- | --- | --- |
-| `spec.app` | string | none | Required | The `GeassApp` the shell belongs to, or the cluster MinIO server's name for a MinIO terminal. |
-| `spec.project` | string | none | Required | The project ID. Empty for a MinIO terminal. |
-| `spec.environment` | string | none | Required | The environment of the service. Empty for a MinIO terminal. |
+| `spec.app` | string | none | Required | The `GeassApp` the shell belongs to, or the cluster object storage server's name for an object storage terminal. |
+| `spec.project` | string | none | Required | The project ID. Empty for an object storage terminal. |
+| `spec.environment` | string | none | Required | The environment of the service. Empty for an object storage terminal. |
 | `spec.pod` | string | none | Required | The pod the shell runs in. |
 | `spec.container` | string | none | Required | The container of that pod. |
 | `spec.actor` | string | none | none | Who opened it: the dashboard user's name, `token:<name>` for an API token, or `dashboard`. |
@@ -92,7 +92,7 @@ A session serves one terminal at a time. Opening a second one on the same sessio
 | Dashboard | Request | Effect |
 | --- | --- | --- |
 | **Console** tab of a service, **Connect** | `POST /api/apps/<app>/console/create`, then a WebSocket to `/api/apps/<app>/console/ws?session=<name>` | Creates the session, then attaches a terminal to the pod. |
-| None. The dashboard has no screen for it | `POST /api/object-stores/cluster-minio/console/create`, then a stream on `/api/object-stores/cluster-minio/console/stream?session=<name>` | The same, for the MinIO pod in `geass-system`. Only the REST API reaches it. Its sessions carry no `geass.dev/app` label, so the `kubectl delete -l` command under [Troubleshooting](#troubleshooting) does not match them. |
+| None. The dashboard has no screen for it | `POST /api/object-stores/<server name>/console/create`, then a stream on `/api/object-stores/<server name>/console/stream?session=<name>` | The same, for the object storage server's pod in `geass-system`. `<server name>` is the server's resource name, `cluster-s3` by default. Only the REST API reaches it. Its sessions carry no `geass.dev/app` label, so the `kubectl delete -l` command under [Troubleshooting](#troubleshooting) does not match them. |
 
 The tab shows **Connected** with a countdown of the time left. A viewer sees "Your viewer role cannot open consoles." API tokens that are limited to a project cannot open terminals. A workspace token with the `admin` role can: its sessions are recorded with the actor `token:<name>`. A token with the `observer` or `viewer` role cannot, because it cannot create the session. See [Users and API tokens](/docs/guides/users-and-tokens/).
 

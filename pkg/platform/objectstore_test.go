@@ -99,15 +99,15 @@ func TestInClusterBucketNameIsUnambiguous(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestObjectStoreOnSharedMinIO(t *testing.T) {
+func TestObjectStoreOnClusterServer(t *testing.T) {
 	store := func(project string, placement geassv1alpha1.GeassObjectStorePlacement, engine geassv1alpha1.GeassObjectStoreEngine) *geassv1alpha1.GeassObjectStore {
 		return &geassv1alpha1.GeassObjectStore{Spec: geassv1alpha1.GeassObjectStoreSpec{Project: project, Placement: placement, Engine: engine}}
 	}
-	require.True(t, ObjectStoreOnSharedMinIO(store("payments", geassv1alpha1.ObjectStorePlacementInCluster, geassv1alpha1.ObjectStoreEngineMinIO)))
-	require.True(t, ObjectStoreOnSharedMinIO(store("payments", "", "")), "placement and engine default to in-cluster MinIO")
-	require.False(t, ObjectStoreOnSharedMinIO(store("", geassv1alpha1.ObjectStorePlacementInCluster, geassv1alpha1.ObjectStoreEngineMinIO)), "the cluster server has no project")
-	require.False(t, ObjectStoreOnSharedMinIO(store("payments", geassv1alpha1.ObjectStorePlacementExternal, geassv1alpha1.ObjectStoreEngineS3)))
-	require.False(t, ObjectStoreOnSharedMinIO(store("payments", "", geassv1alpha1.ObjectStoreEngineS3)))
+	require.True(t, ObjectStoreOnClusterServer(store("payments", geassv1alpha1.ObjectStorePlacementInCluster, geassv1alpha1.ObjectStoreEngineSeaweedFS)))
+	require.True(t, ObjectStoreOnClusterServer(store("payments", "", "")), "placement and engine default to the cluster's server")
+	require.False(t, ObjectStoreOnClusterServer(store("", geassv1alpha1.ObjectStorePlacementInCluster, geassv1alpha1.ObjectStoreEngineSeaweedFS)), "the cluster server has no project")
+	require.False(t, ObjectStoreOnClusterServer(store("payments", geassv1alpha1.ObjectStorePlacementExternal, geassv1alpha1.ObjectStoreEngineS3)))
+	require.False(t, ObjectStoreOnClusterServer(store("payments", "", geassv1alpha1.ObjectStoreEngineS3)))
 }
 
 func TestInClusterBucketNameRefusesWhatDoesNotFit(t *testing.T) {

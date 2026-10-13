@@ -255,7 +255,8 @@ type taggedScope struct {
 }
 
 // requiredTagScopes are the scopes volumes need a class for: those of the projects that require node
-// tags, and those databases were pinned to, which stay served after a project drops its tags.
+// tags, those databases were pinned to, which stay served after a project drops its tags, and the one the
+// cluster's object storage server was pinned to.
 func (r *GeassClusterReconciler) requiredTagScopes(ctx context.Context) ([]taggedScope, error) {
 	scopes := map[string]taggedScope{}
 	add := func(region string, tags []string) {
@@ -286,6 +287,19 @@ func (r *GeassClusterReconciler) requiredTagScopes(ctx context.Context) ([]tagge
 		if pinned, ok := databases.Items[i].Annotations[platform.AnnotationNodePlacement]; ok {
 			placement := platform.ParsePlacement(pinned)
 			add(placement.Region, placement.Required)
+		}
+	}
+	// The cluster's object storage server is pinned to nodes like a database, and its volume stays on them too.
+	var stores geassv1alpha1.GeassObjectStoreList
+	if err := r.List(ctx, &stores, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil, err
+	}
+	for i := range stores.Items {
+		if platform.IsClusterObjectStoreServer(&stores.Items[i]) {
+			if pinned, ok := stores.Items[i].Annotations[platform.AnnotationNodePlacement]; ok {
+				placement := platform.ParsePlacement(pinned)
+				add(placement.Region, platform.ObjectStoreServerStorageTags(placement))
+			}
 		}
 	}
 	return slices.SortedFunc(maps.Values(scopes), func(a, b taggedScope) int {

@@ -67,7 +67,7 @@ func DatabaseStorageDefaults() map[string]string {
 	return defaults
 }
 
-// DefaultDatabaseResources is the CPU and memory assigned to Postgres, MySQL, Redis, and MinIO.
+// DefaultDatabaseResources is the CPU and memory assigned to Postgres, MySQL and Redis.
 func DefaultDatabaseResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{

@@ -17,7 +17,7 @@ import (
 )
 
 // The cluster-wide database server is a Postgres or MySQL that projects share: a GeassDatabase with no
-// project, living in the system namespace as the cluster MinIO does. Projects take logical databases on it
+// project, living in the system namespace as the cluster's object storage does. Projects take logical databases on it
 // (see GeassLogicalDatabase), each with a login that reaches that database and nothing else. Setting it up
 // and removing it is the platform's call, so these handlers are for dashboard admins; project tokens are
 // refused by default like every route they were not given.
@@ -78,7 +78,7 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 			Resources:        res,
 			ServerRegion:     region,
 			RunOn:            geassv1alpha1.GeassWorkloadPlacement{Tags: tags},
-			// There is no project to deploy from, so it starts running at once, as the cluster MinIO does.
+			// There is no project to deploy from, so it starts running at once, as the cluster's object storage does.
 			Deploy: geassv1alpha1.GeassDeploySpec{Enabled: true},
 		},
 	}

@@ -559,7 +559,7 @@ resource's `metadata`, `spec` and `status`. `items` is `null` when empty, so use
 | `deployments`, `builds` | Deploy history and builds (`builds` is empty for viewers and observers) |
 | `clusters`, `haReadiness`, `backupArchives` | The cluster (its `status.conditions` include `ClusterIssuerReady`, which says whether HTTPS certificates can be issued), its HA check and database backups |
 | `cloudConnections`, `platformConfig` | Cloud connections and the platform configuration (empty for viewers and observers) |
-| `platform` | A summary: `hasDashboardURL`, `hasGitHubApp`, `hasCloudflare`, `cloudflareReady`, `dashboardURL`, `haReady`, `healthyNodes`, `awsAvailable`, `planetScaleAvailable`, `minioAvailable`, `capacity`, `defaultRegion`, `storageExpandable`, `fixedSizeDatabases`, `defaultStorage`, `session`, and `cloudflareZoneId` and `cloudflareZoneName` for admins |
+| `platform` | A summary: `hasDashboardURL`, `hasGitHubApp`, `hasCloudflare`, `cloudflareReady`, `dashboardURL`, `haReady`, `healthyNodes`, `awsAvailable`, `planetScaleAvailable`, `objectStorageAvailable`, `objectStorageEngine`, `objectStorageServers`, `objectStorageResizable` (whether the object storage server's volume can be made bigger), `capacity`, `defaultRegion`, `storageExpandable`, `fixedSizeDatabases`, `defaultStorage` (the default volume size per kind of resource: `objectstore` is `10Gi`), `session`, and `cloudflareZoneId` and `cloudflareZoneName` for admins |
 | `metrics` | Three headline numbers: running pods, nodes, CPU cores used |
 
 Items are sorted oldest first. Secrets are never included, and for a viewer or an observer the fields described in
@@ -739,11 +739,11 @@ connection (PlanetScale creates the database and a login itself, as a MySQL or P
 
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
-| `POST /api/object-stores/create` | `project`, `environment`, `name`, `placement` (`InCluster` or `External`), `engine` (`MinIO` or `S3`), `region`, `createBucket`, `connectionRef`, `bucket`, `draft` | Creates a draft bucket. Pass `cluster=on` (with `region`, `runOnTags`, `name`) to create the cluster's MinIO server instead |
-| `POST /api/object-stores/{store}/update` | `connectionRef`, `bucket`, `createBucket`, `project`, `environment` | `{"ok":true,"applied":"deploy","liveChanged":false}` |
+| `POST /api/object-stores/create` | `project`, `environment`, `name`, `placement` (`InCluster` or `External`), `engine` (`S3` for an AWS bucket; leave it out for a bucket in the cluster, which uses the cluster server's engine), `region`, `createBucket`, `connectionRef`, `bucket`, `draft` | Creates a draft bucket. Pass `cluster=on` with `engine` (`SeaweedFS` or `Garage`, required, any letter case) and `placement=InCluster` to create the cluster's object storage server instead. It also takes `cpu`, `memory`, `storageSize` (the volume, default `10Gi`, at least `1Gi`), `name` (default `cluster-s3`), `region` and `runOnTags`. `400` `choose SeaweedFS or Garage for cluster object storage` when `engine` is neither, `400` `Cluster object storage is already set up` when the server exists, and `400` `storage size must be a quantity such as 10Gi` or `storage size must be at least 1Gi` for a bad `storageSize` |
+| `POST /api/object-stores/{store}/update` | `connectionRef`, `bucket`, `createBucket`, `project`, `environment` | `{"ok":true,"applied":"deploy","liveChanged":false}`. On the cluster object storage server it takes `cpu`, `memory` and `storageSize` instead, and returns `{"ok":true}`. `storageSize` can only grow the volume, and only where the cluster's storage can be resized: `400` `storage can be increased but not decreased (currently 10Gi)`, `this cluster's storage can't be resized, so the server stays at 10Gi`, and the two `storageSize` messages above |
 | `POST /api/object-stores/{store}/deploy` | none | Deploys it |
 | `POST /api/object-stores/{store}/retry-provision`, `/delete`, `/display-name` | as above | |
-| `GET /api/object-stores/{name}/logs`, `GET /api/object-stores/{name}/runtime` | none | The cluster MinIO server only (its name is `cluster-minio`): `{"lines":"..."}` of its pod logs, and `{"pods":[...],"endpoint","consoleURL","namespace","chart"}`. Observer |
+| `GET /api/object-stores/{name}/logs`, `GET /api/object-stores/{name}/runtime` | none | The cluster object storage server only (its name is the one it was created with, `cluster-s3` by default): `{"lines":"..."}` of its pod logs, and `{"pods":[...],"endpoint","engine","namespace"}`. Observer |
 
 ### Templates
 
@@ -849,7 +849,7 @@ These exist for the browser flow:
 | `POST /webhooks/github` | GitHub's webhook; checked by HMAC signature |
 | `GET /github/callback`, `GET /settings/github/manifest/callback` | GitHub redirects here after install or app creation; signed-in admins only |
 | `GET /api/events`, `GET /api/apps/{app}/console/ws` | Streams used by the dashboard |
-| `POST /api/apps/{app}/console/stream`, `POST /api/object-stores/cluster-minio/console/create` and `.../console/stream` | An older streaming form of the service terminal, and the same pair for the MinIO server. The dashboard uses neither |
+| `POST /api/apps/{app}/console/stream`, `POST /api/object-stores/<server name>/console/create` and `.../console/stream` | An older streaming form of the service terminal, and the same pair for the object storage server. The dashboard uses neither |
 
 ### Workflows with the dashboard routes
 
