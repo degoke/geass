@@ -140,26 +140,160 @@ func TestVariablesAreSetAsConfigOrSecret(t *testing.T) {
 	}, paths)
 }
 
-func TestLogsAreReadFromTheProjectNarrowedToTheService(t *testing.T) {
+// realLogsAnswer is what the dashboard sends for a service's logs: the lines under "lines", one entry each,
+// beside the services the project has and a note. (An earlier client looked under "logs", which is not there,
+// and its stub answered under "logs" too, so the mistake never showed.)
+func realLogsAnswer(lines ...map[string]any) map[string]any {
+	return map[string]any{
+		"lines": lines, "services": []string{"web", "worker"}, "truncated": false,
+		"note": "These are the logs the nodes still hold. Output from pods that have been replaced or deleted is not kept.",
+	}
+}
+
+func TestLogsAreReadFromTheServicesOwnRoute(t *testing.T) {
 	var logsQuery string
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/apps/web/status":
-			respond(w, 200, map[string]any{"name": "web", "project": "shop", "environment": "production"})
-		case "/api/v1/projects/shop/logs":
-			logsQuery = r.URL.RawQuery
-			respond(w, 200, map[string]any{"logs": []map[string]any{{"t": "2026-01-01T00:00:00Z", "service": "web", "line": "listening", "level": "info"}}})
-		default:
+		if r.URL.Path != "/api/v1/apps/web/logs" {
 			t.Errorf("unexpected request %s", r.URL)
 		}
+		logsQuery = r.URL.RawQuery
+		respond(w, 200, realLogsAnswer(
+			map[string]any{"t": "2026-01-01T00:00:00Z", "service": "web", "pod": "web-6d9c7b8f5-x2k4p", "container": "app", "line": "listening", "level": "info"},
+			map[string]any{"t": "2026-01-01T00:00:01Z", "service": "web", "pod": "web-6d9c7b8f5-x2k4p", "container": "app", "line": "timeout", "level": "error", "previous": true},
+		))
 	})
 
 	lines, err := c.Logs(context.Background(), "web", LogOptions{Tail: 50, Level: "error", Search: "timeout", Since: "15m"})
 
 	require.NoError(t, err)
-	require.Equal(t, "environment=production&level=error&q=timeout&service=web&since=15m&tail=50", logsQuery)
-	require.Len(t, lines, 1)
+	require.Equal(t, "level=error&q=timeout&since=15m&tail=50", logsQuery, "one request, with the filters the API reads")
+	require.Len(t, lines, 2)
 	require.Equal(t, "listening", lines[0].Text)
+	require.Equal(t, "web-6d9c7b8f5-x2k4p", lines[0].Pod)
+	require.Equal(t, "app", lines[0].Container)
+	require.Equal(t, "info", lines[0].Level)
+	require.Equal(t, 2026, lines[0].Time.Year())
+	require.True(t, lines[1].Previous)
+}
+
+func TestLogsAreCutToTheTailAskedForWhateverTheServiceSent(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		entries := make([]map[string]any, 0, 6)
+		for i := range 6 {
+			entries = append(entries, map[string]any{"t": fmt.Sprintf("2026-01-01T00:00:0%dZ", i), "line": fmt.Sprintf("line %d", i)})
+		}
+		respond(w, 200, realLogsAnswer(entries...))
+	})
+
+	newest, err := c.Logs(context.Background(), "web", LogOptions{Tail: 2})
+	require.NoError(t, err)
+	require.Equal(t, []string{"line 4", "line 5"}, []string{newest[0].Text, newest[1].Text}, "the dashboard counts the tail per copy, so the newest lines are kept")
+
+	all, err := c.Logs(context.Background(), "web", LogOptions{})
+	require.NoError(t, err)
+	require.Len(t, all, 6, "with no tail nothing is cut")
+}
+
+func TestNoLogsIsAnEmptyListAndAForbiddenReadIsAnError(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) { respond(w, 200, realLogsAnswer()) })
+	lines, err := c.Logs(context.Background(), "web", LogOptions{})
+	require.NoError(t, err)
+	require.Empty(t, lines)
+
+	denied := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 403, map[string]string{"error": "viewer role cannot access this", "code": "forbidden"})
+	})
+	_, err = denied.Logs(context.Background(), "web", LogOptions{})
+	require.True(t, IsForbidden(err))
+}
+
+// The answer is what the dashboard sends: each section's lines are one block of text. An earlier client read
+// them as a list, so the call failed whenever a section had any.
+func TestDeploymentLogsAreReadAsTheDashboardSendsThem(t *testing.T) {
+	var path string
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"id":"web-7x2kq","sections":[` +
+			`{"id":"provision","title":"Provision","lines":"Provisioning failed\n2026-10-11T12:00:00Z image pull failed"},` +
+			`{"id":"build","title":"Build","lines":"step 1/4\nstep 2/4"}]}`))
+	})
+
+	logs, err := c.DeploymentLogs(context.Background(), "web", "web-7x2kq")
+
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/apps/web/deployments/web-7x2kq/logs", path)
+	require.Equal(t, "web-7x2kq", logs.ID)
+	require.Len(t, logs.Sections, 2)
+	require.Equal(t, "Provisioning failed\n2026-10-11T12:00:00Z image pull failed", logs.Sections[0].Lines)
+	require.Equal(t, "Build", logs.Sections[1].Title)
+}
+
+func TestWaitingForAServiceToSleep(t *testing.T) {
+	var reads atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		details := map[string]any{"scaleToZero": map[string]any{"idleSeconds": 600, "maxReplicas": 3}}
+		if reads.Add(1) >= 3 {
+			details["scaleToZero"] = map[string]any{"idleSeconds": 600, "maxReplicas": 3, "active": true, "message": "Sleeps when idle"}
+		}
+		respond(w, 200, map[string]any{"resource": map[string]any{"name": "web", "details": details}, "spec": map[string]any{}, "status": map[string]any{}})
+	})
+
+	state, err := c.WaitForSleep(context.Background(), "web", WaitOptions{Interval: time.Millisecond})
+
+	require.NoError(t, err)
+	require.True(t, state.Active, "it waits for the operator to say so")
+	require.EqualValues(t, 3, reads.Load())
+}
+
+func TestAServiceThatCannotSleepIsReportedWithTheReasonAfterTheWait(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]any{"resource": map[string]any{"name": "web", "details": map[string]any{
+			"scaleToZero": map[string]any{"active": false, "message": "The serverless add-on is not installed"},
+		}}})
+	})
+
+	state, err := c.WaitForSleep(context.Background(), "web", WaitOptions{Interval: time.Millisecond, Timeout: 30 * time.Millisecond})
+
+	require.NoError(t, err, "running out of time is an answer, not a failure")
+	require.Equal(t, SleepState{Requested: true, Active: false, Message: "The serverless add-on is not installed"}, state)
+}
+
+func TestAServiceThatNeverAskedToSleepHasNothingToWaitFor(t *testing.T) {
+	var reads atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		respond(w, 200, map[string]any{"resource": map[string]any{"name": "web", "details": map[string]any{"port": 8080}}})
+	})
+
+	state, err := c.WaitForSleep(context.Background(), "web", WaitOptions{Interval: time.Millisecond, Timeout: time.Second})
+
+	require.NoError(t, err)
+	require.False(t, state.Requested)
+	require.EqualValues(t, 1, reads.Load())
+}
+
+func TestWaitingForSleepEndsWhenTheCallerGivesUp(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]any{"resource": map[string]any{"name": "web", "details": map[string]any{"scaleToZero": map[string]any{"active": false}}}})
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+
+	_, err := c.WaitForSleep(ctx, "web", WaitOptions{Interval: 5 * time.Millisecond, Timeout: 10 * time.Second})
+
+	require.ErrorIs(t, err, context.Canceled, "that is not the same as the wait running out")
+}
+
+func TestWhoTheTokenIsIncludesWhenItExpires(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]any{"username": "token:ci", "role": "observer", "authentication": "token", "expiresAt": "2026-11-11T09:00:00Z"})
+	})
+
+	me, err := c.Me(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, me.ExpiresAt)
+	require.Equal(t, 11, me.ExpiresAt.Day())
 }
 
 func TestFollowingLogsReadsServerSentEvents(t *testing.T) {
@@ -346,7 +480,21 @@ func TestNodesAndCompliance(t *testing.T) {
 	require.Equal(t, []string{"hipaa"}, report.Databases[0].Missing)
 
 	require.NoError(t, c.SetRequiredTags(context.Background(), "clinic", []string{"hipaa", "pci"}))
-	require.NoError(t, c.SetNodePlacement(context.Background(), "h1", "eu", "", []string{"hipaa"}, nil, []string{"hipaa"}))
+	warnings, err := c.SetNodePlacement(context.Background(), "h1", "eu", "", []string{"hipaa"}, nil, []string{"hipaa"})
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+}
+
+func TestNodePlacementReturnsTheWarningsTheAPISends(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]any{"ok": true, "warnings": []string{"hipaa is now a compliance tag on this node. Workloads already running here keep running until they restart"}})
+	})
+
+	warnings, err := c.SetNodePlacement(context.Background(), "h1", "eu", "", []string{"hipaa"}, nil, []string{"hipaa"})
+
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "compliance tag")
 }
 
 // The answer is what a real dashboard sent when a service was deployed: pending is a list of kinds of change,

@@ -42,9 +42,17 @@ type metricsInput struct {
 	Window string `json:"window,omitempty" jsonschema:"how far back: 15m, 1h (default), 6h or 24h"`
 }
 
+// defaultMetricsWindow is the window app_metrics asks for when the agent gives none. The API's own default is
+// shorter (15m); the tool says 1h, as the command line's --window does, and sends it.
+const defaultMetricsWindow = "1h"
+
+// maxDeploymentLogLines is how many lines of each stage deployment_logs returns, from the end: a build or a
+// rollout says why it failed last, and a result too long is cut from the end it would be read from.
+const maxDeploymentLogLines = 200
+
 type logsInput struct {
 	App    string `json:"app" jsonschema:"the service's name"`
-	Tail   int    `json:"tail,omitempty" jsonschema:"how many recent lines (default 100, at most 500)"`
+	Tail   int    `json:"tail,omitempty" jsonschema:"how many of the newest lines to return (default 100, at most 500). level and search look through the most recent lines only, so raise this to look further back"`
 	Since  string `json:"since,omitempty" jsonschema:"only lines newer than this long ago, such as 15m or 2h"`
 	Level  string `json:"level,omitempty" jsonschema:"only this level: error, warn, info or debug"`
 	Search string `json:"search,omitempty" jsonschema:"only lines containing this text"`
@@ -147,7 +155,7 @@ func (s *Server) register() {
 			return listKind(ctx, api, "apps", client.Filter{Project: in.Project, Environment: in.Environment})
 		})
 
-	add(s, toolSpec{name: "get_app", description: "Show one service's settings and status. Variable values are never included.", level: readAccess, readOnly: true},
+	add(s, toolSpec{name: "get_app", description: "Show one service's settings and status. Secret values are never included. Plain configuration values are, for a token with full access.", level: readAccess, readOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in appInput) (any, error) {
 			return api.Get(ctx, "apps", in.App)
 		})
@@ -173,7 +181,7 @@ func (s *Server) register() {
 			return api.Get(ctx, "databases", in.Name)
 		})
 
-	add(s, toolSpec{name: "database_connection", description: "Show how to reach a database: host, port, database and user. The password and connection string are never returned.", level: workspaceAdmin, readOnly: true},
+	add(s, toolSpec{name: "database_connection", description: "Show how to reach a database: host, port, database and user. The password and connection string are never returned.", level: adminReadAccess, readOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in nameInput) (any, error) {
 			out, err := api.Connection(ctx, "databases", in.Name, false)
 			delete(out, "keys")
@@ -202,7 +210,11 @@ func (s *Server) register() {
 			if kind == "" {
 				kind = "apps"
 			}
-			return api.Metrics(ctx, kind, in.Name, in.Window)
+			window := in.Window
+			if window == "" {
+				window = defaultMetricsWindow
+			}
+			return api.Metrics(ctx, kind, in.Name, window)
 		})
 
 	add(s, toolSpec{name: "get_logs", description: "Read a service's recent log lines. Use level=error or search to narrow them.", level: sensitiveAccess, readOnly: true},
@@ -225,14 +237,21 @@ func (s *Server) register() {
 			return b.String(), nil
 		})
 
-	add(s, toolSpec{name: "list_variables", description: "List the names of a service's variables and secrets. Values are never returned.", level: sensitiveAccess, readOnly: true},
+	add(s, toolSpec{name: "list_variables", description: "List a service's variables: the names of its secrets, and its plain configuration with values. Secret values are never returned. Plain configuration is not secret, so keep anything sensitive in a secret.", level: sensitiveAccess, readOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in appInput) (any, error) {
 			return api.Variables(ctx, in.App)
 		})
 
-	add(s, toolSpec{name: "deployment_logs", description: "The build and deploy logs of one deployment. Read these when a deploy failed.", level: sensitiveAccess, readOnly: true},
+	add(s, toolSpec{name: "deployment_logs", description: "The build and deploy logs of one deployment. Read these when a deploy failed. Each stage is cut to its last 200 lines.", level: sensitiveAccess, readOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in deploymentLogsInput) (any, error) {
-			return api.DeploymentLogs(ctx, in.App, in.Deployment)
+			logs, err := api.DeploymentLogs(ctx, in.App, in.Deployment)
+			if err != nil {
+				return nil, err
+			}
+			for i := range logs.Sections {
+				logs.Sections[i].Lines = lastLines(logs.Sections[i].Lines, maxDeploymentLogLines)
+			}
+			return logs, nil
 		})
 
 	add(s, toolSpec{name: "deploy_app", description: "Deploy a service's pending changes. With wait=true, wait until it is ready or has failed and return the outcome, including why a build failed.", level: writeAccess},
@@ -259,7 +278,28 @@ func (s *Server) register() {
 			if in.IdleSeconds != 0 && (in.IdleSeconds < 30 || in.IdleSeconds > 86400) {
 				return nil, fmt.Errorf("idle_seconds must be between 30 and 86400")
 			}
-			return map[string]any{keyApp: in.App, "sleepWhenIdle": in.Enabled}, api.SetSleepWhenIdle(ctx, in.App, in.Enabled, in.IdleSeconds)
+			if err := api.SetSleepWhenIdle(ctx, in.App, in.Enabled, in.IdleSeconds); err != nil {
+				return nil, err
+			}
+			out := map[string]any{keyApp: in.App, "sleepWhenIdle": in.Enabled}
+			if !in.Enabled {
+				return out, nil
+			}
+			// The setting is saved at once, but the operator decides whether it takes effect: a service that cannot
+			// sleep keeps running, and the agent is told so instead of being told it sleeps.
+			state, err := api.WaitForSleep(ctx, in.App, client.WaitOptions{Timeout: s.opts.SleepCheckTimeout, Interval: s.opts.PollInterval})
+			if err != nil {
+				return nil, err
+			}
+			out["active"] = state.Active
+			if !state.Active {
+				out["reason"] = state.Message
+				if state.Message == "" {
+					out["reason"] = "the cluster has not said yet: call get_app and read resource.details.scaleToZero"
+				}
+				out["note"] = "saved, but the service cannot sleep when idle yet and stays running"
+			}
+			return out, nil
 		})
 
 	add(s, toolSpec{name: "set_function_trigger", description: "Call a function on a schedule, adding the schedule or replacing the one with the same name. The schedule starts once the function is next deployed (call deploy_app).", level: writeAccess, idempotent: true},
@@ -340,7 +380,13 @@ func (s *Server) register() {
 
 	add(s, toolSpec{name: "create_app", description: "Create a service from an image or a GitHub repository. It is saved as a draft unless deploy=true.", level: workspaceAdmin, workspaceOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in createAppInput) (any, error) {
-			fields := map[string]any{"project": in.Project, "environment": in.Environment, "name": in.Name, "draft": !in.Deploy}
+			fields := map[string]any{"project": in.Project, "environment": in.Environment, "name": in.Name}
+			// A service is a draft or it is deployed as it is saved, and the API takes the two to be different asks.
+			if in.Deploy {
+				fields["deploy"] = true
+			} else {
+				fields["draft"] = true
+			}
 			switch {
 			case in.Image != "":
 				fields["source"], fields["image"] = "image", in.Image
@@ -359,7 +405,12 @@ func (s *Server) register() {
 			if _, err := api.CreateApp(ctx, fields); err != nil {
 				return nil, err
 			}
-			return map[string]any{"created": in.Name, "draft": !in.Deploy}, nil
+			out := map[string]any{"created": in.Name, "draft": !in.Deploy}
+			if in.Deploy {
+				out["deploying"] = true
+				out["next"] = "call app_status to see how it is going"
+			}
+			return out, nil
 		})
 
 	if s.opts.AllowDelete {
@@ -376,6 +427,15 @@ func (s *Server) register() {
 				return map[string]any{"deleted": in.Name}, api.Delete(ctx, in.Kind, in.Name)
 			})
 	}
+}
+
+// lastLines keeps the last n lines of text, and says how many it left out.
+func lastLines(text string, n int) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) <= n {
+		return text
+	}
+	return fmt.Sprintf("... (%d earlier lines left out)\n%s", len(lines)-n, strings.Join(lines[len(lines)-n:], "\n"))
 }
 
 // listKind lists resources as {"items": [...]}.

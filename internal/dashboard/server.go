@@ -947,7 +947,14 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	environment := geassv1alpha1.GeassEnvironment(r.FormValue("environment"))
 	source := r.FormValue("source")
 	draft := formDraftRequested(r)
-	if !draft && project != "" && strings.TrimSpace(r.FormValue("name")) == "" && image == "" && source != "git" {
+	// deploy asks for the service to be deployed as soon as it is saved, the field a settings save takes to deploy
+	// at once. Without it a new service is saved as a draft and waits for a deploy, whatever draft says.
+	deployNow := r.FormValue(formDeploy) == "on"
+	if deployNow && draft {
+		redirectFormError(w, r, formProjectFallback(r, "/apps"), "A draft is not deployed: ask for a draft or for a deploy, not both")
+		return
+	}
+	if !draft && !deployNow && project != "" && strings.TrimSpace(r.FormValue("name")) == "" && image == "" && source != "git" {
 		draft = true
 	}
 	fallback = formProjectFallback(r, "/apps")
@@ -1070,6 +1077,11 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	app.Spec.Deploy.Enabled = false
 	initializeAppPendingChanges(app)
+	// A deploy is refused before anything is saved when the cluster has no room, as it is for a deploy of a draft:
+	// otherwise the caller would be left with a draft it did not ask for.
+	if deployNow && s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(app), s.appPlacement(r.Context(), app)) {
+		return
+	}
 	if err := s.Client.Create(r.Context(), app); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			redirectFormError(w, r, fallback, "app already exists")
@@ -1078,7 +1090,25 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
+	if deployNow {
+		s.deployCreatedApp(w, r, app, fallback)
+		return
+	}
 	redirectAfterResourceCreate(w, r, project, string(environment), "apps", name)
+}
+
+// deployCreatedApp deploys a service that has just been saved, and answers the request that created it. When the
+// deploy fails the service is left as the draft it was saved as, and the answer says so.
+func (s *Server) deployCreatedApp(w http.ResponseWriter, r *http.Request, app *geassv1alpha1.GeassApp, fallback string) {
+	if err := s.deployApp(r.Context(), app); err != nil {
+		redirectFormError(w, r, fallback, "The service was saved as a draft, but deploying it failed. Deploy it again from its page")
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": app.Name, "kind": "apps", "deployed": true})
+		return
+	}
+	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", app.Name, "deployments")
 }
 
 func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassApp) (string, error) {
@@ -1171,31 +1201,39 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request, name st
 	if s.rejectIfNoCapacityForPlacement(w, r, fallback, appDeployEstimate(app), s.appPlacement(r.Context(), app)) {
 		return
 	}
+	if err := s.deployApp(r.Context(), app); err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	if isHXRequest(r) || isJSONRequest(r) {
+		writeAppPendingJSON(w, app)
+		return
+	}
+	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
+}
+
+// deployApp deploys a service: it marks the service deployed, so the operator starts running it, and starts the
+// provision attempt and records the deployment that the service's history shows. The caller has already checked
+// that the request may deploy and that the cluster has room.
+func (s *Server) deployApp(ctx context.Context, app *geassv1alpha1.GeassApp) error {
 	markDeployed := func() error {
 		app.Spec.Deploy.Enabled = true
 		clearAppPendingChanges(app)
 		return platform.SetLastDeployedSpec(app)
 	}
 	if err := markDeployed(); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+		return err
 	}
-	if err := s.updateReapplying(r.Context(), app, markDeployed); err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+	if err := s.updateReapplying(ctx, app, markDeployed); err != nil {
+		return err
 	}
-	_ = s.startProvisionAttempt(r.Context(), client.ObjectKeyFromObject(app), app)
-	deploymentName, err := s.recordDeployment(r.Context(), app)
+	_ = s.startProvisionAttempt(ctx, client.ObjectKeyFromObject(app), app)
+	deploymentName, err := s.recordDeployment(ctx, app)
 	if err != nil {
-		redirectFormInternalError(w, r, fallback)
-		return
+		return err
 	}
-	s.attachAppProvisionAttemptRefs(r.Context(), name, deploymentName, s.latestAppBuildName(r.Context(), name))
-	if isHXRequest(r) || isJSONRequest(r) {
-		writeAppPendingJSON(w, app)
-		return
-	}
-	redirectAfterResourceUpdate(w, r, app.Spec.Project, string(app.Spec.Environment), "apps", name, "deployments")
+	s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app.Name))
+	return nil
 }
 
 func (s *Server) appFromForm(name, image string, r *http.Request) *geassv1alpha1.GeassApp {

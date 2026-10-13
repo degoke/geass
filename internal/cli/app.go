@@ -51,6 +51,9 @@ type App struct {
 	Version string
 	// PollInterval is how often --wait reads a service's status; zero uses the client's default.
 	PollInterval time.Duration
+	// SleepCheckTimeout is how long `scale --sleep-after` waits for the operator to say whether the service can
+	// sleep; zero is ten seconds.
+	SleepCheckTimeout time.Duration
 
 	// Set by the flags of each run.
 	flags struct {
@@ -154,9 +157,11 @@ func friendly(err error) string {
 // Root builds the command tree.
 func (a *App) Root() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "geass",
-		Short:         "Deploy and run services on Geass",
-		Long:          "geass deploys and runs services, databases and buckets on a Geass cluster, and lets scripts and agents do the same.\n\nSign in with `geass login`. Every command takes --json for output a program can read.",
+		Use:   "geass",
+		Short: "Deploy and run services on Geass",
+		Long: "geass deploys and runs services, databases and buckets on a Geass cluster, and lets scripts and agents do the same.\n\n" +
+			"Sign in with `geass login`. Commands that print data (lists, statuses, logs, details) take --json for output a program can read.\n" +
+			"Commands that change something report on standard error and by exit code, whatever --json says.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       a.Version,
@@ -167,7 +172,7 @@ func (a *App) Root() *cobra.Command {
 	pf.StringVar(&a.flags.token, "token", "", "an API token, overriding the saved one ($GEASS_TOKEN)")
 	pf.StringVarP(&a.flags.project, "project", "p", "", "the project ($GEASS_PROJECT)")
 	pf.StringVarP(&a.flags.environment, "environment", "e", "", "the environment, such as production ($GEASS_ENVIRONMENT)")
-	pf.BoolVar(&a.flags.json, "json", false, "print JSON, for programs")
+	pf.BoolVar(&a.flags.json, "json", false, "print JSON, for programs (only commands that print data take it; see geass --help)")
 	pf.BoolVarP(&a.flags.yes, "yes", "y", false, "do not ask before deleting")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &exitError{ExitUsage, err} })
 
@@ -217,7 +222,7 @@ func (a *App) api() (*client.Client, Resolved, error) {
 		return nil, resolved, &exitError{ExitDenied, errors.New("not signed in: run `geass login --url https://your-geass-address`")}
 	}
 	if resolved.Token == "" {
-		return nil, resolved, &exitError{ExitDenied, fmt.Errorf("not signed in to %s: run `geass login`", resolved.URL)}
+		return nil, resolved, &exitError{ExitDenied, fmt.Errorf("not signed in to %s: run `geass login --url %s`", resolved.URL, resolved.URL)}
 	}
 	return a.NewClient(resolved.URL, resolved.Token), resolved, nil
 }

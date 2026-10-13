@@ -19,7 +19,7 @@ func (a *App) appsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "apps", Aliases: []string{"app", "services", "service"}, Short: "Manage services"}
 	cmd.AddCommand(
 		a.listCmd("apps", "list", "ls"), a.getCmd("apps", "get NAME"),
-		a.statusCmd(), a.deployCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(),
+		a.statusCmd(), a.deployCmd(), a.deploymentsCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(),
 		a.createAppCmd(), a.deleteCmd("apps"),
 	)
 	return cmd
@@ -218,8 +218,11 @@ func (a *App) logsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs APP",
 		Short: "Show a service's logs, or follow them",
-		Long:  "Show a service's recent logs. With -f, keep following them as they are written, across restarts.\n\nReading logs needs a token that may (an admin, or a read-only token \"with logs\").",
-		Args:  usageArgs(cobra.ExactArgs(1)),
+		Long: "Show a service's recent logs. With -f, keep following them as they are written, across restarts.\n\n" +
+			"--tail is how many of the newest lines to show. The dashboard reads that many from the end of each copy's log\n" +
+			"before it applies --level and --search, so a filter looks through the most recent lines: raise --tail to look further back.\n\n" +
+			"Reading logs needs an admin token, a project token, or a read-only token \"with logs\".",
+		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, _, err := a.api()
 			if err != nil {
@@ -248,6 +251,9 @@ func (a *App) logsCmd() *cobra.Command {
 					return err
 				}
 			}
+			if len(lines) == 0 && !a.flags.json {
+				a.note("No log lines matched.")
+			}
 			return nil
 		},
 	}
@@ -273,7 +279,9 @@ func (a *App) envCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env",
 		Short: "List, set and remove a service's variables",
-		Long:  "Variables are changes like any other: they apply when the service is next deployed, unless you pass --deploy.\nValues are never shown, only names.",
+		Long: "Variables are changes like any other: they apply when the service is next deployed, unless you pass --deploy.\n" +
+			"The list shows names only. Secret values are never returned. Plain configuration is not secret, so `env list --json`\n" +
+			"includes its values: keep anything sensitive in a secret with --secret.",
 	}
 	var secret, deploy, wait bool
 	list := &cobra.Command{
@@ -418,12 +426,16 @@ func (a *App) scaleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var cannotSleep error
 			if sleeping || alwaysOn {
 				if err := api.SetSleepWhenIdle(cmd.Context(), args[0], sleeping, int(sleepAfter.Seconds())); err != nil {
 					return err
 				}
 				if sleeping {
-					a.printf("%s sleeps after %s without requests\n", args[0], sleepAfter)
+					cannotSleep, err = a.confirmSleep(cmd.Context(), api, args[0], sleepAfter)
+					if err != nil {
+						return err
+					}
 				} else {
 					a.printf("%s stays running\n", args[0])
 				}
@@ -434,7 +446,7 @@ func (a *App) scaleCmd() *cobra.Command {
 				}
 				a.printf("%s scaled to %d\n", args[0], replicas)
 			}
-			return nil
+			return cannotSleep
 		},
 	}
 	cmd.Flags().DurationVar(&sleepAfter, "sleep-after", 0, "stop the service after this long without requests, such as 10m")
@@ -447,7 +459,7 @@ func (a *App) rollbackCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rollback APP [DEPLOYMENT]",
 		Short: "Go back to an earlier deployment (the previous one by default)",
-		Long:  "Go back to an earlier deployment. See `geass apps get APP` and the deployment history in the dashboard for ids.\nFunctions cannot be rolled back: restore the earlier code and deploy again.",
+		Long:  "Go back to an earlier deployment. `geass apps deployments APP` lists them, newest first, with the ids this takes.\nFunctions cannot be rolled back: restore the earlier code and deploy again.",
 		Args:  usageArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, _, err := a.api()
@@ -485,6 +497,63 @@ func (a *App) rollbackCmd() *cobra.Command {
 	return cmd
 }
 
+// confirmSleep reads back whether a service that was just told to sleep when idle can. The setting is saved at
+// once, but the operator decides whether it takes effect, and a service that cannot sleep stays running: saying
+// it sleeps would be false. It returns an error for the caller to end with when it cannot, once the rest of what
+// was asked has been done.
+func (a *App) confirmSleep(ctx context.Context, api *client.Client, app string, after time.Duration) (cannotSleep, err error) {
+	state, err := api.WaitForSleep(ctx, app, client.WaitOptions{Timeout: a.SleepCheckTimeout, Interval: a.PollInterval})
+	if err != nil {
+		return nil, err
+	}
+	if state.Active {
+		a.printf("%s sleeps after %s without requests\n", app, after)
+		return nil, nil
+	}
+	reason := state.Message
+	if reason == "" {
+		reason = "the cluster has not said yet; see `geass apps get " + app + "` for scaleToZero"
+	}
+	return fmt.Errorf("saved, but %s cannot sleep when idle and stays running: %s", app, reason), nil
+}
+
+// ---- deployments ----
+
+func (a *App) deploymentsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "deployments APP",
+		Short: "List a service's deployments, newest first",
+		Long: "List a service's deployment history, newest first. The newest is the one running. The ID of an entry is what\n" +
+			"`geass rollback APP DEPLOYMENT` takes. A rollback adds an entry of its own.",
+		Example: "  geass apps deployments web\n  geass rollback web web-7x2kq",
+		Args:    usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, _, err := a.api()
+			if err != nil {
+				return err
+			}
+			history, err := api.Deployments(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if a.flags.json {
+				if history == nil {
+					history = []client.Deployment{}
+				}
+				return a.printJSON(map[string]any{"items": history})
+			}
+			rows := make([][]string, 0, len(history))
+			for _, deployment := range history {
+				rows = append(rows, []string{
+					deployment.ID, dash(deployment.Phase), age(deployment.CreatedAt), dash(deployment.Trigger), dash(deployment.Actor), dash(deployment.ChangeTitle),
+				})
+			}
+			a.printTable([]string{"ID", "PHASE", "AGE", "TRIGGER", "ACTOR", "CHANGE"}, rows)
+			return nil
+		},
+	}
+}
+
 // ---- create, delete ----
 
 func (a *App) createAppCmd() *cobra.Command {
@@ -506,7 +575,13 @@ func (a *App) createAppCmd() *cobra.Command {
 			if resolved.Project == "" || resolved.Environment == "" {
 				return usageError("give --project and --environment")
 			}
-			fields := map[string]any{"project": resolved.Project, "environment": resolved.Environment, "name": args[0], "draft": !deploy}
+			fields := map[string]any{"project": resolved.Project, "environment": resolved.Environment, "name": args[0]}
+			// A service is a draft or it is deployed as it is saved, and the API takes the two to be different asks.
+			if deploy {
+				fields["deploy"] = true
+			} else {
+				fields["draft"] = true
+			}
 			switch {
 			case image != "":
 				fields["source"], fields["image"] = "image", image

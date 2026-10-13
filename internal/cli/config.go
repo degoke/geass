@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -119,16 +121,66 @@ type Resolved struct {
 
 // Resolve combines, in order of precedence, the flags, the environment and the saved context. A flag is
 // whatever the person typed; GEASS_URL, GEASS_TOKEN, GEASS_PROJECT and GEASS_ENVIRONMENT are for scripts.
+//
+// A saved login belongs to the address it was made for. When --url or GEASS_URL points somewhere else, the
+// chosen login does not apply there: a login saved for that address is used if there is one, and none
+// otherwise. Without this the saved token, which only the address it was issued for should ever see, would be
+// sent to whatever address was typed, and a saved project and environment would be applied to a Geass they
+// are not from. A token given with --token or GEASS_TOKEN is the person's own choice for this run and is used
+// as it is.
 func (c Config) Resolve(flags Resolved, contextFlag string, getenv func(string) string) Resolved {
 	name := firstSet(contextFlag, getenv("GEASS_CONTEXT"), c.Current)
 	saved := c.Contexts[name]
+	address := strings.TrimRight(firstSet(flags.URL, getenv("GEASS_URL"), saved.URL), "/")
+	if !sameAddress(saved.URL, address) {
+		name, saved = c.contextForAddress(address)
+	}
 	return Resolved{
 		ContextName: name,
-		URL:         strings.TrimRight(firstSet(flags.URL, getenv("GEASS_URL"), saved.URL), "/"),
+		URL:         address,
 		Token:       firstSet(flags.Token, getenv("GEASS_TOKEN"), saved.Token),
 		Project:     firstSet(flags.Project, getenv("GEASS_PROJECT"), saved.Project),
 		Environment: firstSet(flags.Environment, getenv("GEASS_ENVIRONMENT"), saved.Environment),
 	}
+}
+
+// contextForAddress is the saved login made for an address, or none (an empty name and login). When several were
+// made for it, the first by name is used, so the choice does not change from one run to the next.
+func (c Config) contextForAddress(address string) (string, Context) {
+	for _, name := range c.ContextNames() {
+		if sameAddress(c.Contexts[name].URL, address) {
+			return name, c.Contexts[name]
+		}
+	}
+	return "", Context{}
+}
+
+// sameAddress reports whether two Geass addresses are the same place: the same scheme, host and port, and path.
+// The scheme counts: a token issued for an address over HTTPS must not be sent to it over plain HTTP.
+func sameAddress(a, b string) bool {
+	a, b = normalizeAddress(a), normalizeAddress(b)
+	return a != "" && a == b
+}
+
+// normalizeAddress writes an address one way, so that spellings of the same place compare equal: a host in
+// any case, a port that is the scheme's default, and a trailing slash are all the same as without them.
+func normalizeAddress(address string) string {
+	address = strings.TrimSpace(address)
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Host == "" {
+		return strings.ToLower(strings.TrimRight(address, "/"))
+	}
+	scheme, host, port := strings.ToLower(parsed.Scheme), strings.ToLower(parsed.Hostname()), parsed.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	switch {
+	case port != "":
+		host = net.JoinHostPort(host, port)
+	case strings.Contains(host, ":"):
+		host = "[" + host + "]"
+	}
+	return scheme + "://" + host + strings.TrimRight(parsed.EscapedPath(), "/")
 }
 
 func firstSet(values ...string) string {

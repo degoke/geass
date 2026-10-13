@@ -172,8 +172,29 @@ func TestReadOnlyModeHidesWritesEvenFromAnAdmin(t *testing.T) {
 	names := toolNames(t, session)
 
 	require.Contains(t, names, "get_logs")
-	for _, hidden := range []string{"deploy_app", "scale_app", "set_variable", "create_app", "delete_resource", "database_connection", "set_function_trigger", "invoke_function"} {
+	for _, hidden := range []string{"deploy_app", "scale_app", "set_variable", "create_app", "delete_resource", "set_function_trigger", "invoke_function"} {
 		require.NotContains(t, names, hidden)
+	}
+	require.Contains(t, names, "database_connection", "it changes nothing, and read-only mode hides what changes things")
+}
+
+func TestOnlyAnAdminSeesDatabaseConnectionEvenWhenItIsReadOnly(t *testing.T) {
+	for name, tt := range map[string]struct {
+		me       map[string]any
+		readOnly bool
+		want     bool
+	}{
+		"an admin":                   {admin(), false, true},
+		"an admin in read-only mode": {admin(), true, true},
+		"an observer":                {observer(), false, false},
+		"a viewer":                   {viewer(), false, false},
+		"a project token":            {projectToken(), false, false},
+		"a project token read-only":  {projectToken(), true, false},
+	} {
+		api := (&stub{me: tt.me}).serve(t)
+		_, session := connect(t, Options{Client: api, ReadOnly: tt.readOnly})
+
+		require.Equal(t, tt.want, slices.Contains(toolNames(t, session), "database_connection"), name)
 	}
 }
 
@@ -258,15 +279,26 @@ func TestARefusalTellsTheAgentNotToRetry(t *testing.T) {
 	require.Contains(t, text, "do not retry")
 }
 
+// realLogsAnswer is what the dashboard sends for a service's logs: the lines under "lines", an entry each,
+// beside the services the project has and a note. (The tool once looked under "logs", which is not there, and
+// its stub answered under "logs" too, so it returned nothing and no test noticed.)
+func realLogsAnswer(lines ...map[string]any) map[string]any {
+	return map[string]any{
+		"lines": lines, "services": []string{"web"}, "truncated": false,
+		"note": "These are the logs the nodes still hold. Output from pods that have been replaced or deleted is not kept.",
+	}
+}
+
 func TestLogsAreReturnedAsPlainLines(t *testing.T) {
 	var logsQuery string
 	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
 		switch r.URL.Path {
-		case "/api/v1/apps/web/status":
-			respond(w, 200, map[string]any{"name": "web", "project": "shop", "environment": "production"})
-		case "/api/v1/projects/shop/logs":
+		case "/api/v1/apps/web/logs":
 			logsQuery = r.URL.RawQuery
-			respond(w, 200, map[string]any{"logs": []map[string]any{{"t": "2026-01-01T10:00:00Z", "pod": "web-1", "line": "listening on 8080"}}})
+			respond(w, 200, realLogsAnswer(
+				map[string]any{"t": "2026-01-01T10:00:00Z", "service": "web", "pod": "web-1", "container": "app", "line": "listening on 8080", "level": "info"},
+				map[string]any{"t": "2026-01-01T10:00:01Z", "service": "web", "pod": "web-2", "container": "app", "line": "Error: boom", "level": "error"},
+			))
 		default:
 			return false
 		}
@@ -276,13 +308,156 @@ func TestLogsAreReturnedAsPlainLines(t *testing.T) {
 
 	text, isError := call(t, session, "get_logs", map[string]any{"app": "web", "level": "error", "tail": 9999})
 
-	require.False(t, isError)
-	require.Equal(t, "2026-01-01T10:00:00Z web-1 listening on 8080\n", text)
+	require.False(t, isError, text)
+	require.Equal(t, "2026-01-01T10:00:00Z web-1 listening on 8080\n2026-01-01T10:00:01Z web-2 Error: boom\n", text)
 	require.Contains(t, logsQuery, "tail=500", "an agent cannot ask for an unbounded amount")
 	require.Contains(t, logsQuery, "level=error")
+	require.NotContains(t, logsQuery, "service=", "the route is the service's own: it needs no project or environment")
 
 	empty, _ := call(t, session, "get_logs", map[string]any{"app": "ghost"})
 	require.NotEmpty(t, empty)
+}
+
+func TestLogsAreBoundedToTheTailWhateverTheServiceSends(t *testing.T) {
+	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		entries := make([]map[string]any, 0, 8)
+		for i := range 8 {
+			entries = append(entries, map[string]any{"t": "2026-01-01T10:00:0" + string(rune('0'+i)) + "Z", "pod": "web-1", "line": "line " + string(rune('0'+i))})
+		}
+		respond(w, 200, realLogsAnswer(entries...))
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "get_logs", map[string]any{"app": "web", "tail": 3})
+
+	require.False(t, isError)
+	require.Equal(t, 3, strings.Count(text, "\n"), "three lines even though the dashboard counts the tail per copy: %q", text)
+	require.Contains(t, text, "line 7")
+	require.NotContains(t, text, "line 4")
+}
+
+func TestNoLogLinesSaysSo(t *testing.T) {
+	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		respond(w, 200, realLogsAnswer())
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "get_logs", map[string]any{"app": "web"})
+
+	require.False(t, isError)
+	require.Equal(t, "No log lines matched.", text)
+}
+
+func TestAProjectTokenCanReadLogs(t *testing.T) {
+	api := (&stub{me: projectToken(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/apps/web/logs" {
+			return false
+		}
+		respond(w, 200, realLogsAnswer(map[string]any{"t": "2026-01-01T10:00:00Z", "pod": "web-1", "line": "hello"}))
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "get_logs", map[string]any{"app": "web"})
+
+	require.False(t, isError, "the tool is offered to a project token, so it has to work for one: %s", text)
+	require.Contains(t, text, "hello")
+}
+
+func TestDeploymentLogsAreReadAsTheDashboardSendsThem(t *testing.T) {
+	var path string
+	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		path = r.URL.Path
+		// Each section's lines are one block of text. The tool once read them as a list and failed whenever a
+		// section had any.
+		_, _ = w.Write([]byte(`{"id":"web-7x2kq","sections":[` +
+			`{"id":"provision","title":"Provision","lines":"Provisioning failed\nimage pull failed"},` +
+			`{"id":"build","title":"Build","lines":"Kaniko completed without an immutable image digest"}]}`))
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "deployment_logs", map[string]any{"app": "web", "deployment": "web-7x2kq"})
+
+	require.False(t, isError, text)
+	require.Equal(t, "/api/v1/apps/web/deployments/web-7x2kq/logs", path)
+	var out struct {
+		ID       string `json:"id"`
+		Sections []struct {
+			ID    string `json:"id"`
+			Lines string `json:"lines"`
+		} `json:"sections"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(text), &out), text)
+	require.Equal(t, "web-7x2kq", out.ID)
+	require.Len(t, out.Sections, 2)
+	require.Equal(t, "Provisioning failed\nimage pull failed", out.Sections[0].Lines)
+	require.Contains(t, out.Sections[1].Lines, "immutable image digest")
+}
+
+func TestLongDeploymentLogsKeepTheirEndWhereAFailureIs(t *testing.T) {
+	var build strings.Builder
+	for i := 1; i <= 1000; i++ {
+		build.WriteString("step " + strings.Repeat("x", 10) + " " + string(rune('a'+i%26)) + "\n")
+	}
+	build.WriteString("ERROR: the build failed here")
+	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		respond(w, 200, map[string]any{"id": "d", "sections": []map[string]any{{"id": "build", "title": "Build", "lines": build.String()}}})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "deployment_logs", map[string]any{"app": "web", "deployment": "d"})
+
+	require.False(t, isError)
+	require.Contains(t, text, "ERROR: the build failed here", "a result that is cut would otherwise lose it")
+	require.Contains(t, text, "earlier lines left out")
+	require.Less(t, len(text), maxResultSize)
+}
+
+func TestLastLinesKeepsTheEndAndSaysWhatItLeftOut(t *testing.T) {
+	require.Equal(t, "a\nb", lastLines("a\nb", 5), "short text is as it was")
+	require.Equal(t, "a\nb\n", lastLines("a\nb\n", 2), "and so is text that fits exactly")
+	require.Equal(t, "... (2 earlier lines left out)\nc\nd", lastLines("a\nb\nc\nd", 2))
+}
+
+func TestMetricsAreForAnHourWhenTheAgentSaysNothingElse(t *testing.T) {
+	var queries []string
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+		respond(w, 200, map[string]any{"window": "1h", "step": 60, "available": true, "series": map[string]any{}})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	_, isError := call(t, session, "app_metrics", map[string]any{"name": "web"})
+	require.False(t, isError)
+	_, isError = call(t, session, "app_metrics", map[string]any{"name": "web", "window": "6h"})
+	require.False(t, isError)
+	_, isError = call(t, session, "app_metrics", map[string]any{"name": "shop", "kind": "projects"})
+	require.False(t, isError)
+
+	require.Equal(t, []string{
+		"/api/v1/apps/web/metrics?window=1h", "/api/v1/apps/web/metrics?window=6h", "/api/v1/projects/shop/metrics?window=1h",
+	}, queries, "the tool says 1h is the default, and the API's own default is 15m")
+}
+
+func TestTheMetricsToolSaysWhatItDoes(t *testing.T) {
+	api := (&stub{me: admin()}).serve(t)
+	_, session := connect(t, Options{Client: api})
+	listed, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	for _, tool := range listed.Tools {
+		if tool.Name != "app_metrics" {
+			continue
+		}
+		schema, err := json.Marshal(tool.InputSchema)
+		require.NoError(t, err)
+		require.Contains(t, string(schema), "1h (default)", "and the tool now does")
+	}
 }
 
 func TestDeployingWithWaitReturnsTheOutcome(t *testing.T) {
@@ -367,10 +542,25 @@ func TestSettingAVariableIsPendingUntilDeployed(t *testing.T) {
 	require.NotContains(t, text, "debug", "the value is not echoed back")
 }
 
+// sleepDetail is the answer for a service that asked to sleep when idle, as the dashboard describes it once the
+// operator has looked: active, or not with the reason.
+func sleepDetail(active bool, message string) map[string]any {
+	return map[string]any{
+		"resource": map[string]any{"kind": "app", "name": "web", "state": "ready", "details": map[string]any{
+			"scaleToZero": map[string]any{"idleSeconds": 600, "maxReplicas": 3, "active": active, "message": message},
+		}},
+		"spec": map[string]any{}, "status": map[string]any{},
+	}
+}
+
 func TestSleepWhenIdleIsASettingNotAScale(t *testing.T) {
 	var method, path string
 	var body map[string]any
 	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet {
+			respond(w, 200, sleepDetail(true, "Sleeps when idle"))
+			return true
+		}
 		method, path = r.Method, r.URL.Path
 		body = nil
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -379,8 +569,10 @@ func TestSleepWhenIdleIsASettingNotAScale(t *testing.T) {
 	}}).serve(t)
 	_, session := connect(t, Options{Client: api, PollInterval: time.Millisecond})
 
-	_, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": true, "idle_seconds": 600})
+	text, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": true, "idle_seconds": 600})
 	require.False(t, isError)
+	require.Contains(t, text, `"active": true`)
+	require.NotContains(t, text, "cannot sleep")
 	require.Equal(t, "PATCH /api/v1/apps/web", method+" "+path)
 	require.Equal(t, map[string]any{"scaleToZero": "on", "idleSeconds": float64(600)}, body)
 
@@ -514,4 +706,154 @@ func TestInstructionsTellTheAgentWhatItMayDo(t *testing.T) {
 	require.Contains(t, instructions(client.Identity{CanMutate: true}, Options{}), "deploy_app")
 	require.Contains(t, instructions(client.Identity{CanMutate: true, Scope: "project", Project: "shop", Environment: "production"}, Options{}), "shop/production")
 	require.Contains(t, instructions(client.Identity{CanMutate: true}, Options{ReadOnly: true}), "only read")
+}
+
+func TestAServiceThatCannotSleepIsReportedAsSuch(t *testing.T) {
+	var patched bool
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet {
+			respond(w, 200, sleepDetail(false, "The serverless add-on is not installed"))
+			return true
+		}
+		patched = true
+		respond(w, 200, map[string]any{"ok": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api, PollInterval: time.Millisecond, SleepCheckTimeout: 30 * time.Millisecond})
+
+	text, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": true})
+
+	require.False(t, isError, "the setting was saved, so this is an outcome to read")
+	require.True(t, patched)
+	require.Contains(t, text, `"active": false`)
+	require.Contains(t, text, "The serverless add-on is not installed", "and why, which is what the agent has to act on")
+	require.Contains(t, text, "stays running")
+}
+
+func TestAnUnconfirmedSleepIsNotReportedAsActive(t *testing.T) {
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		respond(w, 200, map[string]any{"ok": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api, PollInterval: time.Millisecond, SleepCheckTimeout: 30 * time.Millisecond})
+
+	text, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": true})
+
+	require.False(t, isError)
+	require.Contains(t, text, `"active": false`)
+	require.Contains(t, text, "scaleToZero", "it says where to look")
+}
+
+func TestKeepingAServiceRunningNeedsNoCheck(t *testing.T) {
+	var gets atomic.Int32
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet {
+			gets.Add(1)
+		}
+		respond(w, 200, map[string]any{"ok": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": false})
+
+	require.False(t, isError)
+	require.Contains(t, text, `"sleepWhenIdle": false`)
+	require.Zero(t, gets.Load())
+}
+
+func TestCreatingAnAppWithDeployAsksTheAPIToDeployIt(t *testing.T) {
+	var body map[string]any
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		respond(w, 200, map[string]any{"ok": true, "name": "web", "kind": "apps", "deployed": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "create_app", map[string]any{"project": "shop", "environment": "production", "name": "web", "image": "nginx:alpine", "deploy": true})
+
+	require.False(t, isError, text)
+	require.Equal(t, true, body["deploy"])
+	require.NotContains(t, body, "draft", "the API takes a draft and a deploy as different asks")
+	require.Contains(t, text, `"draft": false`, "which is now true")
+	require.Contains(t, text, `"deploying": true`)
+	require.Contains(t, text, "app_status")
+}
+
+func TestCreatingAnAppWithoutDeployAsksForADraft(t *testing.T) {
+	var body map[string]any
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		respond(w, 200, map[string]any{"ok": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "create_app", map[string]any{"project": "shop", "environment": "production", "name": "web", "repository": "acme/web"})
+
+	require.False(t, isError, text)
+	require.Equal(t, true, body["draft"])
+	require.NotContains(t, body, "deploy")
+	require.Contains(t, text, `"draft": true`)
+	require.NotContains(t, text, "deploying")
+}
+
+func TestVariableToolsSayPlainConfigurationIsNotHidden(t *testing.T) {
+	api := (&stub{me: admin()}).serve(t)
+	_, session := connect(t, Options{Client: api})
+	listed, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	descriptions := map[string]string{}
+	for _, tool := range listed.Tools {
+		descriptions[tool.Name] = tool.Description
+	}
+
+	require.NotContains(t, descriptions["list_variables"], "Values are never returned")
+	require.Contains(t, descriptions["list_variables"], "Secret values are never returned")
+	require.Contains(t, descriptions["list_variables"], "plain configuration")
+	require.NotContains(t, descriptions["get_app"], "Variable values are never included")
+	require.Contains(t, descriptions["get_app"], "Secret values are never included")
+
+	text := instructions(client.Identity{CanMutate: true}, Options{})
+	require.Contains(t, text, "Secret values are never returned by any tool")
+	require.Contains(t, text, "Plain configuration is not secret")
+}
+
+// The documentation gives how many tools each kind of token sees, so the numbers are pinned here: a tool added
+// or a rule changed has to change them, and the docs with them.
+func TestHowManyToolsEachKindOfTokenSees(t *testing.T) {
+	for name, tt := range map[string]struct {
+		me      map[string]any
+		options Options
+		count   int
+	}{
+		"a viewer":                          {me: viewer(), count: 12},
+		"an observer":                       {me: observer(), count: 15},
+		"a project token":                   {me: projectToken(), count: 18},
+		"an admin":                          {me: admin(), count: 26},
+		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 27},
+		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 16},
+		"a project token in read-only mode": {me: projectToken(), options: Options{ReadOnly: true}, count: 9},
+	} {
+		tt.options.Client = (&stub{me: tt.me}).serve(t)
+		server, err := New(context.Background(), tt.options)
+		require.NoError(t, err)
+
+		require.Len(t, server.Tools(), tt.count, name)
+	}
+}
+
+func TestAnAdminInReadOnlyModeSeesWhatAnObserverSeesAndTheConnection(t *testing.T) {
+	observed, err := New(context.Background(), Options{Client: (&stub{me: observer()}).serve(t)})
+	require.NoError(t, err)
+	readOnly, err := New(context.Background(), Options{Client: (&stub{me: admin()}).serve(t), ReadOnly: true})
+	require.NoError(t, err)
+
+	want := append(observed.Tools(), "database_connection")
+	slices.Sort(want)
+	got := readOnly.Tools()
+	slices.Sort(got)
+
+	require.Equal(t, want, got)
 }
