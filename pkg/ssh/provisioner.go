@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,13 +16,18 @@ import (
 
 type Provisioner interface {
 	Provision(ctx context.Context, in ProvisionInput) error
-	Drain(ctx context.Context, host string, sshKey []byte, user string) error
+	// Drain uninstalls the k3s agent from the machine. It connects the way Provision does, so only the
+	// connection fields of in are used: Host, Port, User, PrivateKey and KnownHosts.
+	Drain(ctx context.Context, in ProvisionInput) error
 }
 
 type ProvisionInput struct {
 	Host, User string
 	Port       int
 	PrivateKey []byte
+	// KnownHosts holds the host keys the machine may present, in the format `ssh-keyscan` prints. When it
+	// is set a machine with any other key is refused; when it is empty the host key is not checked.
+	KnownHosts []byte
 	K3sVersion string
 	ServerURL  string
 	Token      string
@@ -123,13 +130,49 @@ func rootSteps(in ProvisionInput) []provisionStep {
 }
 
 // reachabilityCommand checks that the cluster's API answers from this node. k3s's /ping needs no
-// credentials.
+// credentials. A failure says why, from what curl reports: the commonest causes (a stored address no
+// other machine can use, a closed port, a name that does not resolve) look the same from k3s's own
+// failure, which is a service that restarts forever.
 func reachabilityCommand(in ProvisionInput) string {
-	hint := "cannot reach the cluster API at " + in.ServerURL + " from this node: open TCP 6443 to it"
-	if in.MultiSite {
-		hint += " (and UDP " + platform.WireGuardPort + " between every pair of nodes), including in the provider's security group"
+	var script strings.Builder
+	fmt.Fprintf(&script, "out=$(curl -sk --max-time 15 %s 2>/dev/null); rc=$?\n", shellQuote(in.ServerURL+"/ping"))
+	script.WriteString("case \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n")
+	for _, failure := range reachabilityFailures(in) {
+		fmt.Fprintf(&script, "%s) why=%s ;;\n", failure.curlExit, shellQuote(failure.message))
 	}
-	return fmt.Sprintf(`curl -sk --max-time 15 %s/ping | grep -q pong || { echo %q >&2; exit 1; }`, in.ServerURL, hint)
+	script.WriteString("esac\necho \"$why (curl exit code $rc)\" >&2\nexit 1")
+	return script.String()
+}
+
+type reachabilityFailure struct {
+	// curlExit is a curl exit status, or * for any other.
+	curlExit string
+	message  string
+}
+
+func reachabilityFailures(in ProvisionInput) []reachabilityFailure {
+	url := in.ServerURL
+	lead := "cannot reach the cluster API at " + url + " from this node: "
+	check := "Check that spec.serverURL on the GeassCluster is the control plane's address on a network this node can reach"
+	ports := "and that TCP 6443 is open to this node, in the host firewall and in the provider's security group."
+	if in.MultiSite {
+		ports = strings.TrimSuffix(ports, ".") + ", with UDP " + platform.WireGuardPort + " open between every pair of nodes."
+	}
+
+	if platform.IsLoopbackURL(url) {
+		// Whatever curl said, this is the cause: no machine but the control plane itself can use this address.
+		message := lead + "spec.serverURL on the GeassCluster is a loopback address, which means this node itself to anything " +
+			"that connects to it. Set it to the control plane's private address, or its public address when the nodes " +
+			"share no private network, then delete this node and create it again."
+		return []reachabilityFailure{{"*", message}}
+	}
+	return []reachabilityFailure{
+		{"0", lead + "something answered, but it is not a K3s API server (no pong from /ping). " + check + "."},
+		{"6", lead + "the host name does not resolve from here. " + check + "."},
+		{"7", lead + "the connection was refused: nothing listens at that address and port, or a firewall rejects it. " + check + ", " + ports},
+		{"28", lead + "the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. " + check + ", " + ports},
+		{"*", lead + check + ", " + ports},
+	}
 }
 
 // wireGuardCommand makes sure the kernel can create a WireGuard interface, which the encrypted overlay
@@ -153,22 +196,24 @@ elif command -v firewall-cmd >/dev/null 2>&1 && [ "$(firewall-cmd --state 2>/dev
   firewall-cmd --permanent --add-port=` + platform.WireGuardPort + `/udp --add-port=10250/tcp && firewall-cmd --reload
 fi`
 
-func (p *sshProvisioner) Drain(ctx context.Context, host string, key []byte, user string) error {
-	client, err := dial(ctx, ProvisionInput{
-		Host: host, User: user, PrivateKey: key, Port: 22,
-	})
+func (p *sshProvisioner) Drain(ctx context.Context, in ProvisionInput) error {
+	client, err := dial(ctx, in)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
-	return runStep(ctx, client, "uninstall-k3s", asRoot(user, "/usr/local/bin/k3s-agent-uninstall.sh || true"))
+	return runStep(ctx, client, "uninstall-k3s", asRoot(in.User, "/usr/local/bin/k3s-agent-uninstall.sh || true"))
 }
 
 func dial(_ context.Context, in ProvisionInput) (*gossh.Client, error) {
 	signer, err := gossh.ParsePrivateKey(in.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse key: %w", err)
+	}
+	hostKey, err := hostKeyCallback(in.KnownHosts)
+	if err != nil {
+		return nil, err
 	}
 
 	port := in.Port
@@ -179,11 +224,10 @@ func dial(_ context.Context, in ProvisionInput) (*gossh.Client, error) {
 	cfg := &gossh.ClientConfig{
 		User:            in.User,
 		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKey,
 		Timeout:         30 * time.Second,
 	}
-	addr := fmt.Sprintf("%s:%d", in.Host, port)
-	return gossh.Dial("tcp", addr, cfg)
+	return gossh.Dial("tcp", net.JoinHostPort(in.Host, strconv.Itoa(port)), cfg)
 }
 
 func runStep(ctx context.Context, client *gossh.Client, name, cmd string) error {

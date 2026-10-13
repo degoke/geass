@@ -2,13 +2,18 @@ package installer
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/degoke/geass/pkg/platform"
 )
 
-const firewallFirewalld = "firewalld"
+const (
+	firewallFirewalld = "firewalld"
+	firewallIPTables  = "iptables"
+)
 
 type firewallPort struct {
 	port     string
@@ -16,17 +21,22 @@ type firewallPort struct {
 	desc     string
 }
 
-// k3sPorts are the ports the control plane host must accept. The overlay's port depends on the network:
-// WireGuard for a multi-site cluster, whose traffic crosses the internet, and VXLAN otherwise.
-func k3sPorts(network Network) []firewallPort {
+// controlPlanePorts are the ports the control plane host must accept: the cluster's own, and the web
+// ports of the ingress controller K3s runs, which serve every service and the dashboard's domain. Port 80
+// is also where Let's Encrypt validates a hostname before it issues a certificate. The overlay's port
+// depends on the network: WireGuard for a multi-site cluster, whose traffic crosses the internet, and
+// VXLAN otherwise.
+func controlPlanePorts(network Network) []firewallPort {
 	overlay := firewallPort{platform.VXLANPort, "udp", "Flannel VXLAN overlay"}
 	if network.MultiSite {
 		overlay = firewallPort{platform.WireGuardPort, "udp", "Flannel WireGuard overlay (encrypted, between sites)"}
 	}
 	return []firewallPort{
-		{"6443", "tcp", "Kubernetes API server"},
+		{platform.ClusterAPIPort, "tcp", "Kubernetes API server"},
 		{"10250", "tcp", "kubelet metrics"},
 		overlay,
+		{"80", "tcp", "HTTP ingress, and Let's Encrypt certificate validation"},
+		{"443", "tcp", "HTTPS ingress"},
 	}
 }
 
@@ -45,7 +55,7 @@ func (s *FirewallSetup) Run() error {
 
 	Logf(s.Name(), "Detected active firewall backend: %s", fw)
 
-	for _, p := range k3sPorts(s.Network) {
+	for _, p := range controlPlanePorts(s.Network) {
 		switch fw {
 		case "ufw":
 			if err := runCommand(s.Name(), "ufw", "allow", fmt.Sprintf("%s/%s", p.port, p.protocol)); err != nil {
@@ -63,10 +73,13 @@ func (s *FirewallSetup) Run() error {
 		}
 	}
 
-	if fw == firewallFirewalld {
+	switch fw {
+	case firewallFirewalld:
 		if err := runCommand(s.Name(), "firewall-cmd", "--reload"); err != nil {
 			return fmt.Errorf("firewall-cmd reload: %w", err)
 		}
+	case firewallIPTables:
+		persistIPTables(s.Name(), persistedIPTablesFiles)
 	}
 
 	return nil
@@ -80,7 +93,7 @@ func detectActiveFirewall(step string) string {
 		return firewallFirewalld
 	}
 	if isIPTablesActive(step) {
-		return "iptables"
+		return firewallIPTables
 	}
 	return ""
 }
@@ -147,24 +160,81 @@ func formatFirewallSkipWarning(network Network) string {
 	b.WriteString("No active host firewall detected; skipping port configuration. ")
 	b.WriteString("K3s manages its own packet rules, so this is not required for the cluster to start. ")
 	b.WriteString("If you use a host firewall, manually allow:\n")
-	for _, p := range k3sPorts(network) {
+	for _, p := range controlPlanePorts(network) {
 		fmt.Fprintf(&b, "  - %s/%s (%s)\n", p.port, p.protocol, p.desc)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// persistedIPTablesFiles are the files distributions restore iptables rules from at boot: iptables-persistent
+// on Debian and Ubuntu, iptables-services on the Red Hat family. A variable so tests do not touch the host's.
+var persistedIPTablesFiles = []string{"/etc/iptables/rules.v4", "/etc/sysconfig/iptables"}
+
+// iptablesAllow makes sure INPUT accepts the port.
+//
+// Whether the rule is there is read from the exit status of `iptables -C`: 0 when it exists, anything else
+// when it does not. Its message is not a signal. For a rule that is missing it prints "Bad rule (does a
+// matching rule exist in that chain?)", and reading that as "already present" once left a host that
+// filters with iptables with no port open at all.
+//
+// The rule is inserted at the top, not appended. A host that filters with iptables commonly ends INPUT
+// with a REJECT (the default on Oracle Cloud and Red Hat images), and an ACCEPT after it never matches.
+// -w waits for the xtables lock instead of failing when something else is changing rules.
 func iptablesAllow(step, port, protocol string) error {
-	chain := "INPUT"
-	rule := []string{
-		"-A", chain,
-		"-p", protocol,
-		"--dport", port,
-		"-j", "ACCEPT",
-	}
-	out, _ := exec.Command("iptables", append([]string{"-C"}, rule[1:]...)...).CombinedOutput()
-	if strings.Contains(string(out), "does a matching rule exist") {
+	rule := []string{"INPUT", "-p", protocol, "--dport", port, "-j", "ACCEPT"}
+	if err := exec.Command("iptables", append([]string{"-w", "-C"}, rule...)...).Run(); err == nil {
 		Logf(step, "iptables rule already present for %s/%s", port, protocol)
 		return nil
 	}
-	return runCommand(step, "iptables", rule...)
+	return runCommand(step, "iptables", append([]string{"-w", "-I"}, rule...)...)
+}
+
+// persistIPTables writes the current rules to the file the host restores at boot, so the ports stay open
+// after a reboot. It does so only where the host already restores iptables rules, which the file existing
+// says: installing a persistence package, or creating the file, would change how the machine's firewall is
+// managed, and that is not the installer's call. Anywhere else it says the rules are lost on reboot. It
+// never fails the install: the ports are open for now either way.
+func persistIPTables(step string, files []string) {
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		rules, err := outputCommand(step, "iptables-save")
+		if err != nil {
+			Warnf(step, "Could not read the iptables rules to save them to %s, so the ports opened above are lost on reboot: %v", path, err)
+			return
+		}
+		if err := writeFileAtomic(path, rules, info.Mode().Perm()); err != nil {
+			Warnf(step, "Could not save the iptables rules to %s, so the ports opened above are lost on reboot: %v", path, err)
+			return
+		}
+		Logf(step, "Saved the iptables rules to %s so the ports stay open after a reboot", path)
+		return
+	}
+	Warnf(step, "The iptables rules that open the ports are not saved, because this host does not restore iptables rules at boot, "+
+		"so they are lost on reboot. Install iptables-persistent (Debian, Ubuntu) or iptables-services (Red Hat family) "+
+		"and save the rules, or open the ports from your own boot script")
+}
+
+// writeFileAtomic replaces path with content in one step, so a crash cannot leave a half-written ruleset
+// for the next boot to restore.
+func writeFileAtomic(path string, content []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".geass-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

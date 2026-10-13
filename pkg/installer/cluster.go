@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
 const (
@@ -19,6 +21,9 @@ type ClusterCRApply struct {
 	// ACMEEmail is the Let's Encrypt contact address. Without one the operator creates no certificate
 	// issuer, so no ingress gets an HTTPS certificate until it is set.
 	ACMEEmail string
+
+	// detectAddress replaces the machine's real address lookup in tests.
+	detectAddress func() (string, error)
 }
 
 func (s *ClusterCRApply) Name() string { return "apply GeassCluster CR" }
@@ -32,13 +37,7 @@ func (s *ClusterCRApply) Run() error {
 	if version == "" {
 		version = "v1"
 	}
-	serverURL := s.ServerURL
-	if serverURL == "" {
-		serverURL = s.Network.ServerURL()
-	}
-	if serverURL == "" {
-		serverURL = "https://127.0.0.1:6443"
-	}
+	serverURL := s.resolveServerURL()
 
 	kubeEnv := append(os.Environ(), k3sKubeconfigEnv)
 	kubeOpts := commandOptions{
@@ -65,6 +64,36 @@ func (s *ClusterCRApply) Run() error {
 	opts := kubeOpts
 	opts.stdin = strings.NewReader(manifest)
 	return runCommandWithOptions(s.Name(), opts, "k3s", "kubectl", "apply", "-f", "-")
+}
+
+// loopbackServerURL is what the cluster object holds when this machine's address cannot be worked out.
+// No worker can use it as it is: the operator swaps in the control plane node's own address when it
+// joins one.
+const loopbackServerURL = "https://127.0.0.1:" + platform.ClusterAPIPort
+
+// resolveServerURL is the address workers are told to join the cluster on, which has to be one they can
+// reach from another machine. In order: an address set on the step, the control plane's public address
+// for a multi-site cluster, and otherwise this machine's own address on the network its workers share
+// with it, as the default route sees it.
+func (s *ClusterCRApply) resolveServerURL() string {
+	if s.ServerURL != "" {
+		return s.ServerURL
+	}
+	if serverURL := s.Network.ServerURL(); serverURL != "" {
+		return serverURL
+	}
+	detect := s.detectAddress
+	if detect == nil {
+		detect = controlPlaneAddress
+	}
+	address, err := detect()
+	if err != nil {
+		Warnf(s.Name(), "Could not work out this machine's address (%v), so spec.serverURL is %s. "+
+			"The operator will join workers on the control plane node's own address instead; "+
+			"set spec.serverURL on the GeassCluster to override it", err, loopbackServerURL)
+		return loopbackServerURL
+	}
+	return serverURLFor(address)
 }
 
 func geassClusterManifest(name, version, serverURL string, network Network, acmeEmail string) string {

@@ -28,8 +28,8 @@ func (s *SystemChecks) Run() error {
 		return fmt.Errorf("cannot determine memory: %w", err)
 	}
 	Logf(s.Name(), "Detected memory: %d MB", memKB/1024)
-	if memKB < 2*1024*1024 {
-		return fmt.Errorf("insufficient memory: %d MB (2048 MB required)", memKB/1024)
+	if err := checkMemory(memKB); err != nil {
+		return err
 	}
 
 	diskKB, err := availableDiskKB("/")
@@ -53,6 +53,21 @@ func (s *SystemChecks) Run() error {
 		}
 	}
 
+	return nil
+}
+
+// minMemoryMiB is the least MemTotal the installer accepts. The requirement is a server with 2 GiB, but
+// MemTotal is what the kernel has left after reserving memory for itself, firmware and, on Red Hat family
+// systems, a crash kernel, and on a machine sold as 2 GB that is commonly 1.7 to 1.95 GiB. Requiring a
+// full 2048 MiB turned away exactly the servers the requirement describes. A 1 GiB machine reports about
+// 950 MiB, so this still separates the sizes.
+const minMemoryMiB = 1700
+
+func checkMemory(memKB int) error {
+	if memKB < minMemoryMiB*1024 {
+		return fmt.Errorf("insufficient memory: %d MB (a server with 2 GB is needed, which the kernel reports as at least %d MB)",
+			memKB/1024, minMemoryMiB)
+	}
 	return nil
 }
 
