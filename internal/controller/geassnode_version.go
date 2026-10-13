@@ -21,14 +21,10 @@ const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 // the installer fills it with "v1", which is not a k3s release, so every worker failed to install k3s.
 // It is only used when it is itself a k3s version (an operator who pinned one on purpose); otherwise the
 // answer is empty, and k3s's installer then picks its current stable release.
-func workerK3sVersion(ctx context.Context, c client.Client, cluster *geassv1alpha1.GeassCluster) (string, error) {
-	var nodes corev1.NodeList
-	if err := c.List(ctx, &nodes, client.HasLabels{controlPlaneLabel}); err != nil {
-		return "", err
-	}
+func workerK3sVersion(nodes []corev1.Node, cluster *geassv1alpha1.GeassCluster) string {
 	lowest := ""
-	for i := range nodes.Items {
-		kubelet := nodes.Items[i].Status.NodeInfo.KubeletVersion
+	for i := range nodes {
+		kubelet := nodes[i].Status.NodeInfo.KubeletVersion
 		if !isK3sVersion(kubelet) {
 			continue
 		}
@@ -37,12 +33,22 @@ func workerK3sVersion(ctx context.Context, c client.Client, cluster *geassv1alph
 		}
 	}
 	if lowest != "" {
-		return lowest, nil
+		return lowest
 	}
 	if isK3sVersion(cluster.Spec.Version) {
-		return cluster.Spec.Version, nil
+		return cluster.Spec.Version
 	}
-	return "", nil
+	return ""
+}
+
+// controlPlaneNodes lists the control plane nodes, which a worker's join settings are worked out from: the
+// k3s version it installs and the address it joins on.
+func controlPlaneNodes(ctx context.Context, c client.Client) ([]corev1.Node, error) {
+	var nodes corev1.NodeList
+	if err := c.List(ctx, &nodes, client.HasLabels{controlPlaneLabel}); err != nil {
+		return nil, err
+	}
+	return nodes.Items, nil
 }
 
 // isK3sVersion reports whether v looks like a k3s release, such as v1.36.5+k3s1.

@@ -14,17 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runReachability runs the check exactly as the node would, with a stand-in for curl that answers with
-// the given exit status and body.
-func runReachability(t *testing.T, in ProvisionInput, curlExit int, curlOutput string) (exitCode int, stderr string) {
+// runShell runs a command with sh, as the node would, and returns its exit status and standard error.
+func runShell(t *testing.T, command string, env ...string) (exitCode int, stderr string) {
 	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\nprintf '%s' \"$FAKE_CURL_OUT\"\nexit \"$FAKE_CURL_RC\"\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(script), 0o755))
-
-	cmd := exec.Command("sh", "-c", reachabilityCommand(in))
-	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"),
-		"FAKE_CURL_RC="+strconv.Itoa(curlExit), "FAKE_CURL_OUT="+curlOutput)
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Env = append(os.Environ(), env...)
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
@@ -33,6 +27,18 @@ func runReachability(t *testing.T, in ProvisionInput, curlExit int, curlOutput s
 	}
 	require.NoError(t, err)
 	return 0, errBuf.String()
+}
+
+// runReachability runs the check exactly as the node would, with a stand-in for curl that answers with
+// the given exit status and body.
+func runReachability(t *testing.T, in ProvisionInput, curlExit int, curlOutput string) (exitCode int, stderr string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s' \"$FAKE_CURL_OUT\"\nexit \"$FAKE_CURL_RC\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(script), 0o755))
+
+	return runShell(t, reachabilityCommand(in), "PATH="+dir+":"+os.Getenv("PATH"),
+		"FAKE_CURL_RC="+strconv.Itoa(curlExit), "FAKE_CURL_OUT="+curlOutput)
 }
 
 func privateAddress() ProvisionInput {
@@ -122,15 +128,7 @@ func TestTheCheckWorksWithRealCurl(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	run := func(url string) (int, string) {
-		cmd := exec.Command("sh", "-c", reachabilityCommand(ProvisionInput{ServerURL: url}))
-		var errBuf bytes.Buffer
-		cmd.Stderr = &errBuf
-		err := cmd.Run()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), errBuf.String()
-		}
-		require.NoError(t, err)
-		return 0, errBuf.String()
+		return runShell(t, reachabilityCommand(ProvisionInput{ServerURL: url}))
 	}
 
 	code, stderr := run(server.URL)

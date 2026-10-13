@@ -120,10 +120,10 @@ func rootSteps(in ProvisionInput) []provisionStep {
  K3S_TOKEN=%s \
  K3S_NODE_NAME=%s \
  sh -`,
-			in.K3sVersion,
-			in.ServerURL,
-			in.Token,
-			in.NodeName,
+			shellQuote(in.K3sVersion),
+			shellQuote(in.ServerURL),
+			shellQuote(in.Token),
+			shellQuote(in.NodeName),
 		)},
 		provisionStep{name: "enable-k3s", cmd: "systemctl enable k3s-agent && systemctl start k3s-agent"},
 	)
@@ -216,18 +216,26 @@ func dial(_ context.Context, in ProvisionInput) (*gossh.Client, error) {
 		return nil, err
 	}
 
+	address := in.address()
+	cfg := &gossh.ClientConfig{
+		User:              in.User,
+		Auth:              []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback:   hostKey,
+		HostKeyAlgorithms: hostKeyAlgorithms(in.KnownHosts, address),
+		Timeout:           30 * time.Second,
+	}
+	return gossh.Dial("tcp", address, cfg)
+}
+
+// address is where the SSH server is: the host and the port, which is 22 when none is set. An IPv6 host
+// may be written with or without the brackets a URL needs.
+func (in ProvisionInput) address() string {
 	port := in.Port
 	if port == 0 {
 		port = 22
 	}
-
-	cfg := &gossh.ClientConfig{
-		User:            in.User,
-		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
-		HostKeyCallback: hostKey,
-		Timeout:         30 * time.Second,
-	}
-	return gossh.Dial("tcp", net.JoinHostPort(in.Host, strconv.Itoa(port)), cfg)
+	host := strings.TrimSuffix(strings.TrimPrefix(in.Host, "["), "]")
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func runStep(ctx context.Context, client *gossh.Client, name, cmd string) error {

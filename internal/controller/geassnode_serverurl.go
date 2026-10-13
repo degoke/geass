@@ -2,12 +2,11 @@ package controller
 
 import (
 	"cmp"
-	"context"
+	"net"
 	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -22,18 +21,19 @@ import (
 // address in a multi-site cluster, whose workers are at other providers, and its private one otherwise.
 // The cluster object is not edited. If no control plane node has an address, the URL is returned as it
 // is and the worker's own reachability check explains what is wrong.
-func workerServerURL(ctx context.Context, c client.Client, cluster *geassv1alpha1.GeassCluster) (string, error) {
+func workerServerURL(cluster *geassv1alpha1.GeassCluster, controlPlane []corev1.Node) string {
 	serverURL := cluster.Spec.ServerURL
 	if !platform.IsLoopbackURL(serverURL) {
-		return serverURL, nil
-	}
-	var nodes corev1.NodeList
-	if err := c.List(ctx, &nodes, client.HasLabels{controlPlaneLabel}); err != nil {
-		return "", err
+		return serverURL
 	}
 	// A node that is up is the safer one to name, and sorting keeps the answer the same between reconciles.
-	slices.SortStableFunc(nodes.Items, func(a, b corev1.Node) int {
-		if readyA, readyB := nodeReady(&a), nodeReady(&b); readyA != readyB {
+	// The nodes are sorted through pointers: a Node is a large struct.
+	nodes := make([]*corev1.Node, len(controlPlane))
+	for i := range controlPlane {
+		nodes[i] = &controlPlane[i]
+	}
+	slices.SortStableFunc(nodes, func(a, b *corev1.Node) int {
+		if readyA, readyB := nodeReady(a), nodeReady(b); readyA != readyB {
 			if readyA {
 				return -1
 			}
@@ -41,16 +41,16 @@ func workerServerURL(ctx context.Context, c client.Client, cluster *geassv1alpha
 		}
 		return cmp.Compare(a.Name, b.Name)
 	})
-	for i := range nodes.Items {
-		host := controlPlaneHost(&nodes.Items[i], cluster.Spec.Network.MultiSite)
+	for _, node := range nodes {
+		host := controlPlaneHost(node, cluster.Spec.Network.MultiSite)
 		if host == "" {
 			continue
 		}
 		if resolved, ok := platform.WithURLHost(serverURL, host); ok {
-			return resolved, nil
+			return resolved
 		}
 	}
-	return serverURL, nil
+	return serverURL
 }
 
 // controlPlaneHost is the address of a control plane node that workers should join on. A multi-site
@@ -63,7 +63,9 @@ func controlPlaneHost(node *corev1.Node, multiSite bool) string {
 	}
 	for _, want := range []corev1.NodeAddressType{first, second} {
 		for _, addr := range node.Status.Addresses {
-			if host := strings.TrimSpace(addr.Address); addr.Type == want && host != "" {
+			// The address becomes part of a command that runs as root on the worker, and a node reports it
+			// itself, so only an IP address is taken: anything else is skipped.
+			if host := strings.TrimSpace(addr.Address); addr.Type == want && net.ParseIP(host) != nil {
 				return host
 			}
 		}

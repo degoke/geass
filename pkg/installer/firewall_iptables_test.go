@@ -23,12 +23,24 @@ func fakeIPTables(t *testing.T, existing ...string) (rules func() []string, call
 	}
 	write("iptables", `#!/bin/sh
 echo "$*" >> "$FAKE_IPTABLES_LOG"
-if [ "$1" = "-w" ]; then shift; fi
+if [ "$1" = "-w" ]; then
+	if [ -n "$FAKE_IPTABLES_NO_WAIT" ]; then
+		echo 'iptables v1.4.7: unknown option "-w"' >&2
+		exit 2
+	fi
+	shift
+fi
 op="$1"
 case "$op" in
 -L)
 	echo "Chain INPUT (policy DROP)"
 	echo "target     prot opt source               destination"
+	exit 0 ;;
+-S)
+	echo "-P INPUT DROP"
+	while IFS= read -r line; do
+		if [ -n "$line" ]; then echo "-A $line"; fi
+	done < "$FAKE_IPTABLES_STATE"
 	exit 0 ;;
 -C)
 	shift
@@ -38,9 +50,30 @@ case "$op" in
 	done < "$FAKE_IPTABLES_STATE"
 	echo "iptables: Bad rule (does a matching rule exist in that chain?)." >&2
 	exit 1 ;;
--I|-A)
+-A)
 	shift
 	echo "$*" >> "$FAKE_IPTABLES_STATE"
+	exit 0 ;;
+-I)
+	shift
+	chain="$1"
+	shift
+	pos=1
+	case "$1" in [0-9]*) pos="$1"; shift ;; esac
+	rule="$chain $*"
+	new="$FAKE_IPTABLES_STATE.new"
+	: > "$new"
+	i=1
+	placed=0
+	while IFS= read -r line; do
+		if [ -z "$line" ]; then continue; fi
+		if [ "$i" -eq "$pos" ]; then echo "$rule" >> "$new"; placed=1; fi
+		echo "$line" >> "$new"
+		i=$((i + 1))
+	done < "$FAKE_IPTABLES_STATE"
+	if [ "$placed" -eq 0 ]; then echo "$rule" >> "$new"; fi
+	: > "$FAKE_IPTABLES_STATE"
+	while IFS= read -r line; do echo "$line" >> "$FAKE_IPTABLES_STATE"; done < "$new"
 	exit 0 ;;
 esac
 exit 2
@@ -83,51 +116,111 @@ func noPersistedRules(t *testing.T) {
 	t.Cleanup(func() { persistedIPTablesFiles = previous })
 }
 
+func allow(t *testing.T, port, protocol string) bool {
+	t.Helper()
+	added, err := iptablesAllow("test", port, protocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return added
+}
+
 // `iptables -C` prints "Bad rule" when the rule is NOT there. The installer used to read that as "already
 // present", so on a host that filters with iptables it opened nothing.
 func TestIPTablesOpensAPortThatIsNotOpenYet(t *testing.T) {
 	rules, calls := fakeIPTables(t)
 
-	if err := iptablesAllow("test", "6443", "tcp"); err != nil {
-		t.Fatal(err)
+	if !allow(t, "6443", "tcp") {
+		t.Fatal("a rule that was added must be reported as added")
 	}
 
 	if got := rules(); len(got) != 1 || got[0] != "INPUT -p tcp --dport 6443 -j ACCEPT" {
 		t.Fatalf("rules = %q, want the rule to have been added", got)
 	}
-	for _, call := range calls() {
-		if strings.Contains(call, " -A ") || strings.HasPrefix(call, "-A ") {
-			t.Fatalf("the rule must be inserted at the top, not appended behind a final REJECT: %q", calls())
-		}
-	}
-	if !strings.Contains(strings.Join(calls(), "\n"), "-w -I INPUT") {
-		t.Fatalf("expected an insert that waits for the xtables lock, got %q", calls())
+	if !strings.Contains(strings.Join(calls(), "\n"), "-w -A INPUT") {
+		t.Fatalf("expected an append that waits for the xtables lock, got %q", calls())
 	}
 }
 
 func TestIPTablesLeavesARuleThatIsAlreadyThere(t *testing.T) {
 	rules, calls := fakeIPTables(t, "INPUT -p tcp --dport 6443 -j ACCEPT")
 
-	if err := iptablesAllow("test", "6443", "tcp"); err != nil {
-		t.Fatal(err)
+	if allow(t, "6443", "tcp") {
+		t.Fatal("a rule that was already there was not added")
 	}
 
 	if got := rules(); len(got) != 1 {
 		t.Fatalf("a rule that exists must not be added again: %q", got)
 	}
-	if strings.Contains(strings.Join(calls(), "\n"), "-I") {
-		t.Fatalf("nothing should have been inserted: %q", calls())
+	for _, call := range calls() {
+		if strings.Contains(call, "-I") || strings.Contains(call, "-A") {
+			t.Fatalf("nothing should have been added: %q", calls())
+		}
 	}
 }
 
 func TestIPTablesDistinguishesPortsAndProtocols(t *testing.T) {
 	rules, _ := fakeIPTables(t, "INPUT -p tcp --dport 8472 -j ACCEPT")
 
-	if err := iptablesAllow("test", "8472", "udp"); err != nil {
-		t.Fatal(err)
-	}
+	allow(t, "8472", "udp")
+
 	if got := rules(); len(got) != 2 {
 		t.Fatalf("tcp/8472 does not open udp/8472: %q", got)
+	}
+}
+
+// A catch-all REJECT at the end of INPUT would swallow a rule appended behind it, so the rule goes in front
+// of it. What the admin wrote ahead of that, a blocked source above all, must still come first.
+func TestTheRuleGoesAheadOfACatchAllRejectAndBehindTheAdminsOwnRules(t *testing.T) {
+	blocked := "INPUT -s 198.51.100.7 -j DROP"
+	established := "INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT"
+	rejectAll := "INPUT -j REJECT --reject-with icmp-host-prohibited"
+	rules, _ := fakeIPTables(t, blocked, established, rejectAll)
+
+	allow(t, "443", "tcp")
+
+	want := []string{blocked, established, "INPUT -p tcp --dport 443 -j ACCEPT", rejectAll}
+	if got := rules(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rules =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestACatchAllDropIsAlsoGivenWayTo(t *testing.T) {
+	rules, _ := fakeIPTables(t, "INPUT -i lo -j ACCEPT", "INPUT -j DROP")
+
+	allow(t, "80", "tcp")
+
+	if got := rules(); len(got) != 3 || got[1] != "INPUT -p tcp --dport 80 -j ACCEPT" || got[2] != "INPUT -j DROP" {
+		t.Fatalf("rules = %q", got)
+	}
+}
+
+// A REJECT that matches something is a rule of the admin's, not a catch-all, and is not stepped over.
+func TestARejectThatMatchesSomethingIsNotACatchAll(t *testing.T) {
+	closed := "INPUT -p tcp --dport 8080 -j REJECT"
+	rules, _ := fakeIPTables(t, closed)
+
+	allow(t, "443", "tcp")
+
+	if got := rules(); len(got) != 2 || got[0] != closed || got[1] != "INPUT -p tcp --dport 443 -j ACCEPT" {
+		t.Fatalf("rules = %q: with no catch-all the rule is appended", got)
+	}
+}
+
+// iptables before 1.4.20 has no -w. Failing the whole install over an option that only waits for a lock
+// would be a worse failure than the one it guards against.
+func TestAnIPTablesThatDoesNotKnowWaitStillOpensThePort(t *testing.T) {
+	rules, calls := fakeIPTables(t)
+	t.Setenv("FAKE_IPTABLES_NO_WAIT", "1")
+
+	allow(t, "6443", "tcp")
+
+	if got := rules(); len(got) != 1 {
+		t.Fatalf("rules = %q, want the rule added without -w", got)
+	}
+	all := calls()
+	if last := all[len(all)-1]; strings.Contains(last, "-w") || !strings.Contains(last, "-A INPUT") {
+		t.Fatalf("the insert should not pass -w: %q", all)
 	}
 }
 
@@ -227,5 +320,34 @@ func TestNothingIsCreatedOnAHostThatDoesNotRestoreRulesAtBoot(t *testing.T) {
 
 	if _, err := os.Stat(absent); !os.IsNotExist(err) {
 		t.Fatalf("the installer must not create a persistence file of its own: %v", err)
+	}
+}
+
+// Saving rewrites a file the host restores at boot, so it is done only when there is something new in it.
+func TestNothingIsSavedWhenAllTheRulesWereAlreadyThere(t *testing.T) {
+	existing := make([]string, 0, len(controlPlanePorts(Network{})))
+	for _, p := range controlPlanePorts(Network{}) {
+		existing = append(existing, "INPUT -p "+p.protocol+" --dport "+p.port+" -j ACCEPT")
+	}
+	fakeIPTables(t, existing...)
+	saved := filepath.Join(t.TempDir(), "rules.v4")
+	const original = "# the host's own ruleset\n"
+	if err := os.WriteFile(saved, []byte(original), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	previous := persistedIPTablesFiles
+	persistedIPTablesFiles = []string{saved}
+	t.Cleanup(func() { persistedIPTablesFiles = previous })
+
+	if err := (&FirewallSetup{}).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("the file must be left alone when nothing was added, got:\n%s", raw)
 	}
 }

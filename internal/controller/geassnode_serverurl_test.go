@@ -43,9 +43,9 @@ func clusterWithServerURL(serverURL string, multiSite bool) *geassv1alpha1.Geass
 
 func joinURL(t *testing.T, cluster *geassv1alpha1.GeassCluster, nodes ...client.Object) string {
 	t.Helper()
-	got, err := workerServerURL(context.Background(), versionClient(t, nodes...), cluster)
+	controlPlane, err := controlPlaneNodes(context.Background(), versionClient(t, nodes...))
 	require.NoError(t, err)
-	return got
+	return workerServerURL(cluster, controlPlane)
 }
 
 // A cluster installed before the installer was fixed holds the control plane's own loopback address, which
@@ -141,4 +141,15 @@ func TestProvisioningPassesTheResolvedAddressAndTheHostKeysToTheProvisioner(t *t
 	require.Equal(t, 2222, in.Port)
 	require.Equal(t, []byte("203.0.113.9 ssh-ed25519 AAAA\n"), in.KnownHosts)
 	require.Equal(t, []byte("pem"), in.PrivateKey)
+}
+
+// A node reports its own addresses, and the one chosen ends up in a command that runs as root on the worker.
+func TestOnlyAnIPAddressOfAControlPlaneNodeIsEverUsedToJoin(t *testing.T) {
+	cluster := clusterWithServerURL("https://127.0.0.1:6443", false)
+
+	got := joinURL(t, cluster, controlPlaneNode("cp", true, internalIP("10.0.0.1$(id)"), externalIP("203.0.113.10")))
+	require.Equal(t, "https://203.0.113.10:6443", got, "an internal address that is not an IP is skipped, not trusted")
+
+	got = joinURL(t, cluster, controlPlaneNode("cp", true, internalIP("10.0.0.1;touch /tmp/x"), externalIP("evil.example.com")))
+	require.Equal(t, "https://127.0.0.1:6443", got, "with no usable address the loopback URL is left for the worker's own check to explain")
 }

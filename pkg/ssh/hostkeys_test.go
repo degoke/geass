@@ -94,3 +94,15 @@ func TestKnownHostsThatCannotBeHonouredAreAnErrorNotSkipped(t *testing.T) {
 		})
 	}
 }
+
+func TestTheKeyTypesToAskForAreThoseRecordedForTheAddress(t *testing.T) {
+	ed := newHostKey(t)
+	rsaKey := newRSAHostKey(t)
+	known := append(knownHostsFor("203.0.113.20", ed), knownHostsFor("203.0.113.21", rsaKey)...)
+
+	require.Equal(t, []string{"ssh-ed25519"}, hostKeyAlgorithms(known, "203.0.113.20:22"))
+	require.Equal(t, []string{"rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"}, hostKeyAlgorithms(known, "203.0.113.21:22"),
+		"an RSA key signs with SHA-2 on current servers and SHA-1 on old ones")
+	require.Nil(t, hostKeyAlgorithms(known, "203.0.113.99:22"), "an address that is not listed keeps the default, and the callback refuses it")
+	require.Nil(t, hostKeyAlgorithms(nil, "203.0.113.20:22"), "no known_hosts means no preference")
+}

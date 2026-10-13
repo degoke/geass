@@ -2,8 +2,11 @@ package ssh
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -26,11 +29,20 @@ type testSSHServer struct {
 
 func startSSHServer(t *testing.T) *testSSHServer {
 	t.Helper()
-	server := &testSSHServer{hostKey: newHostKey(t)}
+	return startSSHServerWithHostKeys(t, newHostKey(t))
+}
+
+// startSSHServerWithHostKeys is a server that has several host keys, as sshd does. The first one is
+// server.hostKey, and which of them a client is shown depends on what the client asks for.
+func startSSHServerWithHostKeys(t *testing.T, hostKeys ...gossh.Signer) *testSSHServer {
+	t.Helper()
+	server := &testSSHServer{hostKey: hostKeys[0]}
 	config := &gossh.ServerConfig{
 		PublicKeyCallback: func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error) { return nil, nil },
 	}
-	config.AddHostKey(server.hostKey)
+	for _, hostKey := range hostKeys {
+		config.AddHostKey(hostKey)
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
@@ -89,7 +101,11 @@ func (s *testSSHServer) ran() []string {
 }
 
 func (s *testSSHServer) knownHosts() []byte {
-	return knownHostsFor(fmt.Sprintf("[127.0.0.1]:%d", s.port), s.hostKey)
+	return s.knownHostsOf(s.hostKey)
+}
+
+func (s *testSSHServer) knownHostsOf(hostKey gossh.Signer) []byte {
+	return knownHostsFor(fmt.Sprintf("[127.0.0.1]:%d", s.port), hostKey)
 }
 
 func clientKeyPEM(t *testing.T) []byte {
@@ -124,11 +140,23 @@ func TestDrainConnectsOnTheNodesSSHPort(t *testing.T) {
 	require.Equal(t, []string{"/usr/local/bin/k3s-agent-uninstall.sh || true"}, server.ran())
 }
 
-func TestDrainWithoutAPortUsesTheDefaultOne(t *testing.T) {
-	in := ProvisionInput{Host: "127.0.0.1", User: "root", PrivateKey: clientKeyPEM(t)}
-	// Nothing listens on 22 in the test, so the connection is refused; the address it names is the point.
-	err := New().Drain(shortContext(t), in)
-	require.ErrorContains(t, err, "127.0.0.1:22")
+// Nothing here connects to port 22, which a machine running the tests may well be listening on.
+func TestTheSSHAddressDefaultsToPort22AndAcceptsIPv6InEitherForm(t *testing.T) {
+	for name, tt := range map[string]struct {
+		in   ProvisionInput
+		want string
+	}{
+		"no port":                {ProvisionInput{Host: "203.0.113.5"}, "203.0.113.5:22"},
+		"a port":                 {ProvisionInput{Host: "203.0.113.5", Port: 2222}, "203.0.113.5:2222"},
+		"a host name":            {ProvisionInput{Host: "node.example.com"}, "node.example.com:22"},
+		"an IPv6 address":        {ProvisionInput{Host: "2001:db8::1", Port: 2222}, "[2001:db8::1]:2222"},
+		"a bracketed IPv6 form":  {ProvisionInput{Host: "[2001:db8::1]"}, "[2001:db8::1]:22"},
+		"a bracketed IPv6, port": {ProvisionInput{Host: "[2001:db8::1]", Port: 2222}, "[2001:db8::1]:2222"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.in.address())
+		})
+	}
 }
 
 func TestDrainAsAnOrdinaryUserUsesSudo(t *testing.T) {
@@ -177,5 +205,49 @@ func TestUnusableKnownHostsStopTheConnection(t *testing.T) {
 	in.KnownHosts = []byte("|1|abc=|def= ssh-ed25519 AAAA\n")
 
 	require.ErrorContains(t, New().Drain(shortContext(t), in), KnownHostsSecretKey)
+	require.Empty(t, server.ran())
+}
+
+func newECDSAHostKey(t *testing.T) gossh.Signer {
+	t.Helper()
+	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	signer, err := gossh.NewSignerFromKey(private)
+	require.NoError(t, err)
+	return signer
+}
+
+func newRSAHostKey(t *testing.T) gossh.Signer {
+	t.Helper()
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	signer, err := gossh.NewSignerFromKey(private)
+	require.NoError(t, err)
+	return signer
+}
+
+// A stock sshd has RSA, ECDSA and ed25519 host keys, and the Go client asks for ECDSA first. Pinning the
+// key that `ssh-keyscan -t ed25519` printed used to be refused as another machine answering, because the
+// server showed its ECDSA key, which was not recorded.
+func TestPinningOneKeyTypeWorksOnAServerThatHasSeveralHostKeys(t *testing.T) {
+	ecdsaKey, ed25519Key, rsaKey := newECDSAHostKey(t), newHostKey(t), newRSAHostKey(t)
+	server := startSSHServerWithHostKeys(t, ecdsaKey, rsaKey, ed25519Key)
+
+	for name, pinned := range map[string]gossh.Signer{"ed25519": ed25519Key, "ecdsa": ecdsaKey, "rsa": rsaKey} {
+		t.Run(name, func(t *testing.T) {
+			in := server.input(t)
+			in.KnownHosts = server.knownHostsOf(pinned)
+
+			require.NoError(t, New().Drain(shortContext(t), in))
+		})
+	}
+}
+
+func TestAServerThatHasNoneOfTheRecordedKeyTypesIsStillRefused(t *testing.T) {
+	server := startSSHServerWithHostKeys(t, newECDSAHostKey(t), newHostKey(t))
+	in := server.input(t)
+	in.KnownHosts = server.knownHostsOf(newRSAHostKey(t))
+
+	require.Error(t, New().Drain(shortContext(t), in))
 	require.Empty(t, server.ran())
 }

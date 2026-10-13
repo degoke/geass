@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -54,6 +55,38 @@ func hostKeyCallback(knownHosts []byte) (gossh.HostKeyCallback, error) {
 		}
 		return fmt.Errorf("the SSH host key of %s (%s) is not listed in %s", want, got, KnownHostsSecretKey)
 	}, nil
+}
+
+// hostKeyAlgorithms are the host key algorithms to ask the server for when connecting to address: those
+// of the keys recorded for it. Without this the client offers its own preference order, in which ECDSA
+// comes before ed25519, and a server with several host keys presents the first one it shares, usually a
+// key type that was not recorded, so `ssh-keyscan -t ed25519` would pin a machine that is then refused.
+// OpenSSH narrows the list the same way. It returns nil, the client's default, when no entry covers the
+// address, and the callback then refuses the machine as not listed.
+func hostKeyAlgorithms(knownHosts []byte, address string) []string {
+	entries, err := parseKnownHosts(knownHosts)
+	if err != nil {
+		return nil
+	}
+	want := knownhosts.Normalize(address)
+	var algorithms []string
+	add := func(algorithm string) {
+		if !slices.Contains(algorithms, algorithm) {
+			algorithms = append(algorithms, algorithm)
+		}
+	}
+	for _, entry := range entries {
+		if !entry.covers(want) {
+			continue
+		}
+		if entry.key.Type() == gossh.KeyAlgoRSA {
+			// An RSA key signs with SHA-2 on current servers and with SHA-1 on very old ones.
+			add(gossh.KeyAlgoRSASHA512)
+			add(gossh.KeyAlgoRSASHA256)
+		}
+		add(entry.key.Type())
+	}
+	return algorithms
 }
 
 type knownHostEntry struct {

@@ -81,6 +81,12 @@ func (r *GeassNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.Update(ctx, &node)
 	}
 
+	if node.Status.Phase != geassv1alpha1.NodePhaseFailed {
+		if err := r.dropRetryAnnotation(ctx, &node); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	clusterNS := node.Spec.ClusterRef.Namespace
 	if clusterNS == "" {
 		clusterNS = node.Namespace
@@ -249,8 +255,8 @@ func (r *GeassNodeReconciler) reconcileControlPlane(
 // handleRetry starts over a node that is Failed when the geass.dev/retry annotation asks for it. The phase
 // lives in the status, which a plain Update of the node does not write, so it goes through the status
 // client; the annotation is removed afterwards with a patch, which cannot conflict. In that order a failure
-// part-way costs one extra retry the next time the node fails, from the annotation left behind, rather than
-// dropping a request the user made.
+// part-way leaves the node retrying with the annotation still on it, which the next reconcile drops
+// (dropRetryAnnotation), rather than losing a request the user made.
 func (r *GeassNodeReconciler) handleRetry(
 	ctx context.Context,
 	node *geassv1alpha1.GeassNode,
@@ -270,6 +276,18 @@ func (r *GeassNodeReconciler) handleRetry(
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// dropRetryAnnotation removes the geass.dev/retry annotation from a node that is not Failed. It asks for a
+// retry of a failure, and there is none to retry, so left in place it would restart the node by itself the
+// next time it fails, without anyone having asked for that.
+func (r *GeassNodeReconciler) dropRetryAnnotation(ctx context.Context, node *geassv1alpha1.GeassNode) error {
+	if _, ok := node.Annotations[nodeRetryAnnotKey]; !ok {
+		return nil
+	}
+	base := node.DeepCopy()
+	delete(node.Annotations, nodeRetryAnnotKey)
+	return client.IgnoreNotFound(r.Patch(ctx, node, client.MergeFrom(base)))
 }
 
 func (r *GeassNodeReconciler) provision(
@@ -293,14 +311,12 @@ func (r *GeassNodeReconciler) provision(
 		sshPort = 22
 	}
 
-	k3sVersion, err := workerK3sVersion(ctx, r.Client, cluster)
+	controlPlane, err := controlPlaneNodes(ctx, r.Client)
 	if err != nil {
 		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
 	}
-	serverURL, err := workerServerURL(ctx, r.Client, cluster)
-	if err != nil {
-		return r.setFailed(ctx, node, "could not determine the address workers join the cluster on: "+err.Error())
-	}
+	k3sVersion := workerK3sVersion(controlPlane, cluster)
+	serverURL := workerServerURL(cluster, controlPlane)
 	if serverURL != cluster.Spec.ServerURL {
 		log.Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
 			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
