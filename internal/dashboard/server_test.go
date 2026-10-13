@@ -1091,6 +1091,7 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	require.Len(t, updated.Spec.Env, 1)
 	require.Equal(t, "DATABASE_URL", updated.Spec.Env[0].Name)
 	require.Equal(t, "postgres-connection", updated.Spec.Env[0].ValueFrom.SecretKeyRef.Name)
+	require.Equal(t, platform.ConnectionKeyURI, updated.Spec.Env[0].ValueFrom.SecretKeyRef.Key, "database Secrets keep the connection URL under uri")
 	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 }
 
@@ -1114,6 +1115,44 @@ func TestHandleAppAttachRedisDatabaseUsesRedisURL(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
 	require.Len(t, updated.Spec.Env, 1)
 	require.Equal(t, "REDIS_URL", updated.Spec.Env[0].Name)
+}
+
+// A bucket's connection Secret has no "uri" key, only endpoint, accessKey, secretKey and bucket, so a
+// reference to a key that is not there would leave the pod in CreateContainerConfigError.
+func TestHandleAppAttachBucketReadsAKeyTheConnectionSecretHas(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: testProjectName, Source: imageAppSource("nginx")}}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads", Namespace: platform.SystemNamespace},
+		Status:     geassv1alpha1.GeassObjectStoreStatus{ConnectionSecret: "uploads-connection"},
+	}
+	connection := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads-connection", Namespace: "payments-dev"},
+		Data: map[string][]byte{
+			platform.ConnectionKeyEndpoint:  []byte("http://geass-minio.geass-system.svc:9000"),
+			platform.ConnectionKeyAccessKey: []byte("uploads"),
+			platform.ConnectionKeySecretKey: []byte("secret"),
+			platform.ConnectionKeyBucket:    []byte("uploads"),
+		},
+	}
+	c := newFakeClient(app, store, connection)
+	srv := &Server{Client: c}
+	form := url.Values{"kind": {"object-store"}, formFieldName: {"uploads"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppAttach(rec, req, "api")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var updated geassv1alpha1.GeassApp
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
+	require.Len(t, updated.Spec.Env, 1)
+	require.Equal(t, "S3_ENDPOINT", updated.Spec.Env[0].Name)
+	ref := updated.Spec.Env[0].ValueFrom.SecretKeyRef
+	require.Equal(t, "uploads-connection", ref.Name)
+	require.Contains(t, connection.Data, ref.Key, "the referenced key must exist in the bucket's connection Secret")
+	require.Equal(t, platform.ConnectionKeyEndpoint, ref.Key)
+	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 }
 
 func TestHandleDatabaseCRUD(t *testing.T) {

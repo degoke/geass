@@ -27,6 +27,19 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
+// reconcileTimes runs the reconciler n times for one store. A new store needs a pass to add its finalizer, and
+// the cluster MinIO server needs two more that each record a default (its resources, then its placement) and
+// ask to run again, before the first pass that creates the chart.
+func reconcileTimes(ctx context.Context, r *GeassObjectStoreReconciler, name string, n int) {
+	for range n {
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: platform.SystemNamespace}})
+		Expect(err).NotTo(HaveOccurred())
+	}
+}
+
+// clusterMinIOReconcilesBeforeChart is how many passes the cluster MinIO server needs before its chart exists.
+const clusterMinIOReconcilesBeforeChart = 4
+
 var _ = Describe("GeassObjectStore Controller", func() {
 	ctx := context.Background()
 	const ns = platform.SystemNamespace
@@ -84,16 +97,12 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())
 
 		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, clusterMinIOReconcilesBeforeChart)
 
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		markClusterMinIOWorkloadReady(ctx)
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, 1)
 
 		secret := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName + "-connection", Namespace: ns}, secret)).To(Succeed())
@@ -134,8 +143,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())
 
 		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testObjectStoreName, 2)
 
 		latest := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, latest)).To(Succeed())
@@ -188,14 +196,10 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, server)).To(Succeed())
 		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), HTTP: s3.Client()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, clusterMinIOReconcilesBeforeChart)
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		markClusterMinIOWorkloadReady(ctx)
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, 1)
 
 		latestServer := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}, latestServer)).To(Succeed())
@@ -212,10 +216,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 			},
 		}
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testObjectStoreName, 2)
 
 		pending := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, pending)).To(Succeed())
@@ -225,16 +226,14 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
 		Expect(chart.Annotations[platform.HelmStaleJobUIDAnnotation]).NotTo(BeEmpty())
 
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testObjectStoreName, 1)
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testObjectStoreName, Namespace: ns}, pending)).To(Succeed())
 		Expect(conditionIsTrue(pending.Status.Conditions, platform.ConditionReady)).To(BeFalse())
 		Expect(conditionMessage(pending.Status.Conditions, platform.ConditionReady)).To(ContainSubstring("Installing"))
 
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		markClusterMinIOWorkloadReady(ctx)
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testObjectStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testObjectStoreName, 1)
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
 		Expect(chart.Annotations[platform.HelmStaleJobUIDAnnotation]).To(BeEmpty())
 
@@ -264,7 +263,7 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("accessKey: \"assets\""))
 		Expect(chart.Spec.ValuesContent).To(ContainSubstring("arn:aws:s3:::uploads"))
 		Expect(chart.Spec.ValuesContent).NotTo(ContainSubstring("secretKey: \""))
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "geass-minio-assets", Namespace: testHelmChartNS}, &helmv1.HelmChart{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
 		latest := &geassv1alpha1.GeassObjectStore{}
@@ -289,14 +288,10 @@ var _ = Describe("GeassObjectStore Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, server)).To(Succeed())
 		reconciler := &GeassObjectStoreReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), HTTP: s3.Client()}
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, clusterMinIOReconcilesBeforeChart)
 		markHelmChartReady(ctx, platform.ClusterMinIOChartName)
 		markClusterMinIOWorkloadReady(ctx)
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, 1)
 
 		latestServer := &geassv1alpha1.GeassObjectStore{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}, latestServer)).To(Succeed())
@@ -312,19 +307,16 @@ var _ = Describe("GeassObjectStore Controller", func() {
 			},
 		}
 		Expect(k8sClient.Create(ctx, store)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testTempStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testTempStoreName, 1)
 		Expect(k8sClient.Delete(ctx, store)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: testTempStoreName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileTimes(ctx, reconciler, testTempStoreName, 1)
 
 		chart := &helmv1.HelmChart{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)).To(Succeed())
 
 		Expect(k8sClient.Delete(ctx, server)).To(Succeed())
-		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: platform.ClusterMinIOName, Namespace: ns}})
-		Expect(err).NotTo(HaveOccurred())
-		err = k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)
+		reconcileTimes(ctx, reconciler, platform.ClusterMinIOName, 1)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: platform.ClusterMinIOChartName, Namespace: testHelmChartNS}, chart)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 })

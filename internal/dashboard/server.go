@@ -1561,6 +1561,9 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 	resourceName := strings.TrimSpace(r.FormValue("name"))
 	kind := r.FormValue("kind")
 	secretName, envName := "", ""
+	// Database Secrets hold a ready-made connection URL under "uri". Bucket Secrets have no URL, so a bucket
+	// reference reads the S3 endpoint.
+	secretKey := platform.ConnectionKeyURI
 	if kind == "database" {
 		var db geassv1alpha1.GeassDatabase
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: resourceName, Namespace: systemNamespace}, &db); err != nil {
@@ -1580,7 +1583,7 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			http.NotFound(w, r)
 			return
 		}
-		secretName, envName = store.Status.ConnectionSecret, "S3_ENDPOINT"
+		secretName, envName, secretKey = store.Status.ConnectionSecret, "S3_ENDPOINT", platform.ConnectionKeyEndpoint
 	}
 	if secretName == "" {
 		redirectFormError(w, r, fallback, "resource is not ready")
@@ -1592,7 +1595,7 @@ func (s *Server) handleAppAttach(w http.ResponseWriter, r *http.Request, name st
 			break
 		}
 	}
-	app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: "uri"}}})
+	app.Spec.Env = append(app.Spec.Env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: secretKey}}})
 	markAppPendingChange(&app, pendingChangeVariables)
 	if err := s.Client.Update(r.Context(), &app); err != nil {
 		redirectFormInternalError(w, r, fallback)

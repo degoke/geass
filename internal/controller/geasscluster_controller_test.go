@@ -67,6 +67,11 @@ func markHelmChartReady(ctx context.Context, name string) {
 }
 
 func markHelmReleaseWorkloadReady(ctx context.Context, namespace, release string) {
+	// The release's namespace is created by Helm in a real cluster, and the API server rejects a pod
+	// without containers.
+	if err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}); err != nil && !apierrors.IsAlreadyExists(err) {
+		Expect(err).NotTo(HaveOccurred())
+	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      release + "-0",
@@ -75,8 +80,14 @@ func markHelmReleaseWorkloadReady(ctx context.Context, namespace, release string
 				"app.kubernetes.io/instance": release,
 			},
 		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "pause:3.9"}}},
 	}
-	Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+	// Specs share one API server, so a release pod an earlier spec left behind is reused.
+	if err := k8sClient.Create(ctx, pod); apierrors.IsAlreadyExists(err) {
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)).To(Succeed())
+	} else {
+		Expect(err).NotTo(HaveOccurred())
+	}
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.Conditions = []corev1.PodCondition{{
 		Type:   corev1.PodReady,

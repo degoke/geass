@@ -211,9 +211,13 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 			if err := platform.ValidBucketName(store.Name); err != nil {
 				return deployed, fmt.Errorf("set a bucket name for %s before deploying", store.Name)
 			}
-			store.Spec.Buckets = []string{store.Name}
 		}
 		markDeployed := func() error {
+			// An unnamed draft deploys under its resource ID, like the Settings form. This is part of
+			// markDeployed because a conflict retry starts from a fresh copy and runs only markDeployed.
+			if len(store.Spec.Buckets) == 0 {
+				store.Spec.Buckets = []string{store.Name}
+			}
 			store.Spec.Deploy.Enabled = true
 			platform.ClearPendingChanges(&store.ObjectMeta)
 			return platform.SetLastDeployedJSON(&store.ObjectMeta, store.Spec)
