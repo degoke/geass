@@ -206,3 +206,71 @@ func platformConfigCount(t *testing.T, c client.Client) int {
 	require.NoError(t, c.List(t.Context(), list))
 	return len(list.Items)
 }
+
+// The save talks to Cloudflare for a while between reading the Secret and writing it. Something else that
+// changes the Secret in that time must come back as a conflict, not be overwritten with the older copy.
+func TestCloudflareSettingsSaveDoesNotOverwriteAConcurrentChange(t *testing.T) {
+	const otherZones = `[{"id":"zone-1","name":"example.com"},{"id":"zone-9","name":"other.example"}]`
+	cases := []struct {
+		name       string
+		interfere  func(ctx context.Context, c client.Client, key client.ObjectKey)
+		wantStatus string
+		wantZones  string
+		wantGone   bool
+	}{
+		{
+			name: "another save or a zone refresh changes it",
+			interfere: func(ctx context.Context, c client.Client, key client.ObjectKey) {
+				latest := &corev1.Secret{}
+				if err := c.Get(ctx, key, latest); err == nil {
+					latest.Data[platform.SecretKeyCloudflareZones] = []byte(otherZones)
+					_ = c.Update(ctx, latest)
+				}
+			},
+			wantStatus: "changed while saving",
+			wantZones:  otherZones,
+		},
+		{
+			name: "the connection is removed",
+			interfere: func(ctx context.Context, c client.Client, key client.ObjectKey) {
+				_ = c.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})
+			},
+			wantStatus: "could not save",
+			wantGone:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: platform.SystemNamespace}
+			existing := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Data: map[string][]byte{
+					platform.SecretKeyCloudflareAPIToken:  []byte("working-token"),
+					platform.SecretKeyCloudflareAccountID: []byte("acct"),
+					platform.SecretKeyCloudflareZoneName:  []byte("example.com"),
+					platform.SecretKeyCloudflareZones:     []byte(`[{"id":"zone-1","name":"example.com"}]`),
+				},
+			}
+			c := newFakeClient(existing)
+			var once sync.Once
+			stub := cloudflareAPIStub(t, true, func() {
+				once.Do(func() { tc.interfere(context.Background(), c, key) })
+			})
+			srv := &Server{Client: c, HTTPClient: stub}
+
+			rec := saveCloudflareSettings(srv, url.Values{"apiToken": {"new-token"}, "accountId": {"acct"}, "zoneId": {"zone-1"}, "zoneName": {"example.com"}})
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), tc.wantStatus)
+
+			stored := &corev1.Secret{}
+			err := c.Get(t.Context(), key, stored)
+			if tc.wantGone {
+				require.True(t, apierrors.IsNotFound(err), "a Secret removed while saving must not be brought back: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			require.JSONEq(t, tc.wantZones, string(stored.Data[platform.SecretKeyCloudflareZones]))
+			require.Equal(t, "working-token", string(stored.Data[platform.SecretKeyCloudflareAPIToken]))
+		})
+	}
+}

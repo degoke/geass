@@ -171,7 +171,7 @@ stringData:
 | `users` | A JSON array of `{"username","password","role"}`. Roles are `admin` and `viewer` (`observer` is a token role, not a user role). Plain passwords are replaced by bcrypt hashes the first time they are read |
 | `session-key` | The key that signs sessions, as `hex:` plus 64 hex characters. Generated on first use. Delete it to sign everyone out |
 | `session-epochs` | A JSON object of per-user counters that Geass increments on sign-out |
-| `login-lockouts` | A JSON object of failed sign-in counters and lock times, per username |
+| `login-lockouts` | A JSON object of failed sign-in counters and lock times, per configured username. Expired records are removed and at most 256 are kept |
 
 Geass writes the last three keys; you only need `users`. The full story is in [Users and API tokens](/docs/guides/users-and-tokens/).
 
