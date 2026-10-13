@@ -1,0 +1,119 @@
+---
+import { withBase } from "../../lib/site";
+
+const cliDocs = withBase("docs/guides/command-line/");
+const mcpDocs = withBase("docs/guides/mcp-server/");
+---
+  <section class="sec" id="agents" aria-labelledby="agents-title">
+    <div class="sec-inner">
+      <div class="sec-head">
+        <span class="eyebrow mono">AGENTS AND AUTOMATION</span>
+        <h2 id="agents-title">Your agents can run it too</h2>
+        <p class="sub">
+          A command line, an MCP server and a versioned API. Give an agent a token and it can ship, debug and fix
+          your cloud, inside the limits you set.
+        </p>
+      </div>
+
+      <div class="agents-grid">
+        <ul class="can">
+          <li><span class="mono">SHIP</span><p>Deploy a service and wait until it is ready, or roll back a bad release.</p></li>
+          <li><span class="mono">DEBUG</span><p>Read status, metrics and deployment history, and see what the last deploy left behind.</p></li>
+          <li><span class="mono">FIX</span><p>Change variables and secrets, scale a service, or let it sleep when idle.</p></li>
+          <li><span class="mono">SCHEDULE</span><p>Give a function a schedule, and call it on demand to check it.</p></li>
+          <li><span class="mono">PLAN</span><p>See nodes, regions and compliance tags, and how to reach a database.</p></li>
+          <li><span class="mono">GROW</span><p>Create a service from an image or a GitHub repository, as a draft you review.</p></li>
+        </ul>
+
+        <div class="demo">
+          <div class="tabs" role="tablist" aria-label="How an agent connects">
+            <button type="button" role="tab" id="tab-cli" aria-controls="panel-cli" aria-selected="true">CLI</button>
+            <button type="button" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1">MCP</button>
+            <button type="button" role="tab" id="tab-api" aria-controls="panel-api" aria-selected="false" tabindex="-1">API</button>
+          </div>
+
+          <div class="panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli">
+            <pre class="term"><span class="p">$</span> geass status thumbnails
+<span class="dim">NAME        STATE   READY  BUILD  URL  MESSAGE</span>
+thumbnails  <span class="bad">failed</span>  0/1    -      -    CrashLoopBackOff
+
+<span class="p">$</span> geass env set thumbnails MAX_IMAGE_MB=8
+<span class="p">$</span> geass deploy thumbnails --wait
+<span class="dim">thumbnails: Deploying thumbnails</span>
+<span class="ok">thumbnails: ready at https://thumbs.example.com</span></pre>
+          </div>
+
+          <div class="panel" role="tabpanel" id="panel-mcp" aria-labelledby="tab-mcp">
+            <div class="chat">
+              <p class="msg"><span class="who mono">you</span>Why does thumbnails keep crashing?</p>
+              <p class="msg tool mono"><span class="who">agent</span><code>app_status(app: "thumbnails")</code></p>
+              <p class="msg tool mono"><span class="who">agent</span><code>app_metrics(name: "thumbnails", window: "1h")</code></p>
+              <p class="msg tool mono"><span class="who">agent</span><code>set_variable(app: "thumbnails", key: "MAX_IMAGE_MB", value: "8")</code><span class="ok">pending</span></p>
+              <p class="msg"><span class="who mono">agent</span>Its memory sits at the limit and it restarts whenever someone uploads a large image. I capped uploads at 8 MB as a pending change. Want me to deploy it?</p>
+              <p class="msg"><span class="who mono">you</span>Yes, go ahead.</p>
+              <p class="msg tool mono"><span class="who">agent</span><code>deploy_app(app: "thumbnails", wait: true)</code><span class="ok">ready</span></p>
+            </div>
+          </div>
+
+          <div class="panel" role="tabpanel" id="panel-api" aria-labelledby="tab-api">
+            <pre class="term"><span class="p">$</span> export GEASS_TOKEN=gsp_&hellip;
+<span class="p">$</span> curl -H "Authorization: Bearer $GEASS_TOKEN" \
+"https://geass.example.com/api/v1/apps?project=storefront"
+
+<span class="dim"># Every route is described at /api/v1/openapi.json,</span>
+<span class="dim"># and signed webhooks tell you when a deploy changes.</span></pre>
+          </div>
+          <p class="demo-foot mono">One token, the same limits, whichever way an agent connects. <a href={cliDocs}>CLI docs</a> · <a href={mcpDocs}>MCP docs</a></p>
+        </div>
+      </div>
+
+      <div class="stories-head">
+        <span class="eyebrow mono">IN PRACTICE</span>
+        <h3>What an agent does with it</h3>
+      </div>
+      <div class="stories">
+        <article>
+          <span class="eyebrow mono">INCIDENT</span>
+          <h4>Fix it at 3 a.m.</h4>
+          <p>Checks status and metrics, finds the failing service, changes a variable, redeploys and tells you what it changed.</p>
+          <code class="chain mono">app_status <b>&rarr;</b> app_metrics <b>&rarr;</b> set_variable <b>&rarr;</b> deploy_app</code>
+        </article>
+        <article>
+          <span class="eyebrow mono">RECOVERY</span>
+          <h4>Undo a bad release</h4>
+          <p>Checks the deployment history and status, and returns the service to the previous deployment.</p>
+          <code class="chain mono">app_deployments <b>&rarr;</b> app_status <b>&rarr;</b> rollback_app</code>
+        </article>
+        <article>
+          <span class="eyebrow mono">REVIEW</span>
+          <h4>Check a pull request properly</h4>
+          <p>Finds the pull request's preview environment and checks that every service is up and how it is using resources.</p>
+          <code class="chain mono">list_apps <b>&rarr;</b> app_status <b>&rarr;</b> app_metrics</code>
+        </article>
+        <article>
+          <span class="eyebrow mono">COST</span>
+          <h4>Let idle services sleep</h4>
+          <p>Finds services that sit unused and makes them stop when idle, then start again on the next request.</p>
+          <code class="chain mono">list_apps <b>&rarr;</b> app_metrics <b>&rarr;</b> set_sleep_when_idle</code>
+        </article>
+        <article>
+          <span class="eyebrow mono">BUILD</span>
+          <h4>Stand up a service</h4>
+          <p>Describe a repository. The agent creates the service as a draft, sets its variables and deploys it when you agree.</p>
+          <code class="chain mono">create_app <b>&rarr;</b> set_variable <b>&rarr;</b> deploy_app</code>
+        </article>
+        <article>
+          <span class="eyebrow mono">SCHEDULE</span>
+          <h4>Run a job every night</h4>
+          <p>Gives a function a schedule, deploys it, then calls it once to check that it works.</p>
+          <code class="chain mono">set_function_trigger <b>&rarr;</b> deploy_app <b>&rarr;</b> invoke_function</code>
+        </article>
+      </div>
+
+      <div class="guards">
+        <div><h3>Scoped by project</h3><p>A project token reaches only that project, so an agent touches only what you give it.</p></div>
+        <div><h3>Read-only when you want</h3><p>A read-only token can inspect everything it is allowed to see, logs included, and change nothing.</p></div>
+        <div><h3>Drafts, then your approval</h3><p>Changes wait as pending until you deploy, and a delete needs the resource's name typed back.</p></div>
+      </div>
+    </div>
+  </section>

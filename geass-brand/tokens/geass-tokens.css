@@ -1,68 +1,75 @@
 /**
- * Geass design tokens — single source for dashboard and marketing surfaces.
+ * Geass design tokens: "The Contract". Single source for the dashboard and the marketing site.
  * Palette: geass-colors.json
+ *
+ * Dark is the primary experience. The accent is C.C. green on dark and deep green on light.
+ * Corners are square; the only round things are status dots.
  */
 
 :root {
-  --geass-signal: #888cf8;
-  --geass-surface: #121214;
-  --geass-light: #f2f2f3;
-  --geass-cloud: #eaeaff;
-  --geass-layer: #d8d6ff;
-  --geass-healthy: #59c77a;
-  --geass-critical: #e66a6a;
-  --geass-canvas-base: #0a0a0b;
-  --geass-ink: #171719;
+  --geass-signal: #7ce0a0;
+  --geass-signal-hover: #94e8b2;
+  --geass-on-signal: #0a0a0a;
+  --geass-healthy: #7ce0a0;
+  --geass-warning: #e8a84a;
+  --geass-critical: #ff8a8a;
+  --geass-critical-solid: #c93c3c;
 
-  --geass-radius-sm: 6px;
-  --geass-radius-md: 8px;
-  --geass-radius-lg: 10px;
-  --geass-radius-xl: 12px;
+  --geass-radius: 0;
 
-  --geass-font-sans: "Inter Variable", Inter, Geist, ui-sans-serif, system-ui, sans-serif;
-  --geass-font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --geass-font-sans: "Space Grotesk Variable", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --geass-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The wordmark is outlined in the logo SVGs. This is only for live text that must echo it. */
+  --geass-font-wordmark: "Geist Variable", Geist, var(--geass-font-sans);
 
-  --geass-shadow-card: 0 1px 2px rgb(18 18 20 / 4%), 0 8px 24px rgb(136 140 248 / 8%);
-  --geass-shadow-elevated: 0 16px 40px rgb(0 0 0 / 24%);
-  --geass-focus-ring: 0 0 0 2px color-mix(in srgb, var(--geass-signal) 42%, transparent);
-  --geass-grid-dot: color-mix(in srgb, var(--geass-signal) 14%, transparent);
+  --geass-grid-size: 48px;
 }
 
+:root,
 [data-mantine-color-scheme="dark"] {
-  --geass-canvas: #0e0e10;
-  --geass-subtle: #0e0e10;
-  --geass-surface: #17171a;
-  --geass-elevated: #1c1c21;
-  --geass-hover: #24242b;
-  --geass-border-subtle: #2c2c34;
-  --geass-border: #3a3a44;
-  --geass-btn-primary-bg: #f4f4f5;
-  --geass-btn-primary-fg: #111113;
-  --geass-text: var(--geass-light);
-  --geass-text-secondary: #a3a3ab;
-  --geass-text-muted: #696972;
-  --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 14%, var(--geass-surface));
-  --geass-cloud-wash: color-mix(in srgb, var(--geass-cloud) 8%, var(--geass-canvas));
+  --geass-canvas: #0a0a0a;
+  --geass-subtle: #0f0f0f;
+  --geass-terminal-bg: #000000;
+  --geass-surface: #151515;
+  --geass-elevated: #1a1a1a;
+  --geass-hover: #222222;
+  --geass-border-subtle: #262626;
+  --geass-border: #333333;
+  --geass-border-strong: #5a5a5a;
+  --geass-text: #f2f2f2;
+  --geass-text-secondary: #a1a1a1;
+  --geass-text-muted: #8f8f8f;
+  --geass-accent: #7ce0a0;
+  --geass-btn-primary-bg: #7ce0a0;
+  --geass-btn-primary-fg: #0a0a0a;
+  --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 10%, var(--geass-surface));
+  --geass-grid-line: rgb(255 255 255 / 4.5%);
+  --geass-grid-dot: color-mix(in srgb, #ffffff 16%, transparent);
   --geass-shadow-card: none;
-  --geass-terminal-bg: #0e0e10;
-  --geass-terminal-chrome: #18181b;
+  --geass-shadow-elevated: 0 16px 40px rgb(0 0 0 / 40%);
+  --geass-focus-ring: 0 0 0 2px color-mix(in srgb, var(--geass-signal) 55%, transparent);
 }
 
 [data-mantine-color-scheme="light"] {
-  --geass-canvas: #e6e6ea;
-  --geass-subtle: #f5f5f7;
+  --geass-canvas: #ffffff;
+  --geass-subtle: #f4f4f2;
+  --geass-terminal-bg: #0a0a0a;
   --geass-surface: #ffffff;
-  --geass-btn-primary-bg: #171719;
-  --geass-btn-primary-fg: #f4f4f5;
   --geass-elevated: #ffffff;
-  --geass-hover: color-mix(in srgb, var(--geass-ink) 5%, var(--geass-surface));
-  --geass-border-subtle: #d4d4da;
-  --geass-border: #b8b8c0;
-  --geass-text: var(--geass-ink);
-  --geass-text-secondary: #575761;
-  --geass-text-muted: #7d7d87;
-  --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 12%, #ffffff);
-  --geass-cloud-wash: var(--geass-cloud);
-  --geass-terminal-bg: var(--geass-surface);
-  --geass-terminal-chrome: var(--geass-cloud);
+  --geass-hover: #f4f4f2;
+  --geass-border-subtle: #e3e2de;
+  --geass-border: #d5d4cf;
+  --geass-border-strong: #0a0a0a;
+  --geass-text: #0a0a0a;
+  --geass-text-secondary: #45454b;
+  --geass-text-muted: #6b6b70;
+  --geass-accent: #16935a;
+  --geass-btn-primary-bg: #0a0a0a;
+  --geass-btn-primary-fg: #ffffff;
+  --geass-accent-surface: color-mix(in srgb, #16935a 8%, #ffffff);
+  --geass-grid-line: rgb(10 10 10 / 5%);
+  --geass-grid-dot: color-mix(in srgb, #0a0a0a 18%, transparent);
+  --geass-shadow-card: none;
+  --geass-shadow-elevated: 0 16px 40px rgb(10 10 10 / 12%);
+  --geass-focus-ring: 0 0 0 2px color-mix(in srgb, #16935a 45%, transparent);
 }

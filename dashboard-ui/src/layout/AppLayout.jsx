@@ -1,35 +1,31 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Burger, Kbd, Menu } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { Burger, Menu } from "@mantine/core";
 import {
-  Activity,
   BarChart3,
-  Bell,
-  FileText,
   ChevronDown,
   ExternalLink,
   FolderKanban,
-  LayoutGrid,
   LayoutTemplate,
   LifeBuoy,
   LogOut,
-  MoreVertical,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
-import { dashboardSession, useBootstrap } from "@/lib/dashboard";
+import { canMutate, dashboardSession, useBootstrap } from "@/lib/dashboard";
+import { openResourceDialog } from "@/lib/services";
 import {
   ACCOUNT_PRIMARY,
   ACCOUNT_USAGE,
   FOOTER_LINKS,
   settingsActive,
 } from "@/lib/platform-nav";
+import { ClusterHealth } from "@/components/ClusterHealth";
+import { DeployControls } from "@/components/DeployControls";
 import { DomainSetupBanner } from "@/components/DomainSetupBanner";
-import { EnvironmentMenu } from "@/components/ProjectEnvironmentBar";
 
 const NAV_ICONS = {
   projects: FolderKanban,
@@ -44,6 +40,7 @@ const FOOTER_ICONS = {
 };
 
 const ACCOUNT_NAV_COLLAPSED_KEY = "geass-account-nav-collapsed";
+const PROJECT_SECTIONS = ["monitor", "logs", "settings"];
 
 function useAccountNavCollapsed() {
   const [collapsed, setCollapsed] = useState(() => {
@@ -72,26 +69,37 @@ function initial(username) {
 }
 
 export function AppLayout({ children }) {
-  const { data } = useBootstrap();
+  const { data, refetch } = useBootstrap();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const search = useRouterState({ select: (state) => state.location.search || {} });
   const navigate = useNavigate();
   const session = dashboardSession(data);
   const username = session.username || "Signed in";
-  const [opened, { toggle, close }] = useDisclosure();
+  const [navOpen, setNavOpen] = useState(false);
   const [accountNavCollapsed, toggleAccountNav] = useAccountNavCollapsed();
 
   useEffect(() => {
-    close();
-  }, [pathname, close]);
+    setNavOpen(false);
+  }, [pathname]);
 
   const parts = pathname.split("/").filter(Boolean);
   const projectSlug = parts[0] === "projects" ? parts[1] : "";
-  const project = projectSlug ? list(data, "projects").find((item) => resourceName(item) === projectSlug) : null;
+  const projects = list(data, "projects");
+  const project = projectSlug ? projects.find((item) => resourceName(item) === projectSlug) : null;
   const inProject = Boolean(project);
+  const onResourceRoute = inProject && parts.length > 3;
   const environment = search.environment || project?.spec?.environments?.[0] || "";
-  const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   const envSearch = environment ? { environment } : undefined;
+
+  // A resource that exists in one environment may not exist in another, so switching environments from a
+  // resource page goes back to the project instead of to a page that would be empty.
+  const setEnvironment = (next) => {
+    if (onResourceRoute) {
+      navigate({ to: `/projects/${projectSlug}`, search: next ? { environment: next } : undefined });
+      return;
+    }
+    navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
+  };
 
   const signOut = () => {
     action("/logout")
@@ -101,34 +109,38 @@ export function AppLayout({ children }) {
 
   return (
     <div className="rw-shell">
-      <Burger className="rw-burger" opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Open navigation" />
-      <div className={inProject ? "rw-shell-project" : "rw-shell-account"} style={{ display: "flex", minHeight: "100dvh" }}>
-        <nav
-          className={`rw-nav rw-nav-home${accountNavCollapsed ? " is-collapsed" : ""}`}
-          data-open={opened ? "true" : "false"}
-        >
+      <TopBar
+        data={data}
+        project={project}
+        projectSlug={projectSlug}
+        projects={projects}
+        environment={environment}
+        onEnvironmentChange={setEnvironment}
+        onProjectChange={(name) => navigate({ to: `/projects/${name}` })}
+        onAllProjects={() => navigate({ to: "/projects" })}
+        username={username}
+        onSignOut={signOut}
+        reload={refetch}
+        navOpened={navOpen}
+        onToggleNav={() => setNavOpen((open) => !open)}
+      />
+      <div className="rw-shell-body">
+        <nav className={`rw-nav rw-nav-home${accountNavCollapsed ? " is-collapsed" : ""}`} data-open={navOpen ? "true" : "false"}>
           <AccountNav
             pathname={pathname}
-            username={username}
-            onSignOut={signOut}
             collapsed={accountNavCollapsed}
-            projectSlug={inProject ? projectSlug : ""}
-            envSearch={inProject ? envSearch : undefined}
+            onToggleCollapsed={toggleAccountNav}
+            data={data}
           />
         </nav>
-        <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <main className="rw-main">
           {inProject ? (
             <>
-              <HomeTopBar
-                collapsed={accountNavCollapsed}
-                onToggleCollapsed={toggleAccountNav}
-                project={project}
+              <ProjectTabs
                 projectSlug={projectSlug}
-                projects={list(data, "projects")}
-                environment={environment}
-                onEnvironmentChange={setEnvironment}
-                onProjectChange={(name) => navigate({ to: `/projects/${name}` })}
-                onAllProjects={() => navigate({ to: "/projects" })}
+                envSearch={envSearch}
+                pathname={pathname}
+                canAdd={canMutate(data)}
               />
               <div className="rw-stage rw-stage-project">
                 <div className="rw-frame rw-frame-flush">
@@ -137,13 +149,10 @@ export function AppLayout({ children }) {
               </div>
             </>
           ) : (
-            <>
-              <HomeTopBar collapsed={accountNavCollapsed} onToggleCollapsed={toggleAccountNav} />
-              <div className="rw-account-pane">
-                <DomainSetupBanner />
-                <div className="rw-account-main">{children}</div>
-              </div>
-            </>
+            <div className="rw-account-pane">
+              <DomainSetupBanner />
+              <div className="rw-account-main">{children}</div>
+            </div>
           )}
         </main>
       </div>
@@ -151,9 +160,8 @@ export function AppLayout({ children }) {
   );
 }
 
-function HomeTopBar({
-  collapsed,
-  onToggleCollapsed,
+function TopBar({
+  data,
   project,
   projectSlug,
   projects,
@@ -161,156 +169,186 @@ function HomeTopBar({
   onEnvironmentChange,
   onProjectChange,
   onAllProjects,
+  username,
+  onSignOut,
+  reload,
+  navOpened,
+  onToggleNav,
 }) {
   const inProject = Boolean(project && projectSlug);
+  const environments = project?.spec?.environments || [];
+  const pullRequests = project?.status?.pullRequests || [];
   return (
-    <header className="rw-home-top">
-      <div className="rw-home-top-start">
-        <button
-          type="button"
-          className="rw-icon-btn"
-          onClick={() => onToggleCollapsed?.()}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-        </button>
-        {inProject ? (
-          <div className="rw-home-top-project">
-            <Menu position="bottom-start">
-              <Menu.Target>
-                <button type="button" className="rw-crumb">
-                  {project.spec?.displayName || projectSlug}
-                  <ChevronDown size={14} />
+    <header className="rw-top">
+      <Burger className="rw-top-burger" opened={navOpened} onClick={onToggleNav} hiddenFrom="sm" size="sm" aria-label="Open navigation" />
+      <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
+        <img src="/geass-logo-dark.svg" alt="Geass" height={24} width={91} />
+      </Link>
+
+      {inProject ? (
+        <>
+          <Menu position="bottom-start">
+            <Menu.Target>
+              <button type="button" className="rw-top-project" aria-label="Switch project">
+                {project.spec?.displayName || projectSlug}
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {projects.map((item) => {
+                const name = resourceName(item);
+                return (
+                  <Menu.Item key={name} onClick={() => onProjectChange?.(name)}>
+                    {item.spec?.displayName || name}
+                  </Menu.Item>
+                );
+              })}
+              <Menu.Divider />
+              <Menu.Item leftSection={<FolderKanban size={14} />} onClick={() => onAllProjects?.()}>
+                All projects
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+
+          <nav className="rw-env-tabs" aria-label="Environments">
+            {environments.map((env) => {
+              const pullRequest = pullRequests.find((entry) => entry.environment === env);
+              const active = env === environment;
+              return (
+                <button
+                  key={env}
+                  type="button"
+                  className={active ? "rw-env-tab is-on" : "rw-env-tab"}
+                  aria-current={active ? "true" : undefined}
+                  onClick={() => onEnvironmentChange?.(env)}
+                >
+                  {env}
+                  {pullRequest ? <span className="rw-env-badge">PR #{pullRequest.number}</span> : null}
                 </button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {projects.map((item) => {
-                  const name = resourceName(item);
-                  return (
-                    <Menu.Item key={name} onClick={() => onProjectChange?.(name)}>
-                      {item.spec?.displayName || name}
-                    </Menu.Item>
-                  );
-                })}
-                <Menu.Divider />
-                <Menu.Item leftSection={<FolderKanban size={14} />} onClick={() => onAllProjects?.()}>
-                  All projects
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-            <EnvironmentMenu project={project} environment={environment} onChange={onEnvironmentChange} />
-          </div>
-        ) : null}
-      </div>
-      <div className="rw-home-top-actions">
-        <button type="button" className="rw-icon-btn" aria-label="Notifications">
-          <Bell size={18} />
-        </button>
+              );
+            })}
+            {canMutate(data) ? (
+              <Link to={`/projects/${projectSlug}/settings`} search={environment ? { environment } : undefined} className="rw-env-tab rw-env-add">
+                + Environment
+              </Link>
+            ) : null}
+          </nav>
+        </>
+      ) : null}
+
+      <div className="rw-top-end">
+        {inProject ? <DeployControls projectName={projectSlug} environment={environment} data={data} reload={reload} /> : null}
+        <Menu position="bottom-end" width={200}>
+          <Menu.Target>
+            <button type="button" className="rw-top-avatar" aria-label="Account menu" title={username}>
+              {initial(username)}
+            </button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>{username}</Menu.Label>
+            <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </div>
     </header>
   );
 }
 
-function AccountNav({ pathname, username, onSignOut, collapsed, projectSlug, envSearch }) {
-  const onPlatformSettings = settingsActive(pathname);
-  const onProjectSettings = Boolean(projectSlug) && pathname.includes("/settings");
-  const onMetrics = Boolean(projectSlug) && pathname.endsWith("/monitor");
-  const onLogs = Boolean(projectSlug) && pathname.endsWith("/logs");
-  const onCanvas = Boolean(projectSlug) && !onProjectSettings && !onMetrics && !onLogs;
+function ProjectTabs({ projectSlug, envSearch, pathname, canAdd }) {
+  const section = pathname.split("/").filter(Boolean)[2];
+  const onResources = !PROJECT_SECTIONS.includes(section);
+  const tabs = [
+    { id: "resources", label: "Resources", to: `/projects/${projectSlug}`, on: onResources },
+    { id: "monitor", label: "Metrics", to: `/projects/${projectSlug}/monitor`, on: section === "monitor" },
+    { id: "logs", label: "Logs", to: `/projects/${projectSlug}/logs`, on: section === "logs" },
+    { id: "settings", label: "Settings", to: `/projects/${projectSlug}/settings`, on: section === "settings" },
+  ];
+  return (
+    <div className="rw-ptabs">
+      <nav className="rw-ptabs-list" aria-label="Project">
+        {tabs.map((tab) => (
+          <Link
+            key={tab.id}
+            to={tab.to}
+            search={envSearch}
+            className={tab.on ? "rw-ptab is-on" : "rw-ptab"}
+            aria-current={tab.on ? "page" : undefined}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
+      {onResources && canAdd ? (
+        <div className="rw-ptabs-actions">
+          <Link to="/templates" className="rw-btn-ghost">From template</Link>
+          <button type="button" className="rw-btn-white" onClick={openResourceDialog}>+ Add resource</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
+  const usageActive = ACCOUNT_USAGE.active(pathname);
+  const settingsOn = settingsActive(pathname) && !usageActive;
   const UsageIcon = NAV_ICONS.cluster;
-  const sideLink = (to, active, icon, label, search) => (
+  const sideLink = (to, active, icon, label) => (
     <Link
+      key={label}
       to={to}
-      search={search}
       className={active ? "rw-side-link rw-side-on" : "rw-side-link"}
       title={label}
       aria-label={label}
+      aria-current={active ? "page" : undefined}
     >
       {icon}
       <span className="rw-side-link-label">{label}</span>
     </Link>
   );
 
-  const inProject = Boolean(projectSlug);
-
   return (
     <div className={collapsed ? "rw-account is-collapsed" : "rw-account"}>
-      <Link
-        to="/projects"
-        className="rw-side-brand"
-        aria-label="Geass home"
-        title="Projects"
-      >
-        <img className="rw-side-brand-logo" src="/geass-logo-dark.svg" alt="Geass" height={20} width={152} />
-        <img className="rw-side-brand-mark" src="/geass-symbol.svg" alt="" width={22} height={22} />
-      </Link>
       <div className="rw-account-body">
-        <nav className="rw-nav-stack" aria-label={inProject ? "Project" : "Account"}>
-          {inProject ? (
-            <>
-              <div className="rw-nav-group">
-                {sideLink("/projects", false, <FolderKanban size={16} />, "All projects")}
-              </div>
-              <div className="rw-nav-group rw-nav-group-separated">
-                {sideLink(`/projects/${projectSlug}`, onCanvas, <LayoutGrid size={16} />, "Canvas", envSearch)}
-                {sideLink(`/projects/${projectSlug}/monitor`, onMetrics, <Activity size={16} />, "Metrics", envSearch)}
-                {sideLink(`/projects/${projectSlug}/logs`, onLogs, <FileText size={16} />, "Logs", envSearch)}
-                {sideLink(`/projects/${projectSlug}/settings`, onProjectSettings, <Settings size={16} />, "Settings", envSearch)}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="rw-nav-group">
-                {ACCOUNT_PRIMARY.map((item) => {
-                  const Icon = NAV_ICONS[item.icon] || FolderKanban;
-                  return sideLink(item.to, item.active(pathname), <Icon size={16} />, item.label);
-                })}
-              </div>
-              <div className="rw-nav-group rw-nav-group-separated">
-                {sideLink(ACCOUNT_USAGE.to, ACCOUNT_USAGE.active(pathname), <UsageIcon size={16} />, ACCOUNT_USAGE.label)}
-                {sideLink("/settings", onPlatformSettings, <Settings size={16} />, "Settings")}
-              </div>
-            </>
-          )}
+        <nav className="rw-nav-stack" aria-label="Account">
+          {ACCOUNT_PRIMARY.map((item) => {
+            const Icon = NAV_ICONS[item.icon] || FolderKanban;
+            return sideLink(item.to, item.active(pathname), <Icon size={16} />, item.label);
+          })}
+          {sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label)}
+          {sideLink("/settings", settingsOn, <Settings size={16} />, "Settings")}
         </nav>
 
         <div className="rw-account-foot">
-          {!inProject ? (
-            <div className="rw-nav-footer">
-              {FOOTER_LINKS.map((item) => {
-                const FooterIcon = FOOTER_ICONS[item.id] || ExternalLink;
-                return (
-                  <a
-                    key={item.id}
-                    href={item.href}
-                    className="rw-footer-link"
-                    target="_blank"
-                    rel="noreferrer"
-                    title={item.label}
-                    aria-label={item.label}
-                  >
-                    <span className="rw-side-link-label">{item.label}</span>
-                    <FooterIcon size={14} className="rw-footer-link-icon" />
-                  </a>
-                );
-              })}
-            </div>
-          ) : null}
-
-          <Menu position={collapsed ? "right-end" : "top-start"} width={200}>
-            <Menu.Target>
-              <button type="button" className="rw-user-bottom" aria-label="Account menu" title={username}>
-                <span className="rw-avatar">{initial(username)}</span>
-                <span className="rw-user-name">{username}</span>
-                <MoreVertical size={16} className="rw-user-more" />
-              </button>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label>{username}</Menu.Label>
-              <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
+          {!collapsed ? <ClusterHealth data={data} /> : null}
+          <div className="rw-nav-footer">
+            {FOOTER_LINKS.map((item) => {
+              const FooterIcon = FOOTER_ICONS[item.id] || ExternalLink;
+              return (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  className="rw-footer-link"
+                  target="_blank"
+                  rel="noreferrer"
+                  title={item.label}
+                  aria-label={item.label}
+                >
+                  <span className="rw-side-link-label">{item.label}</span>
+                  <FooterIcon size={14} className="rw-footer-link-icon" />
+                </a>
+              );
+            })}
+            <button
+              type="button"
+              className="rw-footer-link rw-collapse-toggle"
+              onClick={() => onToggleCollapsed?.()}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              <span className="rw-side-link-label">Collapse</span>
+              {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { Box, Database, GitBranch, HardDrive, Maximize2, Plus, SquareFunction, ZoomIn, ZoomOut } from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Box, Database, GitBranch, HardDrive, Maximize2, SquareFunction, ZoomIn, ZoomOut } from "lucide-react";
 import { Status } from "@/components/Status";
-import { Button } from "@/components/geass-ui";
 
 const KIND_ICON = {
   Service: Box,
@@ -10,6 +9,9 @@ const KIND_ICON = {
   Redis: Database,
 };
 
+const NODE_WIDTH = 236;
+const NODE_HEIGHT = 112;
+const NODE_STEP = 300;
 const ZOOM_MIN = 0.45;
 const ZOOM_MAX = 1.6;
 const ZOOM_STEP = 0.1;
@@ -39,32 +41,28 @@ function savePositions(projectKey, positions) {
 function layoutNodes(rows) {
   const apps = rows.filter((row) => row.kind === "Service");
   const others = rows.filter((row) => row.kind !== "Service");
-  const nodes = [];
-  const baseX = 320;
-  apps.forEach((row, index) => {
-    nodes.push({
-      ...row,
-      x: baseX + (index - (apps.length - 1) / 2) * 300,
-      y: 72,
-    });
-  });
-  others.forEach((row, index) => {
-    const column = index % 3;
-    const line = Math.floor(index / 3);
-    nodes.push({
-      ...row,
-      x: 80 + column * 300,
-      y: 280 + line * 170,
-    });
-  });
-  if (!nodes.length) return nodes;
   if (!apps.length) {
-    return nodes.map((node, index) => ({
-      ...node,
-      x: 120 + (index % 3) * 300,
+    return others.map((row, index) => ({
+      ...row,
+      x: 80 + (index % 3) * NODE_STEP,
       y: 120 + Math.floor(index / 3) * 170,
     }));
   }
+  // Both rows start at the same left edge and are centred on each other, so nothing slides under the rail.
+  const span = (count) => (count ? (count - 1) * NODE_STEP + NODE_WIDTH : 0);
+  const columns = Math.min(3, others.length);
+  const width = Math.max(span(apps.length), span(columns));
+  const nodes = [];
+  apps.forEach((row, index) => {
+    nodes.push({ ...row, x: 80 + (width - span(apps.length)) / 2 + index * NODE_STEP, y: 72 });
+  });
+  others.forEach((row, index) => {
+    nodes.push({
+      ...row,
+      x: 80 + (width - span(columns)) / 2 + (index % 3) * NODE_STEP,
+      y: 280 + Math.floor(index / 3) * 170,
+    });
+  });
   return nodes;
 }
 
@@ -91,17 +89,19 @@ function buildEdges(nodes) {
   return edges;
 }
 
+/** Lines leave and enter a card at right angles, like wiring on a board. */
 function edgePath(from, to) {
-  const x1 = from.x + 115;
-  const y1 = from.y + 56;
-  const x2 = to.x + 115;
-  const y2 = to.y - 1;
+  const x1 = from.x + NODE_WIDTH / 2;
+  const y1 = from.y + NODE_HEIGHT;
+  const x2 = to.x + NODE_WIDTH / 2;
+  const y2 = to.y;
   const midY = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+  return `M ${x1} ${y1} V ${midY} H ${x2} V ${y2}`;
 }
 
-export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) {
+export function ProjectCanvas({ projectKey, rows, environment }) {
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const viewportRef = useRef(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -127,6 +127,28 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
     [layout, positions],
   );
   const edges = useMemo(() => buildEdges(nodes), [nodes]);
+  const selectedKey = nodes.find((node) => node.href === pathname)?.key || "";
+
+  // The drawer docks beside the canvas, so a card that was visible can end up beneath it. Pan just enough
+  // to keep the selected card in view.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const selected = nodes.find((node) => node.key === selectedKey);
+    if (!viewport || !selected) return;
+    const margin = 32;
+    const left = selected.x * zoomRef.current;
+    const right = left + NODE_WIDTH * zoomRef.current;
+    setPan((current) => {
+      const screenRight = right + current.x;
+      const screenLeft = left + current.x;
+      const width = viewport.clientWidth;
+      if (screenRight > width - margin) return { ...current, x: current.x - (screenRight - (width - margin)) };
+      if (screenLeft < margin) return { ...current, x: current.x + (margin - screenLeft) };
+      return current;
+    });
+    // Only when the selection changes: reacting to every pan or drag would fight the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
 
   const clampZoom = (value) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
 
@@ -267,14 +289,6 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <div className="rw-project-canvas-toolbar">
-        {canAdd ? (
-          <Button variant="outline" onClick={onAdd} leftSection={<Plus size={14} />}>
-            Add
-          </Button>
-        ) : null}
-      </div>
-
       <div className="rw-project-canvas-controls" aria-label="Canvas controls">
         <button type="button" className="rw-canvas-ctl" onClick={() => setZoom((value) => clampZoom(value + ZOOM_STEP))} aria-label="Zoom in">
           <ZoomIn size={16} />
@@ -293,17 +307,11 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
       >
         {edges.length ? (
           <svg className="rw-project-canvas-edges" aria-hidden="true">
-            <defs>
-              <marker id="rw-edge-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                <path d="M0,0 L8,4 L0,8 Z" fill="#5c5c66" />
-              </marker>
-            </defs>
             {edges.map(({ from, to }) => (
               <path
                 key={`${from.key}-${to.key}`}
                 d={edgePath(from, to)}
-                className="rw-project-canvas-edge"
-                markerEnd="url(#rw-edge-arrow)"
+                className={pathname === from.href || pathname === to.href ? "rw-project-canvas-edge is-active" : "rw-project-canvas-edge"}
               />
             ))}
           </svg>
@@ -315,12 +323,23 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
           const isFunction = node.sourceKind === "function";
           const pending = node.pendingKinds?.length;
           const deleting = node.isDeleting;
+          const failed = node.status === "Failed" || node.status === "False" || node.status === "Error";
+          const selected = pathname === node.href;
+          const classes = [
+            "rw-canvas-node",
+            draggingKey === node.key ? "is-dragging" : "",
+            selected ? "is-selected" : "",
+            failed ? "is-failed" : "",
+            pending ? "has-pending" : "",
+            node.isNew ? "is-new" : "",
+            deleting ? "is-deleting" : "",
+          ].filter(Boolean).join(" ");
           return (
             <Link
               key={node.key}
               to={node.href}
               search={search}
-              className={`rw-canvas-node${draggingKey === node.key ? " is-dragging" : ""}${pending ? " has-pending" : ""}${node.isNew ? " is-new" : ""}${deleting ? " is-deleting" : ""}${node.volume ? " has-volume" : ""}`}
+              className={classes}
               style={{ left: node.x, top: node.y }}
               onPointerDown={(event) => onNodePointerDown(event, node)}
               onClick={onNodeClick}
@@ -332,21 +351,18 @@ export function ProjectCanvas({ projectKey, rows, environment, canAdd, onAdd }) 
                 <span className="rw-canvas-node-name">{node.name}</span>
                 {deleting ? <span className="rw-canvas-node-badge is-deleting">Deleting</span> : null}
                 {!deleting && node.isNew ? <span className="rw-canvas-node-badge">New</span> : null}
+                {node.meta ? <span className="rw-canvas-node-kind">{node.meta}</span> : null}
               </div>
               <div className="rw-canvas-node-sub">{node.source}</div>
-              {pending ? (
-                <div className="rw-canvas-node-pending">{node.pendingCount} {node.pendingLabel}</div>
-              ) : null}
               {node.warning ? <div className="rw-backup-node-warning">{node.warning}</div> : null}
               <div className="rw-canvas-node-foot">
                 <Status value={node.status} />
+                {pending ? (
+                  <span className="rw-canvas-node-change">{node.pendingCount} {node.pendingCount === 1 ? "change" : "changes"}</span>
+                ) : node.endpoint ? (
+                  <span className="rw-canvas-node-endpoint">{node.endpoint}</span>
+                ) : null}
               </div>
-              {node.volume ? (
-                <div className="rw-canvas-node-volume">
-                  <HardDrive size={12} aria-hidden />
-                  <span>{node.volume}</span>
-                </div>
-              ) : null}
             </Link>
           );
         })}

@@ -3,15 +3,17 @@ import { Stack } from "@mantine/core";
 import { MetricsBarChart } from "@/components/MetricsBarChart";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { ArrowLeft, Box, Database, HardDrive, RefreshCw } from "lucide-react";
+import { ArrowLeft, Box, Database, HardDrive, RefreshCw, X } from "lucide-react";
 import { action, api, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { EditableResourceTitle } from "@/components/EditableResourceTitle";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { pendingChangeCopy, provisionFailed, resourceStatus, retryProvisionPathForKind, usesDeployWorkflow, userFacingReadyMessage } from "@/lib/services";
 import { sizeLabel } from "@/lib/capacity";
+import { backupSpec, isSnapshotDatabase, supportsBackups } from "@/lib/backups";
 import { functionSourceLabel } from "@/lib/functions";
 import { CodePanel } from "@/components/CodePanel";
+import { DatabaseBackups } from "@/components/DatabaseBackups";
 import { PendingChangesBanner } from "@/components/PendingChangesBanner";
 import { ResourceDeploymentsView } from "@/components/ResourceDeploymentsView";
 import { ResourceVariables } from "@/components/ResourceVariables";
@@ -39,7 +41,7 @@ import {
 export function ResourceDetailPage({ project, data, kind, name, reload, embedded = false, onClose }) {
   const navigate = useNavigate();
   const search = useRouterState({ select: (state) => state.location.search || {} });
-  const view = search.view || (embedded ? "deployments" : "overview");
+  const view = search.view || "overview";
   const key = { apps: "apps", databases: "databases", "object-stores": "objectStores", "logical-databases": "logicalDatabases" }[kind];
   const item = list(data, key).find((entry) => resourceName(entry) === name);
   const [query, setQuery] = useState("SELECT 1");
@@ -64,12 +66,14 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
   const isApp = kind === "apps";
   const isDatabase = kind === "databases" || kind === "logical-databases";
   const isFunction = isApp && Boolean(item.spec?.source?.function);
+  const hasBackups = kind === "databases" && supportsBackups(item);
   const tabs = [
+    "overview",
     "deployments",
     ...(isFunction ? ["code"] : []),
-    ...(!embedded ? ["overview"] : []),
     ...(isApp ? ["variables", "metrics", "console"] : []),
     ...(isDatabase ? ["console", "monitor"] : []),
+    ...(hasBackups ? ["backups"] : []),
     "settings",
   ];
   const sourceImage = typeof item.spec?.source?.image === "string" ? item.spec.source.image : item.spec?.source?.image?.image;
@@ -80,7 +84,10 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
   const status = resourceStatus(item);
   const statusDetail = userFacingReadyMessage(item);
   const pending = pendingChangeCopy(item);
-  const drawerSubtitle = embedded && (status === "Draft" || pending) ? undefined : sourceSummary;
+  const databaseSummary = isDatabase
+    ? [[item.spec?.engine, item.spec?.version].filter(Boolean).join(" "), item.spec?.storageSize].filter(Boolean).join(" · ")
+    : "";
+  const drawerSubtitle = databaseSummary || sourceSummary;
   const pageSubtitle = statusDetail && status !== "True" && status !== "Ready" ? statusDetail : sourceSummary;
   const endpoint = item.status?.host || item.status?.endpoint || item.status?.url || "Appears when ready";
   const backToProject = () => {
@@ -101,6 +108,10 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
         value: `${sizeLabel(data?.platform?.capacity?.cpuSizes || [], item.spec?.resources?.requests?.cpu, item.spec?.resources?.requests?.cpu || "0.1 CPU")} · ${sizeLabel(data?.platform?.capacity?.memorySizes || [], item.spec?.resources?.requests?.memory, item.spec?.resources?.requests?.memory || "128 MB")}`,
       }]
       : []),
+    ...(kind === "databases" && item.spec?.storageSize ? [{ label: "Storage", value: String(item.spec.storageSize) }] : []),
+    ...(hasBackups
+      ? [{ label: "Backups", value: backupSpec(item).enabled ? (isSnapshotDatabase(item) ? "Daily copy" : "Continuous, restore to any moment") : "Off" }]
+      : []),
     { label: "Endpoint", value: endpoint },
   ];
 
@@ -112,17 +123,21 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
       header={
         <PageHeader
           leading={
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Back to canvas"
-                onClick={backToProject}
-              >
-                <ArrowLeft size={16} />
-              </Button>
+            embedded ? (
               <KindIcon size={22} strokeWidth={1.75} aria-hidden />
-            </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Back to canvas"
+                  onClick={backToProject}
+                >
+                  <ArrowLeft size={16} />
+                </Button>
+                <KindIcon size={22} strokeWidth={1.75} aria-hidden />
+              </>
+            )
           }
           title={
             <EditableResourceTitle
@@ -148,12 +163,17 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
               {isApp && !pendingChangeCopy(item) && item.spec?.deploy?.enabled && canMutate(data) && (
                 <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alertUser("Redeploy requested"); }).catch((error) => alertUser(error.message))}>Redeploy</Button>
               )}
+              {embedded ? (
+                <Button variant="outline" size="icon" aria-label="Close resource panel" onClick={backToProject}>
+                  <X size={16} />
+                </Button>
+              ) : null}
             </>
           }
         />
       }
       notice={!embedded && usesDeployWorkflow(item) ? <PendingChangesBanner item={item} kind={kind} name={name} reload={reload} data={data} /> : null}
-      nav={<DetailTabs value={view} tabs={tabs} hrefFor={(tab) => href(tab)} labels={{ code: "Source Code" }} />}
+      nav={<DetailTabs value={view} tabs={tabs} hrefFor={(tab) => href(tab)} labels={{ code: "Code" }} />}
     >
       {view === "overview" && (
         <MetricPanel label="Overview">
@@ -171,6 +191,9 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
           deployments={deployments}
           onOpenDeployment={openDeployment}
         />
+      )}
+      {view === "backups" && hasBackups && (
+        <DatabaseBackups item={item} name={name} data={data} reload={reload} />
       )}
       {view === "logs" && (
         <PageSection
