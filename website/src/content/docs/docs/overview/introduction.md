@@ -44,7 +44,7 @@ Geass is source-available under the Elastic License 2.0. It is not a hosted serv
 | The network: firewall, ports 80 and 443, DNS | Installs and wires the add-ons: certificate manager, metrics, storage, logs, and the serverless add-on when you turn it on |
 | Capacity: when to add a server | Creates and updates Kubernetes objects from what you deploy |
 | Your accounts at AWS, Cloudflare, GitHub or PlanetScale | Calls those accounts with the credentials you give it, only for the features you set up |
-| Moving to a new release (there is no in-place upgrade yet) | Backs up databases to your S3 bucket when you turn backups on |
+| Choosing when to move to a new release, and reading its notes | Updates in place when you run the installer: it keeps the cluster's data, takes an etcd snapshot first and refuses a downgrade. It also backs up databases to your S3 bucket when you turn backups on |
 
 ## When Geass fits, and when it does not
 
@@ -54,7 +54,7 @@ Be aware of these limits before you commit:
 
 - **It is not a managed service.** Nobody runs your servers for you, and there is no uptime guarantee.
 - **The control plane is one server.** The installer builds a single K3s server and a single operator. Losing that server stops the dashboard and everything the operator does. The only high availability feature is a Postgres database that runs as three instances on three nodes. See [High availability](/docs/operations/high-availability/).
-- **There is no in-place upgrade.** A new release means a new install. Running the installer again on a machine that has K3s deletes the cluster. See [Upgrade Geass](/docs/operations/upgrading/).
+- **Updates are run by you, on the control plane.** The installer updates a running cluster in place, but nothing updates it by itself: there is no automatic update, and no rollback other than restoring the snapshot the installer takes first. See [Upgrade Geass](/docs/operations/upgrading/).
 - **HTTPS needs a step from you.** Geass creates the Let's Encrypt certificate issuer only when it has a contact email address: give the installer `GEASS_ACME_EMAIL`, or set the address on the cluster later. Without one, no HTTPS certificate is issued. Ports 80 and 443 must also be open. See [Install Geass](/docs/getting-started/install/#https-certificates) and [Domains and TLS](/docs/guides/domains-and-tls/).
 - **Two roles for people and no single sign-on.** Dashboard users live in a Kubernetes Secret and are either admins or viewers. API tokens add a third, read-only role that can also read logs. See [Sign in to the dashboard](/docs/getting-started/sign-in/) and [Users and API tokens](/docs/guides/users-and-tokens/).
 - **Servers at different providers are experimental.** See [Multi-provider clusters](/docs/operations/multi-provider/).

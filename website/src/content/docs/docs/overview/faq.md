@@ -47,7 +47,7 @@ No. There is one K3s server and one operator. If that server goes down, the dash
 
 ### Can I install Geass on a machine that already runs K3s or Kubernetes?
 
-Not alongside it. The installer uninstalls an existing K3s before it installs its own, with no confirmation. Geass also depends on parts that K3s bundles: its Helm controller and the Traefik ingress. The installer is the only documented way to set it up. See [Install Geass](/docs/getting-started/install/#run-the-installer-again).
+Not alongside it. On a machine that already has a K3s, the installer stops and says why, unless Geass is already in it (then it updates) or you pass `--reinstall`, which uninstalls that K3s after a confirmation. Geass also depends on parts that K3s bundles: its Helm controller and the Traefik ingress. The installer is the only documented way to set it up. See [Install Geass](/docs/getting-started/install/#run-the-installer-again).
 
 ### Which providers and operating systems work?
 
@@ -89,15 +89,15 @@ Not unless you give it an email address. Geass gets certificates from Let's Encr
 
 ### What does running the installer a second time do?
 
-It uninstalls K3s from that machine first, then installs a new cluster. That deletes the old cluster's database: projects, services, secrets, users and tokens, and local volumes. It is a reinstall, not an upgrade. See [Install Geass](/docs/getting-started/install/#run-the-installer-again).
+On a machine that runs Geass it updates the cluster and keeps its data. It deletes a cluster only when you pass `--reinstall`, after a confirmation, which uninstalls K3s from that machine and builds a new cluster: that deletes the old cluster's database (projects, services, secrets, users and tokens) and local volumes. See [Install Geass](/docs/getting-started/install/#run-the-installer-again).
 
 ### How do I upgrade Geass?
 
-There is no in-place upgrade yet. The options are a new server with the new release, a reinstall, or updating the operator from source. See [Upgrade Geass](/docs/operations/upgrading/).
+Run the new release's installer on the control plane. It checks the cluster, takes an etcd snapshot, replaces the custom resource definitions and the operator, and waits until the new operator has taken over; your projects, services, databases and settings stay. Add `--k3s-version` to upgrade K3s too, and the operator then upgrades the workers one at a time. See [Upgrade Geass](/docs/operations/upgrading/).
 
 ### How do I know which version I run?
 
-The cluster does not record it, and the dashboard shows no version. Note the release tag when you install. `geass version` prints the command line's own version, and `api v1` under it is the version of the API, not of the release.
+The cluster records it. `sudo k3s kubectl -n geass-system get geasscluster` shows the release of the operator in the `RELEASE` column and the control plane's K3s version under `K3S`. A cluster installed before releases were recorded shows neither until it has been updated once. The dashboard shows both on the **Usage** page, under **Version**, and the K3s version of every node in the **Nodes** table. `geass version` prints the command line's own version, then the cluster's API version (`api v1`, which is not the release) and its release, and says when the two releases differ.
 
 ## Cloud accounts
 
@@ -139,7 +139,7 @@ Only if you turn backups on, and only for PostgreSQL, MySQL and SQLite databases
 
 ### Is Geass itself backed up?
 
-No. Geass makes no backup of the cluster's own state. K3s's embedded etcd takes its default snapshots (twice a day, five kept) in its data directory on the same disk, so they do not survive losing that disk, and Geass has no restore workflow for them. Keep your own record of your setup.
+Only around an update. Geass makes no scheduled backup of the cluster's own state. K3s's embedded etcd takes its default snapshots (twice a day, five kept) in its data directory on the same disk, so they do not survive losing that disk. What Geass does is take an etcd snapshot of its own just before it updates the cluster, which is the way back from an update that goes wrong (see [Go back](/docs/operations/upgrading/#go-back)); it stays on the same disk too, and holds the cluster's objects, not your databases' contents. Keep your own record of your setup.
 
 ### Can I restore my backups on a new cluster?
 

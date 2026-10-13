@@ -21,6 +21,12 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
+    - jsonPath: .status.release
+      name: Release
+      type: string
+    - jsonPath: .status.k3s.controlPlaneVersion
+      name: K3s
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -132,6 +138,22 @@ spec:
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              k3s:
+                description: K3s says which K3s release the nodes should run.
+                properties:
+                  version:
+                    description: |-
+                      Version is the K3s release the worker nodes are brought to, such as v1.36.5+k3s1. When it is set and a
+                      worker runs something else, the operator upgrades the workers one at a time: it cordons the node, replaces
+                      K3s on it over SSH, waits for it to be ready on the new version and uncordons it, and stops at the first
+                      that does not come back. Workers are only moved to the version the control plane already runs, because an
+                      agent must not be newer than its server, and the operator never touches the control plane itself: it is
+                      upgraded by running the installer on that machine with --k3s-version, which also sets this field.
+                      Left empty, the operator leaves K3s on every node alone.
+                    maxLength: 40
+                    pattern: ^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$
+                    type: string
+                type: object
               network:
                 description: Network says how the nodes reach each other.
                 properties:
@@ -232,6 +254,43 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              k3s:
+                description: K3s is what the cluster's nodes run and how an upgrade
+                  of the workers is going.
+                properties:
+                  controlPlaneVersion:
+                    description: ControlPlaneVersion is the oldest K3s version that
+                      a control plane node reports.
+                    type: string
+                  upgrade:
+                    description: Upgrade is the progress of an upgrade of the workers
+                      to spec.k3s.version.
+                    properties:
+                      currentNode:
+                        description: CurrentNode is the worker being upgraded, while
+                          one is.
+                        type: string
+                      message:
+                        description: Message says what the upgrade is doing, or why
+                          it is not.
+                        type: string
+                      phase:
+                        description: Phase says how the upgrade is going.
+                        type: string
+                      startedAt:
+                        description: StartedAt is when the current node's upgrade
+                          began, which is what its time limit counts from.
+                        format: date-time
+                        type: string
+                      step:
+                        description: Step is how far the current node has got.
+                        type: string
+                      targetVersion:
+                        description: TargetVersion is the version the workers are
+                          being brought to.
+                        type: string
+                    type: object
+                type: object
               phase:
                 description: Phase is the current phase of the GeassCluster.
                 type: string
@@ -255,6 +314,19 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              release:
+                description: |-
+                  Release is the Geass release of the operator that last reconciled this cluster, such as v0.2.0. The
+                  installer reads it before an update, to refuse a downgrade and to wait until the new operator reports
+                  itself. A cluster installed before releases were recorded has none until its operator is updated.
+                type: string
+              schemaVersion:
+                description: |-
+                  SchemaVersion is the level of data migrations that have been applied to what this cluster stores.
+                  An operator that knows of fewer migrations than this refuses to start, so that an older release can
+                  never reconcile data that a newer one has changed.
+                format: int32
+                type: integer
             type: object
         required:
         - spec

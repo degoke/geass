@@ -24,21 +24,40 @@ take effect at once and which need a restart.
 
 ## Installer
 
-The installer is a single binary, `geass`, that you run as root on the first server. It takes no command-line flags. It
-reads these environment variables (see [Install](/docs/getting-started/install/) for the whole procedure):
+The installer is a single binary, `geass`, that you run as root on the first server. On a bare machine it builds a cluster; on a machine
+that already runs Geass it updates it, keeping its data; it deletes a cluster only when you pass `--reinstall`. It takes the options below and
+reads these environment variables (see [Install](/docs/getting-started/install/) for the whole procedure, and
+[Upgrade Geass](/docs/operations/upgrading/) for updates):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GEASS_ACME_EMAIL` | none | The contact address for the cluster's Let's Encrypt account. Checked at the first step (it must look like `name@host.tld`, with no spaces and at most 254 characters), then written to the `GeassCluster` as `spec.addons.certManager.acmeEmail`. Without it Geass creates no certificate issuer and no HTTPS certificate is issued. Let's Encrypt refuses placeholder domains such as `example.com`. [HTTPS certificates](/docs/getting-started/install/#https-certificates) |
 | `GEASS_MULTI_SITE` | off | `1`, `true`, `yes` or `on` builds a cluster whose nodes are at different providers: an encrypted WireGuard overlay instead of VXLAN. Chosen at install time because changing it later means restarting every node. [Multi-provider clusters](/docs/operations/multi-provider/) |
 | `GEASS_NODE_EXTERNAL_IP` | none | This node's public IP address. Required when `GEASS_MULTI_SITE` is on; must be a valid IP. Workers join on it |
+| `GEASS_K3S_VERSION` | the current `stable` K3s | The K3s release, in full (`v1.36.5+k3s1`), to build a new cluster on. The same as `--k3s-version` for a new cluster; when a cluster that exists is updated it is ignored (with a warning), so a value left over from the install does not upgrade K3s: pass `--k3s-version` for that |
+| `GEASS_REINSTALL` | off | `1`, `true`, `yes` or `on`: same as `--reinstall` |
+| `GEASS_YES` | off | `1`, `true`, `yes` or `on`: same as `--yes` |
 | `GEASS_INSTALL_LOG` | `geass-install-<UTC timestamp>.log` in the current directory | Where the installer writes its log. If that path is not writable it falls back to the system temp directory |
 | `GEASS_INSTALL_TRACE` | off | `1`, `true`, `yes` or `on` runs the downloaded K3s installer script with shell tracing (`sh -x`) |
 | `GEASS_INSTALL_ROOT` | detected | A directory with installer assets. The installer binary embeds everything it needs and never asks for an override, so setting it has no effect on a normal install |
 
+| Option | Meaning |
+| --- | --- |
+| `--upgrade` (or the word `upgrade`) | Update the existing cluster. The default when the machine has one |
+| `--k3s-version <release>` | A new cluster: install this K3s. An existing cluster: also upgrade the control plane's K3s to it, and set `spec.k3s.version` so the operator upgrades the workers. One minor version at a time |
+| `--allow-untested-k3s` | Allow a K3s outside the range this release's add-ons are known to run on |
+| `--skip-snapshot` | Update without an etcd snapshot first |
+| `--force` | Update although the cluster is not ready or a Longhorn volume is degraded |
+| `--reinstall` | Delete the cluster on this machine and build a new one. Asks for confirmation on the terminal |
+| `--yes` | Do not ask for confirmation of `--reinstall` |
+| `--version`, `--help` | Print the installer's release, or the options |
+
+When you pipe the script, put options after `-s --`: `curl -sfL .../install.sh \| sudo sh -s -- --force`.
+
 The installer passes its whole environment to the K3s install script, so K3s's own `INSTALL_K3S_*` variables reach it. Geass
-itself sets `INSTALL_K3S_EXEC` to `server --cluster-init` and, if a version was set, `INSTALL_K3S_VERSION`. The installer binary
-does not set a version, so K3s picks its default release.
+itself sets `INSTALL_K3S_EXEC` to `server --cluster-init` and, if a version was set, `INSTALL_K3S_VERSION`. Without `GEASS_K3S_VERSION`
+the installer sets no version, so K3s picks its default release. When it upgrades K3s on a running server it passes the server's own
+arguments, read from its systemd unit, to the K3s script.
 
 The convenience script `scripts/install.sh` reads two variables of its own: `GEASS_REPO` (default `degoke/geass`) and
 `GEASS_VERSION` (default `latest`). It downloads `geass-linux-amd64` or `geass-linux-arm64` from that repository's releases and
@@ -47,14 +66,15 @@ runs it.
 What the installer does, in order: checks the system (Linux, amd64 or arm64, at least 2 GB of memory and 10 GB free on `/`, and
 `GEASS_ACME_EMAIL` if you set it);
 opens ports 6443/tcp, 10250/tcp and the overlay port (8472/udp, or 51820/udp for multi-site) if it finds an active `ufw`,
-`firewalld` or `iptables`; removes an existing K3s installation; installs the iSCSI initiator that Longhorn needs; installs K3s as a
+`firewalld` or `iptables`; removes an existing K3s installation (only when you passed `--reinstall`); installs the iSCSI initiator that Longhorn needs; installs K3s as a
 server with embedded etcd (`--cluster-init`); imports the operator image; applies the operator manifests; stores the K3s join token
 in the Secret `geass-token`; and creates the `GeassCluster` named `default`. When `GEASS_ACME_EMAIL` is not set it prints a
 warning at that last step and creates the cluster without an `acmeEmail`.
 
-:::danger
-Running the installer on a machine that already has K3s uninstalls that K3s first. Do not re-run it on a working cluster to
-change a setting.
+:::note
+Running the installer on a machine that already runs Geass updates it and does not apply your `GEASS_ACME_EMAIL`,
+`GEASS_MULTI_SITE` or `GEASS_NODE_EXTERNAL_IP` again: they describe a new cluster. To change a setting of a working cluster,
+edit the `GeassCluster`.
 :::
 
 Files it writes on the server:

@@ -5,11 +5,16 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/degoke/geass/pkg/release"
 )
 
 type SystemChecks struct {
 	Network   Network
 	ACMEEmail string
+	// K3sVersion is the K3s release the cluster is to be built on, when one was asked for.
+	K3sVersion       string
+	AllowUntestedK3s bool
 }
 
 func (s *SystemChecks) Name() string { return "system checks" }
@@ -46,6 +51,11 @@ func (s *SystemChecks) Run() error {
 	}
 	if err := ValidateACMEEmail(s.ACMEEmail); err != nil {
 		return err
+	}
+	if s.K3sVersion != "" {
+		if err := release.CheckK3sInstall(s.K3sVersion, s.AllowUntestedK3s); err != nil {
+			return err
+		}
 	}
 	if s.Network.MultiSite {
 		if err := checkWireGuard(s.Name()); err != nil {

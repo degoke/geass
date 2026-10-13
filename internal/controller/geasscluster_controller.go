@@ -100,6 +100,11 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, req.NamespacedName, &cluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if cluster.DeletionTimestamp.IsZero() {
+		if err := r.recordRelease(ctx, &cluster); err != nil {
+			logf.FromContext(ctx).Error(err, "Could not record the operator's release on the cluster")
+		}
+	}
 	if result, paused := beginProvisionReconcileUnlessDeleting(!cluster.DeletionTimestamp.IsZero(), cluster.Status.Conditions, cluster.Generation, &cluster.Status.ReconcileRetry); paused {
 		return result, nil
 	}

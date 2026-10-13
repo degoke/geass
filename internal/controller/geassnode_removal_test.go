@@ -21,6 +21,21 @@ type recordingProvisioner struct {
 	drainInputs []ssh.ProvisionInput
 	drainErr    error
 	provisioned []ssh.ProvisionInput
+	upgraded    []ssh.ProvisionInput
+	// onUpgrade runs when a node is upgraded, to let a test change the world the way the upgrade would.
+	onUpgrade  func(ssh.ProvisionInput)
+	upgradeErr error
+}
+
+func (p *recordingProvisioner) Upgrade(_ context.Context, in ssh.ProvisionInput) error {
+	p.upgraded = append(p.upgraded, in)
+	if p.upgradeErr != nil {
+		return p.upgradeErr
+	}
+	if p.onUpgrade != nil {
+		p.onUpgrade(in)
+	}
+	return nil
 }
 
 func (p *recordingProvisioner) Provision(_ context.Context, in ssh.ProvisionInput) error {

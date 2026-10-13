@@ -54,6 +54,8 @@ type dashboardPlatform struct {
 	// ObjectStorageEngine is the server's engine, "SeaweedFS" or "Garage", or empty when there is no server.
 	ObjectStorageEngine string          `json:"objectStorageEngine,omitempty"`
 	Capacity            clusterCapacity `json:"capacity"`
+	// Release is which Geass and K3s the cluster runs, and how an upgrade of its workers is going.
+	Release dashboardRelease `json:"release"`
 	// DefaultRegion is where projects that do not choose a region run.
 	DefaultRegion     string `json:"defaultRegion,omitempty"`
 	StorageExpandable bool   `json:"storageExpandable"`
@@ -63,6 +65,26 @@ type dashboardPlatform struct {
 	// DefaultStorage is the default volume size per engine, so the UI carries no copy.
 	DefaultStorage map[string]string    `json:"defaultStorage"`
 	Session        dashboardSessionInfo `json:"session"`
+}
+
+// dashboardRelease is what the cluster runs. Geass is the release of the operator that serves this dashboard, which is
+// the one that is running whatever the cluster object last recorded.
+type dashboardRelease struct {
+	Geass string `json:"geass"`
+	// SchemaLevel is the data schema level the operator reports on the cluster object; absent on a cluster whose
+	// operator has not reported one.
+	SchemaLevel int32 `json:"schemaLevel,omitempty"`
+	// K3s is the oldest K3s version that a control plane node reports.
+	K3s string `json:"k3s,omitempty"`
+	// Upgrade is the progress of an upgrade of the workers' K3s, while one is asked for.
+	Upgrade *dashboardK3sUpgrade `json:"upgrade,omitempty"`
+}
+
+type dashboardK3sUpgrade struct {
+	Phase         string `json:"phase,omitempty"`
+	TargetVersion string `json:"targetVersion,omitempty"`
+	CurrentNode   string `json:"currentNode,omitempty"`
+	Message       string `json:"message,omitempty"`
 }
 
 type dashboardMetric struct {

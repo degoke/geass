@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/degoke/geass/pkg/client"
+	"github.com/degoke/geass/pkg/release"
 )
 
 func stdinIsTerminal() bool {
@@ -259,22 +260,43 @@ func (a *App) versionCmd() *cobra.Command {
 		Short: "Show the version of this command line and of the Geass it talks to",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			server := ""
+			var server client.ServerVersion
 			if resolved, err := a.resolved(); err == nil && resolved.URL != "" {
-				if version, err := a.NewClient(resolved.URL, resolved.Token).Version(cmd.Context()); err == nil {
+				if version, err := a.NewClient(resolved.URL, resolved.Token).ServerVersion(cmd.Context()); err == nil {
 					server = version
 				}
 			}
 			if a.flags.json {
-				return a.printJSON(map[string]string{"cli": a.Version, "api": server})
+				return a.printJSON(map[string]string{"cli": a.Version, "api": server.API, "release": server.Release})
 			}
 			a.printf("geass %s\n", a.Version)
-			if server != "" {
-				a.printf("api %s\n", server)
+			if server.API != "" {
+				a.printf("api %s\n", server.API)
+			}
+			if server.Release != "" {
+				a.printf("release %s\n", server.Release)
+				if hint := releaseMismatch(a.Version, server.Release); hint != "" {
+					a.printf("%s\n", hint)
+				}
 			}
 			return nil
 		},
 	}
+}
+
+// releaseMismatch says when this command line and the cluster it talks to are not the same Geass release, and which
+// should be updated. The command line talks to the cluster's API, whose resources carry the fields of the cluster's
+// release, so the two are meant to be kept in step. It says nothing when either cannot be ordered, or is a development
+// build (one past a tag, or with changes): there is no such release to install, and the advice would name it.
+func releaseMismatch(cli, cluster string) string {
+	order, ok := release.Compare(cli, cluster)
+	switch {
+	case !ok || order == 0 || release.Development(cli) || release.Development(cluster):
+		return ""
+	case order < 0:
+		return "note: this command line is older than the cluster. Update it to " + cluster + ": run install-cli.sh again (GEASS_VERSION=" + cluster + " pins it)"
+	}
+	return "note: this command line is newer than the cluster. Update the cluster to " + cli + ": run that release's installer on the control plane"
 }
 
 func (a *App) configCmd() *cobra.Command {

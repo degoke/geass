@@ -214,7 +214,7 @@ The operator runs these commands on the new server in order, each through `sudo 
 | `install-k3s` | Runs the K3s installer in `agent` mode with `K3S_URL`, `K3S_TOKEN` and `K3S_NODE_NAME` set |
 | `enable-k3s` | `systemctl enable k3s-agent && systemctl start k3s-agent` |
 
-The K3s version is the oldest version among the control plane nodes, because an agent must not be newer than its server. Without a K3s version to match, the K3s installer picks its current stable release.
+The K3s version is the oldest version among the control plane nodes, because an agent must not be newer than its server. Without a K3s version to match, the K3s installer picks its current stable release. A worker that has joined keeps that version until `spec.k3s.version` on the cluster object asks for another, when the operator upgrades it in place over SSH: see [Upgrade Geass](/docs/operations/upgrading/#workers).
 
 The credentials involved:
 

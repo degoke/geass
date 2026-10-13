@@ -17,6 +17,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/release"
 )
 
 func (f tokenFixture) get(t *testing.T, token, path string) (*httptest.ResponseRecorder, map[string]any) {
@@ -311,6 +312,7 @@ func TestV1VersionAndUnknownReads(t *testing.T) {
 
 	_, version := f.get(t, admin, "/api/v1/version")
 	require.Equal(t, "v1", version["api"])
+	require.Equal(t, release.Version, version["release"], "the release that runs the API, which the command line compares itself with")
 
 	rec, _ := f.get(t, admin, "/api/v1/not-a-thing")
 	require.Equal(t, http.StatusNotFound, rec.Code)

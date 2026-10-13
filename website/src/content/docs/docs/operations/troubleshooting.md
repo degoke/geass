@@ -77,15 +77,17 @@ The installer prints each step with `→`, a `✓` when it finishes and `✗ <st
 | --- | --- | --- |
 | **system checks** | `GEASS_ACME_EMAIL "<value>" is not an email address` | The value does not look like an address, or is longer than 254 characters. The check runs before anything is changed. Fix the value, or leave the variable out. |
 | **wait for k3s ready** | "k3s did not become ready within 5 minutes" | K3s did not start. Read `journalctl -u k3s -n 100`. Common causes are a port already in use or too little memory. |
-| **remove existing installation** | "existing k3s installation detected but no uninstall script found …" | A K3s install that Geass cannot remove. Remove it yourself, then run the installer again. |
-| **wait for operator ready** | "operator did not become ready within 5 minutes" | Run `kubectl -n geass-system describe pod -l control-plane=controller-manager` and read the events. |
+| **remove existing installation** | "existing k3s installation detected but no uninstall script found …" | Only a `--reinstall` gets here. A K3s install that Geass cannot remove. Remove it yourself, then run the installer again. |
+| **check the cluster before updating** | "the cluster is not in a state to be updated", "does not downgrade", "this release cannot replace the custom resource definitions …" | An update found something it should not change the cluster over. Nothing was changed. See [What stops an update](/docs/operations/upgrading/#what-stops-an-update). |
+| **wait for the new operator to take over** | "the new operator did not report release …", "the operator pod is not starting: …" | The new operator did not start, or refused to. The installer prints its log and, when it is safe, rolls the operator back to the one that ran before and leaves the cluster running it. See [When the new operator does not take over](/docs/operations/upgrading/#when-the-new-operator-does-not-take-over). |
+| **wait for operator ready** | "the operator did not become ready within 5m0s", or "the operator pod is not starting: ..." when its pod is crash looping or cannot pull its image | Run `kubectl -n geass-system describe pod -l control-plane=controller-manager` and read the events. |
 | **apply GeassCluster CR** | "wait for GeassCluster CRD: …" | The operator's custom resource definitions did not become established in 60 seconds. Check the operator pod. |
 | **store worker join token** | "read join token: …" or "join token file … is empty" | K3s has not written `/var/lib/rancher/k3s/server/node-token`. Check K3s, then run the installer again. |
 
 In multi-provider mode, see [Nodes at more than one provider](/docs/operations/multi-provider/) for the messages about `GEASS_NODE_EXTERNAL_IP` and WireGuard.
 
 :::danger
-Running the installer on a machine that already has K3s removes that K3s first, with everything it holds. Only re-run it on a machine you mean to rebuild.
+On a machine that already runs Geass the installer updates it and keeps what it holds; on any other machine that has K3s it stops and says why. It removes a K3s only when you pass `--reinstall`, after a confirmation. Only reinstall a machine you mean to rebuild.
 :::
 
 **The installer warns that `GEASS_ACME_EMAIL` is not set.**

@@ -15,6 +15,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/release"
 )
 
 func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +109,29 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 	return info
 }
 
+// releaseOf says which Geass and K3s the cluster runs. The release is this process's own, so it is right even when the
+// cluster object has not been reconciled yet; the rest is what the operator wrote on the cluster object.
+func releaseOf(clusters []geassv1alpha1.GeassCluster) dashboardRelease {
+	out := dashboardRelease{Geass: release.Version}
+	if len(clusters) == 0 {
+		return out
+	}
+	cluster := clusters[0]
+	for i := range clusters {
+		if clusters[i].Name == "default" {
+			cluster = clusters[i]
+		}
+	}
+	out.SchemaLevel = cluster.Status.SchemaVersion
+	out.K3s = cluster.Status.K3s.ControlPlaneVersion
+	if u := cluster.Status.K3s.Upgrade; u != nil && u.Phase != "" {
+		out.Upgrade = &dashboardK3sUpgrade{
+			Phase: string(u.Phase), TargetVersion: u.TargetVersion, CurrentNode: u.CurrentNode, Message: u.Message,
+		}
+	}
+	return out
+}
+
 func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
 	info := dashboardPlatform{}
 	for _, report := range data.HAReadiness.Items {
@@ -144,6 +168,7 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 		}
 	}
 	info.Capacity = s.clusterCapacity(ctx)
+	info.Release = releaseOf(data.Clusters.Items)
 	for i := range data.Clusters.Items {
 		if region := data.Clusters.Items[i].Spec.DefaultRegion; region != "" {
 			info.DefaultRegion = region

@@ -23,7 +23,8 @@ From top to bottom the page shows:
 | --- | --- |
 | **Summary** | CPU available, memory available and healthy nodes for the whole cluster. |
 | **Capacity and node pressure** | One line for each node problem and each shortage. Only present when there is something to report. |
-| **Nodes** | One row per node, with its role, region, tags, size, pressure and status. |
+| **Version** | Which Geass release and which K3s the cluster runs, and how an upgrade of the workers' K3s is going while one is asked for. |
+| **Nodes** | One row per node, with its role, the K3s version it runs, region, tags, size, pressure and status. |
 | **Usage by project** | What each project reserves, what it uses, and its share of the capacity it runs on. |
 | **Cluster metrics** | Charts of what services use across the cluster and what the machines are doing. |
 | **Geass health** | Charts of how the operator is doing: failed and slow reconciles, work waiting, and how the Kubernetes API server answers it. |
@@ -67,6 +68,18 @@ What counts toward the totals:
 
 If no node reports capacity yet, the **Summary** is replaced by a **Capacity unavailable** panel that says "Schedulable nodes must report before totals appear."
 
+## Version
+
+The **Version** table says what the cluster runs.
+
+| Row | Meaning |
+| --- | --- |
+| **Geass** | The release of the operator that serves this dashboard, such as `v0.3.0`, and the data schema level the operator reports. A build that is not a release reads "development build". |
+| **K3s (control plane)** | The oldest K3s version that a control plane node reports. |
+| **K3s on workers (target)** | Only while `spec.k3s.version` asks for a version: the target, what the operator is doing (the node it is on, and how many are left), and a status of **Upgrading**, **Waiting**, **Waiting for the control plane**, **Failed** or **Up to date**. |
+
+Geass is updated by running the installer of a newer release on the control plane, not from this page. See [Upgrade Geass](/docs/operations/upgrading/).
+
 ## Nodes
 
 Each row of the **Nodes** table is a Kubernetes node.
@@ -75,13 +88,14 @@ Each row of the **Nodes** table is a Kubernetes node.
 | --- | --- |
 | **Node** | The node's name. |
 | **Role** | `control-plane` for the server, `worker` for every other node. |
+| **K3s** | The K3s release the node runs, as its kubelet reports it. Worker nodes can differ from the control plane while an upgrade is going on. |
 | **Region** | The region, and the site after a dot, such as `eu · hetzner-fsn1`. A dash when none is set. |
 | **Tags** | The node's tags. A tag followed by "(reserved)" keeps other workloads off the node. A tag followed by "(compliance)" is reserved for the projects that require it ([Compliance node tags](/docs/guides/compliance-tags/)). |
 | **CPU**, **Memory** | What the node offers to workloads (its allocatable amount, which is less than the machine's total). |
 | **Pressure** | The conditions the node reports, comma separated. A dash when there are none. |
 | **Status** | **Ready**, **Not ready** or **Unschedulable**. |
 
-**Unschedulable** means the node is cordoned: Kubernetes will not start new pods on it, though pods already there keep running. Geass has no cordon button; someone ran `kubectl cordon` (see below).
+**Unschedulable** means the node is cordoned: Kubernetes will not start new pods on it, though pods already there keep running. Geass has no cordon button; someone ran `kubectl cordon` (see below), or Geass is upgrading K3s on the node, in which case the **Version** section says so (see [Upgrade Geass](/docs/operations/upgrading/#workers)).
 
 ## Node health in the rail
 
