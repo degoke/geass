@@ -1,10 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Geass app icon">
-  <rect width="128" height="128" rx="28" fill="#0A0A0B"/>
-  <rect x="1" y="1" width="126" height="126" rx="27" fill="none" stroke="#2A2A30" stroke-width="2"/>
-  <g transform="translate(32 32)">
-    <path d="M47.75 15.9A23 23 0 1 0 52.8 39H34" fill="none" stroke="#888CF8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M52.8 39V51" fill="none" stroke="#888CF8" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="32" cy="32" r="4" fill="#F2F2F3"/>
-    <path d="M32 28V18M28.5 34 20 39M35.5 34 44 39" fill="none" stroke="#F2F2F3" stroke-width="2.5" stroke-linecap="round"/>
-  </g>
+  <title>Geass app icon</title>
+  <rect width="128" height="128" rx="28" fill="#000000"/>
+  <rect x="1" y="1" width="126" height="126" rx="27" fill="none" stroke="#333333" stroke-width="2"/>
+  <path d="M49.47 92.08Q43.39 92.08 39.31 90.58Q35.22 89.07 32.81 86.38Q30.41 83.68 29.44 80.18L41.62 79.33Q42.29 81.4 44.04 82.58Q45.78 83.76 49.47 83.76Q53.69 83.76 55.96 81.75Q58.22 79.74 58.22 75.34V70.77Q56.72 73.71 53.39 75.5Q50.07 77.29 45.96 77.29Q40.75 77.29 36.72 74.73Q32.68 72.16 30.42 67.53Q28.16 62.89 28.16 56.68Q28.16 50.57 30.41 45.9Q32.65 41.24 36.66 38.58Q40.66 35.92 45.83 35.92Q50.5 35.92 53.71 37.98Q56.92 40.03 58.53 43.42V36.87H70.18V75.09Q70.18 80.75 67.56 84.53Q64.94 88.32 60.28 90.2Q55.62 92.08 49.47 92.08ZM49.36 68.54Q53.46 68.54 55.87 65.38Q58.28 62.21 58.31 56.58Q58.34 52.85 57.26 50.17Q56.18 47.5 54.16 46.06Q52.14 44.62 49.36 44.62Q45.1 44.62 42.75 47.88Q40.39 51.14 40.39 56.58Q40.39 62.07 42.82 65.31Q45.26 68.54 49.36 68.54Z" fill="#F2F2F2"/>
+  <rect x="76.11" y="36.87" width="23.73" height="42.4" fill="#7CE0A0"/>
 </svg>

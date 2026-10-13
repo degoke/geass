@@ -2,7 +2,7 @@ import { notifications } from "@mantine/notifications";
 
 export function notify(message, tone = "neutral") {
   const text = String(message);
-  const color = tone === "error" ? "red" : tone === "success" ? "green" : "gray";
+  const color = tone === "error" ? "red" : tone === "success" ? "signal" : "gray";
   notifications.show({
     message: text,
     color,

@@ -1,0 +1,55 @@
+---
+import logo from "../../assets/geass-logo.svg";
+---
+  <section class="sec sec-black" id="cloud" aria-labelledby="cloud-title">
+    <div class="sec-inner">
+      <div class="sec-head">
+        <span class="eyebrow mono">ONE CLOUD</span>
+        <h2 id="cloud-title">One control plane over everything you run</h2>
+        <p class="sub">Your servers and the services you already use, managed in one place, by you or by your agents.</p>
+      </div>
+
+      <div class="topo" role="img" aria-label="Diagram: your servers and your cloud accounts connect to Geass, which you drive from the dashboard, API, CLI or MCP.">
+        <div class="topo-col">
+          <span class="topo-label mono">YOUR SERVERS</span>
+          <ul class="topo-list">
+            <li>VPS</li>
+            <li>Bare metal</li>
+            <li>Any Linux server</li>
+          </ul>
+        </div>
+        <div class="topo-link" aria-hidden="true"><span></span></div>
+        <div class="topo-core">
+          <img src={logo.src} alt="" height="40" width="151" />
+          <ul class="topo-runs mono">
+            <li>Apps</li>
+            <li>Databases</li>
+            <li>Storage</li>
+            <li>Domains</li>
+          </ul>
+        </div>
+        <div class="topo-link" aria-hidden="true"><span></span></div>
+        <div class="topo-col">
+          <span class="topo-label mono">YOUR CLOUDS</span>
+          <ul class="topo-list">
+            <li>GitHub</li>
+            <li>AWS</li>
+            <li>PlanetScale</li>
+            <li>Cloudflare</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="topo-up" aria-hidden="true"><span></span></div>
+      <div class="topo-driven">
+        <span class="mono">DRIVEN BY</span>
+        <ul class="mono">
+          <li>Dashboard</li>
+          <li>API</li>
+          <li>CLI</li>
+          <li>MCP</li>
+        </ul>
+      </div>
+      <p class="topo-note mono">Servers at more than one provider in a single cluster is experimental.</p>
+    </div>
+  </section>

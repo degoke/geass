@@ -66,8 +66,8 @@ export function ProjectCompliance({ project, data, mutable, reload }) {
         </div>
       ) : (
         <p className="rw-rail-hint">
-          No node in {region ? `the ${region} region` : "the cluster"} has a tag yet. Add a compliance tag to a node in
-          Cluster capacity first.
+          No node in {region ? `the ${region} region` : "the cluster"} has a tag yet. Add a compliance tag to a node on the
+          Usage page first.
         </p>
       )}
       <p className="rw-rail-hint">
