@@ -50,6 +50,8 @@ type capacityNode struct {
 	CPUAllocatable    string   `json:"cpuAllocatable"`
 	MemoryAllocatable string   `json:"memoryAllocatable"`
 	Pressure          []string `json:"pressure"`
+	// K3sVersion is the version the node's kubelet reports, which for K3s is the K3s release.
+	K3sVersion string `json:"k3sVersion,omitempty"`
 	// Region, Zone and Tags are where the node sits and what it is for.
 	Region string                       `json:"region,omitempty"`
 	Zone   string                       `json:"zone,omitempty"`
@@ -132,6 +134,7 @@ func describeCapacityNode(node corev1.Node) capacityNode {
 		Schedulable:       !node.Spec.Unschedulable,
 		CPUAllocatable:    quantityString(node.Status.Allocatable[corev1.ResourceCPU]),
 		MemoryAllocatable: quantityString(node.Status.Allocatable[corev1.ResourceMemory]),
+		K3sVersion:        node.Status.NodeInfo.KubeletVersion,
 	}
 	if _, ok := node.Labels["node-role.kubernetes.io/control-plane"]; ok {
 		entry.Role = "control-plane"

@@ -68,13 +68,25 @@ func (c *Client) Me(ctx context.Context) (Identity, error) {
 	return out, c.Do(ctx, http.MethodGet, "/me", nil, nil, &out)
 }
 
+// ServerVersion is what a Geass says about itself.
+type ServerVersion struct {
+	// API is the version of the API it serves, which is how a caller tells it has reached a Geass dashboard.
+	API string `json:"api"`
+	// Release is the Geass release that runs it, such as v0.3.0. Empty from a Geass that predates the field.
+	Release string `json:"release,omitempty"`
+}
+
 // Version reports the API version, which is how a caller tells it has reached a Geass dashboard.
 func (c *Client) Version(ctx context.Context) (string, error) {
-	var out struct {
-		API string `json:"api"`
-	}
-	err := c.Do(ctx, http.MethodGet, "/version", nil, nil, &out)
+	out, err := c.ServerVersion(ctx)
 	return out.API, err
+}
+
+// ServerVersion reports the API version and the release of the Geass that answers.
+func (c *Client) ServerVersion(ctx context.Context) (ServerVersion, error) {
+	var out ServerVersion
+	err := c.Do(ctx, http.MethodGet, "/version", nil, nil, &out)
+	return out, err
 }
 
 // List lists resources of a kind: projects, apps, databases, object-stores or logical-databases.

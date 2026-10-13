@@ -9,9 +9,13 @@ License at LICENSE or https://www.elastic.co/licensing/elastic-license.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
+
+	"github.com/go-logr/logr"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -21,7 +25,9 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -34,7 +40,9 @@ import (
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/migrations"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/release"
 	"github.com/degoke/geass/pkg/ssh"
 	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -44,6 +52,18 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+)
+
+const (
+	// leaderElectionID names the lease that the operators of one cluster compete for.
+	leaderElectionID = "1dcf5cc9.geass.dev"
+	// migrationWait is how long a start that has data to migrate waits for the previous operator to let go
+	// of the lease. The lease runs out 15 seconds after the last renewal, so this is generous: running
+	// out of it means the other operator is still alive.
+	migrationWait = 2 * time.Minute
+	// migrationTimeout bounds the whole migration step. Migrations are meant to be quick; one that is not
+	// has something wrong with it.
+	migrationTimeout = 10 * time.Minute
 )
 
 func init() {
@@ -99,6 +119,18 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// The signal handler can be installed once. Migrations and the manager share it, so that a stop signal
+	// during a migration ends the process instead of leaving it half way.
+	ctx := ctrl.SetupSignalHandler()
+
+	setupLog.Info("Starting Geass operator", "release", release.Version, "schemaLevel", migrations.Latest())
+	// Data written by an earlier release is brought up to what this one reads before a single controller
+	// starts, and an operator that is older than the data refuses to run over it. See pkg/migrations.
+	if err := migrateData(ctx, restConfig); err != nil {
+		setupLog.Error(err, "Could not prepare the cluster's data for this release")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -174,18 +206,11 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "1dcf5cc9.geass.dev",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		LeaderElectionID:       leaderElectionID,
+		// The lease is given up when the manager stops, once its controllers have, so that the operator that
+		// replaces this one (an update restarts it) takes over at once and not after the lease runs out. This
+		// is safe because the process ends as soon as the manager does: nothing runs after the lease is let go.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
@@ -196,6 +221,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
+		os.Exit(1)
+	}
+	if err := (&controller.GeassK3sUpgradeReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		SSH:    ssh.New(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassk3supgrade")
 		os.Exit(1)
 	}
 	if err := (&controller.GeassProjectReconciler{
@@ -327,8 +360,39 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+// migrateData runs the data migrations this release knows of, over a client that talks to the API server
+// directly: the manager, and with it its cache, has not started yet. When there is anything to migrate it
+// first waits until the operator it replaces has stopped renewing the leader election lease, because that one
+// would write back over what the migration changes.
+func migrateData(ctx context.Context, cfg *rest.Config) error {
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, migrationTimeout)
+	defer cancel()
+
+	// The migrations log to the setup logger.
+	ctx = logr.NewContext(ctx, setupLog)
+	result, err := migrations.Run(ctx, c, platform.SystemNamespace, release.Version, migrations.All, migrations.Options{
+		Before: func(ctx context.Context) error {
+			return migrations.WaitForLeaseRelease(ctx, c, platform.SystemNamespace, leaderElectionID, migrationWait)
+		},
+	})
+	if err != nil {
+		if migrations.IsTooNew(err) {
+			setupLog.Error(err, "Refusing to start")
+		}
+		return err
+	}
+	if len(result.Applied) > 0 {
+		setupLog.Info("Migrated the cluster's data", "from", result.From, "to", result.To)
+	}
+	return nil
 }

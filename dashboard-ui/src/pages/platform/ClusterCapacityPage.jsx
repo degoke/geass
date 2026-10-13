@@ -3,6 +3,7 @@ import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
+import { ClusterVersion } from "@/components/ClusterVersion";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
 import { UsagePanel } from "@/components/UsagePanel";
@@ -57,6 +58,7 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       role: node.role,
       cpu: node.cpuAllocatable,
       memory: node.memoryAllocatable,
+      k3s: node.k3sVersion || "—",
       region: node.region ? (node.zone ? `${node.region} · ${node.zone}` : node.region) : "—",
       tags: describeTags(node.tags) || "—",
       raw: node,
@@ -100,11 +102,13 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
           />
         </PageSection>
       )}
+      <ClusterVersion data={data} />
       <PageSection title="Nodes" description="Per-node allocatable resources and pressure.">
         <DataTable
           columns={[
             { label: "Node", key: "name" },
             { label: "Role", key: "role" },
+            { label: "K3s", key: "k3s" },
             { label: "Region", key: "region" },
             { label: "Tags", key: "tags" },
             { label: "CPU", key: "cpu" },

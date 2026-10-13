@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/degoke/geass/pkg/release"
 )
 
 type OperatorDeploy struct {
@@ -41,11 +43,16 @@ func (s *OperatorDeploy) applyEmbedded() error {
 		return fmt.Errorf("embedded operator manifests are empty; rebuild geass with make build-geass")
 	}
 
-	Logf(s.Name(), "Deploying embedded operator manifests (%d bytes)", len(embeddedOperatorManifests))
+	// The Deployment is stamped with this release, so that the first update can tell what it is replacing.
+	manifests, err := stampOperator(embeddedOperatorManifests, release.Version, operatorImageDigest())
+	if err != nil {
+		return err
+	}
+	Logf(s.Name(), "Deploying embedded operator manifests (%d bytes)", len(manifests))
 	return runCommandWithOptions(s.Name(), commandOptions{
 		env:        append(os.Environ(), k3sKubeconfigEnv),
 		envLog:     []string{k3sKubeconfigEnv},
-		stdin:      bytes.NewReader(embeddedOperatorManifests),
+		stdin:      bytes.NewReader(manifests),
 		echoStdout: true,
 		echoStderr: true,
 	}, "k3s", "kubectl", "apply", "-f", "-")

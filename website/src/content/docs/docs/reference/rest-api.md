@@ -201,7 +201,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
-| `GET /version` | Any, project token | none | `{"api": "v1", "name": "geass"}` |
+| `GET /version` | Any, project token | none | `{"api": "v1", "name": "geass", "release": "v0.3.0"}`. `release` is the Geass release that runs the API, which the command line compares itself with |
 | `GET /me` | Any, project token | none | `username`, `role`, `canMutate`, `canReadSensitive`, `authentication` (`session` or `token`), and for a token `scope`, `expiresAt` and, for a project token, `project` and `environment` |
 | `GET /openapi.json` | Any | none | The OpenAPI document |
 | `GET /events` | Any | none | A server-sent event stream that says when something changed; see [Events](#events) |

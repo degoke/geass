@@ -22,6 +22,18 @@ spec:
       control-plane: controller-manager
       app.kubernetes.io/name: geass
   replicas: 1
+  # The old operator stops before the new one starts. The new operator runs data migrations when it starts, and an old
+  # one still reconciling the same objects while it does would write back what the migration just changed; the new one
+  # also waits for the old one to let go of leader election before it migrates. With the default (one extra pod
+  # allowed) the two would overlap for as long as the new one takes to start. The price is that a new operator that
+  # cannot start (data newer than it, a failed migration) finds the old one already gone. The installer puts the old
+  # one back when that happens and it is safe (pkg/installer/takeover.go); whoever applies these manifests by hand gets
+  # no rollback, and nothing reconciles until the new operator is fixed (the workloads it manages keep running).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   template:
     metadata:
       annotations:
@@ -103,6 +115,15 @@ spec:
           capabilities:
             drop:
             - "ALL"
+        # The operator migrates data, after waiting for the operator it replaces, before it serves anything, and that can
+        # take minutes on an update. The liveness probe waits for this one, which allows 12 minutes: the longest the
+        # migration step is allowed to run (10) and some time to start.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8086
+          periodSeconds: 5
+          failureThreshold: 144
         livenessProbe:
           httpGet:
             path: /healthz

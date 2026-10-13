@@ -1,0 +1,14 @@
+# Deliberate changes to the Geass custom resource definitions that `make crd-compat` would otherwise refuse.
+#
+# A cluster that is updated keeps its stored objects, and a CRD change that drops a field, narrows an enum or
+# tightens a bound loses or invalidates what they hold. The check exists to make that a decision someone takes and
+# a reviewer sees, not something that happens. To take it, add an entry here with the reason (the field was never
+# read, the data was migrated in pkg/migrations, ...). An entry that stops matching anything must be removed.
+#
+# exceptions:
+# - crd: geassapps.geass.geass.dev
+#   version: v1alpha1          # optional: every version when left out
+#   path: spec.someField
+#   rule: field-removed        # the rule the check names
+#   reason: Nothing ever read it, and no release wrote it.
+exceptions: []

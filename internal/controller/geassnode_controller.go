@@ -169,6 +169,9 @@ const nodeResync = 10 * time.Minute
 // nodeNotReadyGracePeriod is how long a node may stay NotReady before it is provisioned again.
 const nodeNotReadyGracePeriod = 5 * time.Minute
 
+// nodeNotReadyRecheck is how often a node that is NotReady, and is not going to be provisioned again, is looked at.
+const nodeNotReadyRecheck = 30 * time.Second
+
 func nodeReady(node *corev1.Node) bool {
 	for _, cond := range node.Status.Conditions {
 		if cond.Type == corev1.NodeReady {
@@ -217,7 +220,9 @@ func (r *GeassNodeReconciler) reconcileWorker(
 		return r.checkJoined(ctx, node)
 
 	case geassv1alpha1.NodePhaseReady:
-		return r.healthCheck(ctx, node, true)
+		// A node whose K3s is being replaced is NotReady while the agent restarts, and the health check would
+		// take that for a node that is gone and provision it again, over the upgrade.
+		return r.healthCheck(ctx, node, !k3sUpgradeRunsOn(cluster, node))
 
 	case geassv1alpha1.NodePhaseFailed:
 		return r.handleRetry(ctx, node)
@@ -290,6 +295,50 @@ func (r *GeassNodeReconciler) dropRetryAnnotation(ctx context.Context, node *gea
 	return client.IgnoreNotFound(r.Patch(ctx, node, client.MergeFrom(base)))
 }
 
+// workerJoinInput is what is needed to put the K3s agent on a worker, and to put it there again: the machine, the
+// cluster to join and the node's own settings. Joining a node and upgrading one use the same, so that an upgraded
+// node is the node it was.
+func workerJoinInput(
+	ctx context.Context,
+	c client.Reader,
+	node *geassv1alpha1.GeassNode,
+	cluster *geassv1alpha1.GeassCluster,
+	creds sshCredentials,
+	token string,
+) (ssh.ProvisionInput, error) {
+	sshPort := node.Spec.SSHPort
+	if sshPort == 0 {
+		sshPort = 22
+	}
+
+	controlPlane, err := controlPlaneNodes(ctx, c)
+	if err != nil {
+		return ssh.ProvisionInput{}, err
+	}
+	serverURL := workerServerURL(cluster, controlPlane)
+	if serverURL != cluster.Spec.ServerURL {
+		logf.FromContext(ctx).Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
+			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
+	}
+	return ssh.ProvisionInput{
+		Host:       node.Spec.EIP,
+		Port:       sshPort,
+		User:       node.Spec.SSHUser,
+		PrivateKey: creds.privateKey,
+		KnownHosts: creds.knownHosts,
+		K3sVersion: workerK3sVersion(controlPlane, cluster),
+		ServerURL:  serverURL,
+		Token:      token,
+		NodeName:   node.Name,
+		Config: ssh.NewAgentConfig(ssh.AgentOptions{
+			Placement:  node.Spec.Placement,
+			MultiSite:  cluster.Spec.Network.MultiSite,
+			ExternalIP: node.Spec.EIP,
+		}),
+		MultiSite: cluster.Spec.Network.MultiSite,
+	}, nil
+}
+
 func (r *GeassNodeReconciler) provision(
 	ctx context.Context,
 	node *geassv1alpha1.GeassNode,
@@ -306,38 +355,11 @@ func (r *GeassNodeReconciler) provision(
 		return ctrl.Result{}, err
 	}
 
-	sshPort := node.Spec.SSHPort
-	if sshPort == 0 {
-		sshPort = 22
-	}
-
-	controlPlane, err := controlPlaneNodes(ctx, r.Client)
+	in, err := workerJoinInput(ctx, r.Client, node, cluster, creds, token)
 	if err != nil {
 		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
 	}
-	k3sVersion := workerK3sVersion(controlPlane, cluster)
-	serverURL := workerServerURL(cluster, controlPlane)
-	if serverURL != cluster.Spec.ServerURL {
-		log.Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
-			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
-	}
-	err = r.SSH.Provision(ctx, ssh.ProvisionInput{
-		Host:       node.Spec.EIP,
-		Port:       sshPort,
-		User:       node.Spec.SSHUser,
-		PrivateKey: creds.privateKey,
-		KnownHosts: creds.knownHosts,
-		K3sVersion: k3sVersion,
-		ServerURL:  serverURL,
-		Token:      token,
-		NodeName:   node.Name,
-		Config: ssh.NewAgentConfig(ssh.AgentOptions{
-			Placement:  node.Spec.Placement,
-			MultiSite:  cluster.Spec.Network.MultiSite,
-			ExternalIP: node.Spec.EIP,
-		}),
-		MultiSite: cluster.Spec.Network.MultiSite,
-	})
+	err = r.SSH.Provision(ctx, in)
 	if err != nil {
 		log.Error(err, "Provisioning failed")
 		return r.setFailed(ctx, node, err.Error())
@@ -397,6 +419,12 @@ func (r *GeassNodeReconciler) healthCheck(
 			node.Status.Message = "node NotReady, re-provisioning"
 			_ = r.Status().Update(ctx, node)
 			return ctrl.Result{Requeue: true}, nil
+		}
+		if elapsed > nodeNotReadyGracePeriod {
+			// Past the grace period and not re-provisioning (a control plane node, or a worker that is being upgraded):
+			// there is nothing for the controller to do but look again later. Asking to be woken when the grace period
+			// ends, which was a moment ago, would be asking every second.
+			return ctrl.Result{RequeueAfter: nodeNotReadyRecheck}, nil
 		}
 		return ctrl.Result{RequeueAfter: max(nodeNotReadyGracePeriod-elapsed, time.Second)}, nil
 	}
@@ -473,13 +501,31 @@ func (r *GeassNodeReconciler) resolveSSHCredentials(
 	ref corev1.SecretReference,
 	defaultNS string,
 ) (sshCredentials, error) {
+	return loadSSHCredentials(ctx, r.Client, ref, defaultNS)
+}
+
+func (r *GeassNodeReconciler) resolveToken(
+	ctx context.Context,
+	ref corev1.SecretReference,
+	defaultNS string,
+) (string, error) {
+	return loadJoinToken(ctx, r.Client, ref, defaultNS)
+}
+
+// loadSSHCredentials reads a node's SSH key, and the host keys it may present, from the Secret that names them.
+func loadSSHCredentials(
+	ctx context.Context,
+	c client.Reader,
+	ref corev1.SecretReference,
+	defaultNS string,
+) (sshCredentials, error) {
 	ns := ref.Namespace
 	if ns == "" {
 		ns = defaultNS
 	}
 
 	var secret corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
 		return sshCredentials{}, err
 	}
 
@@ -492,8 +538,10 @@ func (r *GeassNodeReconciler) resolveSSHCredentials(
 	return sshCredentials{}, fmt.Errorf("no private key found in secret %s/%s", ns, ref.Name)
 }
 
-func (r *GeassNodeReconciler) resolveToken(
+// loadJoinToken reads the token that lets a node join the cluster.
+func loadJoinToken(
 	ctx context.Context,
+	c client.Reader,
 	ref corev1.SecretReference,
 	defaultNS string,
 ) (string, error) {
@@ -503,7 +551,7 @@ func (r *GeassNodeReconciler) resolveToken(
 	}
 
 	var secret corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
 		return "", err
 	}
 

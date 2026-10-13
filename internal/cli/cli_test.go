@@ -756,6 +756,46 @@ func TestVersionWorksSignedOut(t *testing.T) {
 	require.Contains(t, stdout, "geass test")
 }
 
+func TestVersionSaysWhichReleaseTheClusterRuns(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"api":"v1","release":"v0.3.0","name":"geass"}`))
+	})
+	h.signedIn(t, "", "")
+
+	code, stdout, _ := h.run("version")
+	require.Equal(t, ExitOK, code)
+	require.Contains(t, stdout, "api v1\n")
+	require.Contains(t, stdout, "release v0.3.0\n")
+	require.NotContains(t, stdout, "note:", "a command line that is not a release (the tests' is \"test\") cannot be ordered against the cluster's")
+
+	code, stdout, _ = h.run("--json", "version")
+	require.Equal(t, ExitOK, code)
+	require.JSONEq(t, `{"cli":"test","api":"v1","release":"v0.3.0"}`, stdout)
+}
+
+func TestVersionSaysWhenTheCommandLineAndTheClusterAreOutOfStep(t *testing.T) {
+	require.Empty(t, releaseMismatch("v0.3.0", "v0.3.0"))
+	require.Empty(t, releaseMismatch("dev", "v0.3.0"), "nothing is known about the order of a development build")
+	require.Empty(t, releaseMismatch("v0.3.0", ""), "a cluster that predates the field says no release")
+
+	older := releaseMismatch("v0.2.0", "v0.3.0")
+	require.Contains(t, older, "older than the cluster")
+	require.Contains(t, older, "install-cli.sh")
+	require.Contains(t, older, "GEASS_VERSION=v0.3.0")
+
+	newer := releaseMismatch("v0.4.0", "v0.3.0")
+	require.Contains(t, newer, "newer than the cluster")
+	require.Contains(t, newer, "installer on the control plane")
+
+	// A build past a tag, or with changes, is a developer's own: there is no such release to install, so neither side
+	// is told to update to it.
+	for _, dev := range []string{"v0.3.0-4-g1a2b3c4", "v0.3.0-4-g1a2b3c4-dirty", "v0.3.0-dirty"} {
+		require.Empty(t, releaseMismatch(dev, "v0.4.0"), "cli %s", dev)
+		require.Empty(t, releaseMismatch("v0.3.0", dev), "cluster %s", dev)
+		require.Empty(t, releaseMismatch(dev, "v0.3.0"), "cli %s", dev)
+	}
+}
+
 func TestTheExitCodeFollowsTheKindOfFailure(t *testing.T) {
 	require.Equal(t, ExitOK, exitCodeFor(nil))
 	require.Equal(t, ExitNotFound, exitCodeFor(&client.Error{Status: 404}))

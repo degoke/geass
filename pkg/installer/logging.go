@@ -189,32 +189,6 @@ func outputCommand(step, name string, args ...string) ([]byte, error) {
 	return stdoutBuf.Bytes(), nil
 }
 
-func combinedOutputCommandWithOptions(step string, opts commandOptions, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = opts.dir
-	cmd.Env = opts.env
-	cmd.Stdin = opts.stdin
-
-	var combined bytes.Buffer
-	streamWriter := newStreamWriter(step, "combined", &combined)
-	cmd.Stdout = streamWriter
-	cmd.Stderr = streamWriter
-
-	logCommand(step, cmd, opts)
-	err := cmd.Run()
-	streamWriter.Flush()
-	if err != nil {
-		Logf(step, "Command failed: %v", err)
-		if out := strings.TrimSpace(combined.String()); out != "" {
-			return combined.Bytes(), fmt.Errorf("%s failed: %w: %s", formatCommand(name, args...), err, out)
-		}
-		return combined.Bytes(), fmt.Errorf("%s failed: %w", formatCommand(name, args...), err)
-	}
-
-	Logf(step, "Command completed successfully")
-	return combined.Bytes(), nil
-}
-
 func formatCommand(name string, args ...string) string {
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, shellQuote(name))

@@ -246,7 +246,7 @@ With `--json` it prints the identity returned by the API: `username`, `role`, `s
 
 ### `geass version`
 
-Shows the version of the command line and of the Geass API it talks to.
+Shows the version of the command line, and the API version and Geass release of the cluster it talks to.
 
 ```text
 geass version
@@ -255,12 +255,16 @@ geass version
 ```text
 geass v0.2.0
 api v1
+release v0.3.0
+note: this command line is older than the cluster. Update it to v0.3.0: run install-cli.sh again (GEASS_VERSION=v0.3.0 pins it)
 ```
 
-The `api` line appears only when an address is known and the token is accepted. The saved token is sent only to the
-address it was saved for. Without a login the command prints
-only the first line, with exit 0. A command line built without a release tag reports `dev`. With `--json`:
-`{"cli": "...", "api": "..."}`.
+The `api` and `release` lines appear only when an address is known and the token is accepted (a cluster from before the
+release was reported prints no `release` line). The `note` line appears when the command line and the cluster are different
+releases that can be ordered: the command line talks to the cluster's API, whose resources carry the fields of the cluster's
+release, so keep them in step. The saved token is sent only to the address it was saved for. Without a login the command
+prints only the first line, with exit 0. A command line built without a release tag reports `dev`, and says nothing about
+order. With `--json`: `{"cli": "...", "api": "...", "release": "..."}`.
 
 **API calls:** `GET /version` (optional). **Needs:** nothing.
 

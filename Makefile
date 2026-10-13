@@ -115,6 +115,23 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+##@ Upgrades
+
+# A cluster that is updated keeps what it stored with the CRDs of the release it ran, so a CRD change that
+# drops a field or tightens a bound loses or invalidates that data. crd-compat compares the generated CRDs with
+# the release in hack/crd-baseline-ref (see pkg/crdcompat for the rules). It reads that release from git, so it
+# needs the full history: a shallow clone does not have it.
+.PHONY: crd-compat
+crd-compat: manifests ## Fail when the CRDs would lose or invalidate data stored by the baseline release. CRD_BASE_REF=<ref> overrides it.
+	go run ./hack/crdcompat $(if $(CRD_BASE_REF),--base-ref $(CRD_BASE_REF))
+
+# Cutting a release moves the baseline to it, so the next release is held to what this one shipped.
+.PHONY: crd-baseline
+crd-baseline: ## Make a release the compatibility baseline: make crd-baseline REF=v0.2.0
+	@test -n "$(REF)" || { echo "Usage: make crd-baseline REF=<release tag>"; exit 1; }
+	@git rev-parse --verify --quiet "$(REF)^{commit}" >/dev/null || { echo "$(REF) is not a tag or commit in this clone"; exit 1; }
+	echo "$(REF)" > hack/crd-baseline-ref
+
 .PHONY: lint
 lint: golangci-lint stub-installer-assets ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
@@ -162,7 +179,7 @@ dashboard-build: ## Build the Vite/React dashboard bundle.
 
 .PHONY: build
 build: dashboard-build manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -ldflags "$(GEASS_LDFLAGS)" -o bin/manager cmd/main.go
 
 .PHONY: run dashboard-backend dashboard-dev
 run: manifests generate fmt vet install ## Run the controller and React dashboard from your host (refreshes CRDs on the current kube context).
@@ -180,11 +197,11 @@ dashboard-dev: ## Run the Vite/React dashboard in development mode.
 .PHONY: build-linux
 build-linux: dashboard-build ## Build manager binary for Linux containers.
 	@mkdir -p .build
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell go env GOARCH) go build -o .build/manager cmd/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell go env GOARCH) go build -ldflags "$(GEASS_LDFLAGS)" -o .build/manager cmd/main.go
 
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg VERSION=$(GEASS_VERSION) -t ${IMG} .
 
 .PHONY: docker-build-prebuilt
 docker-build-prebuilt: build-linux ## Build docker image from a local Linux binary (no registry pull).
@@ -194,7 +211,13 @@ docker-build-prebuilt: build-linux ## Build docker image from a local Linux bina
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-OPERATOR_IMAGE ?= geass-operator:v0.0.1
+# GEASS_VERSION is the release being built. The release workflow sets it to the tag; otherwise it is whatever
+# git describes. It is built into the installer and the operator (pkg/release) and names the operator image,
+# so that an installer that is applied over a running cluster really changes its Deployment and the operator
+# restarts: the same tag for every release would leave the old operator running under the new manifests.
+GEASS_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GEASS_LDFLAGS ?= -X github.com/degoke/geass/pkg/release.Version=$(GEASS_VERSION)
+OPERATOR_IMAGE ?= geass-operator:$(GEASS_VERSION)
 INSTALLER_OPERATOR_TAR ?= pkg/installer/assets/geass-operator.tar
 INSTALLER_OPERATOR_MANIFESTS ?= pkg/installer/assets/operator.yaml
 GEASS_GOOS ?= linux
@@ -211,7 +234,7 @@ require-docker: ## Fail fast when the container tool daemon is unavailable.
 .PHONY: prepare-installer-assets
 prepare-installer-assets: require-docker manifests generate kustomize ## Build operator image and export embeddable install assets.
 	mkdir -p pkg/installer/assets
-	$(CONTAINER_TOOL) build --platform linux/$(GEASS_GOARCH) -t $(OPERATOR_IMAGE) .
+	$(CONTAINER_TOOL) build --platform linux/$(GEASS_GOARCH) --build-arg VERSION=$(GEASS_VERSION) -t $(OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) save $(OPERATOR_IMAGE) -o $(INSTALLER_OPERATOR_TAR)
 	# The manifests must name the image saved above. The checked-in kustomization names a placeholder
 	# (controller:latest) that no node has, so without this the operator stays in ImagePullBackOff and the
@@ -222,7 +245,7 @@ prepare-installer-assets: require-docker manifests generate kustomize ## Build o
 
 .PHONY: build-geass
 build-geass: prepare-installer-assets ## Build geass installer with embedded operator image and manifests.
-	GOOS=$(GEASS_GOOS) GOARCH=$(GEASS_GOARCH) go build -o bin/geass ./cmd/geass/
+	GOOS=$(GEASS_GOOS) GOARCH=$(GEASS_GOARCH) go build -ldflags "$(GEASS_LDFLAGS)" -o bin/geass ./cmd/geass/
 
 CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 CLI_GOOS ?= $(shell go env GOOS)

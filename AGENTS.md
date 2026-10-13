@@ -46,6 +46,10 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 ### Never Remove Scaffold Markers
 Do NOT delete `// +kubebuilder:scaffold:*` comments. CLI injects code at these markers.
 
+### API Changes Must Be Additive
+
+A cluster that is updated keeps its stored objects, and the API server prunes any field a CRD no longer has the next time an object is written. So `v1alpha1` only grows: no removed or renamed field, no changed type, no new `required` field (give it a `+kubebuilder:default` or make it `+optional`), no tighter bound, narrower enum or new validation rule. `make crd-compat` compares the generated CRDs with the release in `hack/crd-baseline-ref` and CI fails on a break; a deliberate one is listed with its reason in `hack/crd-compat-exceptions.yaml`. To reshape stored data, add the new field beside the old one and register a migration in `pkg/migrations` (idempotent, appended, never edited). Cutting a release moves the baseline: `make crd-baseline REF=<tag>`.
+
 ### Keep Project Structure
 Do not move files around. The CLI expects files in specific locations.
 
@@ -60,8 +64,9 @@ Ensure you run them against a dedicated [Kind](https://kind.sigs.k8s.io/) cluste
 
 **After editing `*_types.go` or markers:**
 ```
-make manifests  # Regenerate CRDs/RBAC from markers
-make generate   # Regenerate DeepCopy methods
+make manifests         # Regenerate CRDs/RBAC from markers
+make generate          # Regenerate DeepCopy methods
+make build-installer   # Regenerate dist/install.yaml (CI fails when it is stale)
 ```
 
 **After editing `*.go` files:**

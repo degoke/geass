@@ -31,6 +31,46 @@ jobs:
       - name: Run linter
         run: make lint
 
+  crd-compat:
+    permissions:
+      contents: read
+    name: CRD compatibility and install bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # The baseline release is read from git history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # The check reads the checked-in CRDs, so it means nothing if they are not what the types generate.
+      - name: Check the CRDs are generated from the types
+        run: |
+          make manifests
+          git diff --exit-code -- config/crd config/rbac || {
+            echo "::error::config/crd or config/rbac is out of date with the API types: run make manifests and commit the result"
+            exit 1
+          }
+
+      - name: Check the CRDs are compatible with the baseline release
+        run: make crd-compat
+
+      # dist/install.yaml is what people who do not use the installer apply, and it went stale for several releases because
+      # nothing said so.
+      - name: Check dist/install.yaml is generated from the manifests
+        run: |
+          make build-installer
+          git diff --exit-code -- dist/install.yaml config/manager/kustomization.yaml || {
+            echo "::error::dist/install.yaml is out of date with config/: run make build-installer and commit the result"
+            exit 1
+          }
+
   website:
     permissions:
       contents: read
@@ -79,6 +119,8 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # The upgrade test installs the baseline release's CRDs, which it reads from git history.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Go
@@ -87,6 +129,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests
+        env:
+          # A test that cannot run (no baseline in the clone, no envtest binaries) must fail here, not skip.
+          GEASS_REQUIRE_UPGRADE_TESTS: "1"
         run: |
           go mod tidy
           make test

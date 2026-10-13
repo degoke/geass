@@ -409,7 +409,7 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 Geass does not do these for you:
 
 - **Operating system.** Patching, kernel updates, SSH configuration, disk encryption and time sync on every server.
-- **K3s.** Geass does not upgrade or patch K3s on your servers. See [Upgrading](/docs/operations/upgrading/).
+- **K3s.** Geass upgrades K3s only when you ask it to, with `--k3s-version` (the control plane) and `spec.k3s.version` (the workers). It does not patch K3s by itself, and it does not watch for K3s security releases: that is yours. See [Upgrading](/docs/operations/upgrading/#update-k3s). Each update leaves an etcd snapshot, which holds every Secret in the cluster, in `/var/lib/rancher/k3s/server/db/snapshots`: protect it like the disk and delete old ones.
 - **Network.** Provider firewalls and security groups, DNS, and DDoS protection.
 - **TLS.** A real contact address for the Let's Encrypt account, port 80 reachable for validation, and the domain you point
   at the cluster. Geass creates the `letsencrypt-prod` ClusterIssuer from that address and cert-manager renews certificates,
