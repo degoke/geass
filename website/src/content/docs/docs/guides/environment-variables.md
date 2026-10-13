@@ -66,28 +66,29 @@ A reference puts a database's connection string into the service, so you never c
    environment. One that is not ready yet is greyed out and labelled "not ready".
 3. Choose **Add reference**. A toast says "Connection added. Deploy to apply it."
 
-Geass adds one variable, named by what you chose:
+Geass adds the variables named by what you chose:
 
 | You chose | Variable | Reads |
 | --- | --- | --- |
 | A Postgres, MySQL or SQLite database | `DATABASE_URL` | Key `uri` of the database's connection Secret |
 | A Redis database | `REDIS_URL` | Key `uri` of the connection Secret |
-| A bucket | `S3_ENDPOINT` | Key `uri` of the connection Secret |
+| A bucket | `S3_ENDPOINT` | Key `endpoint` of the connection Secret |
+| A bucket | `S3_ACCESS_KEY_ID` | Key `accessKey` |
+| A bucket | `S3_SECRET_ACCESS_KEY` | Key `secretKey` |
+| A bucket | `S3_BUCKET` | Key `bucket`, the name as stored (for an in-cluster bucket `<project ID>.<environment>.<name>`) |
 
 Adding a reference that uses the same variable name replaces the first one, so two Postgres databases cannot both be
-`DATABASE_URL`. On the canvas, a line now joins the service to the database.
+`DATABASE_URL`. A variable with that name that someone set by hand, a plain environment variable or one under
+**Variables**, is never replaced: **Add reference** refuses and names it, so remove it first. On the canvas, a line now
+joins the service to the database.
 
-:::caution
-A bucket's connection Secret has the keys `endpoint`, `accessKey`, `secretKey` and `bucket`. It has no `uri`. A
-`S3_ENDPOINT` reference made with **Add reference** therefore points at a key that does not exist, and the pod fails to
-start with `CreateContainerConfigError: couldn't find key uri in Secret`. Reference the bucket's real keys in the
-resource instead, as shown below.
-:::
+A bucket's connection Secret has the keys `endpoint`, `accessKey`, `secretKey` and `bucket`. It has no `uri`, so a bucket
+gets one variable for each key instead of a connection URL.
 
 ### Reference other keys
 
 A database's connection Secret `<database ID>-connection` has the keys `uri`, `host`, `port`, `username`, `password`
-and `database`. The dashboard only adds the `uri` key. To use another key, or a bucket's keys, add an `env` entry to the
+and `database`. The dashboard adds the `uri` key of a database and the four keys of a bucket. To use another key of a database, add an `env` entry to the
 service's resource and redeploy:
 
 ```yaml title="Reference individual keys (excerpt of the GeassApp spec)"

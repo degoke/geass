@@ -208,12 +208,16 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 			return deployed, err
 		}
 		if len(buckets) == 0 {
-			if err := platform.ValidBucketName(store.Name); err != nil {
-				return deployed, fmt.Errorf("set a bucket name for %s before deploying", store.Name)
+			if err := validateBucketNameForStore(store, store.Name); err != nil {
+				return deployed, fmt.Errorf("set a bucket name for %s before deploying: %w", store.Name, err)
 			}
-			store.Spec.Buckets = []string{store.Name}
 		}
 		markDeployed := func() error {
+			// An unnamed draft deploys under its resource ID, like the Settings form. This is part of
+			// markDeployed because a conflict retry starts from a fresh copy and runs only markDeployed.
+			if len(store.Spec.Buckets) == 0 {
+				store.Spec.Buckets = []string{store.Name}
+			}
 			store.Spec.Deploy.Enabled = true
 			platform.ClearPendingChanges(&store.ObjectMeta)
 			return platform.SetLastDeployedJSON(&store.ObjectMeta, store.Spec)
@@ -234,9 +238,22 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 func objectStoreBucketNamesFromSpec(store *geassv1alpha1.GeassObjectStore) ([]string, error) {
 	buckets := store.Spec.Buckets
 	for _, bucket := range buckets {
-		if err := platform.ValidBucketName(bucket); err != nil {
+		if err := validateBucketNameForStore(store, bucket); err != nil {
 			return nil, err
 		}
 	}
 	return buckets, nil
+}
+
+// validateBucketNameForStore reports whether bucket can be a bucket of this store. An in-cluster bucket also has
+// to fit behind its project environment, because that is the name it is stored under on the shared MinIO server.
+func validateBucketNameForStore(store *geassv1alpha1.GeassObjectStore, bucket string) error {
+	if err := platform.ValidBucketName(bucket); err != nil {
+		return err
+	}
+	if platform.ObjectStoreOnSharedMinIO(store) {
+		_, err := platform.InClusterBucketName(store.Spec.Project, string(store.Spec.Environment), bucket)
+		return err
+	}
+	return nil
 }

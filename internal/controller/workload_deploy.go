@@ -41,8 +41,11 @@ func applyAppDeployedSpec(app *geassv1alpha1.GeassApp) bool {
 	return true
 }
 
+// applyObjectStoreDeployedSpec makes store.Spec the spec to reconcile. Only the deploy workflow gates a
+// project bucket: a draft waits, and a deployed bucket is provisioned. It must not wait for
+// status.connectionSecret, because that is what the first successful provision writes.
 func applyObjectStoreDeployedSpec(store *geassv1alpha1.GeassObjectStore) error {
-	if !platform.ObjectStoreInfrastructureActive(store) {
+	if workloadAwaitingDeploy(store.ObjectMeta, store.Spec.Deploy.Enabled) {
 		return ErrAwaitingDeploy
 	}
 	if platform.UsesDeployWorkflow(store.ObjectMeta) && store.Spec.Deploy.Enabled && platform.PendingUpdates(store.Annotations) > 0 {

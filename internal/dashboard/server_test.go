@@ -1091,6 +1091,7 @@ func TestHandleAppAttachAddsSecretBackedEnvironmentVariable(t *testing.T) {
 	require.Len(t, updated.Spec.Env, 1)
 	require.Equal(t, "DATABASE_URL", updated.Spec.Env[0].Name)
 	require.Equal(t, "postgres-connection", updated.Spec.Env[0].ValueFrom.SecretKeyRef.Name)
+	require.Equal(t, platform.ConnectionKeyURI, updated.Spec.Env[0].ValueFrom.SecretKeyRef.Key, "database Secrets keep the connection URL under uri")
 	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
 }
 
@@ -1114,6 +1115,96 @@ func TestHandleAppAttachRedisDatabaseUsesRedisURL(t *testing.T) {
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
 	require.Len(t, updated.Spec.Env, 1)
 	require.Equal(t, "REDIS_URL", updated.Spec.Env[0].Name)
+}
+
+// A bucket's connection Secret has no "uri" key, only endpoint, accessKey, secretKey and bucket. Adding a
+// reference to a bucket adds one variable per key, so the app has what it needs to use the bucket, and each
+// variable reads a key the Secret has: a reference to a key that is not there leaves the pod in
+// CreateContainerConfigError.
+func TestHandleAppAttachBucketAddsEveryConnectionValue(t *testing.T) {
+	ctx := context.Background()
+	app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: testProjectName, Source: imageAppSource("nginx")}}
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads", Namespace: platform.SystemNamespace},
+		Status:     geassv1alpha1.GeassObjectStoreStatus{ConnectionSecret: "uploads-connection"},
+	}
+	connection := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads-connection", Namespace: "payments-dev"},
+		Data: map[string][]byte{
+			platform.ConnectionKeyEndpoint:  []byte("http://geass-minio.geass-system.svc:9000"),
+			platform.ConnectionKeyAccessKey: []byte("uploads"),
+			platform.ConnectionKeySecretKey: []byte("secret"),
+			platform.ConnectionKeyBucket:    []byte("payments.dev.uploads"),
+		},
+	}
+	// An earlier reference with one of these names is replaced, and an unrelated variable is left alone.
+	app.Spec.Env = []corev1.EnvVar{
+		{Name: "S3_BUCKET", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "old-connection"}, Key: "bucket"}}},
+		{Name: "LOG_LEVEL", Value: "info"},
+	}
+	c := newFakeClient(app, store, connection)
+	srv := &Server{Client: c}
+	form := url.Values{"kind": {"object-store"}, formFieldName: {"uploads"}}
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/apps/api/attach", strings.NewReader(form.Encode())).WithContext(ctx))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.handleAppAttach(rec, req, "api")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	var updated geassv1alpha1.GeassApp
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "api", Namespace: platform.SystemNamespace}, &updated))
+	refs := map[string]string{}
+	for _, env := range updated.Spec.Env {
+		if env.ValueFrom == nil {
+			continue
+		}
+		ref := env.ValueFrom.SecretKeyRef
+		require.Equal(t, "uploads-connection", ref.Name)
+		require.Contains(t, connection.Data, ref.Key, "%s must read a key the bucket's connection Secret has", env.Name)
+		refs[env.Name] = ref.Key
+	}
+	require.Equal(t, map[string]string{
+		"S3_ENDPOINT":          platform.ConnectionKeyEndpoint,
+		"S3_ACCESS_KEY_ID":     platform.ConnectionKeyAccessKey,
+		"S3_SECRET_ACCESS_KEY": platform.ConnectionKeySecretKey,
+		"S3_BUCKET":            platform.ConnectionKeyBucket,
+	}, refs)
+	require.Len(t, updated.Spec.Env, 5, "S3_BUCKET was replaced, not duplicated, and LOG_LEVEL stayed")
+	require.Equal(t, pendingChangeVariables, updated.Annotations[platform.AppPendingChangesAnnotation])
+}
+
+// A reference never replaces or overrides a variable somebody set by hand: the app would silently start using
+// another bucket or database.
+func TestHandleAppAttachRefusesToReplaceAHandSetVariable(t *testing.T) {
+	ctx := context.Background()
+	store := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: "uploads", Namespace: platform.SystemNamespace},
+		Status:     geassv1alpha1.GeassObjectStoreStatus{ConnectionSecret: "uploads-connection"},
+	}
+	for name, mutate := range map[string]func(*geassv1alpha1.GeassApp){
+		"a plain environment variable": func(app *geassv1alpha1.GeassApp) {
+			app.Spec.Env = []corev1.EnvVar{{Name: "S3_ENDPOINT", Value: "https://s3.eu-west-1.amazonaws.com"}}
+		},
+		"a variable in the service's configuration": func(app *geassv1alpha1.GeassApp) {
+			app.Spec.ConfigData = map[string]string{"S3_BUCKET": "my-aws-assets"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := &geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassAppSpec{Environment: geassv1alpha1.EnvironmentDev, Project: testProjectName, Source: imageAppSource("nginx")}}
+			mutate(app)
+			c := newFakeClient(app, store)
+			srv := &Server{Client: c}
+			rec := httptest.NewRecorder()
+			srv.handleAppRoutes(rec, withAdminSession(t, srv, postForm("/apps/api/attach", url.Values{"kind": {"object-store"}, formFieldName: {"uploads"}})))
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "is already set on this service")
+			var after geassv1alpha1.GeassApp
+			require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(app), &after))
+			require.Equal(t, app.Spec.Env, after.Spec.Env, "the service is left as it was")
+			require.Equal(t, app.Spec.ConfigData, after.Spec.ConfigData)
+		})
+	}
 }
 
 func TestHandleDatabaseCRUD(t *testing.T) {

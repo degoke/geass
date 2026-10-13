@@ -638,7 +638,7 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
 | `POST /api/apps/{app}/display-name` | `displayName` | Sets the label shown in the dashboard |
-| `POST /api/apps/{app}/attach` | `name` (a database or bucket), `kind` (`database` or `object-store`) | Adds `DATABASE_URL` (`REDIS_URL` for Redis) or `S3_ENDPOINT` as a reference to the resource's connection Secret |
+| `POST /api/apps/{app}/attach` | `name` (a database or bucket), `kind` (`database` or `object-store`) | Adds `DATABASE_URL` (`REDIS_URL` for Redis), or for a bucket `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET`, as references to the resource's connection Secret. Answers `400` when the service already has a plain or configured variable of that name |
 | `POST /api/apps/{app}/networking/delete` | `confirmName` | Clears the host and TLS |
 | `POST /api/apps/{app}/shared-variables/save` | `sharedVariable` (repeat) | Selects which shared variables the service receives |
 
@@ -735,10 +735,6 @@ connection (PlanetScale creates the database and a login itself, as a MySQL or P
 **PlanetScale** row is greyed out, so create PlanetScale databases through this API; see [Cloud connections](/docs/guides/connections/#planetscale).
 
 #### Buckets
-
-:::caution
-Project buckets currently stay at "waiting for deployment" after a deploy. See [GeassObjectStore](/docs/reference/resources/geass-object-store/).
-:::
 
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
