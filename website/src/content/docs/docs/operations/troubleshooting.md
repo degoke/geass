@@ -64,11 +64,11 @@ Use `geassdatabase`, `geassobjectstore` or `geasslogicaldatabase` for the other 
 
 ## Install
 
-**The install script prints "Downloading Geass from …" and stops.**
-The download failed. The script runs `curl` silently, so it shows no error. Fetch the printed URL by hand with `curl -fL <url> -o /dev/null` to see why: no route to GitHub, a proxy, or a version that does not exist when you pinned `GEASS_VERSION`. The script also exits with "unsupported architecture" on anything but x86-64 and arm64.
+**The install script prints "Could not download Geass from …".**
+The download failed. The line above the message is curl's own error, for example `curl: (22) The requested URL returned error: 404` for a version or file that does not exist, or `curl: (6) Could not resolve host` for no route to GitHub. Check that a `GEASS_VERSION` you pinned is a release and has a file for your architecture, and that the server can reach `github.com` over HTTPS or through your proxy. The script exits with "unsupported architecture", before it downloads anything, on anything but x86-64 and arm64. It deletes its temporary file when it ends.
 
-**"unsupported architecture", "insufficient memory: … (2048 MB required)" or "insufficient disk space on /: … (10240 MB required)".**
-The **system checks** step stops at the first requirement the machine does not meet: Linux, amd64 or arm64, at least 2 GB of memory and 10 GB free on `/`. See [Requirements](/docs/getting-started/requirements/).
+**"unsupported architecture", "insufficient memory: … (a server with 2 GB is needed …)" or "insufficient disk space on /: … (10240 MB required)".**
+The **system checks** step stops at the first requirement the machine does not meet: Linux, amd64 or arm64, a server with 2 GB of memory (at least 1700 MiB of `MemTotal`, which a machine sold as 2 GB reports) and 10 GB free on `/`. See [Requirements](/docs/getting-started/requirements/).
 
 **An install step fails.**
 The installer prints each step with `→`, a `✓` when it finishes and `✗ <step> failed: <reason>` when it stops, then "Detailed log: <path>". The log is `geass-install-<UTC date and time>.log` in the current directory, or at `GEASS_INSTALL_LOG`, or in the system temp directory when the first place is not writable. Set `GEASS_INSTALL_TRACE=1` to run the K3s installer with `sh -x`. The usual failures:
@@ -92,7 +92,13 @@ Running the installer on a machine that already has K3s removes that K3s first, 
 The cluster installs and runs, but Geass creates no certificate issuer, so no HTTPS certificate is issued. Set the address on the running cluster; see [A certificate is never issued](#a-certificate-is-never-issued).
 
 **The installer warns "No active host firewall detected; skipping port configuration."**
-It found no active `ufw`, `firewalld` or `iptables` rules and opened nothing. That is fine for K3s. If you use a firewall of another kind, or a provider security group, open TCP 6443 and 10250 and the overlay port yourself. The installer never opens ports 80 and 443; open them for visitors and for certificates.
+It found no active `ufw`, `firewalld` or `iptables` rules and opened nothing. That is fine for K3s. If you use a firewall of another kind, or a provider security group, open TCP 6443, 10250, 80 and 443 and the overlay port yourself. The installer opens these ports only in an active host firewall, never in a provider's security group, so open 80 and 443 there for visitors and for certificates.
+
+**The installer warns "The iptables rules that open the ports are not saved".**
+The host filters with `iptables` but does not restore rules at boot, so the ports the installer opened close again after a reboot. Install `iptables-persistent` (Debian, Ubuntu) or `iptables-services` (Red Hat family) and save the rules. See [Requirements](/docs/getting-started/requirements/#ports-and-firewall).
+
+**The installer warns "Could not work out this machine's address".**
+It found no usable address on the default route, so the cluster's `spec.serverURL` is `https://127.0.0.1:6443`. Geass joins workers on the control plane node's own address instead, so this does not stop you adding servers. To use another address, patch `spec.serverURL` as shown under the loopback-address message in the `GeassNode` section below.
 
 **The cluster is installed but a project's services never start, and `kubectl get geasscluster` shows it not ready.**
 See [Everything says the cluster is not ready](#everything-says-the-cluster-is-not-ready).
@@ -148,12 +154,13 @@ A node moves through `Pending`, `Joining` and `Ready`. `Failed` carries the reas
 | "join token: …" | The Secret named by the cluster's `spec.tokenSecretRef` (`geass-token`) is missing, or holds no `token`, `value` or `k3s-token` key. The installer's **store worker join token** step creates it. |
 | "cluster not found: …" | `spec.clusterRef.name` names no `GeassCluster`. The installer creates one named `default`. |
 | "could not determine the cluster's k3s version: …" | The operator could not list the control plane nodes. Check the operator's log. |
-| "ssh dial <address>: …" | Port 22 on the worker is not reachable from the control plane, or the user or key is wrong. |
+| "ssh dial <address>: …" | The SSH port on the worker (`spec.sshPort`, default 22) is not reachable from the control plane, or the user or key is wrong. |
+| "ssh dial <address>: … the SSH host key of … is not the key recorded in known_hosts" (or "… is not listed in known_hosts") | The Secret has a `known_hosts` entry and the machine at `spec.eip` does not match it: another machine answers, the machine was rebuilt, or the entry is for a different address or port. Check the fingerprint on the machine, then update `known_hosts` in the Secret. Without that entry Geass does not check host keys. |
 | `sudo: a password is required` in a step's output | A user other than `root` needs passwordless `sudo`. Geass runs each setup step through `sudo -n`. |
-| "cannot reach the cluster API at <url> from this node: open TCP 6443 to it" | The worker cannot reach the control plane on the cluster's `spec.serverURL`. Open TCP 6443 to it, in the provider's security group too. |
+| "cannot reach the cluster API at <url> from this node: …" | The worker cannot reach the control plane on the address Geass joins it on. The rest of the message says why: "the connection was refused" and "the connection timed out" mean TCP 6443 is closed between the worker and the control plane, in the host firewall or the provider's security group. "the host name does not resolve" and "something answered, but it is not a K3s API server" mean `spec.serverURL` is wrong. "spec.serverURL on the GeassCluster is a loopback address" is described below. |
 
-**The message names `https://127.0.0.1:6443`.**
-Unless you installed in multi-provider mode, the installer writes `https://127.0.0.1:6443` as the cluster's `spec.serverURL`, which is the control plane itself and means nothing to a worker. Set it to an address the worker can reach, then delete and re-create the `GeassNode`:
+**The message says `spec.serverURL on the GeassCluster is a loopback address`.**
+The cluster's `spec.serverURL` is `https://127.0.0.1:6443` or similar, which is the control plane itself and means nothing to a worker. The installer now writes the control plane's own address there, and Geass joins workers on the control plane node's address when it finds a loopback one, so this only appears when no control plane node has an address. Set `serverURL` to an address the worker can reach, then delete and re-create the `GeassNode`:
 
 ```bash
 kubectl -n geass-system patch geasscluster default --type merge \
@@ -161,7 +168,7 @@ kubectl -n geass-system patch geasscluster default --type merge \
 ```
 
 **A failed `GeassNode` does not try again after I fix the cause.**
-A node that has failed is not provisioned again by editing it, and the `geass.dev/retry` annotation does not restart it either: Geass removes the annotation and leaves the node `Failed`. Delete the node and apply it again. Deleting also removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH on port 22.
+Editing a failed node does not provision it again. Ask for another attempt with the retry annotation: `kubectl -n geass-system annotate geassnode <name> geass.dev/retry=true`. Geass sets the node back to `Pending`, clears its message and removes the annotation. Deleting the node and applying it again also works. Deleting removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH, on `spec.sshPort`.
 
 **A node stays `Joining`.**
 K3s installed but the node did not register under its name. On the worker run `journalctl -u k3s-agent -n 100`. Look for connection errors to port 6443. Geass waits without a time limit.
@@ -320,7 +327,7 @@ kubectl -n geass-system get geassplatformconfig platform -o jsonpath='{range .st
 ### A service's HTTPS domain does not work
 
 1. Check DNS: the host must resolve to a node that serves ports 80 and 443. `dig +short app.example.com`.
-2. Check the ports. The installer opens only 6443, 10250 and the overlay port, never 80 or 443. Open them on the server and in the provider's security group.
+2. Check the ports. The installer opens 80 and 443 only in an active host firewall on the control plane, never in the provider's security group, and never on workers. Open them on every node that serves web traffic and in the provider's security group.
 3. Check that the cluster has a certificate issuer: `kubectl -n geass-system get geasscluster default -o jsonpath='{.status.conditions[?(@.type=="ClusterIssuerReady")].message}'`. See [A certificate is never issued](#a-certificate-is-never-issued).
 4. Check the ingress and certificate:
 
@@ -381,7 +388,7 @@ While HTTPS is not reachable, the same message is appended to the dashboard doma
 **If the issuer is ready and certificates still fail.** Work through these in order:
 
 1. **DNS.** The host must resolve to the public address of a node that serves ports 80 and 443. Let's Encrypt connects to that address to validate the domain.
-2. **Ports 80 and 443.** Port 80 carries the HTTP-01 validation and port 443 carries visitors. The installer opens neither. Open them on the server and in the provider's security group.
+2. **Ports 80 and 443.** Port 80 carries the HTTP-01 validation and port 443 carries visitors. The installer opens both in an active host firewall on the control plane, but not in the provider's security group and not on workers. Open them there.
 3. **The address.** An address at a domain Let's Encrypt refuses stops the account from registering. The issuer then shows `IssuerNotReady`.
 4. **Rate limits.** Let's Encrypt limits how often it issues and how many times a validation may fail. After repeated failures, the order or certificate reports a rate-limit error. Fix the cause, then wait before trying again.
 

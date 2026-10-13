@@ -55,7 +55,7 @@ Any Linux server on `amd64` or `arm64` that K3s supports, from any provider. The
 
 ### Why does the installer reject my 2 GB server?
 
-It requires at least 2048 MiB of `MemTotal`, as the kernel reports it. The kernel reports a little less than the size on the plan, so a "2 GB" machine can fall short. Check with `grep MemTotal /proc/meminfo`. The installer's 2 GiB and 10 GiB are a floor: the add-ons it installs also use CPU, memory and disk. See [Requirements](/docs/getting-started/requirements/#memory-and-disk).
+It requires at least 1700 MiB of `MemTotal`, as the kernel reports it. The kernel reports less than the size on the plan, but a "2 GB" machine reports about 1.7 to 1.95 GiB, so it passes; a 1 GB machine does not. Check with `grep MemTotal /proc/meminfo`. The installer's 2 GiB and 10 GiB are a floor: the add-ons it installs also use CPU, memory and disk. See [Requirements](/docs/getting-started/requirements/#memory-and-disk).
 
 ### Can I run it on a server without a public IP?
 

@@ -59,7 +59,7 @@ stringData:
     -----END OPENSSH PRIVATE KEY-----
 ```
 
-The key must have no passphrase. Geass reads the first of these keys that exists in the Secret: `ssh-privatekey`, `id_rsa`, `private-key`, `key`.
+The key must have no passphrase. Geass reads the first of these keys that exists in the Secret: `ssh-privatekey`, `id_rsa`, `private-key`, `key`. An optional `known_hosts` key in the same Secret pins the machine's SSH host key: see [SSH and host keys](#ssh-and-host-keys).
 
 ### A worker with a region, a site and a reserved tag
 
@@ -140,9 +140,9 @@ The name must match the control plane's Kubernetes node name (its hostname). The
 | `spec.role` | string | Required | Enum `ControlPlane`, `Worker` | `Worker` is joined over SSH. `ControlPlane` is never provisioned: Geass only waits for a Kubernetes node of that name to become `Ready`. |
 | `spec.default` | boolean | `false` | None | With `role: ControlPlane`, marks an existing control plane node that Geass must not provision. The object then has no finalizer and no cluster check. It has no effect on a worker. |
 | `spec.eip` | string | Optional. Required in practice for a worker. | None | The address Geass connects to over SSH: any address or host name the control plane can reach. In a multi-site cluster it is also the address the node advertises. |
-| `spec.sshPort` | integer | CRD default `22` | None | The SSH port used to provision the node. Removal ignores it: see [Removing a node](#removing-a-node). |
+| `spec.sshPort` | integer | CRD default `22` | None | The SSH port used to provision the node and to remove it. |
 | `spec.sshUser` | string | Optional. Required in practice for a worker. | None | The SSH user: `root`, or a user with passwordless `sudo`. An empty user cannot sign in. |
-| `spec.sshKeySecretRef` | SecretReference | Required for a worker. Optional for a control plane. | None | The Secret that holds the private key. A standard Kubernetes `name` and `namespace` pair. The namespace defaults to the node's. |
+| `spec.sshKeySecretRef` | SecretReference | Required for a worker. Optional for a control plane. | None | The Secret that holds the private key, and optionally the `known_hosts` that pin the machine's host key. A standard Kubernetes `name` and `namespace` pair. The namespace defaults to the node's. |
 | `spec.sshKeySecretRef.name` | string | Optional | None | Name of the Secret. |
 | `spec.sshKeySecretRef.namespace` | string | Optional | None | Namespace of the Secret. |
 | `spec.clusterRef` | ObjectReference | Required | None | The [GeassCluster](/docs/reference/resources/geass-cluster/) to join. A standard Kubernetes object reference. Geass reads only `name` and `namespace` (default: the node's namespace). The other fields are ignored. |
@@ -185,7 +185,7 @@ The phases Geass sets:
 | *(empty)* or `Pending` | Not started. The controller waits, checking every 15 seconds, until the cluster's `status.phase` is `Ready`, then provisions. |
 | `Joining` | For a worker, the message is `installing k3s agent` while the SSH steps run, then Geass waits for a Kubernetes node of the same name to report `Ready`. For a control plane entry, the message is `waiting for control plane node registration`. |
 | `Ready` | The Kubernetes node is `Ready`. Geass looks at it again whenever the Kubernetes node's health or placement changes, and every 10 minutes. |
-| `Failed` | A step failed. `status.message` says which. Delete the object and create it again to retry (the retry annotation does not work, see below). |
+| `Failed` | A step failed. `status.message` says which. Add the `geass.dev/retry` annotation to try again (see [Editing by hand](#editing-by-hand)), or delete the object and create it again. |
 
 The type also defines the phases `Creating`, `Deleting`, `Deleted`, `Error` and `Unknown`. No code sets them.
 
@@ -199,6 +199,9 @@ The messages Geass writes when it sets `Failed`:
 | `join token: <error>` | The Secret named by the cluster's `spec.tokenSecretRef` is missing, or has none of `token`, `value`, `k3s-token`. |
 | `could not determine the cluster's k3s version: <error>` | Geass could not list the control plane nodes. |
 | `ssh dial <host>: <error>` | The SSH connection failed: a timeout, a refused connection, a key the server does not accept, or a key with a passphrase (`parse key: ...`). |
+| `ssh dial <host>: ... the SSH host key of <host> is not the key recorded in known_hosts`, or `... is not listed in known_hosts` | The Secret has a `known_hosts` entry and the machine does not match it. See [SSH and host keys](#ssh-and-host-keys). |
+| `ssh dial <host>: known_hosts ...` | The `known_hosts` entry in the Secret cannot be used: it has hashed host names, an `@` marker, no host keys, or is not valid. |
+| `step check-cluster-reachable failed: ... cannot reach the cluster API at <url> from this node: <why>` | The worker cannot reach the control plane. `<why>` names the cause: a refused connection, a timeout, a host name that does not resolve, an address that is not a K3s API server, or a loopback `spec.serverURL`. See [Troubleshooting](#failed-at-check-cluster-reachable). |
 | `step <name> failed: <error>` followed by `stdout:` and `stderr:` | An SSH step failed. |
 | `step <name> cancelled: <error>` | The operator stopped while the step ran. |
 | `unsupported node role "<role>"` | `spec.role` is not one Geass knows. |
@@ -220,25 +223,38 @@ Creating a `GeassNode` with `kubectl` is the supported way to add a worker.
 
 - Do not rename a node by changing `metadata.name`: you cannot. Delete the object and create a new one.
 - Changing `spec.eip`, `spec.sshUser`, the Secret or the cluster on an object that is already `Ready` does nothing until the node is provisioned again.
-- To retry a `Failed` node, fix the cause, delete the object and create it again from the same manifest.
+- To retry a `Failed` node, fix the cause and add the `geass.dev/retry` annotation:
 
-  :::caution
-  The `geass.dev/retry` annotation looks like a retry switch but does not work. The controller removes the annotation and tries to set `status.phase` back to `Pending` with a plain update, which the API server ignores because `status` is a subresource, so the node stays `Failed`.
-  :::
+  ```bash
+  kubectl -n geass-system annotate geassnode worker-1 geass.dev/retry=true
+  ```
+
+  The controller sets `status.phase` back to `Pending` through the status subresource, clears `status.message`, and removes the annotation, then provisions the node again from the first step. Any value works. On a node that is not `Failed` there is nothing to retry, so the annotation is removed without any action, and a later failure is not retried unless you annotate again. Deleting the object and creating it again from the same manifest also works, and clears the status completely.
 - A `Ready` worker is provisioned again from scratch when its Kubernetes node disappears, or when the node has been `NotReady` for more than 5 minutes (the message becomes `node NotReady, re-provisioning`). That needs the SSH key and the access to still work.
 - Geass joins one worker at a time, because the SSH steps run inside the reconcile.
 
 ### SSH and host keys
 
-:::caution
-Geass does not verify the server's SSH host key. It accepts whatever key the server presents, so it connects to whatever answers at `spec.eip`. Join servers over a network you trust. Authentication is by private key only. The join token is part of the install command, so it is visible in the process list on the new server while the install runs.
-:::
+Authentication is by private key only. The join token is part of the install command, so it is visible in the process list on the new server while the install runs.
+
+By default Geass does not verify the server's SSH host key. It accepts whatever key the server presents, so it connects to whatever answers at `spec.eip`, and runs commands there as root. To pin the machine, add its host key to the Secret that `spec.sshKeySecretRef` names, under the key `known_hosts`, in the plain format `ssh-keyscan` prints:
+
+```bash
+ssh-keyscan -t ed25519 203.0.113.20 > known_hosts
+ssh-keygen -lf known_hosts        # compare the fingerprint with the machine's own
+kubectl -n geass-system create secret generic worker-ssh-key \
+  --from-file=ssh-privatekey=./geass-worker --from-file=known_hosts=./known_hosts
+```
+
+When the Secret has `known_hosts`, every connection to the node (provisioning and removal) checks the key against it, and a machine that presents another key is refused before any command or the join token is sent. The port is part of the address, as in OpenSSH: use `ssh-keyscan -p <port>` for a node whose `spec.sshPort` is not 22. One Secret can hold the keys of several machines, one line each. Hashed host names (`ssh-keyscan -H`), `@cert-authority` and `@revoked` lines are refused with an error, not skipped.
+
+Geass does not record a key the first time it connects and compare it afterwards (trust on first use). A rebuilt machine has a new host key, so a recorded key would make Geass fail to re-provision it, and the first connection, which carries the token, would still be unchecked. After a rebuild, update `known_hosts` in the Secret. The Secret is read each time the node is provisioned or removed.
 
 ### Removing a node
 
 Delete the `GeassNode`. For a worker Geass then:
 
-1. Connects over SSH and runs `/usr/local/bin/k3s-agent-uninstall.sh`. It always uses port 22, whatever `spec.sshPort` says. A failure is logged and does not stop the removal.
+1. Connects over SSH, on `spec.sshPort`, and runs `/usr/local/bin/k3s-agent-uninstall.sh`. It checks the host key against `known_hosts` when the Secret has one. A failure is logged and does not stop the removal.
 2. Deletes the Kubernetes node, so it does not stay listed as `NotReady`.
 3. Releases the object.
 
@@ -256,7 +272,7 @@ For a worker, the operator waits for the cluster, then runs these steps over SSH
 | --- | --- |
 | `check-curl` | Uses `curl`, or installs it with `apt-get`. |
 | `install-iscsi` | Installs and enables the iSCSI initiator Longhorn needs. Optional: a failure does not stop the join. |
-| `check-cluster-reachable` | Runs `curl -sk --max-time 15 <serverURL>/ping`, which must answer `pong`. On failure the message is `cannot reach the cluster API at <serverURL> from this node: open TCP 6443 to it`. |
+| `check-cluster-reachable` | Runs `curl -sk --max-time 15 <serverURL>/ping`, which must answer `pong`. `<serverURL>` is the cluster's `spec.serverURL`, or, when that is a loopback address, the address the control plane node registered under (its external address in a multi-site cluster). On failure the message is `cannot reach the cluster API at <serverURL> from this node:` followed by what curl found: `the connection was refused`, `the connection timed out`, `the host name does not resolve`, `something answered, but it is not a K3s API server`, or, for a loopback address, that `spec.serverURL` is a loopback address. |
 | `check-wireguard`, `open-overlay-port` | Multi-site clusters only. The first needs a kernel that can create a WireGuard interface. The second opens 51820/udp and 10250/tcp in `ufw` or `firewalld`, if one is active. Optional. |
 | `write-k3s-config` | Overwrites `/etc/rancher/k3s/config.yaml` with the node labels and taints from `spec.placement`, kubelet log rotation settings and, for multi-site, `node-external-ip`. |
 | `install-k3s` | Runs the K3s installer in `agent` mode with the cluster's `serverURL`, the join token and the node name. |
@@ -291,7 +307,11 @@ The user or the key is wrong, or the public key is not in `authorized_keys` for 
 
 ### `Failed` at `check-cluster-reachable`
 
-`spec.serverURL` of the [GeassCluster](/docs/reference/resources/geass-cluster/) is still the installer's loopback default, or 6443/tcp is closed. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join).
+The message after `from this node:` says why. A refused connection or a timeout means 6443/tcp is closed between the worker and the control plane, in the host firewall or the provider's security group. A host name that does not resolve, or an answer that is not a K3s API server, means `spec.serverURL` of the [GeassCluster](/docs/reference/resources/geass-cluster/) is wrong. A loopback address means no control plane node has an address Geass could use instead: set `spec.serverURL` to the control plane's private or public address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join).
+
+### `Failed` with `the SSH host key ... is not the key recorded in known_hosts`
+
+The Secret has a `known_hosts` entry and the machine at `spec.eip` does not match it: another machine answers at that address, the machine was rebuilt, or the entry is for a different address or port. Check the fingerprint on the machine itself, then update `known_hosts` in the Secret and add the retry annotation.
 
 ### `Failed` at `install-k3s` with a `sudo` error
 

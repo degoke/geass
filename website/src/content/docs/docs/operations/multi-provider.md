@@ -17,7 +17,7 @@ You choose multi-provider mode when you install the control plane. It cannot be 
 | --- | --- | --- |
 | Overlay between nodes | VXLAN, UDP 8472, not encrypted | WireGuard (`wireguard-native`), UDP 51820, encrypted |
 | Address nodes advertise | Private | Public IP |
-| Address workers join on | The cluster's `spec.serverURL`. The installer writes `https://127.0.0.1:6443`, which you change to an address workers can reach | `https://<control plane public IP>:6443`, set by the installer |
+| Address workers join on | The cluster's `spec.serverURL`. The installer writes the control plane's own address on its default route, such as `https://10.0.0.5:6443` | `https://<control plane public IP>:6443`, set by the installer |
 | API certificate | Local names | Also valid for the control plane's public IP |
 | Container metrics | From each node | Prometheus reaches each kubelet on its public address |
 
@@ -45,7 +45,7 @@ Open these between the nodes' public addresses, and in each provider's security 
 | **TCP 10250** | Every pair of nodes | Container metrics are collected from every node, and live logs are read from each node's kubelet. |
 | **TCP 22** | The control plane to each new worker | Geass joins workers over SSH. |
 
-To serve visitors, also open **TCP 80 and 443** on the nodes your DNS points at. Let's Encrypt validates a domain over port 80, so certificates need it too. The installer opens 6443, 10250 and the overlay port when a host firewall (`ufw`, `firewalld` or `iptables`) is active, and warns when it finds none. It never opens 80 or 443. The worker setup also opens the overlay port and 10250 on an active `ufw` or `firewalld`, but it cannot change a provider's security group.
+To serve visitors, also open **TCP 80 and 443** on the nodes your DNS points at. Let's Encrypt validates a domain over port 80, so certificates need it too. The installer opens 6443, 10250, the overlay port, 80 and 443 on the control plane when a host firewall (`ufw`, `firewalld` or `iptables`) is active, and warns when it finds none. It opens nothing on workers except in this mode, where the worker setup opens the overlay port and 10250 on an active `ufw` or `firewalld`. Neither can change a provider's security group.
 
 ## Install the control plane
 
@@ -107,7 +107,7 @@ kubectl -n geass-system get geassnode worker-eu-1 -w
 The node moves from `Pending` to `Joining` to `Ready`. Before it installs K3s, Geass checks that the worker can reach the control plane's API. In multi-provider mode it also checks that the worker's kernel can create a WireGuard interface, and it opens the overlay port on an active host firewall. Then it writes the worker's K3s configuration (its labels, taints, public address and log limits) and installs the agent at the control plane's K3s version.
 
 :::caution
-Geass does not verify the worker's SSH host key when it connects. Over the public internet, make sure the address in `eip` is the machine you mean, and restrict port 22 on the worker to the control plane's address.
+Geass does not verify the worker's SSH host key unless you pin it. Over the public internet, put the worker's host key in the SSH key Secret under `known_hosts` (see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)), so that nothing but the machine you mean can receive the join token, and restrict port 22 on the worker to the control plane's address.
 :::
 
 ## Choose regions
@@ -176,14 +176,14 @@ The kernel is older than 5.6 or lacks the module. Install the `wireguard` packag
 **After install, the operator and system pods never become ready.**
 The control plane cannot reach its own API on its public address. Open TCP 6443 from the control plane's own public IP in the provider's security group, and in any host firewall.
 
-**A `GeassNode` is `Failed` with "cannot reach the cluster API at https://203.0.113.10:6443 from this node: open TCP 6443 to it (and UDP 51820 between every pair of nodes), including in the provider's security group".**
-The worker cannot reach the control plane on 6443. Fix the rule at both providers.
+**A `GeassNode` is `Failed` with "cannot reach the cluster API at https://203.0.113.10:6443 from this node: ...".**
+The rest of the message says why. "The connection was refused" or "the connection timed out" means the worker cannot reach the control plane on 6443/tcp, and the message adds that UDP 51820 must be open between every pair of nodes: fix the rule at both providers, in the host firewall and in the security group. "The host name does not resolve" or "something answered, but it is not a K3s API server" means `spec.serverURL` of the cluster is wrong: in this mode it is `https://<control plane public IP>:6443`.
 
 **A `GeassNode` is `Failed` with "this node's kernel cannot create a WireGuard interface".**
 The same kernel problem on the worker.
 
 **A `GeassNode` is `Failed` with `ssh dial` or "no private key found in secret".**
-`ssh dial` means port 22 on the worker is not reachable from the control plane, the user or key is wrong, or the address in `eip` is wrong. A missing key means the Secret does not hold the key under `ssh-privatekey`, `id_rsa`, `private-key` or `key`.
+`ssh dial` means the SSH port on the worker (`spec.sshPort`, default 22) is not reachable from the control plane, the user or key is wrong, the address in `eip` is wrong, or the machine's host key does not match the `known_hosts` in the Secret. A missing key means the Secret does not hold the key under `ssh-privatekey`, `id_rsa`, `private-key` or `key`.
 
 **A step fails with `sudo: a password is required`.**
 A user that is not `root` needs passwordless `sudo`. Geass runs each setup step through `sudo -n`.
@@ -201,7 +201,7 @@ Prometheus cannot reach that worker's kubelet. Open TCP 10250 between the nodes.
 Expected. See [What is different in this mode](#what-is-different-in-this-mode).
 
 **A failed `GeassNode` does not retry after I fix the cause.**
-Fixing the cause does not restart provisioning of a node that already failed. Delete the `GeassNode` and apply it again. Deleting also removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH on port 22. Adding the `geass.dev/retry` annotation does not help in this version: Geass removes the annotation and leaves the node `Failed`.
+Fixing the cause does not restart provisioning of a node that already failed by itself. Add the retry annotation: `kubectl -n geass-system annotate geassnode <name> geass.dev/retry=true`. Geass sets the node back to `Pending` and provisions it again. You can also delete the `GeassNode` and apply it again. Deleting also removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH, on `spec.sshPort`.
 
 ## Related
 

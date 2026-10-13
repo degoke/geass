@@ -24,18 +24,32 @@ For nodes at different providers, see [Multi-provider clusters](/docs/operations
 
 ## Set the address workers join
 
-A worker joins the address stored in `spec.serverURL` of the cluster object. The installer writes `https://127.0.0.1:6443` there for a default install, which is the control plane's own loopback address and cannot work from another machine. Nothing changes it for you. Before you add the first worker, set it to the control plane's address on the network the workers share with it:
+A worker joins the address stored in `spec.serverURL` of the cluster object, and you normally do not touch it. The installer writes the control plane's own address there: the one its default route uses, which is the private address on most cloud servers (`https://10.0.0.5:6443`) and the public one on a server that has its public address on the network interface. A cluster installed with `GEASS_MULTI_SITE=1` has the control plane's public address instead, because its workers are at other providers.
+
+Read what the installer stored:
+
+```bash
+sudo k3s kubectl -n geass-system get geasscluster default -o jsonpath='{.spec.serverURL}{"\n"}'
+```
+
+Set it yourself only when the workers must reach the control plane on a different address from the one the installer found: a server with several network interfaces, or workers that reach the control plane through a public address or a name. Use an address the new server can reach, and make sure 6443/tcp is open to it:
 
 ```bash
 sudo k3s kubectl -n geass-system patch geasscluster default --type merge \
   -p '{"spec":{"serverURL":"https://10.0.0.5:6443"}}'
 ```
 
-Use the control plane's private address when the servers share a private network, or its public address when they do not. The address is also checked from the new server (`curl .../ping`), so 6443/tcp must be open to it. A cluster installed with `GEASS_MULTI_SITE=1` already has the public address here.
+If `serverURL` is a loopback address (`127.0.0.1`, `localhost` or `::1`), Geass does not use it. Clusters installed by older versions have one, and so does a new install that could not find its own address. Geass joins the worker on the address the control plane's Kubernetes node registered under instead: its internal address, or its external one in a multi-site cluster. The cluster object is not edited. If no control plane node has an address either, the worker fails at the step `check-cluster-reachable`, and the message names the loopback address as the cause.
 
-:::caution
-If you skip this, the worker fails at the step `check-cluster-reachable` with the message `cannot reach the cluster API at https://127.0.0.1:6443 from this node: open TCP 6443 to it`. The message points at the firewall, but the cause is the stored address.
-:::
+The address is checked from the new server (`curl .../ping`) before anything is installed, so 6443/tcp must be open to it. When the check fails, `status.message` says what curl found:
+
+| Message says | Cause |
+| --- | --- |
+| `spec.serverURL on the GeassCluster is a loopback address` | The stored address means "this machine" to every machine, and no control plane node address was found to use instead. Patch `serverURL` as above, then delete the node and create it again |
+| `the connection was refused` | Nothing listens at that address and port, or a firewall rejects the connection |
+| `the connection timed out` | A host firewall or the provider's security group drops 6443/tcp, or the new server has no route to that address |
+| `the host name does not resolve` | `serverURL` uses a name the new server cannot look up |
+| `something answered, but it is not a K3s API server` | The address belongs to another machine or service |
 
 ## Prepare the new server
 
@@ -54,6 +68,27 @@ If you skip this, the worker fails at the step `check-cluster-reachable` with th
    ```
 
 4. Delete the local copy of the private key when it is no longer needed.
+
+### Pin the server's host key (recommended)
+
+By default Geass does not check the server's SSH host key. It connects to whatever answers at `eip` and runs commands there as root, with the join token among them. To make sure it is your machine, put the machine's host key in the same Secret under the key `known_hosts`. Get it from the machine itself or from the provider's console, and compare the fingerprint there. A key fetched over the network you are trying to protect proves nothing.
+
+```bash
+ssh-keyscan -t ed25519 203.0.113.20 > known_hosts            # sshd on port 22
+ssh-keyscan -t ed25519 -p 2222 203.0.113.20 > known_hosts    # sshd on another port
+ssh-keygen -lf known_hosts                                   # the fingerprint to compare
+
+sudo k3s kubectl -n geass-system create secret generic worker-ssh-key \
+  --from-file=ssh-privatekey=./geass-worker \
+  --from-file=known_hosts=./known_hosts
+```
+
+With `known_hosts` present, a machine that presents any other key is refused before a single command or the join token is sent to it, and `status.message` says `the SSH host key of ... is not the key recorded in known_hosts` or `... is not listed in known_hosts`. The same check applies when the node is removed.
+
+- The file holds plain lines as `ssh-keyscan` prints them, one per machine, so one Secret can serve several nodes that share a key pair. Hashed host names (`ssh-keyscan -H`) and `@cert-authority` or `@revoked` lines are refused with an error rather than skipped, so the check is never weaker than it looks.
+- The port is part of the address: a key recorded for `203.0.113.20` does not vouch for `203.0.113.20` on port 2222. `ssh-keyscan -p` writes the entry in the right form.
+- A rebuilt machine has a new host key. Update `known_hosts` in the Secret before you re-provision or remove it. Geass reads the Secret each time, and an unattended re-provisioning of a node that stayed `NotReady` fails until the key is updated.
+- Geass does not record a key on first use and compare it later (trust on first use). A rebuilt machine would then fail its own repair, and the first connection, which is the one that carries the token, would still be unchecked.
 
 ## Join a worker
 
@@ -103,16 +138,13 @@ sudo k3s kubectl get nodes
 
 Geass sets no timeout on `Joining`. If provisioning finished but the node never becomes `Ready`, the object stays there until you fix the cause. A `Ready` worker is provisioned again from scratch when its Kubernetes node disappears, or when the node stays `NotReady` for more than five minutes (the message becomes `node NotReady, re-provisioning`). Geass asks to be woken when the five minutes are up, so it does not wait for the next 10-minute look. That needs the SSH key and access to still work.
 
-To retry after `Failed`, fix the cause, then delete the object and create it again from the same manifest:
+To retry after `Failed`, fix the cause, then ask for another attempt with the retry annotation:
 
 ```bash
-sudo k3s kubectl -n geass-system delete geassnode worker-1
-sudo k3s kubectl apply -f worker-1.yaml
+sudo k3s kubectl -n geass-system annotate geassnode worker-1 geass.dev/retry=true
 ```
 
-:::caution
-The `geass.dev/retry` annotation looks like a retry switch, but it does not work. The operator removes the annotation and tries to set the phase back to `Pending`, but the phase lives in the object's status, and that update is ignored, so the node stays `Failed`. Delete and recreate it instead.
-:::
+Geass sets the phase back to `Pending`, clears the old message and removes the annotation, then provisions the node again from the first step. Any value works. On a node that is not `Failed` there is nothing to retry, so Geass removes the annotation without acting on it. A later failure is never retried on its own: annotate again. You can also delete the object and create it again from the same manifest, which clears the status completely.
 
 When the cluster changes size, Longhorn needs a ready manager on every node before it reports ready, so the cluster can briefly report not ready while a new node starts. Avoid deploying in that window.
 
@@ -158,7 +190,7 @@ sudo k3s kubectl -n geass-system delete geassnode worker-1
 
 Geass then:
 
-1. Connects over SSH and runs `/usr/local/bin/k3s-agent-uninstall.sh`. It uses port 22 whatever `sshPort` says. A failure is logged and does not stop the removal.
+1. Connects over SSH, on `spec.sshPort`, and runs `/usr/local/bin/k3s-agent-uninstall.sh`. It checks the host key against `known_hosts` when the Secret has one. A failure is logged and does not stop the removal.
 2. Deletes the node from the cluster, so it does not stay listed as `NotReady`.
 3. Releases the object.
 
@@ -170,7 +202,7 @@ If the server was unreachable, the K3s agent keeps running there and can registe
 
 ## What happens under the hood
 
-The operator runs these commands on the new server in order, each through `sudo -n sh -c` unless the user is `root`. It opens an SSH connection with a 30-second timeout and authenticates with the key only.
+The operator runs these commands on the new server in order, each through `sudo -n sh -c` unless the user is `root`. It opens an SSH connection on `spec.sshPort` with a 30-second timeout and authenticates with the key only. The server's host key is checked when the Secret has a `known_hosts` entry: see [Pin the server's host key](#pin-the-servers-host-key-recommended).
 
 | Step | Command |
 | --- | --- |
@@ -188,7 +220,7 @@ The credentials involved:
 
 - **The SSH private key** is in the Secret you created, in `geass-system`. The operator reads it each time it provisions or removes the node. It is never sent to the dashboard. Anyone who can read Secrets in `geass-system` can read it, so use a key made for this and limit what it unlocks.
 - **The join token** is the Secret `geass-token`. It is part of the command that runs on the new server, so it is visible to local users in the process list while the install runs.
-- **Host keys are not verified.** The operator accepts whatever host key the server presents, so it will connect to whatever answers at `eip`. Provision over a network you trust.
+- **Host keys are verified only if you pin them.** Without a `known_hosts` entry in the Secret the operator accepts whatever host key the server presents, so it will connect to whatever answers at `eip`. Pin the key, or provision over a network you trust.
 - You can remove the public key from the new server after it joins. Then Geass cannot re-provision the node or uninstall the agent when you delete it.
 
 ## Options
@@ -197,9 +229,9 @@ The credentials involved:
 | --- | --- | --- |
 | `spec.role` | `Worker` or `ControlPlane`. Only `Worker` is provisioned. A `ControlPlane` entry only waits for a node of that name to register and installs nothing | required |
 | `spec.eip` | Address Geass connects to over SSH. In a multi-site cluster it is also the address the node advertises | |
-| `spec.sshPort` | SSH port for provisioning | `22` |
+| `spec.sshPort` | SSH port for provisioning and for removal | `22` |
 | `spec.sshUser` | SSH user: `root`, or a user with passwordless `sudo` | |
-| `spec.sshKeySecretRef` | Secret (`name`, optional `namespace`, default the object's own) holding the private key. Required for workers | |
+| `spec.sshKeySecretRef` | Secret (`name`, optional `namespace`, default the object's own) holding the private key and, optionally, the `known_hosts` that pin the machine's host key. Required for workers | |
 | `spec.clusterRef` | The `GeassCluster` to join (`name`, optional `namespace`) | required |
 | `spec.placement` | `region`, `zone` and `tags` (each with `name`, `reserved` and `compliance`) | none |
 | `spec.default` | Marks a control plane node that already exists and must not be provisioned | `false` |
@@ -216,7 +248,13 @@ Read `status.message` first. Provisioning errors have the form `step <name> fail
 
 **`step install-k3s failed ... sudo: a password is required`** (or any step failing under `sudo`). The user needs passwordless `sudo`, or use `root`.
 
-**`step check-cluster-reachable failed ... cannot reach the cluster API`.** Either `serverURL` is still the loopback address (see [Set the address workers join](#set-the-address-workers-join)), or 6443/tcp is closed between the new server and the control plane.
+**`step check-cluster-reachable failed ... cannot reach the cluster API`.** The rest of the message says why: a refused connection or a timeout points at a closed 6443/tcp between the new server and the control plane, and a loopback address points at `serverURL`. See the table in [Set the address workers join](#set-the-address-workers-join).
+
+**`ssh dial ...: the SSH host key of ... is not the key recorded in known_hosts`, or `... is not listed in known_hosts`.** The machine at `eip` is not the one whose key you recorded, or the machine was rebuilt, or the entry is for another address or port. Check the fingerprint on the machine itself, then update `known_hosts` in the Secret.
+
+**`ssh dial ...: known_hosts uses the @revoked marker`, `has hashed host names`, or `has no host keys in it`.** The `known_hosts` entry in the Secret cannot be used. Replace it with plain lines from `ssh-keyscan`.
+
+**The node stays `Failed` after you added the retry annotation.** The annotation only restarts a node that is `Failed`. Check `status.phase`, and that the annotation key is exactly `geass.dev/retry`.
 
 **`step check-curl failed`.** The server has no `curl` and no `apt-get`. Install `curl` yourself.
 

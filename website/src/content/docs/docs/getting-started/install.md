@@ -19,7 +19,7 @@ SSH into the server and run:
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh
 ```
 
-`install.sh` is a short script. It works out your architecture from `uname -m` (`x86_64` and `amd64` become `amd64`, `aarch64` and `arm64` become `arm64`), downloads `geass-linux-<arch>` from the GitHub release into a temporary file, makes it executable and runs it. The downloaded installer carries the operator image and manifests inside it, so nothing else is fetched from Geass.
+`install.sh` is a short script. It works out your architecture from `uname -m` (`x86_64` and `amd64` become `amd64`, `aarch64` and `arm64` become `arm64`), downloads `geass-linux-<arch>` from the GitHub release into a temporary file, makes it executable and runs it, then deletes it when the installer ends, whether it succeeded or not. If the download fails the script prints curl's error, the URL and the usual causes, and exits with status 1. The downloaded installer carries the operator image and manifests inside it, so nothing else is fetched from Geass.
 
 Every command printed by the installer is also written to a log file. The first lines of output name it:
 
@@ -28,7 +28,7 @@ Downloading Geass from https://github.com/degoke/geass/releases/latest/download/
 Installation log: /home/ubuntu/geass-install-20261012-091500.log
 → system checks
 ✓ system checks
-→ configure firewall
+→ remove existing installation
 ...
 ```
 
@@ -54,7 +54,7 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
 
 Use a real address: Let's Encrypt refuses placeholder domains such as `example.com`. The first installer step checks that the value looks like an email address (`name@host.tld`, no spaces, at most 254 characters) and stops before it changes anything if it does not.
 
-With an address set, the installer writes it into the cluster object as `spec.addons.certManager.acmeEmail`. Once cert-manager is ready, the operator creates a cert-manager `ClusterIssuer` named `letsencrypt-prod`: ACME against Let's Encrypt's production directory, over HTTP-01, solved through the Traefik ingress class. Every Ingress that Geass creates for a hostname with **HTTPS** on, and the dashboard's own Ingress, asks for its certificate from that issuer. Two ports matter: Let's Encrypt must reach your server on 80/tcp to validate a hostname, and visitors reach it on 443/tcp. The installer opens neither. See [Ports and firewall](/docs/getting-started/requirements/#ports-and-firewall).
+With an address set, the installer writes it into the cluster object as `spec.addons.certManager.acmeEmail`. Once cert-manager is ready, the operator creates a cert-manager `ClusterIssuer` named `letsencrypt-prod`: ACME against Let's Encrypt's production directory, over HTTP-01, solved through the Traefik ingress class. Every Ingress that Geass creates for a hostname with **HTTPS** on, and the dashboard's own Ingress, asks for its certificate from that issuer. Two ports matter: Let's Encrypt must reach your server on 80/tcp to validate a hostname, and visitors reach it on 443/tcp. The installer opens both in an active host firewall on the control plane, but it cannot open them in your provider's firewall or security group. See [Ports and firewall](/docs/getting-started/requirements/#ports-and-firewall).
 
 Without an address the cluster still installs and runs, but no issuer exists and **no HTTPS certificate is issued**. The installer prints a warning that starts `warning: GEASS_ACME_EMAIL is not set`. The cluster object then has a `ClusterIssuerReady` condition that says why. While the dashboard's own HTTPS is unreachable, the same message is also appended to the `PendingHTTPS` message of the `DashboardDomainReady` condition on the platform configuration. The dashboard does not show either condition, so read it with `kubectl`:
 
@@ -93,9 +93,9 @@ The installer runs these steps in order. The names are the ones it prints.
 
 | # | Step | What it does |
 | --- | --- | --- |
-| 1 | `system checks` | Requires Linux, `amd64` or `arm64`, at least 2048 MiB of memory and 10 GiB free on `/`. It also checks `GEASS_ACME_EMAIL` when you set it, and with `GEASS_MULTI_SITE` it validates the public address and tests that WireGuard works |
-| 2 | `configure firewall` | Opens 6443/tcp, 10250/tcp and the overlay port in the first active firewall it finds (`ufw`, `firewalld`, then `iptables`). Prints a warning and continues when none is active. See [Requirements](/docs/getting-started/requirements/#ports-and-firewall) |
-| 3 | `remove existing installation` | Uninstalls K3s when it finds an installation. See [Run the installer again](#run-the-installer-again) |
+| 1 | `system checks` | Requires Linux, `amd64` or `arm64`, a server with 2 GB of memory (at least 1700 MiB of `MemTotal`, which is what a machine sold as 2 GB reports) and 10 GiB free on `/`. It also checks `GEASS_ACME_EMAIL` when you set it, and with `GEASS_MULTI_SITE` it validates the public address and tests that WireGuard works |
+| 2 | `remove existing installation` | Uninstalls K3s when it finds an installation. See [Run the installer again](#run-the-installer-again) |
+| 3 | `configure firewall` | Opens 6443/tcp, 10250/tcp, the overlay port, and 80/tcp and 443/tcp for web traffic in the first active firewall it finds (`ufw`, `firewalld`, then `iptables`). With `iptables` it also saves the rules where the host restores them at boot, if it does. It runs after the old K3s is removed, so the rules it saves are the host's own and not the chains of a cluster being replaced. Prints a warning and continues when no firewall is active. See [Requirements](/docs/getting-started/requirements/#ports-and-firewall) |
 | 4 | `install node prerequisites` | Installs and enables the iSCSI initiator that Longhorn needs. Failure is logged and does not stop the install |
 | 5 | `install k3s (server)` | Writes `/etc/rancher/k3s/config.yaml`, downloads `https://get.k3s.io` and runs it with `INSTALL_K3S_EXEC="server --cluster-init"`: a K3s server with embedded etcd, using K3s's default release channel |
 | 6 | `wait for k3s ready` | Waits up to 5 minutes for `/etc/rancher/k3s/k3s.yaml`, then runs `k3s kubectl get node` |
@@ -103,7 +103,7 @@ The installer runs these steps in order. The names are the ones it prints.
 | 8 | `deploy geass-operator` | Applies the embedded manifests with `k3s kubectl apply`: the `geass-system` namespace, the Geass custom resource definitions, RBAC, the operator Deployment and the dashboard Service |
 | 9 | `wait for operator ready` | Waits up to 5 minutes for `deployment/geass-controller-manager` to roll out |
 | 10 | `store worker join token` | Reads K3s's node token and saves it as the Secret `geass-token` in `geass-system`, where the operator reads it when it joins workers. The token goes in on standard input, so the installer log does not contain it |
-| 11 | `apply GeassCluster CR` | Waits up to 60 seconds for the `geassclusters` definition, then applies the cluster object shown below. Without `GEASS_ACME_EMAIL` it prints the warning described under [HTTPS certificates](#https-certificates) |
+| 11 | `apply GeassCluster CR` | Waits up to 60 seconds for the `geassclusters` definition, then applies the cluster object shown below, with this server's own address as `serverURL`. Without `GEASS_ACME_EMAIL` it prints the warning described under [HTTPS certificates](#https-certificates) |
 
 The `/etc/rancher/k3s/config.yaml` that step 5 writes (mode 0600) sets the kubelet's container log rotation to 50Mi per file and 5 files, so the dashboard has log history to read:
 
@@ -123,7 +123,7 @@ metadata:
   namespace: geass-system
 spec:
   version: v1
-  serverURL: https://127.0.0.1:6443
+  serverURL: https://10.0.0.5:6443
   tokenSecretRef:
     name: geass-token
     namespace: geass-system
@@ -141,7 +141,7 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
       acmeEmail: "you@yourdomain.com"
 ```
 
-`spec.version` is a label that Geass does not use to pick a K3s version. `serverURL` is the address new workers are told to join, which is a loopback address in a default install. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). The cluster object does not turn on cert-manager or monitoring because both default to on, so the operator also installs them. With Longhorn and log collection, that is four add-ons, installed through K3s's Helm controller after the installer has exited. A fifth, the serverless add-on that lets services sleep when idle, is off: the installer never sets `spec.addons.serverless.enabled`. See [How Geass works](/docs/overview/how-it-works/) and [Sleep when idle](/docs/guides/scale-to-zero/).
+`spec.version` is a label that Geass does not use to pick a K3s version. `serverURL` is the address new workers are told to join. The installer fills it with this server's own address on its default route (the `10.0.0.5` above stands for yours), which is a private address on most cloud servers, or the public address with `GEASS_MULTI_SITE`. If the installer cannot find an address it stores `https://127.0.0.1:6443` and prints a warning, and the operator then joins workers on the control plane node's own address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join). The cluster object does not turn on cert-manager or monitoring because both default to on, so the operator also installs them. With Longhorn and log collection, that is four add-ons, installed through K3s's Helm controller after the installer has exited. A fifth, the serverless add-on that lets services sleep when idle, is off: the installer never sets `spec.addons.serverless.enabled`. See [How Geass works](/docs/overview/how-it-works/) and [Sleep when idle](/docs/guides/scale-to-zero/).
 
 ## Environment variables
 
@@ -212,7 +212,7 @@ geass login --url https://geass.example.com
 - **It does not set up dashboard sign-in.** No username or password exists after the install, and the installer prints none. You create them. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
 - **It does not publish the dashboard.** The dashboard is a `ClusterIP` Service, reachable from inside the cluster only. There is no ingress, domain or certificate until you configure a domain from the dashboard.
 - **It does not issue certificates without your email address.** The installer enables cert-manager, and the operator creates the `letsencrypt-prod` issuer that Geass's Ingress objects ask for, but only when it has a contact address (`GEASS_ACME_EMAIL`). See [HTTPS certificates](#https-certificates) and [Domains and TLS](/docs/guides/domains-and-tls/).
-- **It does not open ports 80 and 443**, or touch your provider's firewall. Without 80/tcp, Let's Encrypt cannot validate your hostnames either.
+- **It does not touch your provider's firewall or security group.** It opens ports only in a host firewall that is active on the control plane (`ufw`, `firewalld` or `iptables`). Ports 80 and 443 must also be open in the provider's firewall, or visitors cannot reach your services and Let's Encrypt cannot validate your hostnames. Nothing is opened on workers.
 - **It does not add workers.** See [Add servers](/docs/getting-started/add-servers/).
 - **It does not turn on the serverless add-on.** KEDA and its HTTP add-on, which let a service sleep when idle, are installed only after you set `spec.addons.serverless.enabled` on the cluster. See [Sleep when idle](/docs/guides/scale-to-zero/#turn-on-the-add-on).
 - **It does not install the command line** on your workstation. See [Install the command line](#install-the-command-line-optional).
@@ -245,7 +245,7 @@ Multi-provider clusters are experimental. The project has run a four-node cluste
 Running the installer on a machine that already has K3s uninstalls that K3s first and installs a new cluster. It asks for no confirmation. It is a reinstall, not an upgrade, and everything in the old cluster is deleted.
 :::
 
-Step 3, `remove existing installation`, treats K3s as installed when any of these exist: `/usr/local/bin/k3s-uninstall.sh`, `/usr/local/bin/k3s-agent-uninstall.sh`, `/usr/local/bin/k3s`, `/etc/systemd/system/k3s.service` or `/etc/systemd/system/k3s-agent.service`. It then runs the first uninstall script it finds. K3s's own uninstall script removes `/etc/rancher/k3s`, the K3s data directory (`/var/lib/rancher/k3s` by default) and `/var/lib/kubelet`. The data directory holds the cluster's embedded etcd database and K3s's local-path volumes, so after a second run:
+Step 2, `remove existing installation`, treats K3s as installed when any of these exist: `/usr/local/bin/k3s-uninstall.sh`, `/usr/local/bin/k3s-agent-uninstall.sh`, `/usr/local/bin/k3s`, `/etc/systemd/system/k3s.service` or `/etc/systemd/system/k3s-agent.service`. It then runs the first uninstall script it finds. K3s's own uninstall script removes `/etc/rancher/k3s`, the K3s data directory (`/var/lib/rancher/k3s` by default) and `/var/lib/kubelet`. The data directory holds the cluster's embedded etcd database and K3s's local-path volumes, so after a second run:
 
 - Every project, service, database definition, secret, dashboard user, API token and connection of the old cluster is gone, and so is data on local-path volumes.
 - Workers joined to the old cluster keep running their agents but hold credentials of a cluster that no longer exists.
@@ -267,7 +267,7 @@ On disk the installer and K3s leave:
 | `/var/lib/rancher/k3s/` | Cluster data, including `server/node-token` |
 | `/usr/local/bin/k3s-uninstall.sh` | K3s's uninstall script |
 | `geass-install-*.log` | The installer log |
-| A temporary file from `mktemp` | The downloaded installer. `install.sh` ends by replacing itself with the installer, so its cleanup does not run and the file stays until your temporary directory is cleared |
+| A temporary file from `mktemp` | The downloaded installer, deleted by `install.sh` when the installer ends. Earlier versions of the script replaced themselves with the installer, which left the file behind until the temporary directory was cleared |
 
 K3s runs as the `k3s` systemd service and starts at boot. In the cluster, the installer creates:
 
@@ -284,15 +284,19 @@ K3s runs as the `k3s` systemd service and starts at boot. In the cluster, the in
 
 ## Troubleshooting
 
-**The script prints `Downloading Geass from <url>` and exits with nothing else.** The download failed, and `curl -sfL` hides the reason. Open the URL in a browser, or run `curl -fI <url>`. The usual causes are a tag that does not exist, no outbound access to `github.com`, or an unsupported architecture.
+**`Could not download Geass from <url>`.** The download failed, and the line above it is curl's own error, such as `curl: (22) The requested URL returned error: 404` for a tag or file that does not exist. The usual causes are a `GEASS_VERSION` that is not a release, a release with no file for your architecture, or no outbound access to `github.com`. Open the URL in a browser, or run `curl -fI <url>`. An unsupported architecture is reported before the download, as `unsupported architecture`.
 
-**`✗ system checks failed: insufficient memory: ... MB (2048 MB required)`, or `insufficient disk space on /`.** See [Requirements](/docs/getting-started/requirements/#memory-and-disk).
+**`✗ system checks failed: insufficient memory: ... MB (a server with 2 GB is needed, which the kernel reports as at least 1700 MB)`, or `insufficient disk space on /`.** See [Requirements](/docs/getting-started/requirements/#memory-and-disk).
 
 **`✗ system checks failed: GEASS_ACME_EMAIL "..." is not an email address`.** The value must look like `name@host.tld`, with no spaces and at most 254 characters. This step runs first, so nothing on the machine has changed. Fix the variable and run the installer again.
 
 **`warning: GEASS_ACME_EMAIL is not set, so no certificate issuer is created ...`.** Informational. The install continues, and no HTTPS certificate is issued until you set the address. See [HTTPS certificates](#https-certificates).
 
-**`warning: No active host firewall detected; skipping port configuration`.** Informational. K3s manages its own packet rules, so the cluster starts. If you add a firewall later, open the ports it lists.
+**`warning: No active host firewall detected; skipping port configuration`.** Informational. K3s manages its own packet rules, so the cluster starts. If you add a firewall later, open the ports it lists, which include 80/tcp and 443/tcp.
+
+**`warning: The iptables rules that open the ports are not saved ...`.** The host filters with `iptables` but does not restore rules at boot (there is no `/etc/iptables/rules.v4` or `/etc/sysconfig/iptables`), so the ports the installer opened close again after a reboot. Install `iptables-persistent` (Debian, Ubuntu) or `iptables-services` (Red Hat family) and save the rules. See [Requirements](/docs/getting-started/requirements/#ports-and-firewall).
+
+**`warning: Could not work out this machine's address ...`.** The installer found no usable address on the default route, so `spec.serverURL` holds `https://127.0.0.1:6443`. The operator joins workers on the control plane node's own address anyway. To choose another address, patch `spec.serverURL`: see [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join).
 
 **`✗ configure firewall failed: ufw allow 6443/tcp: ...`.** The firewall command failed. Run it by hand to see why, or disable the firewall for the install and open the ports afterwards.
 
