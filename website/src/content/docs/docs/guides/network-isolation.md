@@ -1,0 +1,201 @@
+---
+title: "Network isolation"
+description: "Each project's services are private by default. Let one project call another, open a project to the whole cluster, and check the rules with kubectl."
+---
+
+In a cluster with no rules, any service can call any other, so one project's service could reach another project's database or read its metrics. Geass closes that by default. Each project is private: only its own services, Geass itself and visitors who arrive through your domains can reach them. You choose which other projects may reach a project, or open it to everything.
+
+## Before you start
+
+- Only admins can change network settings: dashboard admins, and workspace API tokens with the admin role. Project tokens, observer tokens and viewer tokens are refused.
+- Isolation is enforced by Kubernetes network policies. K3s enforces them with its built-in network policy controller, and Geass does not turn that off. On a cluster whose network plugin ignores network policies, Geass still writes the rules, but nothing enforces them.
+
+## What is isolated by default
+
+A project's services and databases accept connections only from:
+
+- the project itself, in **every** one of its environments, pull request environments included;
+- the platform: the ingress controller, the Geass operator and dashboard, Prometheus, the Postgres operator and the scale-to-zero proxy (see the table below);
+- the projects you name in its allow list.
+
+Everything else is dropped, and that includes every other project. The rule limits who can **reach** a project. A project's services can always reach other services, other projects that allow them, the cluster's DNS and the internet. Answers to connections a project starts come back as normal.
+
+## What is always allowed
+
+These can always reach a project's services, whatever you choose, because Geass or your visitors need them:
+
+| Source | Why |
+| --- | --- |
+| Namespace `kube-system` | The ingress controller (Traefik), which forwards visitors who arrive through your domains. |
+| Namespace `geass-system` | The operator and dashboard, and the Cloudflare tunnel when you use one. |
+| Namespace `monitoring` | Prometheus, which scrapes service metrics. |
+| Namespace `cnpg-system` | The Postgres operator, which manages every Postgres database. |
+| Namespace `keda` | The proxy of the serverless add-on, which holds a request while a [sleeping service](/docs/guides/scale-to-zero/) starts and passes it on. The namespace exists only when the add-on is installed, and the rule is there either way. |
+| The project's own namespaces | A service calling its database, or the production environment calling its staging copy. |
+
+Geass runs project workloads only in their own `<project>-<environment>` namespaces, never in these.
+
+:::note
+An ingress controller that you install in another namespace is not on the list, so it cannot reach isolated services. Geass uses the K3s Traefik in `kube-system`.
+:::
+
+## Let one project call another
+
+The allow list belongs to the project that **receives** the calls. To let a front end project call an API project, change the API project.
+
+1. Open the API project and choose **Settings**, then **Network**.
+2. Under **Projects allowed to reach this one**, tick the front end project. The list shows every other project, by display name and ID.
+3. Choose **Save**. The dashboard shows "Network settings saved". The change applies at once and needs no redeploy.
+
+The front end then calls the API on its private address. A service's address is on its **Settings** page, in the **Networking** section under **Private networking**:
+
+```text
+api.morning-beach-production.svc.cluster.local:8080
+```
+
+The form is `<service>.<project>-<environment>.svc.cluster.local:<port>`. The allow list covers every environment of the receiving project, and every environment of the allowed project can call it.
+
+You can allow at most 20 projects. The dashboard refuses a name that is not an existing project, so a typo cannot leave a door open for whoever creates that project later.
+
+## Open a project to the whole cluster
+
+Switch off **Keep this project's services private** under **Settings**, then **Network**, and choose **Save**. The page then reads "Every project in the cluster can reach this project's services." The allow list is ignored while the switch is off, and the dashboard clears it.
+
+Switching it back on restores isolation, with an empty allow list unless you tick projects again.
+
+## Change it with a manifest or the API
+
+The settings live in the project's `spec`. The fragment below shows only the network fields. Add them to your project's full manifest, or use the `kubectl patch` that follows, rather than applying the fragment alone:
+
+```yaml title="project-network.yaml"
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassProject
+metadata:
+  name: morning-beach
+  namespace: geass-system
+spec:
+  network:
+    isolation: Project        # Project (default) or None
+    allowFromProjects:
+      - quiet-river
+```
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `spec.network.isolation` | `Project` limits who can reach the project's services. `None` leaves them open to every service in the cluster. | `Project`, also when the field is absent |
+| `spec.network.allowFromProjects` | Other projects whose services may reach this one. At most 20. Ignored when `isolation` is `None`. | None |
+
+With `kubectl`:
+
+```bash
+kubectl -n geass-system patch geassproject morning-beach --type merge \
+  -p '{"spec":{"network":{"isolation":"Project","allowFromProjects":["quiet-river"]}}}'
+```
+
+Through the API, with a workspace token that has the admin role. Repeat `allowFromProjects` for each project, and always send `isolation`:
+
+```bash
+curl -sS -X POST https://geass.example.com/api/projects/morning-beach/network \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Accept: application/json" \
+  -d isolation=Project -d allowFromProjects=quiet-river
+```
+
+`kubectl` does not check that the names you list are projects. The dashboard and the API do. They also drop your own project and repeated names from the list. The API stores the list as sent when `isolation` is `None`; it has no effect then.
+
+## What holds whatever you choose
+
+**Services cannot read the cloud provider's credentials.** On most clouds, any process on a machine can ask `169.254.169.254` for the machine's credentials, and with them whatever the machine's role may do. Geass blocks that address range (`169.254.0.0/16`) for every pod in every project, including projects you have opened to the cluster. The page says so: "Whatever you choose here, services are never allowed to read the cloud provider's credentials for the machine they run on."
+
+**No project can read another's metrics or logs.** Geass closes the metrics store (Prometheus) and the log store to everything but the platform, so a project's pods cannot query them. The dashboard also builds every metrics and log query from the project's own namespaces. See [Logs, metrics and terminal](/docs/guides/observability/).
+
+## Projects that existed before isolation
+
+Projects that were created before Geass added isolation have no network setting. A project with no setting is isolated, so when Geass is updated, every such project becomes isolated. A service that called another project's service stops working until you allow it.
+
+Before you update:
+
+1. List the projects that call another project's services.
+2. After the update, open each receiving project's **Settings**, then **Network**, and tick the callers.
+3. If you want the old behaviour for a project, switch off **Keep this project's services private** on it.
+
+## Check the rules
+
+Network policies are Kubernetes objects, so `kubectl` shows exactly what is in force. A project environment's namespace is `<project>-<environment>`.
+
+```bash
+kubectl get networkpolicy -n morning-beach-production
+kubectl describe networkpolicy geass-project-isolation -n morning-beach-production
+kubectl get namespace morning-beach-production --show-labels      # expect geass.dev/project=morning-beach
+kubectl get networkpolicy -n monitoring
+kubectl get networkpolicy -n geass-logging
+kubectl -n geass-system get geassproject morning-beach -o jsonpath='{.spec.network}'
+```
+
+To prove that isolation works, call a service from another project's namespace. The call should time out:
+
+```bash
+kubectl run probe --rm -it --restart=Never -n quiet-river-production \
+  --image=curlimages/curl:8.10.1 -- \
+  curl -sS -m 5 http://api.morning-beach-production.svc.cluster.local:8080
+```
+
+Add `quiet-river` to the allow list of `morning-beach` and repeat. The same call now answers. Run the test from another project's namespace, so that the allow list is the only thing that changes. A pod in a namespace that is not a project, such as `default`, is blocked too, but it cannot show that an allowed project gets through.
+
+## What happens under the hood
+
+The project controller writes and keeps these objects. If you edit or delete one by hand, the controller puts it back.
+
+| Policy | Namespace | What it does |
+| --- | --- | --- |
+| `geass-project-isolation` | Each project environment | Selects every pod. Allows ingress only from namespaces labelled `geass.dev/project` with the project's name or an allowed project's name, and from `kube-system`, `geass-system`, `monitoring`, `cnpg-system` and `keda`. Present only when isolation is `Project`. |
+| `geass-block-cloud-metadata` | Each project environment | Selects every pod. Allows egress to every pod and to `0.0.0.0/0` except `169.254.0.0/16`. Always present, even when isolation is `None`. |
+| `geass-restrict-metrics-store` | `monitoring` | Selects only the Prometheus pods. Allows ingress only from the same namespace and `geass-system`. Created when monitoring is on. |
+| `geass-restrict-log-store` | `geass-logging` | Selects every pod. Allows ingress only from the same namespace, `geass-system` and `monitoring`. Created when the logging add-on is on. |
+
+The isolation policy finds a project's namespaces by their `geass.dev/project` label. The project controller adds the label back if it is missing. The metadata policy lists every namespace's pods as well as the address range on purpose: a rule that named only addresses would cut pods off from cluster DNS and from other services on some network plugins.
+
+The metrics and log policies are created once their namespace exists, which is after the add-on's chart is installed. Geass looks again every 30 seconds until then.
+
+Geass restricts only the Prometheus pods in `monitoring`, not the whole namespace, because the Kubernetes API server calls webhooks in that namespace from outside the pod network.
+
+## What isolation does not cover
+
+- **Outbound traffic.** Only the cloud metadata range is blocked. Services can reach the internet and every other service that accepts them.
+- **Shared database servers.** They run in `geass-system`, which has no isolation policy, so every project's pods can open a connection to them. Each project gets its own database and its own login, and a login can reach only its own database. See [Shared database servers](/docs/guides/shared-database-servers/).
+- **The platform namespaces.** `geass-system`, `kube-system`, `monitoring`, `cnpg-system` and `keda` can reach every project. Geass adds no rule in front of the dashboard, the operator or the add-ons other than the metrics and log stores.
+- **Traffic between pods of one project.** Everything inside a project, across environments, is open.
+- **Ports.** Rules cover whole services. There are no per-port rules.
+
+## Troubleshooting
+
+**A service cannot reach another project's service. Calls time out.**
+The receiving project is isolated and does not list the caller. Open the receiving project's **Settings**, then **Network**, and tick the calling project. Calls to a service in the same project, in any environment, need no setting.
+
+**Calls worked before an update and stopped after it.**
+Projects without a network setting became isolated. See [Projects that existed before isolation](#projects-that-existed-before-isolation).
+
+**Visitors reach a service through its domain, but another project's pod cannot.**
+That is intended. Visitors arrive through Traefik in `kube-system`, which is always allowed.
+
+**Visitors time out after I moved to a different ingress controller.**
+Only `kube-system` is allowed. An ingress controller in another namespace cannot reach isolated services. Run it in `kube-system`, or switch the project's isolation off.
+
+**My test from another project connects.**
+Check that the target project is isolated: `kubectl get networkpolicy -n <project>-<environment>` should list `geass-project-isolation`. If it does not, the project has `isolation: None`. If it does, but the call still connects, your network plugin may not enforce network policies.
+
+**A policy I edited keeps changing back.**
+The controller owns the four policies in the table and restores them. Add your own rules as separate policies with other names. Policies are additive, so yours add to Geass's and never remove from them.
+
+**The dashboard says "project does not exist" when I save.**
+You ticked or sent a project name that is not an existing project. Check `kubectl -n geass-system get geassprojects`.
+
+**A project's namespace has no `geass.dev/project` label.**
+The project controller restores it the next time it reconciles the project, which a change to the project or to one of its policies triggers, and so does an operator restart. If it does not, check that the operator is running: `kubectl -n geass-system get deploy geass-controller-manager`.
+
+## Related
+
+- [Projects and environments](/docs/guides/projects-and-environments/)
+- [Logs, metrics and terminal](/docs/guides/observability/)
+- [Shared database servers](/docs/guides/shared-database-servers/)
+- [Sleep when idle](/docs/guides/scale-to-zero/)
+- [Security](/docs/operations/security/)

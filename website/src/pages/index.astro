@@ -1,0 +1,37 @@
+---
+/*
+  The "Agents" section shows the real command line and MCP server. Its sample commands come from `geass --help`
+  (internal/cli), and its tool names and arguments from internal/mcpserver/tools.go. When either changes, update the
+  CLI/MCP/API demo and the "in practice" tool chains in components/landing/Agents.astro to match.
+*/
+import Landing from "../layouts/Landing.astro";
+import Nav from "../components/landing/Nav.astro";
+import Hero from "../components/landing/Hero.astro";
+import OneCloud from "../components/landing/OneCloud.astro";
+import GetStarted from "../components/landing/GetStarted.astro";
+import Features from "../components/landing/Features.astro";
+import Agents from "../components/landing/Agents.astro";
+import Terms from "../components/landing/Terms.astro";
+import Footer from "../components/landing/Footer.astro";
+---
+
+<Landing
+  title="Geass: absolute command over servers you already own"
+  description="Your own cloud on your own servers, from VPS to bare metal. Ship apps and databases, scale across machines and connect your other clouds, all in one place."
+  shareDescription="One cloud to manage them all: your own cloud on your own servers, with no lock-in."
+>
+  <Nav />
+  <main id="main">
+    <Hero />
+    <OneCloud />
+    <GetStarted />
+    <Features />
+    <Agents />
+    <Terms />
+  </main>
+  <Footer />
+</Landing>
+
+<script>
+  import "../scripts/landing.js";
+</script>

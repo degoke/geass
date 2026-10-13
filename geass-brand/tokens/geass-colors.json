@@ -1,63 +1,51 @@
 {
-  "version": "2.0.0",
+  "version": "3.0.0",
+  "name": "The Contract",
   "palette": {
-    "signal": "#888CF8",
-    "surface": "#121214",
-    "light": "#F2F2F3",
-    "cloud": "#EAEAFF",
-    "layer": "#D8D6FF",
-    "healthy": "#59C77A",
-    "critical": "#E66A6A",
-    "canvas": "#0A0A0B",
-    "ink": "#171719"
+    "signal": "#7CE0A0",
+    "signalStrong": "#16935A",
+    "signalHover": "#94E8B2",
+    "void": "#0A0A0A",
+    "black": "#000000",
+    "surface": "#151515",
+    "elevated": "#1A1A1A",
+    "hover": "#222222",
+    "line": "#262626",
+    "border": "#333333",
+    "text": "#F2F2F2",
+    "healthy": "#7CE0A0",
+    "warning": "#E8A84A",
+    "critical": "#FF8A8A",
+    "criticalSolid": "#C93C3C"
   },
   "text": {
-    "primary": { "dark": "#F2F2F3", "light": "#121214" },
-    "secondary": { "dark": "#A3A3AB", "light": "#575761" },
-    "muted": { "dark": "#696972", "light": "#7D7D87" },
-    "faint": { "dark": "#6F6F78", "light": "#85858E" }
+    "primary": { "dark": "#F2F2F2", "light": "#0A0A0A" },
+    "secondary": { "dark": "#A1A1A1", "light": "#45454B" },
+    "muted": { "dark": "#8F8F8F", "light": "#6B6B70" }
   },
   "border": {
-    "default": { "dark": "#27272E", "light": "#D8D6FF" },
-    "subtle": { "dark": "#1B1B20", "light": "#EAEAFF" },
-    "strong": { "dark": "#2A2A30", "light": "#C9C9CE" }
+    "subtle": { "dark": "#262626", "light": "#E3E2DE" },
+    "default": { "dark": "#333333", "light": "#D5D4CF" },
+    "strong": { "dark": "#5A5A5A", "light": "#0A0A0A" }
+  },
+  "usage": {
+    "accentOnDark": "#7CE0A0",
+    "accentOnLight": "#16935A",
+    "textOnAccent": "#0A0A0A",
+    "note": "Solid green blocks are actions. Small green dots and text are status. Never use green for decoration."
   },
   "mantine": {
     "signal": [
-      "#f4f4fe",
-      "#e9e9fd",
-      "#d3d3fb",
-      "#bdbdfb",
-      "#a7a7f9",
-      "#888cf8",
-      "#6d6ce6",
-      "#5453c4",
-      "#3c3ba2",
-      "#292880"
-    ],
-    "healthy": [
-      "#ecf9f0",
-      "#d8f3e1",
-      "#b5e6c8",
-      "#92d9af",
-      "#76cc9a",
-      "#59c77a",
-      "#47a864",
-      "#388952",
-      "#2a6a3f",
-      "#1d4b2d"
-    ],
-    "dark": [
-      "#f2f2f3",
-      "#eaeaff",
-      "#d8d6ff",
-      "#c9c9ce",
-      "#a3a3ab",
-      "#121214",
-      "#0e0e10",
-      "#0a0a0b",
-      "#070708",
-      "#040405"
+      "#effcf4",
+      "#d9f8e5",
+      "#bff1d2",
+      "#a6ebbf",
+      "#90e5b0",
+      "#7ce0a0",
+      "#5fc487",
+      "#46a46c",
+      "#2f8352",
+      "#1d5f39"
     ]
   }
 }

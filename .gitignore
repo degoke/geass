@@ -13,6 +13,11 @@ Dockerfile.cross
 # React dashboard dependencies
 dashboard-ui/node_modules/
 
+# Website (Astro) dependencies and build output
+website/node_modules/
+website/dist/
+website/.astro/
+
 # Local machine and deployment tool state
 .DS_Store
 .outpost/
