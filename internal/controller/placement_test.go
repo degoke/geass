@@ -219,56 +219,29 @@ func TestADatabaseInAProjectWithoutARegionIsNotPinnedToOne(t *testing.T) {
 	require.True(t, placement.IsZero())
 }
 
-func TestMinIOPlacementValuesPlaceTheServerAndItsSetupJob(t *testing.T) {
-	require.Empty(t, minioPlacementValues(platform.Placement{}))
-
-	var parsed map[string]any
-	values := minioPlacementValues(platform.NewPlacement("us", []string{"storage"}))
-	require.NoError(t, yaml.Unmarshal([]byte(values), &parsed), values)
-	require.Equal(t, map[string]any{platform.LabelRegion: "us", "tag.geass.dev/storage": "true"}, parsed["nodeSelector"])
-	require.NotEmpty(t, parsed["tolerations"])
-	job := parsed["postJob"].(map[string]any)
-	require.Equal(t, map[string]any{platform.LabelRegion: "us"}, job["nodeSelector"], "the setup job needs the region, not the reserved storage nodes")
-	require.NotContains(t, job, "tolerations")
-}
-
-func TestClusterMinIOIsPlacedOnceInTheServersRegion(t *testing.T) {
+func TestClusterObjectStorageIsPlacedOnceInTheServersRegion(t *testing.T) {
 	scheme := storageTestScheme(t)
 	store := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine: geassv1alpha1.ObjectStoreEngineMinIO, ServerRegion: "eu",
+			Engine: geassv1alpha1.ObjectStoreEngineSeaweedFS, ServerRegion: "eu",
 			RunOn: geassv1alpha1.GeassWorkloadPlacement{Tags: []string{"storage"}},
 		},
 	}
 	c := fakeObjectStoreClient(t, scheme, store)
 	r := &GeassObjectStoreReconciler{Client: c, Scheme: scheme}
 
-	placement, pinnedNow, err := r.clusterMinIOPlacement(context.Background(), store)
+	placement, pinnedNow, err := r.clusterServerPlacement(context.Background(), store)
 	require.NoError(t, err)
 	require.True(t, pinnedNow)
 	require.Equal(t, platform.NewPlacement("eu", []string{"storage"}), placement)
 
 	var stored geassv1alpha1.GeassObjectStore
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(store), &stored))
-	again, pinnedAgain, err := r.clusterMinIOPlacement(context.Background(), &stored)
+	again, pinnedAgain, err := r.clusterServerPlacement(context.Background(), &stored)
 	require.NoError(t, err)
 	require.False(t, pinnedAgain, "the decision is made once")
 	require.Equal(t, placement, again)
-}
-
-func TestAnExistingClusterMinIOStaysWhereItIs(t *testing.T) {
-	scheme := storageTestScheme(t)
-	store := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
-		Spec:       geassv1alpha1.GeassObjectStoreSpec{Engine: geassv1alpha1.ObjectStoreEngineMinIO, ServerRegion: "eu"},
-		Status:     geassv1alpha1.GeassObjectStoreStatus{TargetNamespace: platform.SystemNamespace},
-	}
-	r := &GeassObjectStoreReconciler{Client: fakeObjectStoreClient(t, scheme, store), Scheme: scheme}
-
-	placement, _, err := r.clusterMinIOPlacement(context.Background(), store)
-	require.NoError(t, err)
-	require.True(t, placement.IsZero(), "a server with data on a node is not pinned to a region it was never in")
 }
 
 func fakeObjectStoreClient(t *testing.T, scheme *runtime.Scheme, objects ...client.Object) client.Client {

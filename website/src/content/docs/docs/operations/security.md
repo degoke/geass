@@ -20,6 +20,7 @@ had no independent audit, and nothing here should be read as one.
 | Where a project's data runs | Compliance tags: node selectors on everything the project runs, and an admission policy as a backstop |
 | Cloud metadata service | A network policy that blocks `169.254.0.0/16` from every project namespace |
 | Metrics and log stores | Network policies that admit only platform namespaces |
+| Object storage server | A network policy, `geass-s3`, that opens the S3 port to every namespace, opens Garage's admin port to the platform only, and closes every other port |
 | HTTPS certificates | cert-manager and a Let's Encrypt `ClusterIssuer` that Geass creates once you give it a contact email |
 | Secrets | Kubernetes Secrets, not encrypted by Geass |
 | Outbound webhooks | Signed with a per-webhook secret; private and loopback addresses refused |
@@ -271,7 +272,7 @@ to the ClusterRole `geass-manager-role`, which allows:
 It has no rule that grants permission to change RBAC objects. It can read and write every Secret and run commands in every
 pod in the cluster, so treat anyone who controls the operator, its image or its service account as a cluster administrator.
 Geass also creates HelmChart resources, which K3s's built-in Helm controller installs for its add-ons (cert-manager, monitoring,
-Longhorn, logging, MinIO, the scale-to-zero add-on and some database engines), so review the add-ons you enable. The admission policy
+Longhorn, logging, the scale-to-zero add-on and some database engines), so review the add-ons you enable. The admission policy
 rights are used for compliance tags (see [Keeping a project's data on chosen nodes](#keeping-a-projects-data-on-chosen-nodes)): the
 operator creates one policy and one binding, which apply only to namespaces it manages.
 
@@ -296,6 +297,12 @@ Without network policies every pod in a Kubernetes cluster can reach every other
   project is isolated.
 - **Telemetry.** The Prometheus and log stores have no login and hold every project's data, so Geass limits them to the
   platform namespaces with `geass-restrict-metrics-store` and `geass-restrict-log-store`.
+- **Object storage.** The cluster's object storage server gets the policy `geass-s3` in `geass-system`. Its S3 port (8333 for
+  SeaweedFS, 3900 for Garage) is open to every namespace, because that is how apps reach their buckets, and each project's login
+  limits it to its own bucket. Garage's admin port, 3903, is open only to `geass-system`, where the operator uses it to make buckets
+  and keys. Every other port is closed. The server also closes those ports itself, so the policy is a second lock: SeaweedFS
+  listens on localhost with a forwarder container publishing S3, and Garage's other ports are closed. Removing the server removes
+  the policy.
 
 Policies only help if your network plugin enforces them. K3s's default does. If you replaced the network plugin, check that yours does.
 
@@ -313,10 +320,11 @@ set it as a required tag on the project. After that:
   `ValidatingAdmissionPolicy` (1.30 or later); on an older cluster the operator logs that pods created outside Geass are not checked, and
   the node selectors still apply.
 - With Longhorn, the copies of a project's database volumes are kept on the tagged nodes (the operator makes a storage class for each
-  combination of region and required tags), and other projects' volume copies are kept off compliance nodes.
+  combination of region and required tags), and other projects' volume copies are kept off compliance nodes. The same holds for the
+  object storage server's own volume, which keeps its copies on the nodes carrying the tags it was set up with.
 - The logs of the project are not shipped to the shared log store, so their history is not kept and the logs stay on the nodes. Live logs
   still work.
-- A project with databases cannot take on a tag its databases are not on, and a shared database server or the cluster MinIO server that
+- A project with databases cannot take on a tag its databases are not on, and a shared database server or the cluster object storage server that
   does not run on tagged nodes is refused for the project.
 
 It does not move data that is already elsewhere, protect against a compromised node, or cover data outside the cluster: buckets in AWS S3,

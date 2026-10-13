@@ -493,5 +493,5 @@ func TestBootstrapServesTheDatabaseStorageDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	info := srv.dashboardPlatformFromInventory(context.Background(), data)
-	require.Equal(t, map[string]string{"postgres": "10Gi", "mysql": "10Gi", "sqlite": "1Gi"}, info.DefaultStorage)
+	require.Equal(t, map[string]string{"postgres": "10Gi", "mysql": "10Gi", "sqlite": "1Gi", "objectstore": "10Gi"}, info.DefaultStorage)
 }

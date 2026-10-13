@@ -25,8 +25,8 @@ func (s *Server) handleObjectStoreDeploy(w http.ResponseWriter, r *http.Request,
 		http.NotFound(w, r)
 		return
 	}
-	if isClusterMinIO(&store) {
-		redirectFormError(w, r, fallback, "cluster MinIO does not use deploy")
+	if isClusterObjectStore(&store) {
+		redirectFormError(w, r, fallback, "cluster object storage does not use deploy")
 		return
 	}
 	fallback = workspaceResourceURL(store.Spec.Project, string(store.Spec.Environment), "object-stores", name, "settings")
@@ -246,12 +246,12 @@ func objectStoreBucketNamesFromSpec(store *geassv1alpha1.GeassObjectStore) ([]st
 }
 
 // validateBucketNameForStore reports whether bucket can be a bucket of this store. An in-cluster bucket also has
-// to fit behind its project environment, because that is the name it is stored under on the shared MinIO server.
+// to fit behind its project environment, because that is the name it is stored under on the cluster's object storage server.
 func validateBucketNameForStore(store *geassv1alpha1.GeassObjectStore, bucket string) error {
 	if err := platform.ValidBucketName(bucket); err != nil {
 		return err
 	}
-	if platform.ObjectStoreOnSharedMinIO(store) {
+	if platform.ObjectStoreOnClusterServer(store) {
 		_, err := platform.InClusterBucketName(store.Spec.Project, string(store.Spec.Environment), bucket)
 		return err
 	}

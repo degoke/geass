@@ -1,9 +1,9 @@
 ---
 title: "Storage and volumes"
-description: "Where Geass keeps database data: local disks by default, or the Longhorn add-on for replicated, resizable volumes. How to enable it and what its limits are."
+description: "Where Geass keeps database and object storage data: local disks by default, or the Longhorn add-on for replicated, resizable volumes, and its limits."
 ---
 
-Databases keep their data on persistent volumes. This page explains which resources get a volume, the two kinds of storage Geass can put it on, how to turn on replicated and resizable storage, and what you can and cannot change after a database exists. Read it before you create databases you care about, because the storage choice is made once.
+Databases, and the cluster's object storage server, keep their data on persistent volumes. This page explains which resources get a volume, the two kinds of storage Geass can put it on, how to turn on replicated and resizable storage, and what you can and cannot change after a volume exists. Read it before you create databases you care about, because the storage choice is made once.
 
 ## What uses a volume
 
@@ -11,7 +11,7 @@ Databases keep their data on persistent volumes. This page explains which resour
 | --- | --- | --- | --- |
 | PostgreSQL, MySQL and SQLite databases | One per instance | 10 GiB by default (1 GiB for SQLite), or the size you choose | Decided once per database, see [The class is pinned per database](#the-class-is-pinned-per-database) |
 | Redis | None. Persistence is off, so Redis is a cache | Not applicable | Not applicable |
-| Cluster MinIO server | One | 10 GiB, fixed | The cluster default class |
+| Cluster object storage server (SeaweedFS or Garage) | One | 10 GiB by default, or the size you choose when you set it up | Decided once, like a database's: see [The object storage server's volume](#the-object-storage-servers-volume) |
 | Monitoring and log add-ons | One each | 5 GiB (Prometheus), 6 GiB (log store) | The cluster default class |
 | Apps and functions | None | Not applicable | Not applicable |
 
@@ -31,14 +31,14 @@ Geass installs the Longhorn add-on on clusters it builds. A cluster that does no
 
 ## The Geass storage classes
 
-When Longhorn is on, Geass creates two storage classes. You never choose between them. Geass picks one for each database. Regions and compliance tags add more, as the table shows.
+When Longhorn is on, Geass creates two storage classes. You never choose between them. Geass picks one for each database, and for the object storage server. Regions and compliance tags add more, as the table shows.
 
 | Class | Copies | Used by | Binding |
 | --- | --- | --- | --- |
-| `geass-replicated` | 1 on a one-node cluster, 2 on two nodes, 3 on three or more | PostgreSQL (not HA), MySQL, SQLite | Immediate |
+| `geass-replicated` | 1 on a one-node cluster, 2 on two nodes, 3 on three or more | PostgreSQL (not HA), MySQL, SQLite, and the cluster object storage server | Immediate |
 | `geass-single` | 1, kept on the node where the pod runs | High-availability PostgreSQL, whose instances replicate the data themselves | When the pod is scheduled |
-| `geass-replicated-<region>` | As above, counted over the nodes of one region | The same databases, in a project in that region | Immediate |
-| `geass-tagged-<hash>` | As above, counted over the nodes that carry a project's required tags | The same databases, in a project that requires node tags | Immediate |
+| `geass-replicated-<region>` | As above, counted over the nodes of one region | The same databases, in a project in that region, and an object storage server placed in that region | Immediate |
+| `geass-tagged-<hash>` | As above, counted over the nodes that carry a project's required tags | The same databases, in a project that requires node tags, and an object storage server placed on nodes with tags | Immediate |
 
 The copy count follows the number of schedulable nodes: nodes that exist, are not marked unschedulable and carry no `NoSchedule` or `NoExecute` taint. A node reserved for a tag (see [Scaling and placement](/docs/guides/scaling-and-placement/)) still counts, and Longhorn is allowed to run on it. Geass counts nodes that exist, not nodes that are Ready, so a node that is briefly unreachable does not change the count. The exception is a compliance node, described under [Compliance tags and storage classes](#compliance-tags-and-storage-classes).
 
@@ -55,6 +55,8 @@ A volume's class cannot change after the volume exists. Geass therefore decides 
 - A new database created while Longhorn is still installing waits instead of settling for local storage. Its Ready condition reads "Storage is starting". Geass waits 15 minutes, measured from when the cluster's add-ons stopped being ready, not from when the database was created. After that the message becomes "Storage is unavailable". That counts as a failure, so the status soon turns to "Provisioning failed after repeated errors" and Geass stops retrying until you select **Retry**.
 - A new database that needs a regional or tagged class that does not exist yet waits while Longhorn is serving the global class. This wait has no limit: the message stays "Storage is starting" until the cluster controller makes the class, which it does once every node in the region or tag scope has a ready Longhorn manager. If no node in that scope exists, or one of them cannot run a manager, the class is never made.
 - A database that already has a volume is pinned to that volume's class. For MySQL, Geass cannot read the class back from the Helm chart, so an existing MySQL database is treated as being on the default class.
+
+The cluster object storage server follows the same rule. Its class is decided once, when its volume is first created, and recorded in the annotation `geass.dev/storage-class` on its `GeassObjectStore`. A server created while Longhorn is still installing reports "Storage is starting" and waits, and after 15 minutes of Longhorn not being ready it reports "Storage is unavailable", which counts as a failure like a database's. See [The object storage server's volume](#the-object-storage-servers-volume).
 
 Read the pinned class:
 
@@ -77,7 +79,7 @@ A project can require compliance node tags, such as `hipaa`. See [Compliance nod
 
 Without Longhorn there are no classes. A volume stays on the node its pod runs on, and the pods go only to nodes that carry the tags.
 
-A shared database server or the MinIO server has no project, so a project's tags do not choose its class. A shared server takes `geass-replicated` (or its regional class), which keeps its copies off compliance nodes even when its pods run on one. The MinIO server uses the cluster default class. See [Shared database servers](/docs/guides/shared-database-servers/#projects-that-require-node-tags).
+A shared database server has no project, so a project's tags do not choose its class. It takes `geass-replicated` (or its regional class), which keeps its copies off compliance nodes even when its pods run on one. See [Shared database servers](/docs/guides/shared-database-servers/#projects-that-require-node-tags). The object storage server has no project either, but it is placed with its own region and tags, and its volume follows them: see [The object storage server's volume](#the-object-storage-servers-volume).
 
 Look at the classes and the tags Geass put on the Longhorn nodes:
 
@@ -89,6 +91,16 @@ kubectl -n longhorn-system get nodes.longhorn.io \
 ```
 
 The second command prints `geass-general` once the guard is on and nothing before that.
+
+## The object storage server's volume
+
+The cluster's object storage server (SeaweedFS or Garage) keeps every in-cluster bucket on one volume. It is made when the server is created, and Geass picks its class once and keeps it, as for a database.
+
+- With Longhorn, the volume is on the replicated class, so its data is kept on up to three nodes, like other volumes. A server placed in a region keeps its copies in that region (`geass-replicated-<region>`). A server placed on nodes with tags (the `runOnTags` it was set up with, such as a compliance tag) keeps its copies on nodes that carry every one of them (`geass-tagged-<hash>`), so its data is never replicated onto other nodes. The cluster controller makes that class itself, once every node it covers has a ready Longhorn manager.
+- Without Longhorn, the volume uses the cluster's default class and lives on one node.
+- The size is 10 GiB unless you chose another one at setup (at least 1 GiB). You can make it bigger later, never smaller, and only on a class that can be resized, which the replicated classes are and K3s's `local-path` is not. The dashboard says "This cluster's storage can't be resized." where it cannot.
+
+The server's volume is raised with the others as nodes join, because it is in one of the replicated classes. See [Object storage](/docs/guides/object-storage/#where-the-servers-data-is-kept) for the steps, and [Make the volume bigger](/docs/guides/object-storage/#make-the-volume-bigger).
 
 ## Enable Longhorn
 
@@ -182,10 +194,10 @@ Longhorn builds a new copy by copying the whole volume to another node. After yo
 
 - The class is chosen once per database and cannot be changed. There is no migration between classes.
 - Volumes only grow. Geass does not shrink a volume.
-- The cluster MinIO volume is 10 GiB and has no size control. See [Object storage](/docs/guides/object-storage/).
+- The cluster object storage volume can be made bigger like a database's, never smaller, and only where its class can be resized. See [Object storage](/docs/guides/object-storage/#make-the-volume-bigger).
 - Geass does not set a Longhorn data path, disk reservation or over-provisioning rule. Longhorn's own defaults apply.
 - Three copies is the maximum, however many nodes you have.
-- A compliance tag keeps other projects' new copies off compliance nodes. It does not move copies that are already there, and it does not cover a shared server's pods and volume the way it covers a project's.
+- A compliance tag keeps other projects' new copies off compliance nodes. It does not move copies that are already there, and it does not cover a shared database server's pods and volume the way it covers a project's.
 - The Longhorn web UI is disabled.
 - Switching the add-on off does not uninstall it.
 
@@ -207,10 +219,10 @@ kubectl get volumes.longhorn.io -n longhorn-system \
 
 ## Troubleshooting
 
-**A new database stays at "Storage is starting".**
-Longhorn is still installing or a node is not ready for it. Run `kubectl get pods -n longhorn-system` and look for pods that are not running. The most common cause is a node without the iSCSI initiator. Install it (see [Requirements](#requirements)). After 15 minutes the database changes to "Storage is unavailable".
+**A new database, or the object storage server, stays at "Storage is starting".**
+Longhorn is still installing or a node is not ready for it. Run `kubectl get pods -n longhorn-system` and look for pods that are not running. The most common cause is a node without the iSCSI initiator. Install it (see [Requirements](#requirements)). After 15 minutes the database or server changes to "Storage is unavailable".
 
-**A database in a region or in a project that requires node tags stays at "Storage is starting" and never changes.**
+**A database in a region or in a project that requires node tags, or an object storage server placed in a region or on tags, stays at "Storage is starting" and never changes.**
 Longhorn is running, but the class for the region or the tags was not made. Run `kubectl get storageclass` and look for `geass-replicated-<region>` or a `geass-tagged-...` class. Geass makes it only when at least one schedulable node is in the scope (the region, and every required tag) and every such node has a ready Longhorn manager. Check the nodes with `kubectl get nodes -L topology.kubernetes.io/region` (add a `-L tag.geass.dev/<tag>` for each tag) and `kubectl get pods -n longhorn-system -o wide`. This wait does not turn into "Storage is unavailable".
 
 **Longhorn manager pods crash on a node.**

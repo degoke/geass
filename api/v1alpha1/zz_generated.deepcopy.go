@@ -2189,6 +2189,11 @@ func (in *GeassObjectStoreSpec) DeepCopyInto(out *GeassObjectStoreSpec) {
 		copy(*out, *in)
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
+	if in.StorageSize != nil {
+		in, out := &in.StorageSize, &out.StorageSize
+		x := (*in).DeepCopy()
+		*out = &x
+	}
 	out.Deploy = in.Deploy
 	in.RunOn.DeepCopyInto(&out.RunOn)
 }

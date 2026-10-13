@@ -80,6 +80,10 @@ k3s-down: ## Remove the k3s that k3s-up started.
 test-k3s-serverless: ## Run the scale-to-zero and function schedule test against the k3s that k3s-up started (takes about 15 minutes the first time).
 	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestServerlessFunctionsOnK3s -v -timeout 40m
 
+.PHONY: test-k3s-objectstorage
+test-k3s-objectstorage: ## Run the cluster object storage test (SeaweedFS and Garage, network policy, isolation) against the k3s that k3s-up started (takes about 10 minutes the first time).
+	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestObjectStorageOnK3s -v -timeout 60m
+
 .PHONY: test-k3s-integration
 test-k3s-integration: ## Run K3s HelmChart integration tests (requires K3S_INTEGRATION=true and kubeconfig).
 	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/...

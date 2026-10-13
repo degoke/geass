@@ -2,9 +2,11 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +132,8 @@ func TestReactDashboardRoutesServeAppAndBootstrapJSON(t *testing.T) {
 	require.Contains(t, bootstrap.Body.String(), testProjectName)
 	require.Contains(t, bootstrap.Body.String(), `"awsAvailable"`)
 	require.Contains(t, bootstrap.Body.String(), `"planetScaleAvailable"`)
-	require.Contains(t, bootstrap.Body.String(), `"minioAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"objectStorageAvailable"`)
+	require.Contains(t, bootstrap.Body.String(), `"objectStorageServers"`)
 	require.Contains(t, bootstrap.Body.String(), `"capacity"`)
 	require.Contains(t, bootstrap.Body.String(), `"haReady"`)
 }
@@ -830,7 +833,7 @@ func TestAPIResourceDisplayNameDoesNotMarkPending(t *testing.T) {
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
 			Project:     testProjectName,
 			Environment: geassv1alpha1.EnvironmentProduction,
-			Engine:      geassv1alpha1.ObjectStoreEngineMinIO,
+			Engine:      geassv1alpha1.ObjectStoreEngineSeaweedFS,
 		},
 	}
 	srv := &Server{Client: newFakeClient(store)}
@@ -1131,7 +1134,7 @@ func TestHandleAppAttachBucketAddsEveryConnectionValue(t *testing.T) {
 	connection := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "uploads-connection", Namespace: "payments-dev"},
 		Data: map[string][]byte{
-			platform.ConnectionKeyEndpoint:  []byte("http://geass-minio.geass-system.svc:9000"),
+			platform.ConnectionKeyEndpoint:  []byte("http://geass-s3.geass-system.svc:8333"),
 			platform.ConnectionKeyAccessKey: []byte("uploads"),
 			platform.ConnectionKeySecretKey: []byte("secret"),
 			platform.ConnectionKeyBucket:    []byte("payments.dev.uploads"),
@@ -1460,132 +1463,209 @@ func TestAPIObjectStoreCreateExternalS3(t *testing.T) {
 	require.Equal(t, "prod-aws", store.Spec.ConnectionRef.Name)
 }
 
-func TestAPIObjectStoreCreateClusterMinIO(t *testing.T) {
-	ctx := context.Background()
-	srv := &Server{Client: newFakeClient(roomyTestNode())}
-	form := url.Values{
-		"cluster":   {"on"},
-		"engine":    {"MinIO"},
-		"placement": {"InCluster"},
-		"cpu":       {"250m"},
-		"memory":    {"512Mi"},
-	}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
+// postObjectStoreCreate sends a create request to the API and returns the recorder.
+func postObjectStoreCreate(t *testing.T, srv *Server, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var store geassv1alpha1.GeassObjectStore
-	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace}, &store))
-	require.Equal(t, geassv1alpha1.ObjectStoreEngineMinIO, store.Spec.Engine)
-	require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
-	require.Empty(t, store.Spec.Project)
-	require.Equal(t, "250m", store.Spec.Resources.Requests.Cpu().String())
-	require.Equal(t, "512Mi", store.Spec.Resources.Requests.Memory().String())
+	return rec
 }
 
-func TestAPIObjectStoreUpdateClusterMinIOResources(t *testing.T) {
-	ctx := context.Background()
-	srv := &Server{Client: newFakeClient(roomyTestNode())}
-	store := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+func clusterObjectStoreServer(engine geassv1alpha1.GeassObjectStoreEngine) *geassv1alpha1.GeassObjectStore {
+	return &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Engine:    engine,
 			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
-			Resources: platform.DefaultDatabaseResources(),
 		},
 	}
+}
+
+// The admin picks the server when setting up cluster storage, and it starts at that server's own size.
+func TestAPIObjectStoreCreateClusterServer(t *testing.T) {
+	for _, tc := range []struct {
+		engine         string
+		want           geassv1alpha1.GeassObjectStoreEngine
+		cpu, memory    string
+		sendSize       bool
+		wantCPU, wantM string
+	}{
+		{engine: "SeaweedFS", want: geassv1alpha1.ObjectStoreEngineSeaweedFS, cpu: "250m", memory: "512Mi", sendSize: true, wantCPU: "250m", wantM: "512Mi"},
+		{engine: "Garage", want: geassv1alpha1.ObjectStoreEngineGarage, cpu: "100m", memory: "256Mi", sendSize: true, wantCPU: "100m", wantM: "256Mi"},
+		{engine: "garage", want: geassv1alpha1.ObjectStoreEngineGarage, wantCPU: "100m", wantM: "256Mi"},
+		{engine: "SeaweedFS", want: geassv1alpha1.ObjectStoreEngineSeaweedFS, wantCPU: "250m", wantM: "512Mi"},
+	} {
+		t.Run(tc.engine+" size sent: "+strconv.FormatBool(tc.sendSize), func(t *testing.T) {
+			ctx := context.Background()
+			srv := &Server{Client: newFakeClient(roomyTestNode())}
+			form := url.Values{"cluster": {"on"}, "engine": {tc.engine}, "placement": {"InCluster"}}
+			if tc.sendSize {
+				form.Set("cpu", tc.cpu)
+				form.Set("memory", tc.memory)
+			}
+
+			rec := postObjectStoreCreate(t, srv, form)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var store geassv1alpha1.GeassObjectStore
+			require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace}, &store))
+			require.Equal(t, tc.want, store.Spec.Engine)
+			require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
+			require.Empty(t, store.Spec.Project)
+			require.Equal(t, tc.wantCPU, store.Spec.Resources.Requests.Cpu().String(), "a server left without a size starts at its own default")
+			require.Equal(t, tc.wantM, store.Spec.Resources.Requests.Memory().String())
+		})
+	}
+}
+
+// Only SeaweedFS and Garage can be set up, and a server needs to be named.
+func TestAPIObjectStoreCreateClusterServerNeedsASupportedEngine(t *testing.T) {
+	for _, engine := range []string{"", "S3", "ceph"} {
+		t.Run("engine "+engine, func(t *testing.T) {
+			ctx := context.Background()
+			srv := &Server{Client: newFakeClient(roomyTestNode())}
+
+			rec := postObjectStoreCreate(t, srv, url.Values{"cluster": {"on"}, "engine": {engine}, "placement": {"InCluster"}})
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Contains(t, rec.Body.String(), "SeaweedFS or Garage")
+			var list geassv1alpha1.GeassObjectStoreList
+			require.NoError(t, srv.Client.List(ctx, &list))
+			require.Empty(t, list.Items, "nothing was created")
+		})
+	}
+}
+
+func TestAPIObjectStoreCreateClusterServerOnlyOnce(t *testing.T) {
+	srv := &Server{Client: newFakeClient(roomyTestNode(), clusterObjectStoreServer(geassv1alpha1.ObjectStoreEngineSeaweedFS))}
+
+	rec := postObjectStoreCreate(t, srv, url.Values{"cluster": {"on"}, "engine": {"Garage"}, "placement": {"InCluster"}})
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "already set up")
+}
+
+func TestAPIObjectStoreUpdateClusterServerResources(t *testing.T) {
+	ctx := context.Background()
+	srv := &Server{Client: newFakeClient(roomyTestNode())}
+	store := clusterObjectStoreServer(geassv1alpha1.ObjectStoreEngineGarage)
+	store.Spec.Resources = platform.DefaultObjectStoreResources(geassv1alpha1.ObjectStoreEngineGarage)
 	require.NoError(t, srv.Client.Create(ctx, store))
 
 	form := url.Values{"cpu": {"500m"}, "memory": {"1Gi"}}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/"+platform.ClusterMinIOName+"/update", strings.NewReader(form.Encode())).WithContext(ctx))
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/"+platform.ClusterObjectStoreName+"/update", strings.NewReader(form.Encode())).WithContext(ctx))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-	srv.handleObjectStoreUpdate(rec, req, platform.ClusterMinIOName)
+	srv.handleObjectStoreUpdate(rec, req, platform.ClusterObjectStoreName)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 
 	var latest geassv1alpha1.GeassObjectStore
-	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace}, &latest))
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace}, &latest))
 	require.Equal(t, "500m", latest.Spec.Resources.Requests.Cpu().String())
 	require.Equal(t, "1Gi", latest.Spec.Resources.Requests.Memory().String())
 }
 
 func TestAPIObjectStoreCreateDraftBucketWithoutName(t *testing.T) {
-	ctx := context.Background()
-	server := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
-		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
-			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
-		},
-	}
-	srv := &Server{Client: newFakeClient(server)}
-	form := url.Values{
+	srv := &Server{Client: newFakeClient(clusterObjectStoreServer(geassv1alpha1.ObjectStoreEngineSeaweedFS))}
+
+	rec := postObjectStoreCreate(t, srv, url.Values{
 		"project":     {testProjectName},
 		"environment": {"production"},
 		"draft":       {"on"},
-		"engine":      {"MinIO"},
 		"placement":   {"InCluster"},
-	}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"name"`)
 }
 
-func TestAPIObjectStoreCreateInClusterRequiresMinIO(t *testing.T) {
-	ctx := context.Background()
+func TestAPIObjectStoreCreateInClusterNeedsObjectStorage(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
-	form := url.Values{
+
+	rec := postObjectStoreCreate(t, srv, url.Values{
 		"name":        {"assets"},
 		"project":     {testProjectName},
 		"environment": {"production"},
-		"engine":      {"MinIO"},
 		"placement":   {"InCluster"},
 		"bucket":      {"uploads"},
-	}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, req)
+	})
+
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, rec.Body.String(), "cluster settings")
+	require.Contains(t, rec.Body.String(), platform.MessageSetUpObjectStorage)
 }
 
-func TestAPIObjectStoreCreateInClusterWithMinIO(t *testing.T) {
-	ctx := context.Background()
-	server := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
-		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
-			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
-		},
-	}
-	srv := &Server{Client: newFakeClient(server)}
-	form := url.Values{
-		"name":        {"assets"},
-		"project":     {testProjectName},
-		"environment": {"production"},
-		"engine":      {"MinIO"},
-		"placement":   {"InCluster"},
-		"bucket":      {"uploads"},
-	}
-	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/object-stores/create", strings.NewReader(form.Encode())).WithContext(ctx))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	srv.handleAPI(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+// A bucket in the cluster is on whichever server the cluster has, and takes that server's engine, whatever the
+// request says.
+func TestAPIObjectStoreCreateInClusterTakesTheServersEngine(t *testing.T) {
+	for _, engine := range []geassv1alpha1.GeassObjectStoreEngine{geassv1alpha1.ObjectStoreEngineSeaweedFS, geassv1alpha1.ObjectStoreEngineGarage} {
+		t.Run(string(engine), func(t *testing.T) {
+			ctx := context.Background()
+			srv := &Server{Client: newFakeClient(clusterObjectStoreServer(engine))}
 
-	var store geassv1alpha1.GeassObjectStore
-	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "assets", Namespace: platform.SystemNamespace}, &store))
-	require.Equal(t, geassv1alpha1.ObjectStoreEngineMinIO, store.Spec.Engine)
-	require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
-	require.Equal(t, testProjectName, store.Spec.Project)
-	require.Equal(t, []string{"uploads"}, store.Spec.Buckets)
-	require.Nil(t, store.Spec.ConnectionRef)
+			rec := postObjectStoreCreate(t, srv, url.Values{
+				"name":        {"assets"},
+				"project":     {testProjectName},
+				"environment": {"production"},
+				"engine":      {"ceph"},
+				"placement":   {"InCluster"},
+				"bucket":      {"uploads"},
+			})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var store geassv1alpha1.GeassObjectStore
+			require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "assets", Namespace: platform.SystemNamespace}, &store))
+			require.Equal(t, engine, store.Spec.Engine)
+			require.Equal(t, geassv1alpha1.ObjectStorePlacementInCluster, store.Spec.Placement)
+			require.Equal(t, testProjectName, store.Spec.Project)
+			require.Equal(t, []string{"uploads"}, store.Spec.Buckets)
+			require.Nil(t, store.Spec.ConnectionRef)
+		})
+	}
+}
+
+// The bootstrap tells the UI which server there is and whether buckets can be made on it.
+func TestBootstrapReportsTheObjectStorageServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		server    *geassv1alpha1.GeassObjectStore
+		available bool
+		engine    string
+	}{
+		{name: "none"},
+		{name: "SeaweedFS", server: clusterObjectStoreServer(geassv1alpha1.ObjectStoreEngineSeaweedFS), available: true, engine: "SeaweedFS"},
+		{name: "Garage", server: clusterObjectStoreServer(geassv1alpha1.ObjectStoreEngineGarage), available: true, engine: "Garage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var objects []client.Object
+			if tc.server != nil {
+				objects = append(objects, tc.server)
+			}
+			srv := &Server{Client: newFakeClient(objects...)}
+			rec := httptest.NewRecorder()
+			srv.handleAPI(rec, adminBootstrapReq(t, srv))
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			var payload struct {
+				Platform struct {
+					Available bool   `json:"objectStorageAvailable"`
+					Engine    string `json:"objectStorageEngine"`
+					Servers   []struct {
+						Engine, Label, CPU, Memory string
+					} `json:"objectStorageServers"`
+				} `json:"platform"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload), rec.Body.String())
+			require.Equal(t, tc.available, payload.Platform.Available)
+			require.Equal(t, tc.engine, payload.Platform.Engine)
+			require.Len(t, payload.Platform.Servers, 2, "the UI offers the two servers, with the size each starts at")
+			require.Equal(t, "SeaweedFS", payload.Platform.Servers[0].Engine)
+			require.Equal(t, "512Mi", payload.Platform.Servers[0].Memory)
+			require.Equal(t, "Garage", payload.Platform.Servers[1].Engine)
+			require.Equal(t, "256Mi", payload.Platform.Servers[1].Memory)
+		})
+	}
 }
 
 func TestHandleAppConfigAndSecrets(t *testing.T) {
@@ -1929,7 +2009,7 @@ func TestDatabaseUpdateKeepsEnvironmentWithoutFormField(t *testing.T) {
 
 func TestObjectStoreUpdateKeepPlacementWithoutFormField(t *testing.T) {
 	ctx := context.Background()
-	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.ObjectStoreEngineMinIO}}
+	store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "assets", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Project: testProjectName, Environment: geassv1alpha1.EnvironmentDev, Engine: geassv1alpha1.ObjectStoreEngineSeaweedFS}}
 	c := newFakeClient(store)
 	srv := &Server{Client: c}
 

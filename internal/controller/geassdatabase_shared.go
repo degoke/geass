@@ -12,7 +12,7 @@ import (
 )
 
 // A database with no project is the cluster-wide server: one Postgres or MySQL that projects share, each
-// taking logical databases of its own on it. It lives in the system namespace, as the cluster MinIO does,
+// taking logical databases of its own on it. It lives in the system namespace, as the cluster's object storage does,
 // and has no project to deploy from, to back up into, or to take its region from.
 
 func isSharedDatabase(db *geassv1alpha1.GeassDatabase) bool {

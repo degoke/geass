@@ -5,8 +5,10 @@ import (
 	"slices"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 )
@@ -22,12 +24,17 @@ import (
 //     credentials service (CloudMetadataPolicy).
 //   - The metrics and log stores accept only the platform (MetricsStorePolicy, LogStorePolicy). They
 //     have no login of their own and between them hold every project's data.
+//   - The object storage server accepts connections on its S3 port from anywhere, which is how apps reach
+//     their buckets, and on nothing else but, for Garage, its admin port from the platform
+//     (ObjectStoreServerPolicy).
 
 const (
 	ProjectIsolationPolicyName = "geass-project-isolation"
 	CloudMetadataPolicyName    = "geass-block-cloud-metadata"
 	LogStorePolicyName         = "geass-restrict-log-store"
 	MetricsStorePolicyName     = "geass-restrict-metrics-store"
+	// ObjectStoreServerPolicyName names the policy on the cluster's object storage server.
+	ObjectStoreServerPolicyName = ObjectStoreServerName
 
 	// LabelNamespaceName is set by Kubernetes on every namespace, so a namespace can be selected by its name.
 	LabelNamespaceName = "kubernetes.io/metadata.name"
@@ -166,4 +173,40 @@ func MetricsStorePolicy() *networkingv1.NetworkPolicy {
 			}}},
 		},
 	}
+}
+
+// ObjectStoreServerPolicy limits what can reach the cluster's object storage server to the ports it is meant to
+// serve. Apps reach their buckets over the S3 port from any namespace, so that is open to everyone, with
+// the server's own logins keeping each project to its bucket. Garage's admin port, which makes buckets and keys, is open
+// to the platform alone: no app has any use for it. Everything else the server might listen on is closed
+// whether or not the server means to.
+//
+// The server also closes those ports itself, so this is a second lock on the same door, for a cluster whose
+// network enforces policies.
+func ObjectStoreServerPolicy(engine geassv1alpha1.GeassObjectStoreEngine) *networkingv1.NetworkPolicy {
+	server, ok := ObjectStoreServerFor(engine)
+	if !ok {
+		return nil
+	}
+	rules := []networkingv1.NetworkPolicyIngressRule{{Ports: []networkingv1.NetworkPolicyPort{tcpPort(server.S3Port)}}}
+	if engine == geassv1alpha1.ObjectStoreEngineGarage {
+		rules = append(rules, networkingv1.NetworkPolicyIngressRule{
+			From:  []networkingv1.NetworkPolicyPeer{namespaceNamed(SystemNamespace)},
+			Ports: []networkingv1.NetworkPolicyPort{tcpPort(GarageAdminPort)},
+		})
+	}
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: policyMeta(ObjectStoreServerPolicyName, SystemNamespace, nil),
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{K8sLabelAppName: ObjectStoreServerName}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress:     rules,
+		},
+	}
+}
+
+func tcpPort(port int32) networkingv1.NetworkPolicyPort {
+	protocol := corev1.ProtocolTCP
+	number := intstr.FromInt32(port)
+	return networkingv1.NetworkPolicyPort{Protocol: &protocol, Port: &number}
 }

@@ -67,7 +67,7 @@ There are 16 Geass kinds. Resources that the dashboard creates for you are marke
 | [GeassApp](/docs/reference/resources/geass-app/) | A service: an image, a repository build or a function (with its schedules), which can sleep when idle | The dashboard |
 | [GeassDatabase](/docs/reference/resources/geass-database/) | A database (Postgres, MySQL, SQLite, Redis), in the cluster or external, and the shared database servers | The dashboard |
 | [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/) | A database of its own on a shared server | The dashboard |
-| [GeassObjectStore](/docs/reference/resources/geass-object-store/) | A bucket, in MinIO or AWS S3, and the cluster MinIO server | The dashboard |
+| [GeassObjectStore](/docs/reference/resources/geass-object-store/) | A bucket, on the cluster's object storage server or in AWS S3, and that server (SeaweedFS or Garage) | The dashboard |
 | [GeassBackupArchive](/docs/reference/resources/geass-backup-archive/) | The backups of one database | Geass, when backups are on |
 | [GeassCluster](/docs/reference/resources/geass-cluster/) | The K3s cluster and its add-ons | The installer |
 | [GeassNode](/docs/reference/resources/geass-node/) | A server joined to the cluster over SSH | You, with `kubectl` |

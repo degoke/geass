@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -264,6 +265,33 @@ func requireStoredVersionsServed(t *testing.T, c client.Client, crds []apiextens
 	}
 }
 
+// withoutAcceptedLosses leaves out the objects of kinds that hack/crd-compat-exceptions.yaml accepts a loss for. The
+// exception says a cluster owner may lose something there, so those objects are not expected to come through; they
+// are carried again as soon as the exception is removed, which the check that reads the same file insists on once the
+// baseline has moved past the change.
+func withoutAcceptedLosses(t *testing.T, objects []stored, crds []apiextensionsv1.CustomResourceDefinition) []stored {
+	t.Helper()
+	ex, err := crdcompat.LoadExceptions(filepath.Join(repoRoot(t), "hack", "crd-compat-exceptions.yaml"))
+	require.NoError(t, err)
+	excepted := map[string]bool{}
+	for _, e := range ex.Exceptions {
+		for i := range crds {
+			if crds[i].Name == e.CRD {
+				excepted[crds[i].Spec.Names.Kind] = true
+			}
+		}
+	}
+	kept := objects[:0:0]
+	for _, s := range objects {
+		if excepted[s.gvk.Kind] {
+			t.Logf("not carried: %s, because its definition has a deliberate exception", s)
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
+}
+
 func TestStoredObjectsSurviveTheUpgradeToTheCurrentDefinitions(t *testing.T) {
 	baseline, current := baselineCRDs(t), currentCRDs(t)
 	cfg, c := startAPIServer(t)
@@ -273,6 +301,7 @@ func TestStoredObjectsSurviveTheUpgradeToTheCurrentDefinitions(t *testing.T) {
 	require.GreaterOrEqual(t, len(objects), len(baseline)*2/3,
 		"most kinds must be covered, or the test proves little: the generator needs teaching about a new kind of schema")
 	require.Empty(t, problems(t, c, objects), "nothing may go wrong before the upgrade, or the check below is not about the upgrade")
+	objects = withoutAcceptedLosses(t, objects, baseline)
 
 	install(t, cfg, current)
 

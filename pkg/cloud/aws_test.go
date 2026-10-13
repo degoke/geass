@@ -123,7 +123,7 @@ func TestDeleteBucketUserRemovesKeysPolicyAndUser(t *testing.T) {
 		case "ListAccessKeys":
 			require.Equal(t, "geass-assets", r.FormValue("UserName"))
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`<ListAccessKeysResponse><ListAccessKeysResult><AccessKeyMetadata><AccessKeyId>AKIASCOPED</AccessKeyId></AccessKeyMetadata></ListAccessKeysResult></ListAccessKeysResponse>`))
+			_, _ = w.Write([]byte(`<ListAccessKeysResponse><ListAccessKeysResult><AccessKeyMetadata><member><AccessKeyId>AKIASCOPED</AccessKeyId></member></AccessKeyMetadata></ListAccessKeysResult></ListAccessKeysResponse>`))
 		case "DeleteAccessKey":
 			require.Equal(t, "AKIASCOPED", r.FormValue("AccessKeyId"))
 			w.WriteHeader(http.StatusOK)

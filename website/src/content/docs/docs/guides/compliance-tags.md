@@ -130,18 +130,21 @@ The fragment shows only the field involved. Add it to your project's full manife
 | Builds from Git | The build job runs on the project's region and required tags. |
 | Backups, restores and logical-database setup | The same, so a dump of the data is as protected as the data. |
 | Schedules of functions | The same. |
-| Buckets in the cluster's MinIO server | The server must run on nodes with the tags. Otherwise the bucket is refused. |
+| Buckets in the cluster's object storage server | The server must run on nodes with the tags. Otherwise the bucket is refused. |
+| The object storage server's own volume | With Longhorn, its copies stay on the nodes that carry the tags the server runs on, in its region, so its data is never replicated onto other nodes. Without Longhorn, the volume stays on the node its pod runs on. |
 | Databases on a shared server | The server must run on nodes with the tags. Otherwise the database is refused. |
 | Logs | Not sent to the shared log store. See [Logs](#logs). |
 | Pods made by anything else | Refused by the admission policy. |
 
 Other projects are kept off the tagged nodes by the taint on them, and their volume copies by the `geass-general` tag (see [What happens under the hood](#what-happens-under-the-hood)).
 
-### Shared servers and MinIO
+### Shared servers and object storage
 
-A shared database server and the MinIO server are not owned by one project. They are placed with their own **Run on** tags, chosen when you set them up, and the setup dialog has no field for that. Use the API (`runOnTags`), as described in [Shared database servers](/docs/guides/shared-database-servers/) and [Object storage](/docs/guides/object-storage/).
+A shared database server and the object storage server are not owned by one project. They are placed with their own **Run on** tags, chosen when you set them up, and the setup dialog has no field for that. Use the API (`runOnTags`), as described in [Shared database servers](/docs/guides/shared-database-servers/) and [Object storage](/docs/guides/object-storage/).
 
-A project that requires tags can use a server only when the server runs on nodes with all of them. A database on a server that does not says "This database server does not run on nodes tagged hipaa, which the project requires". A bucket says "This MinIO server does not run on nodes tagged hipaa, which the project requires". The check runs again when the project changes its tags.
+The object storage server's volume follows the tags it was placed with. With Longhorn the volume is created on the class `geass-tagged-<hash>` for the server's region and tags, which keeps all its copies on nodes in that region that carry every tag, so the bucket data is never replicated onto other nodes. The cluster creates that class itself. Without Longhorn the volume stays on the node its pod runs on, and the pod runs only on the tagged nodes. A server with no tags uses the replicated class of its region, or the global one, which keeps its copies off compliance nodes once any node is a compliance node. See [Object storage](/docs/guides/object-storage/#where-the-servers-data-is-kept).
+
+A project that requires tags can use a server only when the server runs on nodes with all of them. A database on a server that does not says "This database server does not run on nodes tagged hipaa, which the project requires". A bucket says "This object storage server does not run on nodes tagged hipaa, which the project requires". The check runs again when the project changes its tags.
 
 ### Logs
 
@@ -170,7 +173,7 @@ Compliance tags control where Geass puts work. They are not a guarantee on their
 - **Backups leave the cluster by design.** A project's backups go to its backup storage in your AWS account ([Backups and restore](/docs/guides/backups-and-restore/)). External databases and buckets are outside the cluster.
 - **Metrics are not held back.** Prometheus keeps the CPU, memory and request counts of the project's workloads on whatever node it runs on.
 - **An admin can still choose the tag for other work.** A service's own **Run on** accepts any tag that exists, so an admin can put another project's service on a compliance node. A shared server on a compliance node can serve projects that do not require the tag. Geass checks only that a project's required tags are on the server.
-- **Volume copies of shared servers.** The class that keeps copies on the tagged nodes is chosen from a project's required tags. A shared server has none of its own, so with Longhorn its volume uses the cluster's replicated class, which compliance nodes are left out of. Its pods run on the tagged nodes, and the copies of its data do not.
+- **Volume copies of shared database servers.** The class that keeps copies on the tagged nodes is chosen from a project's required tags. A shared database server has none of its own, so with Longhorn its volume uses the cluster's replicated class, which compliance nodes are left out of. Its pods run on the tagged nodes, and the copies of its data do not. The object storage server is different: its volume follows the tags it was set up with, as described above.
 - **Removing a tag from a project does not move anything back.** Databases keep their placement and nodes keep their reservation.
 
 ## What happens under the hood
@@ -181,7 +184,7 @@ Compliance tags control where Geass puts work. They are not a guarantee on their
 | Namespace | each environment of the project | The annotation `geass.dev/required-tags`, such as `hipaa` or `gdpr,hipaa` (comma-separated, sorted). Removed when the project requires nothing. |
 | ValidatingAdmissionPolicy and binding | cluster | `geass-required-node-tags`. Created the first time a project requires tags, kept up to date when the operator changes it, and never removed. It denies a new pod in a namespace labelled `geass.dev/managed-by=geass` unless the pod's node selector has `tag.geass.dev/<tag>: "true"` for each required tag, and refuses a pod that names its own node. |
 | Longhorn nodes | `longhorn-system` | A tag `geass-tag-<tag>` for each Geass tag on the node, `geass-region-<region>`, and, once any node is a compliance node, `geass-general` on every other node. |
-| StorageClass | cluster | `geass-tagged-<10 hex characters>`, a hash of the region and tags, so projects with the same requirements share a class. The cluster controller makes it once every node it covers has a ready Longhorn manager. |
+| StorageClass | cluster | `geass-tagged-<10 hex characters>`, a hash of the region and tags, so projects with the same requirements share a class. The cluster controller makes it once every node it covers has a ready Longhorn manager. It makes one for each project's requirements and one for the tags the object storage server runs on. |
 | StorageClass | cluster | The global and regional replicated classes name `geass-general` in their node selector, so other projects' copies stay off compliance nodes. They switch over once every other node carries the tag. |
 | GeassDatabase | `geass-system` | `geass.dev/node-placement` records the placement, including the required tags, for example `{"region":"eu","required":["hipaa"]}`. |
 | HelmChart `geass-fluent-bit` | `kube-system` | Its values exclude the log files of the project's namespaces. |
@@ -210,7 +213,7 @@ The message suggests restoring them into new databases first. A restore is place
 No ready node in the region carries all the required tags and the service's own tags, or none has room. Read the pod: `kubectl -n morning-beach-production describe pod <pod>`. "didn't match Pod's node affinity/selector" means no node matches. The capacity messages in [Scaling and placement](/docs/guides/scaling-and-placement/#the-capacity-check) name the tags.
 
 **A database or bucket says the server "does not run on nodes tagged hipaa".**
-Set the server up again on nodes with the tag, or use a database of the project's own. See [Shared servers and MinIO](#shared-servers-and-minio).
+Set the server up again on nodes with the tag, or use a database of the project's own. See [Shared servers and object storage](#shared-servers-and-object-storage).
 
 **A pod I created is refused: "This project requires nodes tagged hipaa, so every pod needs the node selector ...".**
 The admission policy refused it. Add `nodeSelector: {"tag.geass.dev/hipaa": "true"}` and a toleration for the key `tag.geass.dev/hipaa` to the pod. A pod that sets `nodeName` is refused with "This project requires tagged nodes, so a pod cannot choose its own node".

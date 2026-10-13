@@ -20,8 +20,8 @@ func TestBeginProvisionAttempt_prependsRunning(t *testing.T) {
 func TestRecordProvisionAttemptError_dedupes(t *testing.T) {
 	status := &geassv1alpha1.GeassProvisionStatus{}
 	BeginProvisionAttempt(status)
-	RecordProvisionAttemptError(status, "dial tcp: lookup minio", true)
-	RecordProvisionAttemptError(status, "dial tcp: lookup minio", true)
+	RecordProvisionAttemptError(status, "dial tcp: lookup geass-s3", true)
+	RecordProvisionAttemptError(status, "dial tcp: lookup geass-s3", true)
 	if len(status.ProvisionAttempts[0].Errors) != 1 {
 		t.Fatalf("expected deduped errors, got %d", len(status.ProvisionAttempts[0].Errors))
 	}

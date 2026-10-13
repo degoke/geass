@@ -84,7 +84,11 @@ export function ResourceDialog({ project, environment, data }) {
   });
   const awsConnections = availableConnections(data, "AWS", project);
   const planetConnections = availableConnections(data, "PlanetScale", project);
-  const minioAvailable = Boolean(platform.minioAvailable);
+  const objectStorageAvailable = Boolean(platform.objectStorageAvailable);
+  const objectStorageEngine = platform.objectStorageEngine || "";
+  const clusterBucketDescription = objectStorageAvailable
+    ? `Stored on this cluster with ${objectStorageEngine}`
+    : "Set up object storage in platform settings first";
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState("root");
   const [text, setText] = useState("");
@@ -160,7 +164,7 @@ export function ResourceDialog({ project, environment, data }) {
 
   const createBucket = (kind) => {
     const values = draftPayload(project, environment, {
-      engine: kind === "s3" ? "S3" : "MinIO",
+      engine: kind === "s3" ? "S3" : objectStorageEngine,
       placement: kind === "s3" ? "External" : "InCluster",
     });
     if (!values) return missingProject();
@@ -331,9 +335,9 @@ export function ResourceDialog({ project, environment, data }) {
     if (step === "bucket") {
       return [
         {
-          key: "minio", label: "In-cluster bucket", icon: HardDrive, disabled: !minioAvailable,
-          description: minioAvailable ? "Stored on this cluster with MinIO" : "Set up the MinIO server in platform settings first",
-          onSelect: () => createBucket("minio"),
+          key: "cluster", label: "In-cluster bucket", icon: HardDrive, disabled: !objectStorageAvailable,
+          description: clusterBucketDescription,
+          onSelect: () => createBucket("cluster"),
         },
         {
           key: "s3", label: "AWS S3", icon: HardDrive, disabled: awsConnections.length === 0,
@@ -356,7 +360,7 @@ export function ResourceDialog({ project, environment, data }) {
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, minioAvailable, awsConnections.length, planetConnections.length, servers.length, sharedServers.length, repos.data, templates.data]);
+  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, objectStorageAvailable, objectStorageEngine, awsConnections.length, planetConnections.length, servers.length, sharedServers.length, repos.data, templates.data]);
 
   const goBack = () => {
     setText("");

@@ -1,4 +1,5 @@
 import { condition, resourceDisplayName, resourceName } from "@/lib/api";
+import { isObjectStoreEngine } from "@/lib/object-storage";
 
 const PENDING_CHANGES_ANNOTATION = "geass.dev/pending-changes";
 const PENDING_UPDATES_ANNOTATION = "geass.dev/pending-updates";
@@ -37,8 +38,7 @@ export function isService(item) {
 }
 
 export function isObjectStore(item) {
-  const engine = item?.spec?.engine;
-  return engine === "MinIO" || engine === "S3";
+  return isObjectStoreEngine(item?.spec?.engine);
 }
 
 export function isDatabase(item) {
@@ -594,7 +594,6 @@ function looksLikeOperatorMessage(raw) {
     /\bnamespace\b/i.test(raw) ||
     /\bsecret\b/i.test(raw) ||
     /127\.0\.0\./.test(raw) ||
-    /\bminio\b/i.test(raw) ||
     /\bcontroller\b/i.test(raw) ||
     /credentials are unavailable/i.test(raw) ||
     raw.length > 160
@@ -605,16 +604,20 @@ function looksLikeOperatorMessage(raw) {
 export function resourceNotReadyKind(item) {
   const message = readyConditionMessage(item);
   const reason = readyConditionReason(item);
-  if (/failed to start|service failed/i.test(message) || reason === "RolloutFailed" || reason === "ProvisionFailed") {
+  if (
+    /failed to start|service failed|storage is unavailable/i.test(message) ||
+    reason === "RolloutFailed" ||
+    reason === "ProvisionFailed"
+  ) {
     return "failed";
   }
-  if (/installing.*chart|installing minio|starting minio|minio server is starting|service is starting|database is starting/i.test(message)) {
+  if (/installing.*chart|storage is starting|service is starting|database is starting/i.test(message)) {
     return "provisioning";
   }
   if (
     reason === "ReconcileError" ||
     looksLikeOperatorMessage(message) ||
-    /configure the bucket name|set up the minio server|minio server in cluster|cluster minio credentials|minio credentials/i.test(message) ||
+    /configure the bucket name|set up object storage|object storage credentials/i.test(message) ||
     /aws connection|external buckets require|aws credentials|access key and secret/i.test(message) ||
     /scale up the cluster|not enough capacity|cannot be scheduled/i.test(message)
   ) {
@@ -675,20 +678,26 @@ export function userFacingReadyMessage(item) {
   if (/configure the bucket name/i.test(raw)) {
     return "Add a bucket name in Settings, then deploy.";
   }
-  if (/set up the minio server|minio server in cluster/i.test(raw)) {
-    return "Turn on object storage in Platform settings, then try again.";
+  if (/set up object storage/i.test(raw)) {
+    return "Set up object storage in Platform settings, then try again.";
   }
-  if (/cluster minio credentials|minio credentials/i.test(raw)) {
+  if (/object storage credentials/i.test(raw)) {
     return "Object storage isn't configured yet. Check Platform settings.";
   }
   if (/aws connection|external buckets require|aws credentials|access key and secret/i.test(raw)) {
     return "Connect your cloud account in Platform settings to use an external bucket.";
   }
-  if (/installing.*chart|installing minio/i.test(raw)) {
+  if (/installing.*chart/i.test(raw)) {
     return "Platform setup is still in progress. This can take a few minutes.";
   }
-  if (/starting minio|minio server is starting|service is starting/i.test(raw)) {
+  if (/object storage is starting|service is starting/i.test(raw)) {
     return "Object storage is starting. Try again in a few minutes.";
+  }
+  if (/storage is starting/i.test(raw)) {
+    return "Storage is starting. This can take a few minutes.";
+  }
+  if (/storage is unavailable/i.test(raw)) {
+    return `Storage for this ${notReadyNoun(item)} is unavailable, so it can't start. Check that your cluster's nodes are healthy.`;
   }
   if (/scale up the cluster|not enough capacity|cannot be scheduled/i.test(raw)) {
     return "There isn't enough capacity for this size. Choose a smaller size or add capacity in Platform settings.";

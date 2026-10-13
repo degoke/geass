@@ -87,7 +87,7 @@ func TestMySQLBackupDumpsWithTheDatabasesOwnImageThenUploads(t *testing.T) {
 	for _, want := range []string{"curl", "--fail", `--aws-sigv4 "aws:amz:${REGION}:s3"`, `--user "${ACCESS_KEY_ID}:${ACCESS_SECRET_KEY}"`, "x-amz-content-sha256: UNSIGNED-PAYLOAD", `--upload-file "/backup/dump.${EXT}"`, "date -u +%Y%m%dT%H%M%SZ", `"${S3_BASE}/${KEY}"`} {
 		require.Contains(t, uploadScript, want)
 	}
-	require.NotContains(t, uploadScript, "mc ", "the MinIO client is not used")
+	require.NotContains(t, uploadScript, "mc ", "no S3 client binary is used")
 	require.NotContains(t, uploadScript, "AKIA", "no literal credentials in a script")
 	for key, want := range map[string]string{"S3_BASE": testObjectBase, "PREFIX": testDumpPrefix, "EXT": "sql.gz"} {
 		env, ok := envNamed(upload, key)

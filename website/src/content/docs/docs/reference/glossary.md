@@ -28,7 +28,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Base environment.** The environment that Geass copies for each pull request. See [Pull request environments](/docs/guides/pull-request-environments/).
 
-**Bucket.** S3-compatible storage for a project, either in the cluster's MinIO server or in AWS S3, kept as a `GeassObjectStore`. See [Object storage](/docs/guides/object-storage/).
+**Bucket.** S3-compatible storage for a project, either on the cluster's object storage server (SeaweedFS or Garage) or in AWS S3, kept as a `GeassObjectStore`. See [Object storage](/docs/guides/object-storage/).
 
 **Build.** A repository build, run as a Kaniko Job and recorded as a `GeassBuild`. See [GitHub and builds](/docs/guides/github-and-builds/).
 
@@ -44,7 +44,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Cluster.** The K3s cluster that Geass runs and manages, represented by the `GeassCluster` named `default`. See [How it works](/docs/overview/how-it-works/).
 
-**Cluster MinIO.** The single MinIO server, shared by every project, that holds in-cluster buckets. See [Object storage](/docs/guides/object-storage/).
+**Cluster object storage.** The single S3 server, SeaweedFS or Garage, shared by every project, that holds in-cluster buckets. An admin chooses one when setting it up. See [Object storage](/docs/guides/object-storage/).
 
 **Cluster size.** The PlanetScale size a database is created with, kept as `spec.clusterSize`; it cannot change after the database exists. See [Connect PlanetScale](/docs/guides/connectors/planetscale/#choosing-a-size).
 
@@ -90,6 +90,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 ## G
 
+**Garage.** One of the two servers Geass can run as the cluster's object storage. A small server that suits low-memory nodes and plain uploads. See [Choosing SeaweedFS or Garage](/docs/guides/object-storage/#choosing-seaweedfs-or-garage).
+
 **GitHub App.** The one app, registered in GitHub, that lets Geass read repositories, receive pushes and build. See [Connect GitHub](/docs/guides/connectors/github/).
 
 ## H
@@ -108,13 +110,11 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Logical database.** A database of its own on a shared database server, with a login that reaches nothing else (`GeassLogicalDatabase`). See [Shared database servers](/docs/guides/shared-database-servers/).
 
-**Longhorn.** The storage engine that keeps database volumes on several nodes and lets them grow. See [Storage](/docs/guides/storage/).
+**Longhorn.** The storage engine that keeps database and object storage volumes on several nodes and lets them grow. See [Storage](/docs/guides/storage/).
 
 ## M
 
 **MCP server.** The `geass mcp` command, a Model Context Protocol server that lets an AI agent see and run services with the tools its token allows. See [MCP server](/docs/guides/mcp-server/) and [MCP tools](/docs/reference/mcp-tools/).
-
-**MinIO.** The open-source S3-compatible server Geass runs in the cluster for in-cluster buckets. See [Object storage](/docs/guides/object-storage/).
 
 **Multi-provider cluster.** A cluster whose servers are at different providers, joined over an encrypted WireGuard network; experimental. See [Multi-provider clusters](/docs/operations/multi-provider/).
 
@@ -126,7 +126,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 ## O
 
-**Object store.** The resource kind (`GeassObjectStore`) behind a bucket or the cluster MinIO server. See [GeassObjectStore](/docs/reference/resources/geass-object-store/).
+**Object store.** The resource kind (`GeassObjectStore`) behind a bucket or the cluster's object storage server. See [GeassObjectStore](/docs/reference/resources/geass-object-store/).
 
 **Observer.** A workspace token role that reads everything a viewer can plus logs and variable names, and changes nothing. See [Users and API tokens](/docs/guides/users-and-tokens/#roles).
 
@@ -170,6 +170,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Scale to zero.** The other name for sleep when idle, made possible by the serverless add-on. See [Scale to zero](/docs/guides/scale-to-zero/).
 
+**SeaweedFS.** One of the two servers Geass can run as the cluster's object storage. It covers more of the S3 API than Garage. See [Choosing SeaweedFS or Garage](/docs/guides/object-storage/#choosing-seaweedfs-or-garage).
+
 **Serverless add-on.** The cluster add-on (`spec.addons.serverless`) that installs KEDA and its HTTP add-on so services can sleep when idle. See [Configuration](/docs/reference/configuration/#geasscluster).
 
 **Service.** What the dashboard calls a deployed app: an image, a repository build or a function. See [Apps](/docs/guides/apps/).
@@ -182,7 +184,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Sleep when idle.** A service setting that stops the service after a period without requests and starts it again on the next request. See [Scale to zero](/docs/guides/scale-to-zero/).
 
-**Storage class.** The Longhorn class that sets how many copies a database volume keeps: `geass-replicated` (several nodes) or `geass-single` (one). See [Storage](/docs/guides/storage/).
+**Storage class.** The Longhorn class that sets how many copies a database or object storage volume keeps: `geass-replicated` (several nodes) or `geass-single` (one). See [Storage](/docs/guides/storage/).
 
 ## T
 

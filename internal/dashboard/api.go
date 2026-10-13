@@ -34,17 +34,26 @@ type dashboardPlatform struct {
 	HasCloudflare   bool `json:"hasCloudflare"`
 	// RegistryRepository is where repository builds push their images when a service names no registry.
 	// Empty means builds wait for one to be set.
-	RegistryRepository   string          `json:"registryRepository,omitempty"`
-	CloudflareReady      bool            `json:"cloudflareReady"`
-	CloudflareZoneID     string          `json:"cloudflareZoneId,omitempty"`
-	CloudflareZoneName   string          `json:"cloudflareZoneName,omitempty"`
-	DashboardURL         string          `json:"dashboardURL"`
-	HAReady              bool            `json:"haReady"`
-	HealthyNodes         int32           `json:"healthyNodes"`
-	AWSAvailable         bool            `json:"awsAvailable"`
-	PlanetScaleAvailable bool            `json:"planetScaleAvailable"`
-	MinIOAvailable       bool            `json:"minioAvailable"`
-	Capacity             clusterCapacity `json:"capacity"`
+	RegistryRepository   string `json:"registryRepository,omitempty"`
+	CloudflareReady      bool   `json:"cloudflareReady"`
+	CloudflareZoneID     string `json:"cloudflareZoneId,omitempty"`
+	CloudflareZoneName   string `json:"cloudflareZoneName,omitempty"`
+	DashboardURL         string `json:"dashboardURL"`
+	HAReady              bool   `json:"haReady"`
+	HealthyNodes         int32  `json:"healthyNodes"`
+	AWSAvailable         bool   `json:"awsAvailable"`
+	PlanetScaleAvailable bool   `json:"planetScaleAvailable"`
+	// ObjectStorageAvailable says the cluster has an object storage server that new buckets can be made on.
+	ObjectStorageAvailable bool `json:"objectStorageAvailable"`
+	// ObjectStorageServers are the servers the cluster's object storage can be set up with, with the size each
+	// starts at, so the UI carries no copy of them.
+	ObjectStorageServers []objectStorageServer `json:"objectStorageServers"`
+	// ObjectStorageResizable says the existing server's volume can be made bigger. It is true when that cannot be told,
+	// and false when there is no server.
+	ObjectStorageResizable bool `json:"objectStorageResizable"`
+	// ObjectStorageEngine is the server's engine, "SeaweedFS" or "Garage", or empty when there is no server.
+	ObjectStorageEngine string          `json:"objectStorageEngine,omitempty"`
+	Capacity            clusterCapacity `json:"capacity"`
 	// Release is which Geass and K3s the cluster runs, and how an upgrade of its workers is going.
 	Release dashboardRelease `json:"release"`
 	// DefaultRegion is where projects that do not choose a region run.
@@ -241,4 +250,13 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveFrontend(w)
+}
+
+// objectStorageServer is one of the servers the cluster's object storage can be set up with.
+type objectStorageServer struct {
+	Engine string `json:"engine"`
+	Label  string `json:"label"`
+	// CPU and Memory are the size the server starts at.
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
 }

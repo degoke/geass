@@ -79,8 +79,14 @@ func (r *GeassDatabaseReconciler) databaseStorageClass(ctx context.Context, db *
 
 // newVolumeStorageClass is the policy for a database with no volume yet.
 func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db *geassv1alpha1.GeassDatabase) (string, bool, error) {
-	want := platform.DatabaseStorageClassFor(db.Spec.Engine, databaseWantsHA(db), pinnedNodePlacement(db))
-	available, err := r.storageClassExists(ctx, want)
+	return volumeClassFor(ctx, r.Client, platform.DatabaseStorageClassFor(db.Spec.Engine, databaseWantsHA(db), pinnedNodePlacement(db)))
+}
+
+// volumeClassFor is the policy for any volume that does not exist yet and wants the Geass class want, whoever
+// owns it: databases and the cluster's object storage server share it. It returns the class to create the volume
+// with ("" is the cluster default), or wait when the answer is not known yet.
+func volumeClassFor(ctx context.Context, c client.Client, want string) (string, bool, error) {
+	available, err := storageClassExists(ctx, c, want)
 	if err != nil {
 		return "", false, err
 	}
@@ -90,19 +96,19 @@ func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db 
 	// A region's class, or the class for a project's required tags, is made by the cluster controller
 	// once the Longhorn nodes it covers are ready. If
 	// Longhorn is already serving the global class, the regional one is only a moment behind, and
-	// settling for local storage now would pin the database to it for good. Wait for it.
+	// settling for local storage now would pin the volume to it for good. Wait for it.
 	if platform.IsScopedReplicatedClass(want) {
-		if global, err := r.storageClassExists(ctx, platform.StorageClassReplicated); err != nil {
+		if global, err := storageClassExists(ctx, c, platform.StorageClassReplicated); err != nil {
 			return "", false, err
 		} else if global {
 			return "", true, nil
 		}
 	}
 	// The class is not there. If Longhorn is on its way, wait for it instead of
-	// settling for local storage that this database could never leave. Waiting is
+	// settling for local storage that this volume could never leave. Waiting is
 	// bounded: a Longhorn that never comes up must show as a failure, not as an
 	// endless "starting".
-	pending, stuckFor, err := r.longhornPending(ctx)
+	pending, stuckFor, err := longhornPending(ctx, c)
 	if err != nil {
 		return "", false, err
 	}
@@ -115,8 +121,8 @@ func (r *GeassDatabaseReconciler) newVolumeStorageClass(ctx context.Context, db 
 	return "", true, nil
 }
 
-func (r *GeassDatabaseReconciler) storageClassExists(ctx context.Context, name string) (bool, error) {
-	err := r.Get(ctx, client.ObjectKey{Name: name}, &storagev1.StorageClass{})
+func storageClassExists(ctx context.Context, c client.Reader, name string) (bool, error) {
+	err := c.Get(ctx, client.ObjectKey{Name: name}, &storagev1.StorageClass{})
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
@@ -125,11 +131,11 @@ func (r *GeassDatabaseReconciler) storageClassExists(ctx context.Context, name s
 
 // longhornPending reports whether a cluster has Longhorn enabled, and for how long
 // its add-ons have been not ready. That is measured from the AddonsReady
-// condition, so it is independent of any one database. Once add-ons are ready the
+// condition, so it is independent of any one volume. Once add-ons are ready the
 // classes are about to appear, which is a gap between reconciles, not a stall.
-func (r *GeassDatabaseReconciler) longhornPending(ctx context.Context) (bool, time.Duration, error) {
+func longhornPending(ctx context.Context, c client.Reader) (bool, time.Duration, error) {
 	var clusters geassv1alpha1.GeassClusterList
-	if err := r.List(ctx, &clusters); err != nil {
+	if err := c.List(ctx, &clusters); err != nil {
 		return false, 0, err
 	}
 	for i := range clusters.Items {

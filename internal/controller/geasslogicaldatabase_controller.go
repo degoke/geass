@@ -269,7 +269,7 @@ func (r *GeassLogicalDatabaseReconciler) ensureLoginPassword(ctx context.Context
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		password = secretValue(secret, platform.ConnectionKeyPassword)
 		if password == "" {
-			generated, genErr := randomCredential()
+			generated, genErr := randomHex(16)
 			if genErr != nil {
 				return genErr
 			}

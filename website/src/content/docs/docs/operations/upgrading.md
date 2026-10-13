@@ -191,7 +191,7 @@ The operator installs these Helm charts through K3s's Helm controller at fixed v
 | KEDA (`geass-keda`), only with the serverless add-on | `2.21.0` |
 | KEDA HTTP add-on (`geass-keda-http`), only with the serverless add-on | `0.16.0` |
 
-A release that raises a pin makes the add-on upgrade itself, which restarts its pods. MinIO, MySQL, Redis and other images and charts are pinned the same way. The update waits for the cluster to report ready again, but does not manage the add-ons' own upgrades: Geass does not upgrade the engine of Longhorn volumes that already exist when Longhorn itself moves, so read Longhorn's upgrade notes for the version a release pins.
+A release that raises a pin makes the add-on upgrade itself, which restarts its pods. The SeaweedFS and Garage images that the in-cluster object storage server runs from, MySQL, Redis and other images and charts are pinned the same way. The update waits for the cluster to report ready again, but does not manage the add-ons' own upgrades: Geass does not upgrade the engine of Longhorn volumes that already exist when Longhorn itself moves, so read Longhorn's upgrade notes for the version a release pins.
 
 ## Go back
 

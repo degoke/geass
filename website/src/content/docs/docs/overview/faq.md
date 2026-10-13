@@ -127,7 +127,7 @@ No to both. Geass has no connector that creates machines, and no Google Cloud or
 | Geass's own state (projects, services, settings, secrets) | K3s's embedded etcd, on the control plane's disk |
 | PostgreSQL, MySQL and SQLite data | Volumes on your nodes: Longhorn, replicated across up to three nodes, or K3s's local-path storage on one node |
 | Redis data | Memory only. Redis runs without persistence |
-| In-cluster buckets | The MinIO server in the cluster |
+| In-cluster buckets | The object storage server in the cluster (SeaweedFS or Garage), on a volume of its own: with Longhorn replicated across up to three nodes, otherwise on one node |
 | AWS S3 buckets and database backups | Your AWS account |
 | Metrics and logs | Volumes on your nodes: 15 days of metrics, and 7 days of logs by default |
 

@@ -305,3 +305,44 @@ func TestRaisedGeneralVolumesTakeTheGeneralSelector(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{platform.LonghornGeneralTag}, selector, "the copy it gains cannot land on the hipaa node")
 }
+
+// The cluster's object storage server, placed on nodes with a tag, has its volume's copies kept on those nodes: a server
+// on compliance nodes must not have its data replicated onto others. No project has to require the tag for that.
+func TestTheObjectStorageServerGetsAClassOnTheNodesItWasPlacedOn(t *testing.T) {
+	server := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace,
+			Annotations: map[string]string{platform.AnnotationNodePlacement: platform.NewPlacement("eu", []string{"hipaa"}).Encode()},
+		},
+		Spec: geassv1alpha1.GeassObjectStoreSpec{Engine: geassv1alpha1.ObjectStoreEngineGarage, Placement: geassv1alpha1.ObjectStorePlacementInCluster},
+	}
+	r, c := regionFixture(t, hipaaNode("h1", "eu"), regionNodeObject("plain", "eu"))
+	require.NoError(t, c.Create(context.Background(), server))
+	managerOn(t, c, "h1")
+	managerOn(t, c, "plain")
+
+	r.reconcileLonghornRegions(context.Background(), replicaTestCluster(true))
+
+	class := getStorageClass(t, c, taggedClassName("eu"))
+	require.Equal(t, "geass-region-eu,geass-tag-hipaa", class.Parameters["nodeSelector"])
+	require.Equal(t, platform.ObjectStoreServerStorageClass(platform.NewPlacement("eu", []string{"hipaa"})), taggedClassName("eu"), "the server asks for exactly this class")
+}
+
+func TestTheClusterReconcilesWhenTheObjectStorageServerIsPlaced(t *testing.T) {
+	placed := objectStoreServerPlaced()
+	server := func(annotated bool) *geassv1alpha1.GeassObjectStore {
+		store := &geassv1alpha1.GeassObjectStore{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: platform.SystemNamespace}, Spec: geassv1alpha1.GeassObjectStoreSpec{Engine: geassv1alpha1.ObjectStoreEngineGarage}}
+		if annotated {
+			store.Annotations = map[string]string{platform.AnnotationNodePlacement: "eu"}
+		}
+		return store
+	}
+	bucket := server(true)
+	bucket.Spec.Project = "payments"
+
+	require.False(t, placed.Create(event.CreateEvent{Object: server(false)}), "a server not yet placed has no class to make")
+	require.True(t, placed.Create(event.CreateEvent{Object: server(true)}))
+	require.True(t, placed.Update(event.UpdateEvent{ObjectOld: server(false), ObjectNew: server(true)}), "the moment it is placed")
+	require.False(t, placed.Update(event.UpdateEvent{ObjectOld: server(true), ObjectNew: server(true)}), "its everyday status changes are not news")
+	require.False(t, placed.Create(event.CreateEvent{Object: bucket}), "a bucket is not the server")
+}

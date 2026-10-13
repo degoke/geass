@@ -11,4 +11,21 @@
 #   path: spec.someField
 #   rule: field-removed        # the rule the check names
 #   reason: Nothing ever read it, and no release wrote it.
-exceptions: []
+exceptions:
+- crd: geassobjectstores.geass.geass.dev
+  version: v1alpha1
+  path: spec.engine
+  rule: enum-restricted
+  reason: >-
+    MinIO is no longer run by Geass. Its community repository was archived in April 2026, so its images are no
+    longer published and get no security fixes. The cluster's object storage is SeaweedFS or Garage now. No release has
+    been made and no cluster stores a MinIO object store (Geass is in development), so nothing is lost; an update that
+    did find one would be refused by the installer's check before it changes anything.
+- crd: geassobjectstores.geass.geass.dev
+  version: v1alpha1
+  path: spec.engine
+  rule: validation-tightened
+  reason: >-
+    The rule `self == oldSelf` makes the engine unchangeable once an object exists, because a server's volume, logins
+    and config belong to the engine it was set up with. It compares the value being written with the stored one, so it
+    cannot reject an object that keeps its engine: every stored object can still be updated.

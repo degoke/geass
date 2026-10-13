@@ -2667,6 +2667,178 @@ button.rw-side-link.rw-side-on {
   max-width: 720px;
 }
 
+/* Choosing the cluster's object storage: a card per server, then the two compared row by row. */
+.rw-storage-choose {
+  max-width: 760px;
+}
+
+.rw-storage-providers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+  margin: 12px 0 32px;
+}
+
+.rw-storage-provider {
+  max-width: none;
+  height: 100%;
+}
+
+.rw-storage-provider .rw-settings-integration-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rw-storage-provider .rw-settings-integration-body p.rw-storage-provider-reason {
+  color: var(--geass-text);
+  font-size: 13px;
+}
+
+.rw-storage-provider .mantine-Button-root {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
+.rw-storage-list {
+  margin: 0 0 16px;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--geass-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rw-storage-same {
+  max-width: 62ch;
+}
+
+.rw-storage-compare-block .rw-settings-subtitle {
+  margin-top: 4px;
+}
+
+.rw-storage-compare {
+  container-type: inline-size;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-elevated);
+}
+
+.rw-storage-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.rw-storage-compare-table th,
+.rw-storage-compare-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--geass-border);
+  text-align: left;
+  vertical-align: top;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rw-storage-compare-table thead th {
+  color: var(--geass-text);
+  font-weight: 600;
+}
+
+.rw-storage-compare-table tbody th {
+  width: 22%;
+  color: var(--geass-text-secondary);
+  font-weight: 500;
+}
+
+.rw-storage-compare-table td {
+  color: var(--geass-text);
+}
+
+.rw-storage-compare-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.rw-storage-compare-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--geass-text-muted);
+  font-size: 13px;
+}
+
+.rw-storage-footnote {
+  margin: 10px 0 24px;
+  max-width: 62ch;
+  color: var(--geass-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rw-storage-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* In a narrow column the table becomes one block per row, each server's answer under its name. */
+@container (max-width: 520px) {
+  .rw-storage-compare-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .rw-storage-compare-table,
+  .rw-storage-compare-table tbody,
+  .rw-storage-compare-table tr,
+  .rw-storage-compare-table th,
+  .rw-storage-compare-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .rw-storage-compare-table tbody th {
+    width: 100%;
+    padding-bottom: 0;
+    border-bottom: 0;
+    color: var(--geass-text);
+    font-weight: 600;
+  }
+
+  .rw-storage-compare-table td {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    border-bottom: 0;
+  }
+
+  .rw-storage-compare-table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--geass-text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .rw-storage-compare-table tbody tr {
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--geass-border);
+  }
+
+  .rw-storage-compare-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+}
+
 .rw-settings-section-head .rw-integration-status {
   margin-top: 2px;
   white-space: nowrap;
@@ -2710,6 +2882,17 @@ button.rw-side-link.rw-side-on {
   margin-bottom: 1rem;
 }
 
+.rw-storage-form .size-grid {
+  display: grid;
+  gap: 14px;
+}
+
+/* A disabled button otherwise looks the same as an enabled one, which misleads where saving is not possible. */
+.rw-storage-form .mantine-Button-root:disabled,
+.rw-storage-form .mantine-Button-root[data-disabled] {
+  opacity: 0.45;
+}
+
 .rw-storage-tab-panel .rw-page-section {
   margin: 0;
 }
@@ -2722,7 +2905,8 @@ button.rw-side-link.rw-side-on {
   margin: 0 0 6px;
 }
 
-.rw-storage-remove .rw-settings-section-desc {
+.rw-storage-remove .rw-settings-section-desc,
+.rw-storage-remove .rw-rail-body {
   margin: 0 0 14px;
 }
 
@@ -3013,6 +3197,12 @@ button.rw-side-link.rw-side-on {
   border: 1px solid color-mix(in srgb, var(--geass-critical) 45%, var(--geass-border));
   background: color-mix(in srgb, var(--geass-critical) 12%, #151515);
   color: color-mix(in srgb, var(--geass-critical) 35%, var(--geass-text));
+}
+
+.rw-settings-alert.is-warning {
+  border: 1px solid color-mix(in srgb, #d4a84b 45%, var(--geass-border));
+  background: color-mix(in srgb, #d4a84b 12%, #151515);
+  color: color-mix(in srgb, #d4a84b 35%, var(--geass-text));
 }
 
 .rw-settings-link-list {

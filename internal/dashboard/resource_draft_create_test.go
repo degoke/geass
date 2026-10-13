@@ -35,10 +35,10 @@ func postDraftCreate(t *testing.T, srv *Server, path string, form url.Values) ma
 
 func TestDraftCreateCoversAllWorkspaceResourceKinds(t *testing.T) {
 	ctx := context.Background()
-	clusterMinIO := &geassv1alpha1.GeassObjectStore{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterMinIOName, Namespace: platform.SystemNamespace},
+	clusterServer := &geassv1alpha1.GeassObjectStore{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ClusterObjectStoreName, Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassObjectStoreSpec{
-			Engine:    geassv1alpha1.ObjectStoreEngineMinIO,
+			Engine:    geassv1alpha1.ObjectStoreEngineSeaweedFS,
 			Placement: geassv1alpha1.ObjectStorePlacementInCluster,
 		},
 	}
@@ -51,7 +51,7 @@ func TestDraftCreateCoversAllWorkspaceResourceKinds(t *testing.T) {
 			Placement:   geassv1alpha1.DatabasePlacementInCluster,
 		},
 	}
-	srv := &Server{Client: newFakeClient(clusterMinIO, dbServer)}
+	srv := &Server{Client: newFakeClient(clusterServer, dbServer)}
 
 	base := url.Values{
 		"project":     {testProjectName},
@@ -96,7 +96,6 @@ func TestDraftCreateCoversAllWorkspaceResourceKinds(t *testing.T) {
 	require.Equal(t, "app", logical.Spec.DatabaseName)
 
 	bucketForm := cloneValues(base)
-	bucketForm.Set("engine", "MinIO")
 	bucketForm.Set("placement", "InCluster")
 	bucketPayload := postDraftCreate(t, srv, "/object-stores/create", bucketForm)
 	var store geassv1alpha1.GeassObjectStore

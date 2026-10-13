@@ -96,10 +96,6 @@ func markHelmReleaseWorkloadReady(ctx context.Context, namespace, release string
 	Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
 }
 
-func markClusterMinIOWorkloadReady(ctx context.Context) {
-	markHelmReleaseWorkloadReady(ctx, platform.SystemNamespace, platform.ClusterMinIOChartName)
-}
-
 func conditionIsTrue(conditions []metav1.Condition, t string) bool {
 	for _, c := range conditions {
 		if c.Type == t {
