@@ -6,11 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/stretchr/testify/require"
 
@@ -96,4 +100,109 @@ func TestGeassProbeAdvertisesCloudflareAPI(t *testing.T) {
 	api, ok := payload["api"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, true, api["cloudflareConnector"])
+}
+
+// cloudflareAPIStub answers every Cloudflare API call, with success or with Cloudflare's own rejection of the
+// token. observe runs on each call before it answers, so a test can look at the cluster at the moment
+// Cloudflare is asked about a token.
+func cloudflareAPIStub(t *testing.T, accept bool, observe func()) *http.Client {
+	t.Helper()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if observe != nil {
+			observe()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !accept {
+			_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":1000,"message":"Invalid API Token"}],"result":null}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+	}))
+	t.Cleanup(api.Close)
+	return &http.Client{Transport: roundTripRewrite{target: api.URL}}
+}
+
+func saveCloudflareSettings(srv *Server, form url.Values) *httptest.ResponseRecorder {
+	req := withOrigin(httptest.NewRequest(http.MethodPost, "/api/settings/cloudflare/save", strings.NewReader(form.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handlePlatformCloudflareSettingsSave(rec, req)
+	return rec
+}
+
+func TestCloudflareSettingsSaveKeepsStoredTokenWhenCloudflareRejectsTheNewOne(t *testing.T) {
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.PlatformCloudflareSecretName, Namespace: platform.SystemNamespace},
+		Data: map[string][]byte{
+			platform.SecretKeyCloudflareAPIToken:  []byte("working-token"),
+			platform.SecretKeyCloudflareAccountID: []byte("acct-old"),
+			platform.SecretKeyCloudflareZoneName:  []byte("example.com"),
+		},
+	}
+	c := newFakeClient(existing)
+	srv := &Server{Client: c, HTTPClient: cloudflareAPIStub(t, false, nil)}
+
+	rec := saveCloudflareSettings(srv, url.Values{"apiToken": {"bad-token"}, "accountId": {"acct-new"}, "zoneId": {"zone-1"}, "zoneName": {"example.com"}})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "Invalid API Token")
+
+	stored := &corev1.Secret{}
+	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(existing), stored))
+	require.Equal(t, "working-token", string(stored.Data[platform.SecretKeyCloudflareAPIToken]))
+	require.Equal(t, "acct-old", string(stored.Data[platform.SecretKeyCloudflareAccountID]))
+}
+
+func TestCloudflareSettingsSaveStoresNothingWhenCloudflareRejectsTheToken(t *testing.T) {
+	c := newFakeClient()
+	srv := &Server{Client: c, HTTPClient: cloudflareAPIStub(t, false, nil)}
+
+	rec := saveCloudflareSettings(srv, url.Values{"apiToken": {"bad-token"}, "accountId": {"acct"}, "zoneId": {"zone-1"}, "zoneName": {"example.com"}})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	err := c.Get(t.Context(), client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: platform.SystemNamespace}, &corev1.Secret{})
+	require.True(t, apierrors.IsNotFound(err), "a token Cloudflare refused must not be saved: %v", err)
+	require.Equal(t, 0, platformConfigCount(t, c), "the platform config must not point at credentials that were not saved")
+}
+
+func TestCloudflareSettingsSaveStoresTokenOnlyAfterCloudflareAcceptsIt(t *testing.T) {
+	c := newFakeClient()
+	key := client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: platform.SystemNamespace}
+	var mu sync.Mutex
+	var storedWhenAsked []string
+	stub := cloudflareAPIStub(t, true, func() {
+		stored := &corev1.Secret{}
+		token := ""
+		if err := c.Get(context.Background(), key, stored); err == nil {
+			token = string(stored.Data[platform.SecretKeyCloudflareAPIToken])
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		storedWhenAsked = append(storedWhenAsked, token)
+	})
+	srv := &Server{Client: c, HTTPClient: stub}
+
+	rec := saveCloudflareSettings(srv, url.Values{"apiToken": {"good-token"}, "accountId": {"acct"}, "zoneId": {"zone-1"}, "zoneName": {"example.com"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	mu.Lock()
+	asked := slices.Clone(storedWhenAsked)
+	mu.Unlock()
+	require.NotEmpty(t, asked)
+	for _, token := range asked {
+		require.Empty(t, token, "the token was already stored when Cloudflare was asked about it")
+	}
+	stored := &corev1.Secret{}
+	require.NoError(t, c.Get(t.Context(), key, stored))
+	require.Equal(t, "good-token", string(stored.Data[platform.SecretKeyCloudflareAPIToken]))
+	require.Equal(t, "acct", string(stored.Data[platform.SecretKeyCloudflareAccountID]))
+	require.Equal(t, "example.com", string(stored.Data[platform.SecretKeyCloudflareZoneName]))
+	require.Equal(t, 1, platformConfigCount(t, c))
+}
+
+func platformConfigCount(t *testing.T, c client.Client) int {
+	t.Helper()
+	list := &geassv1alpha1.GeassPlatformConfigList{}
+	require.NoError(t, c.List(t.Context(), list))
+	return len(list.Items)
 }

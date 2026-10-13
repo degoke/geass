@@ -46,6 +46,11 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not load Cloudflare credentials")
 		return
 	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	// Everything below changes the Secret in memory only. It is written once, after Cloudflare has accepted
+	// the token: saving first would replace a working token with one that does not work.
 	if apiToken != "" {
 		secret.Data[platform.SecretKeyCloudflareAPIToken] = []byte(apiToken)
 	}
@@ -55,10 +60,6 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	}
 	if len(secret.Data[platform.SecretKeyCloudflareAPIToken]) == 0 {
 		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "API token is required")
-		return
-	}
-	if err := s.persistSecret(r.Context(), secret); err != nil {
-		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "could not save Cloudflare credentials")
 		return
 	}
 
