@@ -96,7 +96,7 @@ the word `Bearer` as shown.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. This also hides `database_connection`. |
+| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. A **Full access** token still gets `database_connection`, which only reads. |
 | `--allow-delete` | boolean | `false` | Also offer `delete_resource`, which permanently deletes resources. |
 | `--listen` | string | none | Serve MCP over HTTP at this address, such as `127.0.0.1:8765`, instead of standard input and output. |
 
@@ -236,8 +236,8 @@ error that says `(this token is not allowed to do that; do not retry)`.
 | **Full access** | Yes | Yes | Yes |
 | Project token | One environment | Yes | Yes, in that environment |
 
-**Flags narrow it.** `--read-only` removes every tool that changes anything, even for a **Full access** token.
-Deleting is off unless you pass `--allow-delete`, and `delete_resource` then also needs the resource's name repeated in
+**Flags narrow it.** `--read-only` removes every tool that changes anything, even for a **Full access** token. It
+keeps `database_connection` for that token, because reading how to reach a database changes nothing. Deleting is off unless you pass `--allow-delete`, and `delete_resource` then also needs the resource's name repeated in
 `confirm`, so the agent cannot delete by accident from a vague request.
 
 **The agent host can ask you.** Every tool says whether it is read-only, idempotent or destructive, in the standard MCP
@@ -246,8 +246,8 @@ asks before destructive tools will ask before `delete_resource`. Keep that promp
 
 **Secrets stay hidden, with one exception you should know.**
 
-- Secret values are never returned: `get_app` empties them, `list_variables` returns names only, and the result of
-  `set_variable` does not repeat the value you set.
+- Secret values are never returned: `get_app` empties them, `list_variables` returns secrets by name only, and the
+  result of `set_variable` does not repeat the value you set.
 - Database passwords and connection strings are never returned. `database_connection` returns the host, port, database
   and user, and never asks Geass for the password.
 - Plain configuration is not secret. `list_variables` returns the values of plain configuration, and `get_app` returns
@@ -317,12 +317,6 @@ Two copies are wanted and none is running, and no build failed. The next place t
 ```text
 2026-10-12T09:41:07Z web-6d9c7b8f5-x2k4p Error: connect ECONNREFUSED 203.0.113.10:5432
 ```
-
-:::caution
-At this version `get_logs` always answers `No log lines matched.` (see [MCP tools](/docs/reference/mcp-tools/#known-problems)).
-Until that is fixed, the agent has to work from the other tools, or you have to read the logs yourself with
-`geass logs web -f`.
-:::
 
 **Step 4. Read the variables, and the memory and CPU the service uses.**
 
@@ -480,8 +474,8 @@ configuration.
 
 **The agent has fewer tools than expected.** Ask it to call `whoami`, or read the line `geass MCP server ready with N
 tools` on standard error. A **Read only** token sees 12, **Read only, with logs** 15, a project token 18 and **Full access**
-26. `--read-only` removes the tools that change anything and `database_connection`. `delete_resource` needs
-`--allow-delete`. See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
+26. `--read-only` removes the tools that change anything, so **Full access** then sees the 15 of **Read only, with
+logs** and `database_connection` (16). `delete_resource` needs `--allow-delete`. See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
 
 **I changed the token's role and the agent did not notice.** A session keeps the tools it started with. Restart the server,
 or reconnect the agent. Over HTTP, wait 5 minutes or restart the server too.
@@ -494,11 +488,12 @@ more access, or do it yourself.
 **A tool answers `... (it does not exist, or is not visible to this token)`.** The name is wrong, or the service is outside a
 project token's environment. `list_apps` shows the names the token can see.
 
-**`get_logs` says `No log lines matched.` though the service logs.** A known problem at this version. See
-[MCP tools](/docs/reference/mcp-tools/#known-problems).
+**`get_logs` says `No log lines matched.` though the service logs.** `level` and `search` look only through the newest
+lines: the dashboard reads `tail` lines from the end of each copy's log and filters them after. Raise `tail` (up to 500)
+or loosen `since`, `level` and `search`. `No log lines matched.` is also what a service with no running copy returns.
 
-**`deployment_logs` fails with `the API answered something that is not JSON`.** A known problem at this version. See
-[MCP tools](/docs/reference/mcp-tools/#known-problems).
+**`deployment_logs` shows `... (N earlier lines left out)`.** Each stage is cut to its last 200 lines, which is where a
+failed build or rollout says why. Read the whole log with `geass api GET /apps/APP/deployments/ID/logs`.
 
 **`app_metrics` returns `"available": false`.** Prometheus is not installed or not reachable. See
 [Observability](/docs/guides/observability/).
@@ -506,7 +501,9 @@ project token's environment. `list_apps` shows the names the token can see.
 **`deploy_app` with `wait` never returns, or the host gives up.** A wait lasts up to 900 seconds. Some hosts cut off a tool
 that runs long. Pass a smaller `timeout_seconds`, or call it without `wait` and poll `app_status`.
 
-**`create_app` says `"draft": false` but the service is not running.** It is a draft. Call `deploy_app`.
+**`create_app` says `"draft": true`.** The agent did not pass `deploy`, so the service is saved and waits: call
+`deploy_app`. With `deploy` set the result says `"draft": false` and `"deploying": true`, and `app_status` shows how it
+is going.
 
 **Over HTTP: `401`.** The request has no `Authorization: Bearer ...` header, or the word `Bearer` is not spelled as shown.
 

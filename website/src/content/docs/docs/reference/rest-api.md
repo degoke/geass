@@ -49,8 +49,8 @@ dashboard generates a name like `morning-beach`, and a display label can be kept
 
 **Draft and deploy.** Creating a service, database or bucket saves a draft. Editing a running one saves a pending change. Nothing is
 applied until a deploy call, except settings Geass treats as live: a service's replica count, autoscaling and sleep-when-idle
-settings, its host and TLS settings, metrics scraping and rollout flags, and a database's backup settings. (`logs.retentionHours`
-and `source.git.watchPatterns` are also on that list, but no controller reads them.) A function's schedules are not live: they
+settings, its host and TLS settings, metrics scraping and rollout flags, and a database's backup settings. (`source.git.watchPatterns` is
+also on that list: a push reads it at once. `logs.retentionHours` is too, but nothing reads it.) A function's schedules are not live: they
 start with the next deploy. See [Projects and environments](/docs/guides/projects-and-environments/).
 
 **Who can call what.** There are four kinds of caller:
@@ -229,7 +229,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `PATCH /projects/{name}` | Admin | `displayName`, `environments` (list), `region` | `{"ok": true}` |
 | `DELETE /projects/{name}` | Admin | `confirmName`* (the display name) | `{"ok": true}` |
 | `POST /projects/{name}/deploy` | Admin | `environment`* | `{"ok": true, "deployed": 2}` |
-| `POST /projects/{name}/environments` | Admin | `environment`* | Does not work; see the caution below |
+| `POST /projects/{name}/environments` | Admin | `environment`* | `{"ok": true}`; an environment that exists is a `400` |
 | `POST /projects/{name}/compliance` | Admin | `requiredTags` (list, up to 8; an empty list clears them) | `{"ok": true, "requiredTags": ["hipaa"]}` |
 | `GET /projects/{name}/compliance` | Any | none | `{"requiredTags", "region", "databases": [{"name", "compliant", "missing"}], "openNodes"}`: where the project falls short of its tags |
 | `POST /projects/{name}/network` | Admin | `isolation`* (`Project` or `None`), `allowFromProjects` (list, up to 20) | `{"ok": true}` |
@@ -239,12 +239,6 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /projects/{name}/logs/stream` | Observer | the same query | The same as server-sent events |
 | `GET /projects/{name}/logs/history` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `limit` | Stored history. A project that requires node tags gets `{"available": false, ...}`: its history is not kept |
 
-:::caution
-The documented operation `POST /api/v1/projects/{name}/environments` always fails with a `404`. The dashboard route it forwards to has
-no handler under that name. To add an environment, call `POST /api/v1/projects/{name}/environments/create` with `environment`, which
-reaches the working route `POST /api/projects/{name}/environments/create`.
-:::
-
 #### Services
 
 A service is a `GeassApp`. `{name}` is its resource name.
@@ -252,7 +246,7 @@ A service is a `GeassApp`. `{name}` is its resource name.
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
 | `GET /apps` | Any, project token | `?project=`, `?environment=` | `{"items": [summary, ...]}`. A project token sees only its own environment |
-| `POST /apps` | Admin | `project`*, `environment`*, `source` (`image`, `git` or `function`; an image when left out), `name`, `image`, `repository`, `branch`, `runtime`, `code`, `mode` (`http` or `event`), `functionTriggers` (list), `port`, `draft`; the other fields of [Create and change](#create-and-change) | `{"ok": true, "name": "storefront", "kind": "apps"}`. The service is a draft: call a deploy next |
+| `POST /apps` | Admin | `project`*, `environment`*, `source` (`image`, `git` or `function`; an image when left out), `name`, `image`, `repository`, `branch`, `runtime`, `code`, `mode` (`http` or `event`), `functionTriggers` (list), `port`, `draft` (`true`: save a draft), `deploy` (`true`: deploy it as it is saved); the other fields of [Create and change](#create-and-change) | `{"ok": true, "name": "storefront", "kind": "apps"}`. The service is a draft unless `deploy` is true, so call a deploy next. With `deploy` the answer also has `"deployed": true`. `draft` and `deploy` together are a `400`, and a cluster with no room refuses a `deploy` before anything is saved |
 | `GET /apps/{name}` | Any, project token | none | `{"resource", "spec", "status"}`. Callers who cannot change things get the redacted spec; secret values are blank for everyone |
 | `PATCH /apps/{name}` | Admin, project token | `image`, `port`, `cpu`, `memory`, `replicas`, `deploy` (`true` deploys straight away), `functionCode`, `functionRuntime`, `functionMode`, `functionTriggers` (list; an empty string removes them all), `scaleToZero` (`"on"` or `"off"`), `idleSeconds`, `scaleToZeroMax`; the other fields of [Create and change](#create-and-change) | The pending state; see [Create and change](#create-and-change) |
 | `DELETE /apps/{name}` | Admin | `confirmName`* | `{"ok": true}` |
@@ -268,8 +262,8 @@ A service is a `GeassApp`. `{name}` is its resource name.
 | `POST /apps/{name}/config/delete` | Admin, project token | `key`* | The same |
 | `POST /apps/{name}/secrets/set` | Admin, project token | `key`*, `value`* | `{"ok": true, "secrets": ["STRIPE_API_KEY"], "pending": ["variables"]}`; never returns values |
 | `POST /apps/{name}/secrets/delete` | Admin, project token | `key`* | The same |
-| `GET /apps/{name}/variables` | Observer, project token | none | `{"secrets": [names], "sharedVariableRefs", "env": [{"name", "kind"}], "config": {...}}`. Secrets and attached references are names only; the plain `config` comes with its values, whatever the OpenAPI summary says |
-| `GET /apps/{name}/logs` | Observer, project token | none | The last 200 lines of each pod: `{"lines": "# pod-name\n..."}` |
+| `GET /apps/{name}/variables` | Observer, project token | none | `{"secrets": [names], "sharedVariableRefs", "env": [{"name", "kind"}], "config": {...}}`. Secrets and attached references are names only; the plain `config` comes with its values, because plain configuration is not secret |
+| `GET /apps/{name}/logs` | Observer, project token | `?tail=` (1 to 1000, default 200, counted per pod), `since`, `q`, `level`, `previous` (`true` also reads each pod's run before its last restart) | `{"lines": [{"t", "service", "pod", "container", "line", "level", "previous"}], "services", "truncated", "note"}`: the service's recent log lines, oldest first, one entry each. It is the project's logs narrowed to the service, so the `environment` and `service` query fields are ignored. `level` and `q` look through the `tail` newest lines of each pod |
 | `GET /apps/{name}/logs/stream` | Observer, project token | `?level=`, `since`, and the other log query fields | A server-sent event stream of the service's log lines, recent ones first and then new ones, across restarts |
 | `GET /apps/{name}/runtime` | Observer, project token | none | `{"pods": [{"name", "phase", "container"}]}` |
 | `GET /apps/{name}/metrics` | Any, project token | `?window=` | Series; see [Metrics and logs](#metrics-and-logs) |
@@ -424,6 +418,9 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" $GEASS/api/v1/apps/sto
 { "ok": true, "pending": [], "deployed": true, "title": "", "detail": "", "button": "" }
 ```
 
+To deploy as the service is saved, add `"deploy": true` to the body of the first call and leave out the second. The answer
+is then `{ "ok": true, "name": "storefront", "kind": "apps", "deployed": true }`.
+
 ```bash title="Wait for a deploy to finish"
 while true; do
   status=$(curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" $GEASS/api/v1/apps/storefront/status) || break
@@ -463,6 +460,11 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: appl
 ```
 
 Geass keeps the last 12 deploy records for each service. A project token can list them on `/api/v1`, so it can roll back too.
+
+```bash title="A service's recent errors (works for a project token)"
+curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" "$GEASS/api/v1/apps/storefront/logs?level=error&tail=100" \
+  | jq -r '.lines[] | "\(.t) \(.pod) \(.line)"'
+```
 
 ```bash title="Errors in the last hour (needs an observer or admin token)"
 curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
@@ -633,8 +635,8 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/deploy` | none | Deploys the service |
 | `POST /api/apps/{app}/scale` | `replicas` (0 to 1000) | Changes the replica count at once, without a deploy |
 | `POST /api/apps/{app}/rollback` | `revision` (a `GeassDeployment` name) | Redeploys an earlier revision: an image service gets the earlier image, a Git service only gets the earlier replica count, and a function cannot be rolled back |
-| `POST /api/apps/{app}/build` | none | Starts a repository build. It works on builds labelled `geass.dev/app`, which the operator's own builds do not carry; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
-| `POST /api/apps/{app}/build/cancel` | none | Cancels that build |
+| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its newest build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
+| `POST /api/apps/{app}/build/cancel` | none | Cancels the newest build |
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
 | `POST /api/apps/{app}/display-name` | `displayName` | Sets the label shown in the dashboard |
@@ -684,9 +686,8 @@ See [Functions](/docs/guides/functions/).
 
 `applied` is `none` (nothing changed), `live` (everything took effect already), `deploy` (a change waits for a deploy) or `deployed`
 (the save was a deploy, with `deploy=on`). `title`, `detail` and `button` are the dashboard's own wording and may change.
-`deploy` answers with the same fields except `applied` and `liveChanged`. `update` accepts `context` and `watchPatterns` for a
-repository service, but builds ignore the context (they always build from the repository root) and push webhooks ignore watch
-patterns, so neither has any effect today.
+`deploy` answers with the same fields except `applied` and `liveChanged`. `update` accepts `context` (the root directory of the build) and `watchPatterns` (which pushes build, one pattern per line)
+for a repository service. A `context` or `dockerfile` that leaves the repository is refused.
 
 #### Variables and secrets
 
@@ -770,7 +771,7 @@ These need Prometheus (and, for history, the logging add-on) to be installed. Se
 | `GET /api/databases/{db}/metrics` | Viewer | `window` | Series for a database |
 | `GET /api/cluster/metrics` | Viewer | `window` | Series for the whole cluster |
 | `GET /api/operator/metrics` | Viewer | `window` | Series for the operator itself |
-| `GET /api/apps/{app}/logs` | Observer, project token | none | The last 200 lines of each pod: `{"lines":"# pod-name\n..."}` |
+| `GET /api/apps/{app}/logs` | Observer, project token | none | The dashboard's own route: the last 200 lines of each pod as one block of text, `{"lines":"# pod-name\n..."}`. `/api/v1/apps/{name}/logs` answers structured lines instead |
 | `GET /api/apps/{app}/runtime` | Observer, project token | none | `{"pods":[{"name","phase","container"}]}` |
 | `GET /api/projects/{project}/logs` | Observer | `environment`, `service`, `q`, `level`, `since`, `tail`, `previous` | Merged live logs |
 | `GET /api/projects/{project}/logs/stream` | Observer | same | The same as server-sent events, following new lines |
@@ -816,6 +817,9 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/cloudflare/save` | `apiToken`, `accountId`, `zoneId`, `zoneName`, `zonesJson`, `keepExisting` | Connects Cloudflare |
 | `POST /api/settings/cloudflare/refresh`, `/clear` | none | Re-reads zones, or disconnects |
 | `GET /api/settings/cloudflare` | none | `{"connected","ready"}`; admins also get account, zone and tunnel IDs |
+| `POST /api/settings/registry/save` | `repository`, `username`, `password`, `keepExisting` | Sets the registry that repository builds push to. The login is optional: both `username` and `password`, or neither. It is stored as the Secret `platform-registry` in `geass-system`. `keepExisting=on` keeps the stored login when only the repository changes |
+| `POST /api/settings/registry/clear` | none | Removes the registry and its login |
+| `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |
 | `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project |
 
 Details of the last group are in [Cloud connections](/docs/guides/connections/).

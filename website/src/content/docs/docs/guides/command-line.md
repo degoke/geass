@@ -150,10 +150,12 @@ geass whoami
 token:CLI: geass CLI on laptop on https://geass.example.com
 access: read-only, with logs
 can change things: no
+expires: 2026-11-11 09:00 UTC (in 30 days)
 ```
 
-`geass whoami --json` prints the same facts for a program. The expiry is not in it. To read it, run
-`geass api GET /me`, which includes `expiresAt`.
+The last line is when the token stops working, with the time left, or `never` for a token with no expiry. Sign in again
+before it passes. `geass whoami --json` prints the same facts for a program, including `expiresAt` (absent when the
+token never expires). `geass config get-contexts` shows the expiry day of each saved login.
 
 ### Sign in with a token you made
 
@@ -189,6 +191,11 @@ geass --context staging apps list
 
 `geass login` makes the login it saves the current one. `--context NAME` (or `GEASS_CONTEXT`) uses another login
 for one command.
+
+A login belongs to its address, and its token is sent only there. `--url` (or `GEASS_URL`) with another address does not
+carry the current login's token to it: the command uses the login you saved for that address, or stops with
+``not signed in to ADDRESS: run `geass login --url ADDRESS` `` if there is none. A token you give with `--token` or
+`GEASS_TOKEN` is used as you gave it.
 
 ### Set a default project and environment
 
@@ -245,7 +252,7 @@ nodes. `geass apps get NAME` (and `projects get`, `databases get`, `stores get`)
 ## Create and deploy a service
 
 Creating a service saves a draft. Nothing runs until you deploy it, the same as in the dashboard (see
-[Projects and environments](/docs/guides/projects-and-environments/)).
+[Projects and environments](/docs/guides/projects-and-environments/)). Add `--deploy` to deploy it as it is saved.
 
 ```bash
 geass apps create web -p proj-1a2b3c4d -e production --image nginx:alpine --port 80
@@ -271,11 +278,9 @@ The progress lines depend on what the service is doing, so yours can differ.
 | A GitHub repository | `--repo acme/storefront`, `--branch main` | The project must be linked to GitHub in the dashboard first. See [GitHub and builds](/docs/guides/github-and-builds/). |
 | A function | `--function hook.mjs`, `--runtime node`, `--mode event` | The file on your machine becomes the function's code. See [Functions](/docs/guides/functions/). |
 
-:::caution
-`geass apps create --deploy` is meant to deploy at once. At this version the API still saves every new service as a
-draft, even though the command then prints `Created NAME and started deploying it`. Run `geass deploy NAME` after
-creating, as above.
-:::
+With `--deploy` the command prints `Created NAME and started deploying it`, and the service is deploying. Follow it with
+`geass status web`. A cluster with no room for the service refuses the command before anything is saved, so you are
+not left with a draft you did not ask for.
 
 ### Deploy and wait
 
@@ -318,22 +323,20 @@ geass logs web -f --level error --since 15m
 09:41:09 x2k4p Error: connect ECONNREFUSED 203.0.113.10:5432
 ```
 
-Each line is the time in UTC, the end of the pod's name and the text. `-f` keeps following, across restarts and new pods,
-until you press Ctrl-C. The filters are `--tail` (lines to start with, default 200, at most 1000), `--since` (such as
-`15m` or `48h`, at most 7 days), `--level` (`error`, `warn`, `info` or `debug`) and `--search` (lines containing this
-text).
+Each line is the time in UTC, the end of the pod's name and the text. Without `-f` the command prints the recent lines
+and stops. `-f` keeps following, across restarts and new pods, until you press Ctrl-C. The filters are `--tail` (the
+newest lines to show, default 200, at most 1000), `--since` (such as `15m` or `48h`, at most 7 days), `--level`
+(`error`, `warn`, `info` or `debug`) and `--search` (lines containing this text). When nothing matches, `No log lines
+matched.` is printed on standard error.
 
-:::caution
-At this version `geass logs web` without `-f` prints nothing even when the service has logs, because the command reads
-the answer under a different key than the API uses. Use `-f`. To read recent lines and stop, run
-`geass api GET /projects/proj-1a2b3c4d/logs -q environment=production -q service=web -q tail=100`: it prints them under
-`lines`.
-:::
+The filters look through the most recent lines. The dashboard reads `--tail` lines from the end of each copy's log
+first and filters them after, so `--level error` finds the errors among each copy's last 200 lines. To look further
+back, raise `--tail`.
 
-Reading logs needs **Read only, with logs** or **Full access**.
+Reading logs needs **Read only, with logs**, **Full access**, or a project token for its own services.
 
-Build and deploy logs are not a command. Read the history of a service with `geass api GET /apps/web/deployments`,
-then one deployment's logs by its `id`:
+Build and deploy logs are not a command. List the deployments of a service with `geass apps deployments web`, then read
+one deployment's logs by its ID with the raw API:
 
 ```bash
 geass api GET /apps/web/deployments/web-abc12/logs | jq -r '.sections[] | "== " + .title, .lines'
@@ -365,7 +368,7 @@ Without `--deploy` the command says ``The change is pending. Run `geass deploy w
 `KEY=VALUE` splits it, so a value can contain `=`. A secret is stored apart from ordinary configuration, and is never
 printed back. See [Environment variables](/docs/guides/environment-variables/).
 
-:::caution
+:::note
 Only secrets are hidden. Plain configuration values are returned by the API: `geass env list --json` and
 `geass apps get` (with **Full access**) print them. Store anything sensitive with `--secret`.
 :::
@@ -381,14 +384,17 @@ geass scale web --always-on
 `geass scale` takes effect at once, with no deploy. The replica count is 0 to 1000. `--sleep-after` (30 seconds to 24
 hours) stops the service after that long without requests and starts it on the next request; `--always-on` turns
 that off. It needs the serverless add-on to be on in the cluster settings and a service with a public host, and it
-cannot be combined with CPU autoscaling. See [Scale to zero](/docs/guides/scale-to-zero/). The command saves the setting
-and reports success even when the service cannot sleep: check with `geass apps get web` and look at
-`resource.details.scaleToZero`, where `active` says whether it does.
+cannot be combined with CPU autoscaling. See [Scale to zero](/docs/guides/scale-to-zero/). The command saves the setting,
+then waits up to 10 seconds for the cluster to say whether the service can sleep. It prints `web sleeps after ...` only
+when it can. When it cannot, the service stays running and the command exits `1` with the reason, such as
+`saved, but web cannot sleep when idle and stays running: The serverless add-on is not installed`. The setting stays
+saved, so it takes effect once the add-on is on. `geass apps get web` shows `resource.details.scaleToZero`, where
+`active` says whether it does.
 
 To go back to an earlier deployment:
 
 ```bash
-geass api GET /apps/web/deployments       # newest first: the ids are what rollback takes
+geass apps deployments web                # newest first: the ids are what rollback takes
 geass rollback web --wait                 # the deployment before the newest
 geass rollback web web-abc12 --wait       # a deployment you choose
 ```
@@ -454,7 +460,8 @@ geass compliance show proj-1a2b3c4d
 
 `geass databases connection` needs **Full access**. It shows the host, port, database and user. The password and
 connection string stay hidden unless you add `--reveal`, and a reveal is written to the operator log. `geass nodes tag`
-replaces a node's region, zone and tags, so give every tag the node should keep. See
+replaces a node's region, zone and tags, so give every tag the node should keep. It prints each warning the change
+brings on standard error as `warning: ...`, such as work already on the node that does not belong there. See
 [Compliance tags](/docs/guides/compliance-tags/).
 
 ## Anything else: the raw API
@@ -484,8 +491,9 @@ geass apps delete web --yes
 **Two streams.** Results go to standard output. Progress and notes go to standard error. A program that reads standard
 output sees only results.
 
-**JSON.** Add `--json` to a list, a status, `whoami`, `version`, `nodes list`, `compliance show`, `env list`,
-`metrics`, `functions` commands or `logs` to get JSON. Lists print `{"items": [...]}`:
+**JSON.** Add `--json` to the commands that print data: a list, a status, `apps deployments`, `whoami`, `version`,
+`nodes list`, `compliance show`, `env list`, `metrics`, the `functions` commands that print something, or `logs`. Lists
+print `{"items": [...]}`:
 
 ```bash
 geass apps list -p proj-1a2b3c4d -e production --json | jq -r '.items[] | select(.state == "failed") | .name'
@@ -655,10 +663,16 @@ ready in time. Run `geass status web` for the reason, raise `--timeout` for a sl
 room (see [Usage and capacity](/docs/guides/usage-and-capacity/)).
 
 **`the deploy failed: ...`** (exit 5). The text after the colon is the build's failure reason, or the service's message.
-For a repository build, read the build logs: `geass api GET /apps/web/deployments`, then the logs of the newest
-deployment.
+For a repository build, read the build logs: `geass apps deployments web`, then
+`geass api GET /apps/web/deployments/ID/logs` for the newest deployment.
 
-**`geass logs web` prints nothing.** See the caution under [Read logs](#read-logs): use `-f`.
+**`geass logs web` prints nothing, and `No log lines matched.` is on standard error.** The service wrote nothing that
+matches in the lines the command looked through. Drop `--level` and `--search`, or raise `--tail` and `--since`. See
+[Read logs](#read-logs).
+
+**``not signed in to https://...: run `geass login --url https://...` ``** (exit 4). You gave `--url` or `GEASS_URL` for an
+address you have no login for, and the current login's token is not sent there. Run `geass login --url` for that
+address, or give a token for it with `--token`.
 
 **`no metrics yet: ...`.** Prometheus is not installed or not reachable. See [Observability](/docs/guides/observability/).
 

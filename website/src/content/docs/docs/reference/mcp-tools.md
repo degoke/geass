@@ -83,20 +83,20 @@ means a project token cannot. **Read only, with logs** also covers **Full access
 ## Which tools an agent sees
 
 A tool that a token cannot use is not registered at all, so the agent never sees it. The flags of `geass mcp` narrow
-this further. `--read-only` removes every tool that changes anything, and also `database_connection`.
-`--allow-delete` adds `delete_resource`.
+this further. `--read-only` removes every tool that changes anything. It keeps `database_connection` for a **Full
+access** token, because that tool only reads. `--allow-delete` adds `delete_resource`.
 
 | Token | Tools |
 | --- | --- |
 | **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance` (12) |
 | **Read only, with logs** (`observer`) | The 12 above, plus `get_logs`, `deployment_logs`, `list_variables` (15) |
 | **Full access** (`admin`) | All except `delete_resource` (26), and `delete_resource` with `--allow-delete` (27) |
-| **Full access** with `--read-only` | The same 15 as an `observer`. `database_connection` is not among them. |
+| **Full access** with `--read-only` | The 15 of an `observer`, plus `database_connection` (16). |
 | Project token | `whoami`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `get_logs`, `deployment_logs`, `list_variables`, `deploy_app`, `rollback_app`, `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable`, `set_function_trigger`, `remove_function_trigger`, `invoke_function` (18) |
 
 A project token with `--read-only` gets the first nine tools in its list. Hiding a tool is a convenience. The API
-checks the token on every call, so a tool that is shown can still fail with a
-`403` for something the token may not reach (see [Known problems](#known-problems)).
+checks the token on every call, so a tool that is shown can still fail with a `403` for something the token may not
+reach, such as `app_metrics` with `kind` set to `databases` for a project token.
 
 ## Instructions
 
@@ -111,25 +111,8 @@ token:
 - Otherwise: `Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and
   know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed.`
 
-Every version ends with `Secret values are never returned by any tool.`
-
-## Known problems
-
-:::caution
-Three things in this version behave differently from what the tool descriptions say.
-
-- **`get_logs` returns no lines.** It always answers `No log lines matched.`, because it reads the lines under a
-  different key than the API uses. To read recent lines, use `geass logs APP -f` in a terminal. A shell with the
-  command line can also run `geass api GET /projects/PROJECT/logs -q environment=ENV -q service=APP`.
-- **`deployment_logs` fails when the deployment has logs.** The tool expects each log section as a list of lines, and
-  the API sends it as one string, so the call ends with `the API answered something that is not JSON: json: cannot
-  unmarshal string into Go struct field ...`. A deployment with no logs returns an empty list. The command
-  `geass api GET /apps/APP/deployments/ID/logs` prints the same logs.
-- **`app_metrics` defaults to 15 minutes**, not 1 hour. If you leave `window` out, the API answers for `15m`. Pass
-  `window` to be sure.
-
-A fourth difference concerns [`create_app`](#create_app): it always saves a draft, even with `deploy` set.
-:::
+Every version ends with `Secret values are never returned by any tool. Plain configuration is not secret and is returned
+as it is, so keep anything sensitive in a secret.`
 
 ## Services
 
@@ -204,9 +187,9 @@ Shows one service's settings and status.
 - **Returns:** `{"resource": {...}, "spec": {...}, "status": {...}}`. `resource` is the same summary as in `list_apps`.
   `spec` holds the service's settings and `status` what the operator last reported.
 
-The description says variable values are never included. That holds for secrets: `spec.secretData` lists their names
-with empty values. Plain configuration is not secret and appears in `spec.configData` and `spec.env` when the token is
-**Full access**. A **Read only** or **Read only, with logs** token gets them removed.
+Secret values are never included: `spec.secretData` lists their names with empty values. Plain configuration is not
+secret and appears in `spec.configData` and `spec.env` when the token is **Full access**. A **Read only** or **Read only,
+with logs** token gets them removed. The tool's description says the same.
 
 ### `app_status`
 
@@ -264,7 +247,7 @@ Shows CPU, memory, network and request use over time for a service, a database o
 | --- | --- | --- | --- |
 | `name` | string | yes | The service, database or project to measure. |
 | `kind` | string | no | `apps` (the default), `databases` or `projects`. |
-| `window` | string | no | How far back: `15m`, `1h`, `6h` or `24h`. The tool's description says `1h` is the default. The API uses `15m` when you leave it out. |
+| `window` | string | no | How far back: `15m`, `1h`, `6h` or `24h`. Default `1h`: the tool sends `1h` when you leave it out. (A raw call to the API with no `window` answers for `15m`.) |
 
 - **Needs:** any token for `apps` (a project token for its own services). Any workspace token for `databases` and
   `projects`. **Calls:** `GET /{kind}/{name}/metrics` with `window`.
@@ -290,25 +273,22 @@ Reads a service's recent log lines. Use `level` or `search` to narrow them.
 | Argument | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `app` | string | yes | The service's name. |
-| `tail` | integer | no | How many recent lines. Default 100, at most 500. |
+| `tail` | integer | no | How many of the newest lines to return in all. Default 100, at most 500. `level` and `search` look through the most recent lines only, so raise it to look further back. |
 | `since` | string | no | Only lines newer than this long ago, such as `15m` or `2h`. Go duration syntax, up to 7 days. |
 | `level` | string | no | Only this level: `error`, `warn`, `info` or `debug`. |
 | `search` | string | no | Only lines containing this text, up to 200 characters. |
 
-- **Needs:** Read only, with logs, Full access, or a project token (see the caution below). **Calls:**
-  `GET /apps/{app}/status` (to find the project and environment), then `GET /projects/{project}/logs` with `environment`,
-  `service`, `tail`, `since`, `q` and `level`.
-- **Returns:** plain text, one line per log line, `<time in RFC 3339> <pod> <text>`. When nothing matches:
+- **Needs:** Read only, with logs, Full access, or a project token (for its own services). **Calls:**
+  `GET /apps/{app}/logs` with `tail`, `since`, `q` and `level`.
+- **Returns:** plain text, one line per log line, oldest first, `<time in RFC 3339> <pod> <text>`. When nothing matches:
   `No log lines matched.`
+- **Filters.** The dashboard reads `tail` lines from the end of each copy's log and applies `level` and `search` to
+  those, so `level` `error` finds the errors among each copy's newest lines. `level` `warn` also returns errors. A
+  service with several copies returns the newest `tail` lines of all of them together.
 
 ```text title="Example result"
 2026-10-12T09:41:07Z web-6d9c7b8f5-x2k4p Error: connect ECONNREFUSED 203.0.113.10:5432
 ```
-
-:::caution
-See [Known problems](#known-problems): at this version this tool always returns `No log lines matched.`. A project
-token cannot read `GET /projects/{project}/logs` either, so for a project token the call fails with `403`.
-:::
 
 ### `deployment_logs`
 
@@ -322,11 +302,19 @@ Returns the build and deploy logs of one deployment. Read these when a deploy fa
 - **Needs:** Read only, with logs, Full access, or a project token. **Calls:**
   `GET /apps/{app}/deployments/{deployment}/logs`.
 - **Returns:** `id` and `sections`, a list of `{"id", "title", "lines"}` for the deploy attempt, the build (for a
-  repository) and the rollout. Sections with nothing in them are left out.
+  repository) and the rollout. Sections with nothing in them are left out. `lines` is the stage's log as one block of
+  text, a line to a line. A stage longer than 200 lines is cut to its last 200, which is where a failure says why, and
+  starts with `... (N earlier lines left out)`. The whole log is at `GET /apps/{app}/deployments/{deployment}/logs`.
 
-:::caution
-At this version the call fails whenever a section has lines. See [Known problems](#known-problems).
-:::
+```json title="Example result"
+{
+  "id": "web-7x2kq",
+  "sections": [
+    { "id": "provision", "title": "Provision", "lines": "Provisioning failed\n2026-10-12T09:41:07Z image pull failed" },
+    { "id": "build", "title": "Build", "lines": "Kaniko completed without an immutable image digest" }
+  ]
+}
+```
 
 ### `list_variables`
 
@@ -340,8 +328,9 @@ Lists the names of a service's variables and secrets.
 - **Returns:** `secrets` (a list of names), `env` (a list of `{"name", "kind"}`, where `kind` is `literal` or
   `secret`) and `config` (an object of plain configuration).
 
-The description says values are never returned. Secrets are returned by name only. But `config` is an object of
-plain configuration with its values, because plain configuration is not secret. Store anything sensitive as a secret.
+Secret values are never returned: secrets come back by name only. `config` is an object of plain configuration with
+its values, because plain configuration is not secret. The tool's description says so. Store anything sensitive as a
+secret.
 
 ```json title="Example result"
 {
@@ -389,7 +378,8 @@ returned.
 | --- | --- | --- | --- |
 | `name` | string | yes | The database's name. |
 
-- **Needs:** Full access, and not `--read-only`. **Calls:** `GET /databases/{name}/connection`, never with `reveal`.
+- **Needs:** Full access. It is offered with `--read-only` too, since it only reads. **Calls:**
+  `GET /databases/{name}/connection`, never with `reveal`.
 - **Returns:** the connection facts that exist, among `host`, `port`, `database` and `username`.
 
 ```json title="Example result"
@@ -400,9 +390,6 @@ returned.
   "username": "app"
 }
 ```
-
-The tool is read-only, but `--read-only` still hides it, because it needs the same access as a tool that changes
-things.
 
 ### `list_buckets`
 
@@ -546,8 +533,8 @@ Sets how many copies of a service run. It takes effect at once.
 ### `set_sleep_when_idle`
 
 Makes a service stop when it has had no requests for a while and start again on the next request, or keeps it
-running. It needs the serverless add-on and a public host, and takes effect at once. See
-[Scale to zero](/docs/guides/scale-to-zero/).
+running. It needs the serverless add-on and a public host. The setting is saved at once, and the tool then waits up to 10
+seconds for the cluster to say whether the service can sleep. See [Scale to zero](/docs/guides/scale-to-zero/).
 
 | Argument | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -555,10 +542,12 @@ running. It needs the serverless add-on and a public host, and takes effect at o
 | `enabled` | boolean | yes | `true` to stop it when idle and start it on the next request, `false` to keep it running. |
 | `idle_seconds` | integer | no | How long without requests before it stops, 30 to 86400. The API's default is 300. Anything else is refused with `idle_seconds must be between 30 and 86400`. |
 
-- **Calls:** `PATCH /apps/{app}` with `{"scaleToZero": "on" | "off", "idleSeconds": ...}`.
-- **Returns:** `{"app": "web", "sleepWhenIdle": true}`. The result says what was asked, not whether the service can
-  sleep. If the add-on is missing, the service has no public host or CPU autoscaling is on, the service stays
-  running. `get_app` shows `resource.details.scaleToZero.active` and why.
+- **Calls:** `PATCH /apps/{app}` with `{"scaleToZero": "on" | "off", "idleSeconds": ...}`, then, when `enabled` is
+  true, `GET /apps/{app}` until `resource.details.scaleToZero.active` is `true` or the wait ends.
+- **Returns:** `{"app": "web", "sleepWhenIdle": true, "active": true}` when the service sleeps when idle. When it
+  cannot, because the add-on is missing, the service has no public host or CPU autoscaling is on, the setting stays
+  saved, the service stays running, and the result says so: `"active": false`, a `reason` (the cluster's message, or
+  that it has not said yet) and a `note`. With `enabled` false: `{"app": "web", "sleepWhenIdle": false}`.
 
 ### `set_variable`
 
@@ -596,7 +585,7 @@ Removes a variable or a secret from a service. It applies when the service is de
 
 ### `create_app`
 
-Creates a service from an image or a GitHub repository. It is saved as a draft.
+Creates a service from an image or a GitHub repository. It is saved as a draft unless `deploy` is set.
 
 | Argument | Type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -609,15 +598,15 @@ Creates a service from an image or a GitHub repository. It is saved as a draft.
 | `port` | integer | no | The port it serves on. |
 | `deploy` | boolean | no | Deploy it now instead of saving a draft. |
 
-- **Needs:** Full access. Hidden from project tokens. **Calls:** `POST /apps`.
-- **Returns:** `{"created": "web", "draft": true}`. With neither `image` nor `repository` the call fails with `give an
-  image or a repository to run`. If you give both, `image` wins. A function cannot be created with this tool.
-
-:::caution
-`deploy` does not deploy. The API saves every new service as a draft, but the result then says `"draft": false`.
-Call `deploy_app` afterwards. A repository also needs the project to be linked to GitHub first (see
-[GitHub and builds](/docs/guides/github-and-builds/)).
-:::
+- **Needs:** Full access. Hidden from project tokens. **Calls:** `POST /apps` with `draft`, or with `deploy` when the
+  argument is set.
+- **Returns:** `{"created": "web", "draft": true}`. With `deploy`: `{"created": "web", "draft": false, "deploying":
+  true, "next": "call app_status to see how it is going"}`, and the service is deploying. With neither `image` nor
+  `repository` the call fails with `give an image or a repository to run`. If you give both, `image` wins. A function
+  cannot be created with this tool.
+- With `deploy`, the deploy is checked before anything is saved: a cluster with no room for the service fails the
+  call and leaves no draft behind. A repository also needs the project to be linked to GitHub first (see
+  [GitHub and builds](/docs/guides/github-and-builds/)).
 
 ## Functions
 
