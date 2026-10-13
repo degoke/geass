@@ -26,7 +26,8 @@ func (a *App) mcpCmd() *cobra.Command {
 			"The agent acts as the token you are signed in with, and is only shown the tools that token may use: with a\n" +
 			"read-only token it cannot even see a tool that deploys. For an agent that should only watch, sign in with a\n" +
 			"read-only token (\"with logs\") or pass --read-only. Deleting is off unless you pass --allow-delete. Secret\n" +
-			"values and database passwords are never returned.\n\n" +
+			"values and database passwords are never returned. Plain configuration is not secret, so its values are: keep\n" +
+			"anything sensitive in a secret.\n\n" +
 			"By default it speaks over standard input and output, which is how an agent runs it:\n\n" +
 			"  claude mcp add geass -- geass mcp\n\n" +
 			"With --listen it serves MCP over HTTP instead, and each agent sends its own Geass token as a Bearer token.",

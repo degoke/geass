@@ -78,8 +78,13 @@ func (a *App) loginCmd() *cobra.Command {
 			}
 			contextID := firstSet(name, a.flags.context, contextName(resolved.URL))
 			saved := config.Contexts[contextID]
+			// The project and environment a login kept are IDs from the Geass it was made for: a name that is pointed at
+			// another address starts afresh, and keeps them only when the address is the same.
+			if !sameAddress(saved.URL, resolved.URL) {
+				saved = Context{}
+			}
 			saved.URL, saved.Token, saved.User, saved.Role = resolved.URL, token, me.Username, me.Role
-			saved.ExpiresAt = nil
+			saved.ExpiresAt = me.ExpiresAt
 			if config.Contexts == nil {
 				config.Contexts = map[string]Context{}
 			}
@@ -89,7 +94,11 @@ func (a *App) loginCmd() *cobra.Command {
 				return fmt.Errorf("signed in, but could not save the login: %w", err)
 			}
 			if a.flags.json {
-				return a.printJSON(map[string]any{"context": contextID, "url": resolved.URL, "user": me.Username, "role": me.Role})
+				signedIn := map[string]any{"context": contextID, "url": resolved.URL, "user": me.Username, "role": me.Role}
+				if me.ExpiresAt != nil {
+					signedIn["expiresAt"] = me.ExpiresAt
+				}
+				return a.printJSON(signedIn)
 			}
 			a.printf("Signed in to %s as %s (%s)\n", resolved.URL, me.Username, describeRole(me))
 			return nil
@@ -148,6 +157,27 @@ func (a *App) deviceLogin(ctx context.Context, address string, noBrowser bool) (
 	}
 }
 
+// describeExpiry says when a token stops working: the moment, and how long from now, or that it never does.
+func describeExpiry(expires *time.Time, now time.Time) string {
+	if expires == nil {
+		return "never"
+	}
+	when := expires.UTC().Format("2006-01-02 15:04 UTC")
+	remaining := expires.Sub(now)
+	switch {
+	case remaining <= 0:
+		return fmt.Sprintf("%s (expired %s ago)", when, ageAt(*expires, now))
+	case remaining < time.Minute:
+		return fmt.Sprintf("%s (in under a minute)", when)
+	case remaining < time.Hour:
+		return fmt.Sprintf("%s (in %d minutes)", when, int(remaining.Minutes()))
+	case remaining < 48*time.Hour:
+		return fmt.Sprintf("%s (in %d hours)", when, int(remaining.Hours()))
+	default:
+		return fmt.Sprintf("%s (in %d days)", when, int(remaining.Hours()/24))
+	}
+}
+
 func describeRole(me client.Identity) string {
 	if me.Scope == "project" {
 		return fmt.Sprintf("project token for %s/%s", me.Project, me.Environment)
@@ -179,7 +209,7 @@ func (a *App) logoutCmd() *cobra.Command {
 				a.printf("Not signed in.\n")
 				return nil
 			}
-			saved.Token, saved.User, saved.Role = "", "", ""
+			saved.Token, saved.User, saved.Role, saved.ExpiresAt = "", "", "", nil
 			config.Contexts[name] = saved
 			if err := config.Save(path); err != nil {
 				return err
@@ -213,6 +243,10 @@ func (a *App) whoamiCmd() *cobra.Command {
 				a.printf("can change things: yes\n")
 			} else {
 				a.printf("can change things: no\n")
+			}
+			// A token that never expires says so, so its silence is not read as not knowing.
+			if me.Authentication == "token" {
+				a.printf("expires: %s\n", describeExpiry(me.ExpiresAt, time.Now()))
 			}
 			return nil
 		},
@@ -265,9 +299,16 @@ func (a *App) configCmd() *cobra.Command {
 					if name == config.Current {
 						current = "*"
 					}
-					rows = append(rows, []string{current, name, saved.URL, dash(saved.User), dash(saved.Project), dash(saved.Environment)})
+					expires := "-"
+					if saved.ExpiresAt != nil {
+						expires = saved.ExpiresAt.UTC().Format("2006-01-02")
+						if saved.ExpiresAt.Before(time.Now()) {
+							expires += " (expired)"
+						}
+					}
+					rows = append(rows, []string{current, name, saved.URL, dash(saved.User), dash(saved.Project), dash(saved.Environment), expires})
 				}
-				a.printTable([]string{"", "NAME", "URL", "USER", "PROJECT", "ENVIRONMENT"}, rows)
+				a.printTable([]string{"", "NAME", "URL", "USER", "PROJECT", "ENVIRONMENT", "EXPIRES"}, rows)
 				return nil
 			},
 		},

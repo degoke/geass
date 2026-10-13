@@ -139,6 +139,9 @@ func v1LegacyPath(method string, parts []string) (string, map[string]string, boo
 		return "/api/tokens/create", nil, true
 	case kind == "tokens" && len(parts) == 2 && method == http.MethodDelete:
 		return "/api/tokens/revoke", map[string]string{"id": parts[1]}, true
+	case kind == kindProjects && method == http.MethodPost && len(parts) == 3 && parts[2] == pathEnvironments:
+		// The dashboard adds an environment at .../environments/create, so the path v1 documents is not its own.
+		return "/api/projects/" + parts[1] + "/environments/create", nil, true
 	case method == http.MethodPost && len(parts) >= 2:
 		return "/api/" + strings.Join(parts, "/"), nil, true
 	}

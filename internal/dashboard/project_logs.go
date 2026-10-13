@@ -386,6 +386,14 @@ func (s *Server) readProjectLogs(ctx context.Context, sources []logSource, query
 
 // handleAPIProjectLogs serves GET /api/projects/{name}/logs.
 func (s *Server) handleAPIProjectLogs(w http.ResponseWriter, r *http.Request, project string) {
+	s.writeProjectLogs(w, r, project, "")
+}
+
+// writeProjectLogs answers a project's recent logs. With forService set the answer is that one service's: its name
+// is the whole list of services (the project's other services, and its databases, are not the caller's to learn
+// from a service's logs), and the tail counts the newest lines across the service's copies, where for a project
+// it is read from the end of each container's log.
+func (s *Server) writeProjectLogs(w http.ResponseWriter, r *http.Request, project, forService string) {
 	query, err := parseLogQuery(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
@@ -399,6 +407,12 @@ func (s *Server) handleAPIProjectLogs(w http.ResponseWriter, r *http.Request, pr
 	lines, truncated := s.readProjectLogs(r.Context(), sources, query)
 	if lines == nil {
 		lines = []logLine{}
+	}
+	if forService != "" {
+		services = []string{forService}
+		if int64(len(lines)) > query.tail {
+			lines = lines[int64(len(lines))-query.tail:]
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		logsKey: lines, "services": services, "truncated": truncated,

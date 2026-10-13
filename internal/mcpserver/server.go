@@ -30,6 +30,9 @@ type Options struct {
 	AllowDelete bool
 	// PollInterval is how often a deploy that is waited for is checked; zero uses the client's default.
 	PollInterval time.Duration
+	// SleepCheckTimeout is how long set_sleep_when_idle waits for the operator to say whether the service can
+	// sleep; zero is ten seconds.
+	SleepCheckTimeout time.Duration
 }
 
 // Server holds what the tools share.
@@ -86,7 +89,7 @@ func instructions(me client.Identity, opts Options) string {
 	} else {
 		b.WriteString("Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. ")
 	}
-	b.WriteString("Secret values are never returned by any tool.")
+	b.WriteString("Secret values are never returned by any tool. Plain configuration is not secret and is returned as it is, so keep anything sensitive in a secret.")
 	return b.String()
 }
 
@@ -102,6 +105,7 @@ const (
 	sensitiveAccess               // may read logs and variable names
 	writeAccess                   // may change things
 	workspaceAdmin                // a workspace admin, not a project token
+	adminReadAccess               // a workspace admin's token, for something that changes nothing
 )
 
 func (s *Server) allowed(level access) bool {
@@ -115,6 +119,10 @@ func (s *Server) allowed(level access) bool {
 		return canWrite(s.me, s.opts)
 	case workspaceAdmin:
 		return canWrite(s.me, s.opts) && !projectToken
+	case adminReadAccess:
+		// What only an admin may read, and nothing is changed by reading it: read-only mode offers it to the
+		// admin whose token it is, since it hides what changes things and not what an admin may look at.
+		return s.me.CanMutate && !projectToken
 	}
 	return false
 }

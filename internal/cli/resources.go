@@ -227,10 +227,16 @@ func (a *App) nodesCmd() *cobra.Command {
 					unique = append(unique, name)
 				}
 			}
-			if err := api.SetNodePlacement(cmd.Context(), args[0], region, zone, unique, reserved, compliance); err != nil {
+			warnings, err := api.SetNodePlacement(cmd.Context(), args[0], region, zone, unique, reserved, compliance)
+			if err != nil {
 				return err
 			}
 			a.printf("Updated %s. Running workloads are not moved: one that restarts only returns to a node that matches.\n", args[0])
+			// What the change leaves for the person to do or watch for, such as work that is already on the node and
+			// does not belong there. It goes to the error stream like any note, and is never left out.
+			for _, warning := range warnings {
+				a.note("warning: %s", warning)
+			}
 			return nil
 		},
 	}

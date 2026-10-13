@@ -130,6 +130,11 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
+		// JSON of another shape is not the same trouble as no JSON: it is what a Geass of another version sends.
+		var mismatch *json.UnmarshalTypeError
+		if errors.As(err, &mismatch) {
+			return fmt.Errorf("the API answered in a shape this client does not know (%s is a %s): is Geass a different version? %w", mismatch.Field, mismatch.Value, err)
+		}
 		return fmt.Errorf("the API answered something that is not JSON: %w", err)
 	}
 	return nil
