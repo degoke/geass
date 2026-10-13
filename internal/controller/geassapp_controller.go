@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -129,23 +130,8 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if app.Spec.Source.Git != nil {
-		if !app.Spec.Deploy.Enabled {
-			if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
-				r.deleteTargetResources(ctx, &app, prevNS)
-			}
-			r.deleteTargetResources(ctx, &app, wsNS)
-			return r.setNotReady(ctx, &app, "Service is configured and waiting for deployment")
-		}
-		build, ready, err := r.ensureGitBuild(ctx, &app)
-		if err != nil {
-			return r.setNotReady(ctx, &app, err.Error())
-		}
-		if ready {
-			app.Status.ResolvedImage = build.Status.ImageDigest
-			app.Status.ActiveBuild = build.Name
-		}
-		if !ready {
-			return r.setNotReady(ctx, &app, "Git source is waiting for a successful build")
+		if result, stop, err := r.resolveGitImage(ctx, &app, wsNS); stop {
+			return result, err
 		}
 	}
 
@@ -185,7 +171,11 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
-	if err := r.reconcileDeployment(ctx, &app, wsNS, withScaleToZero(plan)); err != nil {
+	pullSecret, err := r.reconcileRegistryPullSecret(ctx, &app, wsNS)
+	if err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
+	if err := r.reconcileDeployment(ctx, &app, wsNS, withScaleToZero(plan), withRegistryPullSecret(pullSecret)); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := r.reconcileAutoscaler(ctx, &app, wsNS); err != nil {
@@ -291,6 +281,13 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+		if app.Status.ResolvedImage != "" {
+			latest.Status.ResolvedImage = app.Status.ResolvedImage
+			latest.Status.ActiveBuild = app.Status.ActiveBuild
+		}
+		if app.Status.CurrentBuild != "" {
+			latest.Status.CurrentBuild = app.Status.CurrentBuild
+		}
 		latest.Status.TargetNamespace = wsNS
 		latest.Status.URL = url
 		latest.Status.DNSName = app.Spec.Ingress.Host
@@ -467,7 +464,17 @@ func (r *GeassAppReconciler) reconcileSecret(ctx context.Context, app *geassv1al
 // workloadOption changes how a service's Deployment and Ingress are made.
 type workloadOption func(*workloadOptions)
 
-type workloadOptions struct{ scaleToZero scaleToZeroPlan }
+type workloadOptions struct {
+	scaleToZero scaleToZeroPlan
+	// pullSecret is the credential the nodes pull a built image with, when the registry needs one.
+	pullSecret *corev1.LocalObjectReference
+}
+
+// withRegistryPullSecret has the service's pods pull their image with a credential, for an image Geass built
+// and pushed to a registry that needs one. A nil secret changes nothing.
+func withRegistryPullSecret(secret *corev1.LocalObjectReference) workloadOption {
+	return func(o *workloadOptions) { o.pullSecret = secret }
+}
 
 // withScaleToZero carries a service's scale-to-zero plan to the pieces that depend on it.
 func withScaleToZero(plan scaleToZeroPlan) workloadOption {
@@ -674,7 +681,11 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 				Volumes: volumes,
 			},
 		}
-		if pullSecret := appImagePullSecret(app); pullSecret != nil {
+		pullSecret := appImagePullSecret(app)
+		if pullSecret == nil {
+			pullSecret = options.pullSecret
+		}
+		if pullSecret != nil {
 			deploy.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{*pullSecret}
 		}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
@@ -716,6 +727,9 @@ func validateAppSource(app *geassv1alpha1.GeassApp) error {
 		if app.Spec.Source.Git.ConnectionRef.Name == "" || app.Spec.Source.Git.Repository == "" || app.Spec.Source.Git.Branch == "" {
 			return fmt.Errorf("source.git.connectionRef, repository, and branch are required")
 		}
+		if _, _, err := platform.BuildPaths(kanikoWorkspace, app.Spec.Source.Git.Context, app.Spec.Source.Git.Dockerfile); err != nil {
+			return fmt.Errorf("source.git: %w", err)
+		}
 	}
 	if functionSource {
 		if err := platform.ValidateFunctionSource(app.Spec.Source.Function); err != nil {
@@ -756,21 +770,70 @@ func appImagePullSecret(app *geassv1alpha1.GeassApp) *corev1.LocalObjectReferenc
 	return app.Spec.Source.Image.PullSecret
 }
 
+// resolveGitImage points a Git service at the image of its build. stop is true when the reconcile pass is over
+// for now, because the service is not deployed yet, or has no registry to build into, or its build has not
+// succeeded; result and err are then what the pass returns.
+func (r *GeassAppReconciler) resolveGitImage(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) (result ctrl.Result, stop bool, err error) {
+	if !app.Spec.Deploy.Enabled {
+		if prevNS, moved := previousTargetNamespace(app.Status.TargetNamespace, wsNS); moved {
+			r.deleteTargetResources(ctx, app, prevNS)
+		}
+		r.deleteTargetResources(ctx, app, wsNS)
+		result, err = r.setNotReady(ctx, app, "Service is configured and waiting for deployment")
+		return result, true, err
+	}
+	build, ready, err := r.ensureGitBuild(ctx, app)
+	if err != nil {
+		result, err = r.setNotReady(ctx, app, err.Error())
+		return result, true, err
+	}
+	app.Status.CurrentBuild = build.Name
+	if !ready {
+		result, err = r.setNotReady(ctx, app, "Git source is waiting for a successful build")
+		return result, true, err
+	}
+	image, err := builtImageReference(build)
+	if err != nil {
+		result, err = r.setNotReady(ctx, app, err.Error())
+		return result, true, err
+	}
+	app.Status.ResolvedImage = image
+	app.Status.ActiveBuild = build.Name
+	return ctrl.Result{}, false, nil
+}
+
+// buildRegistry is where a service's builds push their image, and the credential they push with. A service's
+// own registry is used when it names one, with its own credential. Otherwise the platform's is, and so is its
+// credential unless the service names one.
+func (r *GeassAppReconciler) buildRegistry(ctx context.Context, app *geassv1alpha1.GeassApp) (string, *corev1.LocalObjectReference, error) {
+	registry := app.Spec.Build.Registry.Repository
+	credentialRef := app.Spec.Build.Registry.CredentialRef
+	if registry != "" {
+		return registry, credentialRef, nil
+	}
+	config := &geassv1alpha1.GeassPlatformConfig{}
+	if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err != nil {
+		return "", nil, client.IgnoreNotFound(err)
+	}
+	if credentialRef == nil {
+		credentialRef = config.Spec.Registry.CredentialRef
+	}
+	return config.Spec.Registry.Repository, credentialRef, nil
+}
+
 func (r *GeassAppReconciler) ensureGitBuild(ctx context.Context, app *geassv1alpha1.GeassApp) (*geassv1alpha1.GeassBuild, bool, error) {
 	git := app.Spec.Source.Git
 	if git == nil {
 		return nil, false, fmt.Errorf("git source is required")
 	}
-	registry := app.Spec.Build.Registry.Repository
-	credentialRef := app.Spec.Build.Registry.CredentialRef
+	registry, credentialRef, err := r.buildRegistry(ctx, app)
+	if err != nil {
+		return nil, false, err
+	}
 	if registry == "" {
-		config := &geassv1alpha1.GeassPlatformConfig{}
-		if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
-			registry = config.Spec.Registry.Repository
-			if credentialRef == nil {
-				credentialRef = config.Spec.Registry.CredentialRef
-			}
-		}
+		// There is no registry of Geass's own to push to, so a build without one would only fail on a host
+		// that does not exist. Say what to set instead.
+		return nil, false, errors.New(noRegistryMessage)
 	}
 	gitCredentialRef := &git.ConnectionRef
 	connection := &geassv1alpha1.GeassGitHubConnection{}
@@ -780,12 +843,83 @@ func (r *GeassAppReconciler) ensureGitBuild(ctx context.Context, app *geassv1alp
 	desired := geassv1alpha1.GeassBuildSpec{App: app.Name, Project: app.Spec.Project, Environment: app.Spec.Environment, Repository: git.Repository, Branch: git.Branch, Revision: git.Commit, ConnectionRef: &git.ConnectionRef, GitCredentialRef: gitCredentialRef, Dockerfile: git.Dockerfile, Context: git.Context, WaitForCI: git.WaitForCI, Cache: app.Spec.Build.Cache, CredentialRef: credentialRef, LogStoreRef: app.Spec.Logs.ArchiveStoreRef, Registry: registry}
 	name := gitBuildName(app.Name, desired)
 	build := &geassv1alpha1.GeassBuild{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: app.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, build, func() error {
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, build, func() error {
 		applyGeassLabels(build, app, "GeassBuild")
+		// The label a service's builds are found by. applyGeassLabels names the build's owner with
+		// geass.dev/name, which nothing that looks builds up selects on.
+		maps.Copy(build.Labels, platform.GitBuildLabels(app))
 		build.Spec = desired
 		return setSameNamespaceOwner(app, build, r.Scheme)
 	})
 	return build, err == nil && build.Status.Phase == geassv1alpha1.GeassBuildSucceeded && build.Status.ImageDigest != "", err
+}
+
+// builtImageReference is the image to run for a build that succeeded: the repository it pushed to, at the
+// digest it pushed. The digest alone is not an image a node can pull.
+func builtImageReference(build *geassv1alpha1.GeassBuild) (string, error) {
+	image := build.Status.Image
+	if image == "" {
+		image = build.Spec.Registry
+	}
+	reference, err := platform.ImageReferenceWithDigest(image, build.Status.ImageDigest)
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", build.Name, err)
+	}
+	return reference, nil
+}
+
+// registryPullSecretName is the Secret in a service's namespace that its pods pull a built image with.
+func registryPullSecretName(app *geassv1alpha1.GeassApp) string { return app.Name + "-registry-pull" }
+
+// reconcileRegistryPullSecret lets a service's pods pull the image Geass built for it when the registry needs
+// a credential. The credential the build pushes with lives in geass-system, and a pod can only use a pull
+// secret from its own namespace, so it is copied here. It returns nil, and removes a copy that is not wanted
+// any more, for a service that has no built image or whose registry needs no credential.
+func (r *GeassAppReconciler) reconcileRegistryPullSecret(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) (*corev1.LocalObjectReference, error) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: registryPullSecretName(app), Namespace: wsNS}}
+	var credentialRef *corev1.LocalObjectReference
+	if app.Spec.Source.Git != nil {
+		var err error
+		if _, credentialRef, err = r.buildRegistry(ctx, app); err != nil {
+			return nil, err
+		}
+	}
+	if credentialRef == nil || credentialRef.Name == "" {
+		// Looked for in the cache first: a delete is a request to the API server, and this runs on every pass of
+		// every service, nearly all of which have no such Secret.
+		if err := r.Get(ctx, client.ObjectKeyFromObject(secret), secret); err != nil {
+			return nil, client.IgnoreNotFound(err)
+		}
+		return nil, client.IgnoreNotFound(r.Delete(ctx, secret))
+	}
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: credentialRef.Name, Namespace: platform.SystemNamespace}, source); err != nil {
+		return nil, fmt.Errorf("registry credential: %w", err)
+	}
+	config := source.Data[corev1.DockerConfigJsonKey]
+	if len(config) == 0 {
+		return nil, fmt.Errorf("registry credential %s has no %s key", credentialRef.Name, corev1.DockerConfigJsonKey)
+	}
+	// A Secret's type cannot be changed. One of another type under this name is replaced when Geass made it, and
+	// reported when it is somebody else's, which is not Geass's to delete.
+	existing := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(secret), existing); err == nil && existing.Type != corev1.SecretTypeDockerConfigJson {
+		if existing.Labels[platform.LabelManagedBy] != platform.ManagedByValue {
+			return nil, fmt.Errorf("secret %s in %s is not a Docker registry Secret and is not Geass's, so it cannot be used to pull the built image", existing.Name, wsNS)
+		}
+		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
+			return nil, err
+		}
+	}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		applyGeassLabels(secret, app, "GeassApp")
+		secret.Type = corev1.SecretTypeDockerConfigJson
+		secret.Data = map[string][]byte{corev1.DockerConfigJsonKey: config}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &corev1.LocalObjectReference{Name: secret.Name}, nil
 }
 
 func gitBuildName(appName string, spec geassv1alpha1.GeassBuildSpec) string {
@@ -1021,7 +1155,7 @@ func appDeletionNamespaces(app *geassv1alpha1.GeassApp) []string {
 func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) {
 	_ = r.deleteScaleToZero(ctx, app, wsNS)
 	_ = r.deleteFunctionTriggers(ctx, app, wsNS, nil)
-	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics", functionConfigMapName(app), triggerSecretName(app)}
+	names := []string{app.Name, app.Name + "-config", app.Name + "-secret", app.Name + "-metrics", functionConfigMapName(app), triggerSecretName(app), registryPullSecretName(app)}
 	for _, name := range names {
 		_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
 		_ = r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}})
@@ -1052,6 +1186,9 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		if app.Status.ResolvedImage != "" {
 			latest.Status.ResolvedImage = app.Status.ResolvedImage
 			latest.Status.ActiveBuild = app.Status.ActiveBuild
+		}
+		if app.Status.CurrentBuild != "" {
+			latest.Status.CurrentBuild = app.Status.CurrentBuild
 		}
 	}); err != nil {
 		return ctrl.Result{}, err

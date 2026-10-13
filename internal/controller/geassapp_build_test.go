@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -61,13 +62,18 @@ func TestGitBuildNameChangesWithConfiguration(t *testing.T) {
 
 func TestKanikoJobUsesRegistrySecretAndCache(t *testing.T) {
 	build := &geassv1alpha1.GeassBuild{ObjectMeta: metav1.ObjectMeta{Name: "api-build", Namespace: "system"}, Spec: geassv1alpha1.GeassBuildSpec{App: "api", Project: "payments", Repository: "acme/api", Branch: "main", Registry: "registry.example/payments/api:abc", Cache: true, CredentialRef: &corev1.LocalObjectReference{Name: "registry-credentials"}}}
-	job := (&GeassBuildReconciler{}).jobFor(build)
-	if job.Spec.Template.Spec.Containers[0].Image != "gcr.io/kaniko-project/executor:v1.23.2" {
+	job, err := (&GeassBuildReconciler{}).jobFor(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kaniko := job.Spec.Template.Spec.Containers[0]
+	if kaniko.Image != "gcr.io/kaniko-project/executor:v1.23.2" {
 		t.Fatal("expected Kaniko executor")
 	}
-	if len(job.Spec.Template.Spec.Containers[0].Args) != 4 {
-		t.Fatalf("expected cache-enabled Kaniko args, got %v", job.Spec.Template.Spec.Containers[0].Args)
-	}
+	require.ElementsMatch(t, []string{
+		"--dockerfile=/workspace/Dockerfile", "--context=dir:///workspace", "--destination=registry.example/payments/api:abc",
+		"--digest-file=/dev/termination-log", "--cache=true",
+	}, kaniko.Args)
 	if len(job.Spec.Template.Spec.Volumes) != 2 || job.Spec.Template.Spec.Volumes[1].Secret == nil {
 		t.Fatal("expected registry Secret volume")
 	}

@@ -206,8 +206,13 @@ spec:
               failureReason:
                 type: string
               image:
+                description: Image is the destination the build pushes to, as it was
+                  told to (spec.registry).
                 type: string
               imageDigest:
+                description: |-
+                  ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
+                  it, and the digest recorded when that run ends is the one its own pod reports.
                 type: string
               jobRef:
                 type: string

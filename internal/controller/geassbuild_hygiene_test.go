@@ -45,8 +45,8 @@ func buildTestReconciler(t *testing.T, objects ...client.Object) (*GeassBuildRec
 func finishedBuild(name string, phase geassv1alpha1.GeassBuildPhase, mutate ...func(*geassv1alpha1.GeassBuild)) *geassv1alpha1.GeassBuild {
 	started := metav1.NewTime(time.Now().Add(-time.Hour))
 	build := &geassv1alpha1.GeassBuild{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Labels: map[string]string{platform.LabelApp: "api"}},
-		Spec:       geassv1alpha1.GeassBuildSpec{App: "api", Project: "shop", Repository: "acme/api", Branch: "main", WaitForCI: true},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Labels: platform.GitBuildLabels(&geassv1alpha1.GeassApp{ObjectMeta: metav1.ObjectMeta{Name: "api"}})},
+		Spec:       geassv1alpha1.GeassBuildSpec{App: "api", Project: "shop", Repository: "acme/api", Branch: "main", WaitForCI: true, Registry: "registry/api:1"},
 		Status: geassv1alpha1.GeassBuildStatus{
 			Phase: phase, StartedAt: &started, JobRef: name + "-kaniko", Image: "registry/api:1",
 			ImageDigest: "sha256:abc", LogRef: "pod-log://" + name + "-kaniko/kaniko",
@@ -122,8 +122,9 @@ func TestARetriggeredBuildStartsOverAndMakesAJob(t *testing.T) {
 }
 
 func TestKanikoJobsAreCleanedUpAfterAWhile(t *testing.T) {
-	job := (&GeassBuildReconciler{}).jobFor(finishedBuild("api-build-1", geassv1alpha1.GeassBuildPending))
+	job, err := (&GeassBuildReconciler{}).jobFor(finishedBuild("api-build-1", geassv1alpha1.GeassBuildPending))
 
+	require.NoError(t, err)
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
 	require.Equal(t, kanikoJobTTL, *job.Spec.TTLSecondsAfterFinished)
 }

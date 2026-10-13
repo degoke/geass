@@ -133,9 +133,17 @@ func TestV1StatusGathersWhatADeployLeavesBehind(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Replicas: ptr.To[int32](3)},
 		Status:     appsv1.DeploymentStatus{ReadyReplicas: 2, AvailableReplicas: 2},
 	}))
-	now := metav1.Now()
+	var app geassv1alpha1.GeassApp
+	require.NoError(t, f.srv.Client.Get(ctx, client.ObjectKey{Name: "api-prod", Namespace: platform.SystemNamespace}, &app))
+	// An older build that succeeded, and the newer one for the current settings that failed. The status says
+	// how the newer one went. Both carry the labels the operator gives its builds.
 	require.NoError(t, f.srv.Client.Create(ctx, &geassv1alpha1.GeassBuild{
-		ObjectMeta: metav1.ObjectMeta{Name: "api-prod-build-1", Namespace: platform.SystemNamespace, Labels: map[string]string{platform.LabelApp: "api-prod"}, CreationTimestamp: now},
+		ObjectMeta: metav1.ObjectMeta{Name: "api-prod-build-0", Namespace: platform.SystemNamespace, Labels: platform.GitBuildLabels(&app), CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour))},
+		Spec:       geassv1alpha1.GeassBuildSpec{App: "api-prod", Project: testProjectName},
+		Status:     geassv1alpha1.GeassBuildStatus{Phase: geassv1alpha1.GeassBuildSucceeded},
+	}))
+	require.NoError(t, f.srv.Client.Create(ctx, &geassv1alpha1.GeassBuild{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-prod-build-1", Namespace: platform.SystemNamespace, Labels: platform.GitBuildLabels(&app), CreationTimestamp: metav1.Now()},
 		Spec:       geassv1alpha1.GeassBuildSpec{App: "api-prod", Project: testProjectName},
 		Status:     geassv1alpha1.GeassBuildStatus{Phase: geassv1alpha1.GeassBuildFailed, FailureReason: "Kaniko completed without an immutable image digest"},
 	}))
@@ -147,6 +155,7 @@ func TestV1StatusGathersWhatADeployLeavesBehind(t *testing.T) {
 	require.Equal(t, "api-prod", status["name"])
 	require.Equal(t, map[string]any{"desired": float64(3), "ready": float64(2), "available": float64(2)}, status["replicas"])
 	build := status["build"].(map[string]any)
+	require.Equal(t, "api-prod-build-1", build["name"], "the newest build, not the first in the list")
 	require.Equal(t, "Failed", build["phase"])
 	require.Contains(t, build["failureReason"], "immutable image digest", "why it failed, where a program can read it")
 

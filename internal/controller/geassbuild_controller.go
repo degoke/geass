@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,6 +52,10 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.Get(ctx, req.NamespacedName, build); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := r.ensureAppLabel(ctx, build); err != nil {
+		// A build that was deleted since it was read (pruned, or its service removed) is not an error.
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 	// A build that has finished and has nothing left to do is not looked at again. Every build ever made
 	// would otherwise be reconciled on each operator restart and each event of its job, and each pass
 	// asked GitHub about it and copied its log again.
@@ -58,6 +63,27 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 	started, jobRan := buildProgress(build)
+	if !jobRan && !build.Status.CancelRequested {
+		// A build that cannot run as it is written fails before GitHub is asked anything about it.
+		if _, _, _, err := buildTarget(build); err != nil {
+			return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
+		}
+	}
+	if !started && !build.Status.CancelRequested {
+		// A build that has not started yet (new, or put back to the start by a push, a rebuild or a reset) has no
+		// Job of its own. One that exists is the last run's, and its result is not this run's, so it is removed
+		// here and not left to whoever reset the build: that may have failed to, or have had no way to.
+		stale := &batchv1.Job{}
+		err := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, stale)
+		if err == nil {
+			if err := r.Delete(ctx, stale, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
 	if build.Spec.Repository != "" && !build.Status.CancelRequested && !started {
 		ready, err := r.refreshGitHubState(ctx, build)
 		if err != nil {
@@ -91,7 +117,11 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if build.Spec.WaitForCI && !strings.EqualFold(build.Status.CIState, "success") {
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildWaitingForCI, ptr(metav1.Now()), nil)
 		}
-		job = r.jobFor(build)
+		var jobErr error
+		if job, jobErr = r.jobFor(build); jobErr != nil {
+			// The build cannot run as it is written, and running it again would say the same.
+			return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, jobErr)
+		}
 		// Builds run in the project's region so a project never spends another region's capacity, or
 		// pulls its source and pushes its image across regions. They never need the tags a single
 		// service asked for, but they check out its source and write its image layers to the node, so
@@ -226,28 +256,45 @@ func buildsToPrune(builds []geassv1alpha1.GeassBuild, current, active string, ke
 	return doomed
 }
 
-func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) *batchv1.Job {
-	image := build.Status.Image
-	if image == "" {
-		image = build.Spec.Registry
+const (
+	// kanikoContainerName is the container of a build's pod that runs Kaniko.
+	kanikoContainerName = "kaniko"
+	// noRegistryMessage is what a build says when there is nowhere to push its image. Geass has no registry
+	// of its own to fall back on, so a build that is not told where to push does not run.
+	noRegistryMessage = "no container registry is set for builds: set one under Settings > Registry, or set spec.build.registry.repository on the service"
+	// kanikoWorkspace is where the git container checks the repository out and Kaniko reads it from.
+	kanikoWorkspace = "/workspace"
+	// kanikoDigestFile is where Kaniko writes the digest of the image it pushed. It is the container's
+	// termination message, which Kubernetes keeps in the pod's status, so the digest is read from there and
+	// not picked out of the log.
+	kanikoDigestFile = "/dev/termination-log"
+)
+
+// buildTarget is where a build pushes its image and where Kaniko finds what to build in the checkout, or why
+// the build cannot run: no registry to push to, or a path that leaves the repository.
+func buildTarget(build *geassv1alpha1.GeassBuild) (image, contextDir, dockerfile string, err error) {
+	if build.Spec.Registry == "" {
+		return "", "", "", errors.New(noRegistryMessage)
 	}
-	if image == "" {
-		image = "registry.geass.dev/" + build.Spec.Project + "/" + build.Spec.App + ":" + buildRevision(build)
+	contextDir, dockerfile, err = platform.BuildPaths(kanikoWorkspace, build.Spec.Context, build.Spec.Dockerfile)
+	return build.Spec.Registry, contextDir, dockerfile, err
+}
+
+func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) (*batchv1.Job, error) {
+	image, contextDir, dockerfile, err := buildTarget(build)
+	if err != nil {
+		return nil, err
 	}
-	dockerfile := build.Spec.Dockerfile
-	if dockerfile == "" {
-		dockerfile = "Dockerfile"
-	}
-	args := []string{"--dockerfile=" + dockerfile, "--context=dir:///workspace", "--destination=" + image}
+	args := []string{"--dockerfile=" + dockerfile, "--context=dir://" + contextDir, "--destination=" + image, "--digest-file=" + kanikoDigestFile}
 	if build.Spec.Cache {
 		args = append(args, "--cache=true")
 	}
-	cloneCommand := "git clone --branch \"$BRANCH\" https://github.com/" + strings.TrimPrefix(build.Spec.Repository, "https://github.com/") + " /workspace"
+	cloneCommand := "git clone --branch \"$BRANCH\" https://github.com/" + strings.TrimPrefix(build.Spec.Repository, "https://github.com/") + " " + kanikoWorkspace
 	if build.Spec.GitCredentialRef != nil {
-		cloneCommand = "git -c http.extraheader=\"Authorization: Bearer $GITHUB_TOKEN\" clone --branch \"$BRANCH\" https://github.com/" + strings.TrimPrefix(build.Spec.Repository, "https://github.com/") + " /workspace"
+		cloneCommand = "git -c http.extraheader=\"Authorization: Bearer $GITHUB_TOKEN\" clone --branch \"$BRANCH\" https://github.com/" + strings.TrimPrefix(build.Spec.Repository, "https://github.com/") + " " + kanikoWorkspace
 	}
-	cloneCommand += " && git -C /workspace checkout --detach \"$REVISION\""
-	podSpec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, InitContainers: []corev1.Container{{Name: "git", Image: "alpine/git:latest", Command: []string{"sh", "-c", cloneCommand}, Env: []corev1.EnvVar{{Name: "BRANCH", Value: build.Spec.Branch}, {Name: "REVISION", Value: buildRevision(build)}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}}, Containers: []corev1.Container{{Name: "kaniko", Image: "gcr.io/kaniko-project/executor:v1.23.2", Args: args, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
+	cloneCommand += " && git -C " + kanikoWorkspace + " checkout --detach \"$REVISION\""
+	podSpec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, InitContainers: []corev1.Container{{Name: "git", Image: "alpine/git:latest", Command: []string{"sh", "-c", cloneCommand}, Env: []corev1.EnvVar{{Name: "BRANCH", Value: build.Spec.Branch}, {Name: "REVISION", Value: buildRevision(build)}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Containers: []corev1.Container{{Name: kanikoContainerName, Image: "gcr.io/kaniko-project/executor:v1.23.2", Args: args, TerminationMessagePath: kanikoDigestFile, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if build.Spec.GitCredentialRef != nil {
 		podSpec.InitContainers[0].Env = append(podSpec.InitContainers[0].Env, corev1.EnvVar{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: *build.Spec.GitCredentialRef, Key: "token"}}})
 	}
@@ -255,7 +302,7 @@ func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) *batchv1.
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{Name: "registry-auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: build.Spec.CredentialRef.Name, Items: []corev1.KeyToPath{{Key: ".dockerconfigjson", Path: "config.json"}}}}})
 		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registry-auth", MountPath: "/kaniko/.docker", ReadOnly: true})
 	}
-	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: build.Name + "-kaniko", Namespace: build.Namespace, Labels: map[string]string{labelGeassName: build.Spec.App}}, Spec: batchv1.JobSpec{BackoffLimit: ptrInt32(2), TTLSecondsAfterFinished: ptrInt32(kanikoJobTTL), Template: corev1.PodTemplateSpec{Spec: podSpec}}}
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: build.Name + "-kaniko", Namespace: build.Namespace, Labels: map[string]string{labelGeassName: build.Spec.App}}, Spec: batchv1.JobSpec{BackoffLimit: ptrInt32(2), TTLSecondsAfterFinished: ptrInt32(kanikoJobTTL), Template: corev1.PodTemplateSpec{Spec: podSpec}}}, nil
 }
 
 func ptrInt32(v int32) *int32 { return &v }
@@ -269,43 +316,51 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 	retryCount := int32(-1)
 	imageDigest := ""
 	job := &batchv1.Job{}
-	if err := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, job); err == nil {
+	jobFound := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, job) == nil
+	if jobFound {
 		retryCount = job.Status.Failed
-		imageDigest = job.Annotations["geass.dev/image-digest"]
+		if phase == geassv1alpha1.GeassBuildSucceeded {
+			imageDigest = r.digestFromBuildPod(ctx, build, job)
+		}
 	}
-	if phase == geassv1alpha1.GeassBuildSucceeded && imageDigest == "" && latest.Status.ImageDigest == "" {
-		imageDigest = r.digestFromBuildPod(ctx, build)
+	// This pass read a Job that the build has since been put back to the start under: what it found is the old
+	// run's, and writing it would undo the reset (or fail the build for a digest that run no longer has).
+	if jobFound && started == nil && latest.Status.StartedAt == nil {
+		return nil
+	}
+	// The digest a run ends with is the one its own pod reports. One recorded earlier is kept only when the
+	// build had already succeeded: a build that was reset and has run again is not Succeeded until it ends, so
+	// a digest left from its last run is never taken for the result of this one.
+	if phase == geassv1alpha1.GeassBuildSucceeded && imageDigest == "" && latest.Status.Phase == geassv1alpha1.GeassBuildSucceeded {
+		imageDigest = latest.Status.ImageDigest
 	}
 	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		latest.Status.Phase = phase
 		latest.Status.JobRef = build.Name + "-kaniko"
 		latest.Status.LogRef = build.Status.LogRef
 		if latest.Status.LogRef == "" {
-			latest.Status.LogRef = "pod-log://" + build.Name + "-kaniko/kaniko"
+			latest.Status.LogRef = "pod-log://" + build.Name + "-kaniko/" + kanikoContainerName
 		}
 		latest.Status.SourceRevision = build.Status.SourceRevision
 		latest.Status.CIState = build.Status.CIState
 		latest.Status.CIChecks = append([]string(nil), build.Status.CIChecks[:min(len(build.Status.CIChecks), geassv1alpha1.MaxCIChecks)]...)
-		if latest.Status.Image == "" {
-			latest.Status.Image = build.Spec.Registry
-			if latest.Status.Image == "" {
-				latest.Status.Image = "registry.geass.dev/" + build.Spec.Project + "/" + build.Spec.App + ":" + buildRevision(build)
-			}
-		}
+		// What the build pushes to is what it was told to, so it is the same on every run.
+		latest.Status.Image = build.Spec.Registry
 		if started != nil && latest.Status.StartedAt == nil {
 			latest.Status.StartedAt = started
 		}
 		if failure != nil {
 			latest.Status.FailureReason = failure.Error()
+		} else if phase != geassv1alpha1.GeassBuildFailed {
+			// A build that went on after a failure (GitHub answered the next time) is not failed any more.
+			latest.Status.FailureReason = ""
 		}
 		if retryCount >= 0 {
 			latest.Status.RetryCount = retryCount
 		}
 		if phase == geassv1alpha1.GeassBuildSucceeded {
-			if imageDigest != "" {
-				latest.Status.ImageDigest = imageDigest
-			}
-			if latest.Status.ImageDigest == "" {
+			latest.Status.ImageDigest = imageDigest
+			if imageDigest == "" {
 				latest.Status.Phase = geassv1alpha1.GeassBuildFailed
 				latest.Status.FailureReason = "Kaniko completed without an immutable image digest"
 			}
@@ -340,7 +395,7 @@ func (r *GeassBuildReconciler) archiveBuildLog(ctx context.Context, build *geass
 	}
 	var logData []byte
 	for _, pod := range pods.Items {
-		logData, err = r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "kaniko"}).Do(ctx).Raw()
+		logData, err = r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
 		if err == nil && len(logData) > 0 {
 			break
 		}
@@ -437,6 +492,10 @@ func (r *GeassBuildReconciler) refreshGitHubState(ctx context.Context, build *ge
 	}
 	checks, err := r.githubRequest(ctx, token, build, "/commits/"+url.PathEscape(build.Status.SourceRevision)+"/check-runs", nil)
 	if err != nil {
+		var refused *githubAPIError
+		if errors.As(err, &refused) && refused.code == http.StatusForbidden {
+			return false, fmt.Errorf("%w: reading check runs needs the Checks: Read permission on the Geass GitHub App, which an app registered before it was requested does not have", err)
+		}
 		return false, err
 	}
 	var result struct {
@@ -507,31 +566,70 @@ func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, 
 		return nil, err
 	}
 	if response.StatusCode >= 300 {
-		return nil, fmt.Errorf("GitHub API returned %s", response.Status)
+		return nil, &githubAPIError{code: response.StatusCode, status: response.Status}
 	}
 	return data, nil
 }
 
-func (r *GeassBuildReconciler) digestFromBuildPod(ctx context.Context, build *geassv1alpha1.GeassBuild) string {
+// githubAPIError is GitHub refusing a request, with the code kept so a caller can say what the refusal means.
+type githubAPIError struct {
+	code   int
+	status string
+}
+
+func (e *githubAPIError) Error() string { return "GitHub API returned " + e.status }
+
+// digestFromBuildPod reads the digest of the image a build pushed from the pods of its Job. Kaniko writes it
+// to the container's termination message (kanikoDigestFile), which Kubernetes keeps in the pod's status. The
+// log is the fallback, for a build whose Job was made before Kaniko was asked to write it: Kaniko ends a push
+// with "Pushed <repository>@sha256:<digest>". Only pods that finished successfully are read, and only the
+// ones this Job owns: a Job that was deleted and made again has the same name, and its old pods can outlive it.
+func (r *GeassBuildReconciler) digestFromBuildPod(ctx context.Context, build *geassv1alpha1.GeassBuild, job *batchv1.Job) string {
 	if r.Kube == nil {
 		return ""
 	}
-	pods, err := r.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + build.Name + "-kaniko"})
+	pods, err := r.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
 	if err != nil {
 		return ""
 	}
-	for _, pod := range pods.Items {
-		data, err := r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "kaniko"}).Do(ctx).Raw()
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodSucceeded || (job.UID != "" && !metav1.IsControlledBy(pod, job)) {
+			continue
+		}
+		for _, status := range pod.Status.ContainerStatuses {
+			if status.Name != kanikoContainerName || status.State.Terminated == nil || status.State.Terminated.ExitCode != 0 {
+				continue
+			}
+			if digest := strings.TrimSpace(status.State.Terminated.Message); platform.ValidImageDigest(digest) {
+				return digest
+			}
+		}
+		data, err := r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
 		if err != nil {
 			continue
 		}
-		for field := range strings.FieldsSeq(string(data)) {
-			if strings.HasPrefix(field, "sha256:") {
-				return strings.TrimRight(field, ",")
-			}
+		if digest := platform.DigestFromKanikoLog(string(data)); digest != "" {
+			return digest
 		}
 	}
 	return ""
+}
+
+// ensureAppLabel puts the label a service's builds are found by on a build made before every build carried
+// it. The operator labelled its builds geass.dev/name only, and everything that looks builds up (the push
+// webhook, the build actions, the status read and the clean-up of old builds) selects on geass.dev/app, so
+// those builds were never found. Every build is reconciled when the operator starts, so this reaches them all.
+func (r *GeassBuildReconciler) ensureAppLabel(ctx context.Context, build *geassv1alpha1.GeassBuild) error {
+	if build.Spec.App == "" || build.Labels[platform.LabelApp] == build.Spec.App {
+		return nil
+	}
+	patch := client.MergeFrom(build.DeepCopy())
+	if build.Labels == nil {
+		build.Labels = map[string]string{}
+	}
+	build.Labels[platform.LabelApp] = build.Spec.App
+	return r.Patch(ctx, build, patch)
 }
 
 func (r *GeassBuildReconciler) SetupWithManager(mgr ctrl.Manager) error {

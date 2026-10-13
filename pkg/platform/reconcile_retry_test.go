@@ -95,3 +95,19 @@ func TestRestoringADatabaseIsNotCountedAsAFailure(t *testing.T) {
 		t.Fatalf("a restore running longer than the retry window was marked failed (reason %q)", reason)
 	}
 }
+
+func TestApplyNotReady_aMissingRegistryIsAWaitNotAFailure(t *testing.T) {
+	message := "no container registry is set for builds: set one under Settings > Registry, or set spec.build.registry.repository on the service"
+	retry := ReconcileRetryState{Failures: ReconcileFailureThreshold}
+	started := metav1.NewTime(time.Now().Add(-2 * ReconcileFailureMaxDuration))
+	retry.FailureStarted = &started
+
+	out := ApplyNotReady(nil, retry, 1, message)
+
+	if ReadyConditionReason(out.Conditions) == ConditionReasonProvisionFailed || out.Terminal {
+		t.Fatalf("a service waiting for a registry went terminal: %q", ReadyConditionReason(out.Conditions))
+	}
+	if out.Retry.Failures != 0 || out.RequeueAfter != RequeueAfterDefault {
+		t.Fatalf("expected retry state cleared and a requeue so setting the registry is noticed, got %+v / %v", out.Retry, out.RequeueAfter)
+	}
+}

@@ -1191,12 +1191,15 @@ spec:
                         x-kubernetes-map-type: atomic
                       context:
                         default: .
-                        description: Context is the build context relative to the
-                          repository root.
+                        description: |-
+                          Context is the build context (the root directory of the build) relative to the repository root. A
+                          leading slash means the repository root, and a path that leaves the repository is refused.
                         type: string
                       dockerfile:
                         default: Dockerfile
-                        description: Dockerfile is relative to Context.
+                        description: |-
+                          Dockerfile is the path of the Dockerfile, relative to Context. A path that already starts with
+                          Context is taken as relative to the repository root.
                         type: string
                       repository:
                         type: string
@@ -1205,7 +1208,10 @@ spec:
                           selected commit.
                         type: boolean
                       watchPatterns:
-                        description: WatchPatterns limits webhook-triggered builds.
+                        description: |-
+                          WatchPatterns limits webhook-triggered builds to pushes that change a file they select. They are
+                          gitignore-style, matched from the repository root, and a "!" pattern takes files back out. Empty means
+                          every push to the branch builds.
                         items:
                           type: string
                         type: array
@@ -1248,7 +1254,7 @@ spec:
             description: GeassAppStatus defines the observed state of GeassApp.
             properties:
               activeBuild:
-                description: ActiveBuild references the current Git build.
+                description: ActiveBuild references the Git build whose image is deployed.
                 type: string
               conditions:
                 description: conditions represent the current state of the GeassApp
@@ -1311,6 +1317,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentBuild:
+                description: |-
+                  CurrentBuild references the Git build for the service's current settings. A build is named by a hash of
+                  its settings, so a service that goes back to earlier settings uses an older build than the newest: this
+                  is the one a push or a rebuild runs again, and it can be one that is not deployed yet.
+                type: string
               dnsMessage:
                 type: string
               dnsName:
@@ -1422,8 +1434,9 @@ spec:
                     type: integer
                 type: object
               resolvedImage:
-                description: ResolvedImage is the immutable digest used by the active
-                  deployment.
+                description: |-
+                  ResolvedImage is the image the active deployment runs: for a Git source, the repository the build
+                  pushed to at the digest it pushed (repository@sha256:...), which a node can pull.
                 type: string
               rolloutPaused:
                 type: boolean

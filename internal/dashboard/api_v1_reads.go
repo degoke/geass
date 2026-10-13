@@ -426,7 +426,7 @@ func (s *Server) v1AppStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if build := s.latestBuild(r.Context(), app.Name); build != nil {
+	if build, err := s.currentBuild(r.Context(), app); err == nil && build != nil {
 		status["build"] = map[string]any{
 			pathNameParam: build.Name, "phase": string(build.Status.Phase), "failureReason": build.Status.FailureReason,
 			"sourceRevision": build.Status.SourceRevision, "ciState": build.Status.CIState,
@@ -447,22 +447,6 @@ func latestProvisionAttempt(provision geassv1alpha1.GeassProvisionStatus) *geass
 		return nil
 	}
 	return &provision.ProvisionAttempts[0]
-}
-
-// latestBuild is the newest build of a service. Builds are read straight from the cache and not from the
-// redacted bootstrap, because their outcome is the point of a status read.
-func (s *Server) latestBuild(ctx context.Context, appName string) *geassv1alpha1.GeassBuild {
-	var builds geassv1alpha1.GeassBuildList
-	if err := s.Client.List(ctx, &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: appName}); err != nil || len(builds.Items) == 0 {
-		return nil
-	}
-	newest := &builds.Items[0]
-	for i := range builds.Items {
-		if builds.Items[i].CreationTimestamp.After(newest.CreationTimestamp.Time) {
-			newest = &builds.Items[i]
-		}
-	}
-	return newest
 }
 
 func (s *Server) v1AppDeployments(w http.ResponseWriter, r *http.Request) {

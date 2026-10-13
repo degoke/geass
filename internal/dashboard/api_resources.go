@@ -39,6 +39,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIGitHubSettings(w, r)
 	case r.URL.Path == "/api/settings/cloudflare":
 		s.handleAPICloudflareSettings(w, r)
+	case r.URL.Path == "/api/settings/registry":
+		s.handleAPIRegistrySettings(w, r)
 	case r.URL.Path == "/api/planetscale/cluster-sizes":
 		s.handleAPIPlanetScaleClusterSizes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
@@ -94,6 +96,7 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 		info.HasDashboardURL = readiness.HasDashboardURL
 		info.HasGitHubApp = readiness.HasGitHubApp
 		info.HasCloudflare = readiness.HasCloudflare
+		info.RegistryRepository = readiness.Config.Spec.Registry.Repository
 		info.CloudflareReady = readiness.CloudflareReady
 		info.DashboardURL = readiness.DashboardURL
 		if readiness.HasCloudflare {

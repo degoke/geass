@@ -296,16 +296,19 @@ type GeassBuildSpec struct {
 const MaxCIChecks = 50
 
 type GeassBuildStatus struct {
-	Phase         GeassBuildPhase `json:"phase,omitempty"`
-	JobRef        string          `json:"jobRef,omitempty"`
-	Image         string          `json:"image,omitempty"`
-	ImageDigest   string          `json:"imageDigest,omitempty"`
-	LogRef        string          `json:"logRef,omitempty"`
-	FailureReason string          `json:"failureReason,omitempty"`
-	RetryCount    int32           `json:"retryCount,omitempty"`
-	StartedAt     *metav1.Time    `json:"startedAt,omitempty"`
-	CompletedAt   *metav1.Time    `json:"completedAt,omitempty"`
-	CIState       string          `json:"ciState,omitempty"`
+	Phase  GeassBuildPhase `json:"phase,omitempty"`
+	JobRef string          `json:"jobRef,omitempty"`
+	// Image is the destination the build pushes to, as it was told to (spec.registry).
+	Image string `json:"image,omitempty"`
+	// ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
+	// it, and the digest recorded when that run ends is the one its own pod reports.
+	ImageDigest   string       `json:"imageDigest,omitempty"`
+	LogRef        string       `json:"logRef,omitempty"`
+	FailureReason string       `json:"failureReason,omitempty"`
+	RetryCount    int32        `json:"retryCount,omitempty"`
+	StartedAt     *metav1.Time `json:"startedAt,omitempty"`
+	CompletedAt   *metav1.Time `json:"completedAt,omitempty"`
+	CIState       string       `json:"ciState,omitempty"`
 	// CIChecks are the names of the checks that ran. At most MaxCIChecks are kept: a monorepo can run
 	// hundreds, and a status that grows with the repository is not one to store in etcd.
 	// +kubebuilder:validation:MaxItems=50

@@ -29,9 +29,12 @@ type dashboardBootstrap struct {
 }
 
 type dashboardPlatform struct {
-	HasDashboardURL      bool            `json:"hasDashboardURL"`
-	HasGitHubApp         bool            `json:"hasGitHubApp"`
-	HasCloudflare        bool            `json:"hasCloudflare"`
+	HasDashboardURL bool `json:"hasDashboardURL"`
+	HasGitHubApp    bool `json:"hasGitHubApp"`
+	HasCloudflare   bool `json:"hasCloudflare"`
+	// RegistryRepository is where repository builds push their images when a service names no registry.
+	// Empty means builds wait for one to be set.
+	RegistryRepository   string          `json:"registryRepository,omitempty"`
 	CloudflareReady      bool            `json:"cloudflareReady"`
 	CloudflareZoneID     string          `json:"cloudflareZoneId,omitempty"`
 	CloudflareZoneName   string          `json:"cloudflareZoneName,omitempty"`
@@ -148,6 +151,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAPICloudflareDiscover(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/refresh":
 		s.handlePlatformCloudflareRefresh(w, mutation)
+	case mutation.URL.Path == "/settings/registry/save":
+		s.handlePlatformRegistrySave(w, mutation)
+	case mutation.URL.Path == "/settings/registry/clear":
+		s.handlePlatformRegistryClear(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create":

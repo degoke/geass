@@ -151,7 +151,7 @@ func (s *Server) deployAllPendingInProject(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return deployed, err
 		}
-		s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app.Name))
+		s.attachAppProvisionAttemptRefs(ctx, app.Name, deploymentName, s.latestAppBuildName(ctx, app))
 		deployed++
 		s.notifyResourceMutation(app, "deploy")
 	}

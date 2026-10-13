@@ -59,18 +59,22 @@ type GeassAppGitSource struct {
 	// Commit pins the source when supplied.
 	// +optional
 	Commit string `json:"commit,omitempty"`
-	// Dockerfile is relative to Context.
+	// Dockerfile is the path of the Dockerfile, relative to Context. A path that already starts with
+	// Context is taken as relative to the repository root.
 	// +kubebuilder:default=Dockerfile
 	// +optional
 	Dockerfile string `json:"dockerfile,omitempty"`
-	// Context is the build context relative to the repository root.
+	// Context is the build context (the root directory of the build) relative to the repository root. A
+	// leading slash means the repository root, and a path that leaves the repository is refused.
 	// +kubebuilder:default=.
 	// +optional
 	Context string `json:"context,omitempty"`
 	// WaitForCI requires successful checks for the selected commit.
 	// +optional
 	WaitForCI bool `json:"waitForCI,omitempty"`
-	// WatchPatterns limits webhook-triggered builds.
+	// WatchPatterns limits webhook-triggered builds to pushes that change a file they select. They are
+	// gitignore-style, matched from the repository root, and a "!" pattern takes files back out. Empty means
+	// every push to the branch builds.
 	// +optional
 	WatchPatterns []string `json:"watchPatterns,omitempty"`
 }
@@ -360,14 +364,19 @@ type GeassAppStatus struct {
 	// URL is the primary ingress URL when configured.
 	// +optional
 	URL string `json:"url,omitempty"`
-	// ResolvedImage is the immutable digest used by the active deployment.
+	// ResolvedImage is the image the active deployment runs: for a Git source, the repository the build
+	// pushed to at the digest it pushed (repository@sha256:...), which a node can pull.
 	ResolvedImage string `json:"resolvedImage,omitempty"`
 	// DNSName is the hostname users should point at the Traefik entrypoint.
 	DNSName string `json:"dnsName,omitempty"`
 	// TraefikTarget is the observed ingress target when available.
 	TraefikTarget string `json:"traefikTarget,omitempty"`
-	// ActiveBuild references the current Git build.
-	ActiveBuild         string `json:"activeBuild,omitempty"`
+	// ActiveBuild references the Git build whose image is deployed.
+	ActiveBuild string `json:"activeBuild,omitempty"`
+	// CurrentBuild references the Git build for the service's current settings. A build is named by a hash of
+	// its settings, so a service that goes back to earlier settings uses an older build than the newest: this
+	// is the one a push or a rebuild runs again, and it can be one that is not deployed yet.
+	CurrentBuild        string `json:"currentBuild,omitempty"`
 	DNSVerified         bool   `json:"dnsVerified,omitempty"`
 	DNSMessage          string `json:"dnsMessage,omitempty"`
 	HealthCheckFailures int32  `json:"healthCheckFailures,omitempty"`

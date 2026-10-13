@@ -6,15 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -30,6 +29,34 @@ type githubWebhookPayload struct {
 		FullName string `json:"full_name"`
 	} `json:"repository"`
 	Ref string `json:"ref"`
+	// Deleted is a push that removed the branch, which has nothing to build.
+	Deleted bool `json:"deleted"`
+	// Commits are the commits the push brought, with the files each changed.
+	Commits []struct {
+		Added    []string `json:"added"`
+		Modified []string `json:"modified"`
+		Removed  []string `json:"removed"`
+	} `json:"commits"`
+}
+
+// githubMaxPushCommits is how many commits GitHub puts in a push event. A push with that many has more it did
+// not list, so the files it lists are not all of the files it changed.
+const githubMaxPushCommits = 2048
+
+// changedFiles is every file the push touched, or nil when the event does not say (a branch made at an
+// existing commit has no commits of its own) or does not say all of it. Nil means "cannot tell", which a
+// service that watches paths answers by building.
+func (p githubWebhookPayload) changedFiles() []string {
+	if len(p.Commits) == 0 || len(p.Commits) >= githubMaxPushCommits {
+		return nil
+	}
+	var files []string
+	for _, commit := range p.Commits {
+		files = append(files, commit.Added...)
+		files = append(files, commit.Modified...)
+		files = append(files, commit.Removed...)
+	}
+	return files
 }
 
 func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
@@ -97,20 +124,33 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhookPayload) (int, error) {
+	if payload.Deleted {
+		return 0, nil
+	}
 	var apps geassv1alpha1.GeassAppList
 	if err := s.Client.List(ctx, &apps, client.InNamespace(systemNamespace)); err != nil {
 		return 0, err
 	}
+	changed := payload.changedFiles()
 	triggered := 0
+	var failures []error
 	for i := range apps.Items {
 		app := &apps.Items[i]
-		if app.Spec.Source.Git == nil || app.Spec.Source.Git.Repository != payload.Repository.FullName {
+		git := app.Spec.Source.Git
+		if git == nil || git.Repository != payload.Repository.FullName {
 			continue
 		}
 		if !app.Spec.Deploy.Enabled {
 			continue
 		}
-		if payload.Ref != "" && payload.Ref != "refs/heads/"+app.Spec.Source.Git.Branch {
+		if payload.Ref != "" && payload.Ref != "refs/heads/"+git.Branch {
+			continue
+		}
+		// A service that pins a commit builds that commit and no other, so a push has nothing for it.
+		if git.Commit != "" {
+			continue
+		}
+		if !platform.WatchPatternsTrigger(git.WatchPatterns, changed) {
 			continue
 		}
 		if payload.Installation.ID > 0 {
@@ -119,19 +159,18 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 				continue
 			}
 		}
-		var builds geassv1alpha1.GeassBuildList
-		if err := s.Client.List(ctx, &builds, client.InNamespace(systemNamespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil || len(builds.Items) == 0 {
+		build, err := s.currentBuild(ctx, app)
+		if err != nil || build == nil {
 			continue
 		}
-		slices.SortStableFunc(builds.Items, func(a, b geassv1alpha1.GeassBuild) int {
-			return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
-		})
-		if err := s.retriggerBuild(ctx, &builds.Items[0]); err != nil {
-			return triggered, err
+		if err := s.retriggerBuild(ctx, build); err != nil {
+			// The other services the push matches are still built. GitHub is told afterwards that it failed.
+			failures = append(failures, fmt.Errorf("%s: %w", app.Name, err))
+			continue
 		}
 		triggered++
 	}
-	return triggered, nil
+	return triggered, errors.Join(failures...)
 }
 
 func (s *Server) appMatchesInstallation(ctx context.Context, app *geassv1alpha1.GeassApp, installationID int64) (bool, error) {
@@ -151,29 +190,6 @@ func (s *Server) appMatchesInstallation(ctx context.Context, app *geassv1alpha1.
 		return false, err
 	}
 	return githubapp.InstallationIDFromSecret(secret) == installationID, nil
-}
-
-func (s *Server) retriggerBuild(ctx context.Context, build *geassv1alpha1.GeassBuild) error {
-	latest := &geassv1alpha1.GeassBuild{}
-	if err := s.Client.Get(ctx, client.ObjectKeyFromObject(build), latest); err != nil {
-		return err
-	}
-	if s.Kube != nil {
-		jobName := latest.Name + "-kaniko"
-		policy := metav1.DeletePropagationBackground
-		_ = s.Kube.BatchV1().Jobs(latest.Namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &policy})
-	}
-	latest.Status.CancelRequested = false
-	latest.Status.Phase = geassv1alpha1.GeassBuildPending
-	latest.Status.FailureReason = ""
-	// The build starts over, so what said it had run and finished is cleared: the controller does not
-	// run a build again just because its job is gone, only because it is asked to.
-	latest.Status.StartedAt = nil
-	latest.Status.CompletedAt = nil
-	latest.Status.SourceRevision = ""
-	latest.Status.CIState = ""
-	latest.Status.CIChecks = nil
-	return s.Client.Status().Update(ctx, latest)
 }
 
 func (s *Server) validateGitConnectionForProject(ctx context.Context, project, connectionRef string) error {

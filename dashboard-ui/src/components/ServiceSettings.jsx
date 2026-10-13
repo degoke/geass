@@ -154,7 +154,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                           <Field label="Repository">
                             <Input required value={repository} onChange={(event) => setRepository(event.currentTarget.value)} placeholder="org/app" />
                           </Field>
-                          <Field label="Root directory" description="Used for build and deploy steps. Leave empty for the repository root.">
+                          <Field label="Root directory" description="The folder of the repository the Dockerfile is built from. Leave empty for the repository root.">
                             <Input value={context} onChange={(event) => setContext(event.currentTarget.value)} placeholder="/apps/api" />
                           </Field>
                         </SettingsPanel>
@@ -328,7 +328,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     className="rw-rail-form"
                     onSubmit={save("build", { dockerfile, watchPatterns, buildCache: buildCache ? "on" : "" })}
                   >
-                    <ResourceSettingsBlock title="Builder" description="Geass builds your repository with a Dockerfile using BuildKit.">
+                    <ResourceSettingsBlock title="Builder" description="Geass builds your repository with a Dockerfile using Kaniko.">
                       <SettingsPanel>
                         <Field label="Dockerfile path" description="Path to your Dockerfile in the repository. Defaults to Dockerfile at the root directory.">
                           <Input value={dockerfile} onChange={(event) => setDockerfile(event.currentTarget.value)} placeholder="/apps/api/Dockerfile" />
