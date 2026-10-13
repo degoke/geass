@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/degoke/geass/internal/testshapes"
 	"github.com/degoke/geass/pkg/client"
 )
 
@@ -176,23 +177,12 @@ func TestUsageMistakesExitWithTwo(t *testing.T) {
 	}
 }
 
-// sleepDetail is the answer for a service that asked to sleep when idle, as the dashboard describes it once the
-// operator has looked: active, or not with the reason.
-func sleepDetail(active bool, message string) map[string]any {
-	return map[string]any{
-		"resource": map[string]any{"kind": "app", "name": "web", "state": "ready", "details": map[string]any{
-			"scaleToZero": map[string]any{"idleSeconds": 600, "maxReplicas": 3, "active": active, "message": message},
-		}},
-		"spec": map[string]any{}, "status": map[string]any{},
-	}
-}
-
 func TestScaleCanPutAServiceToSleep(t *testing.T) {
 	var requests []string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		if r.Method == http.MethodGet {
-			reply(w, 200, sleepDetail(true, "Sleeps when idle"))
+			reply(w, 200, testshapes.SleepStatus("web", true, "Sleeps when idle"))
 			return
 		}
 		requests = append(requests, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(raw)))
@@ -404,14 +394,6 @@ func TestRollbackGoesToThePreviousDeploymentByDefault(t *testing.T) {
 	require.Equal(t, "web-1", rolledTo)
 }
 
-// realLogsAnswer is what the dashboard sends for a service's logs: the lines under "lines", an entry each.
-func realLogsAnswer(lines ...map[string]any) map[string]any {
-	return map[string]any{
-		"lines": lines, "services": []string{"web"}, "truncated": false,
-		"note": "These are the logs the nodes still hold. Output from pods that have been replaced or deleted is not kept.",
-	}
-}
-
 func TestLogsPrintLinesAndFollowStreams(t *testing.T) {
 	var requests []string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
@@ -421,7 +403,7 @@ func TestLogsPrintLinesAndFollowStreams(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(w, "data: {\"t\":\"2026-01-01T10:00:00Z\",\"service\":\"web\",\"pod\":\"web-5d8f-abcde\",\"container\":\"app\",\"line\":\"streamed line\",\"level\":\"info\"}\n\n")
 		case strings.HasSuffix(r.URL.Path, "/logs"):
-			reply(w, 200, realLogsAnswer(
+			reply(w, 200, testshapes.LogsAnswer("web",
 				map[string]any{"t": "2026-01-01T09:00:00Z", "service": "web", "pod": "web-5d8f-abcde", "container": "app", "line": "hello", "level": "info"},
 				map[string]any{"t": "2026-01-01T09:00:05Z", "service": "web", "pod": "web-5d8f-fghij", "container": "app", "line": "Error: boom", "level": "error"},
 			))
@@ -445,7 +427,7 @@ func TestLogsPassTheirFiltersOn(t *testing.T) {
 	var query string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		query = r.URL.RawQuery
-		reply(w, 200, realLogsAnswer(map[string]any{"t": "2026-01-01T09:00:00Z", "pod": "web-5d8f-abcde", "line": "timeout", "level": "error"}))
+		reply(w, 200, testshapes.LogsAnswer("web", map[string]any{"t": "2026-01-01T09:00:00Z", "pod": "web-5d8f-abcde", "line": "timeout", "level": "error"}))
 	})
 	h.signedIn(t, "", "")
 
@@ -458,7 +440,7 @@ func TestLogsPassTheirFiltersOn(t *testing.T) {
 
 func TestLogsAsJSONAreTheLinesTheAPISent(t *testing.T) {
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
-		reply(w, 200, realLogsAnswer(map[string]any{"t": "2026-01-01T09:00:00Z", "service": "web", "pod": "web-5d8f-abcde", "container": "app", "line": "hello", "level": "info"}))
+		reply(w, 200, testshapes.LogsAnswer("web", map[string]any{"t": "2026-01-01T09:00:00Z", "service": "web", "pod": "web-5d8f-abcde", "container": "app", "line": "hello", "level": "info"}))
 	})
 	h.signedIn(t, "", "")
 
@@ -472,7 +454,7 @@ func TestLogsAsJSONAreTheLinesTheAPISent(t *testing.T) {
 }
 
 func TestNoLogsSaysSoOnTheErrorStream(t *testing.T) {
-	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) { reply(w, 200, realLogsAnswer()) })
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) { reply(w, 200, testshapes.LogsAnswer("web")) })
 	h.signedIn(t, "", "")
 
 	code, stdout, stderr := h.run("logs", "web")

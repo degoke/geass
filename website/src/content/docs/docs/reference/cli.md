@@ -46,8 +46,10 @@ thing. `metrics` exists only at the top level, and `deployments` only under `gea
 A saved login belongs to the address it was made for, and its token is sent only there. When `--url` or `$GEASS_URL`
 points somewhere else, the current login's token, project and environment are not used for that address:
 
-- If you have a login saved for that address, the command uses that one. If several are saved for it, the first by
-  name is used.
+- If you have exactly one login saved for that address, the command uses it. If you have several (an admin and a
+  read-only one, say), it uses none of them and stops as below: say which with `--context`.
+- A login you chose with `--context` or `$GEASS_CONTEXT` is never swapped for another. With an address that is not its
+  own, it supplies no token, project or environment.
 - If you have none, the command stops with ``not signed in to ADDRESS: run `geass login --url ADDRESS` `` (exit `4`) and
   sends nothing.
 - A token you give with `--token` or `$GEASS_TOKEN` is your choice for this run and is used for whatever address you
@@ -188,8 +190,9 @@ The command also uses the global flags `--url`, `--token` and `--context`.
   `slow_down`, and gives up when the code expires, 10 minutes after it was issued.
 - **Check and save.** The token is checked with `GET /me` before anything is saved. A login that fails is not saved. A
   login that works is saved under `--name`, else `--context`, else the host of the address, becomes the current login,
-  and keeps the project and environment defaults an earlier login of that name had. When the token expires is saved
-  with it.
+  and keeps the project and environment defaults an earlier login of that name had, when it was for the same address.
+  A name that is pointed at another address starts with none, because a project ID from one Geass means nothing on
+  another. When the token expires is saved with it.
 - **Output.** `Signed in to <url> as <user> (<access>)`, where access is `admin`, `read-only, with logs`, `read-only`
   or `project token for <project>/<environment>`. With `--json`: `{"context", "url", "user", "role"}`, and
   `expiresAt` when the token expires.
@@ -232,8 +235,8 @@ can change things: no
 expires: 2026-11-11 09:00 UTC (in 30 days)
 ```
 
-The `expires` line says when the token stops working and how long is left (`in 30 days`, `in 5 hours`, or `expired 2d
-ago`), or `never` for a token with no expiry.
+The `expires` line says when the token stops working and how long is left (`in 30 days`, `in 5 hours`, `in under a
+minute`, or `expired 2d ago`), or `never` for a token with no expiry.
 
 With `--json` it prints the identity returned by the API: `username`, `role`, `scope` (`workspace` or `project`),
 `project` and `environment` (project tokens only), `canMutate`, `canReadSensitive`, `authentication` (`token`) and
@@ -279,8 +282,8 @@ geass config get-contexts
    staging.example.com  https://staging.example.com  -                               -              -            -
 ```
 
-`EXPIRES` is the day the token expires, as `geass login` saw it, or `-` when it was not recorded or the token never
-expires. With `--json` it prints the whole configuration with each token replaced by `(saved)`.
+`EXPIRES` is the day the token expires, as `geass login` saw it, followed by `(expired)` once that day has passed, or `-`
+when it was not recorded or the token never expires. With `--json` it prints the whole configuration with each token replaced by `(saved)`.
 
 #### `geass config use-context NAME`
 
@@ -373,7 +376,9 @@ api   failed  0/1    Failed     -                        Kaniko completed withou
 | `MESSAGE` | Why the service is not ready, when it says. |
 
 With `--json` it prints `{"items": [...]}`. Each item has `name`, `project`, `environment`, `state`, `message`,
-`url`, `ready`, `pendingChanges`, `replicas` (`desired`, `ready`, `available`), `sleeping`, `build` (`name`, `phase`,
+`url`, `ready`, `pendingChanges`, `replicas` (`desired`, `ready`, `available`), `sleeping`, `scaleToZero` (for a service
+that asked to sleep when idle: `idleSeconds`, `maxReplicas`, and `active` and `message` once the cluster has said),
+`build` (`name`, `phase`,
 `failureReason`, `sourceRevision`, `ciState`, `startedAt`, `completedAt`) and `lastAttempt` (`id`, `phase`,
 `startedAt`, `completedAt`, `summary`, `errors`).
 
@@ -563,12 +568,14 @@ Error: saved, but web cannot sleep when idle and stays running: The serverless a
 ```
 
 If you gave `REPLICAS` too, it is applied before the command reports that. When the cluster has not answered within
-10 seconds, the message says so and points at `resource.details.scaleToZero` in `geass apps get APP`, where `active` and
-`message` give the state. `--always-on` needs no check. See [Scale to zero](/docs/guides/scale-to-zero/).
+10 seconds, the message says so and points at `resource.details.scaleToZero`, where `active` and `message` give the
+state (`geass status APP --json` shows them as `scaleToZero`). A service that shows no request to sleep at all is waited
+for too, since the read can lag the change, and ends the wait the same way. `--always-on` needs no check. See
+[Scale to zero](/docs/guides/scale-to-zero/).
 
 **API calls:** `POST /apps/{name}/scale` with `{"replicas"}`; `PATCH /apps/{name}` with
-`{"scaleToZero": "on" | "off", "idleSeconds"}`, then `GET /apps/{name}` until `resource.details.scaleToZero.active` is
-`true` or the wait ends. **Needs:** Full access or a project token.
+`{"scaleToZero": "on" | "off", "idleSeconds"}`, then `GET /apps/{name}/status` until `scaleToZero.active` is `true` or
+the wait ends. **Needs:** Full access or a project token.
 
 ### `geass rollback`
 
@@ -624,7 +631,10 @@ geass apps create hook -p proj-1a2b3c4d -e production --function hook.mjs --runt
 
 Without `--deploy` the service is saved as a draft and the command prints ``Created NAME as a draft. Deploy it with `geass deploy NAME`.`` With `--deploy` it is deployed as it is saved and the command prints `Created NAME and started
 deploying it`. Follow it with `geass status NAME`, or `geass deploy NAME --wait` once it exists. The deploy is checked
-before anything is saved: a cluster with no room for the service refuses the command and leaves no draft behind.
+before anything is saved: a cluster with no room for the service refuses the command and leaves no draft behind. The
+command prints that only when the answer says the service was deployed. A Geass older than the command line ignores
+`--deploy` and saves a draft: the command then exits `1`, saying that it did not deploy the service and to run
+`geass deploy NAME`.
 
 Creating a service from a repository also needs the project to be linked to GitHub, which you do in the dashboard
 ([GitHub and builds](/docs/guides/github-and-builds/)). With `--deploy`, a missing link is an error. As a draft it is

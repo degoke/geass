@@ -949,7 +949,7 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	draft := formDraftRequested(r)
 	// deploy asks for the service to be deployed as soon as it is saved, the field a settings save takes to deploy
 	// at once. Without it a new service is saved as a draft and waits for a deploy, whatever draft says.
-	deployNow := r.FormValue(formDeploy) == "on"
+	deployNow := formFlagSet(r, formDeploy)
 	if deployNow && draft {
 		redirectFormError(w, r, formProjectFallback(r, "/apps"), "A draft is not deployed: ask for a draft or for a deploy, not both")
 		return
@@ -1682,8 +1682,11 @@ func formHasValue(r *http.Request, keys ...string) bool {
 	return false
 }
 
-func formDraftRequested(r *http.Request) bool {
-	switch strings.ToLower(strings.TrimSpace(r.FormValue("draft"))) {
+func formDraftRequested(r *http.Request) bool { return formFlagSet(r, "draft") }
+
+// formFlagSet reports whether a yes-or-no field is set: a checked box ("on"), or true, 1 or yes.
+func formFlagSet(r *http.Request, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.FormValue(key))) {
 	case "on", "true", "1", "yes":
 		return true
 	default:

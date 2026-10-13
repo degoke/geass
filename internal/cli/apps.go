@@ -426,7 +426,7 @@ func (a *App) scaleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var cannotSleep error
+			cannotSleep := ""
 			if sleeping || alwaysOn {
 				if err := api.SetSleepWhenIdle(cmd.Context(), args[0], sleeping, int(sleepAfter.Seconds())); err != nil {
 					return err
@@ -446,7 +446,10 @@ func (a *App) scaleCmd() *cobra.Command {
 				}
 				a.printf("%s scaled to %d\n", args[0], replicas)
 			}
-			return cannotSleep
+			if cannotSleep != "" {
+				return fmt.Errorf("saved, but %s cannot sleep when idle and stays running: %s", args[0], cannotSleep)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().DurationVar(&sleepAfter, "sleep-after", 0, "stop the service after this long without requests, such as 10m")
@@ -499,22 +502,18 @@ func (a *App) rollbackCmd() *cobra.Command {
 
 // confirmSleep reads back whether a service that was just told to sleep when idle can. The setting is saved at
 // once, but the operator decides whether it takes effect, and a service that cannot sleep stays running: saying
-// it sleeps would be false. It returns an error for the caller to end with when it cannot, once the rest of what
-// was asked has been done.
-func (a *App) confirmSleep(ctx context.Context, api *client.Client, app string, after time.Duration) (cannotSleep, err error) {
+// it sleeps would be false. It returns why it cannot, for the caller to end with once the rest of what was asked
+// has been done, or nothing when it can.
+func (a *App) confirmSleep(ctx context.Context, api *client.Client, app string, after time.Duration) (string, error) {
 	state, err := api.WaitForSleep(ctx, app, client.WaitOptions{Timeout: a.SleepCheckTimeout, Interval: a.PollInterval})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if state.Active {
-		a.printf("%s sleeps after %s without requests\n", app, after)
-		return nil, nil
+	if !state.Active {
+		return state.Why(), nil
 	}
-	reason := state.Message
-	if reason == "" {
-		reason = "the cluster has not said yet; see `geass apps get " + app + "` for scaleToZero"
-	}
-	return fmt.Errorf("saved, but %s cannot sleep when idle and stays running: %s", app, reason), nil
+	a.printf("%s sleeps after %s without requests\n", app, after)
+	return "", nil
 }
 
 // ---- deployments ----
@@ -602,10 +601,15 @@ func (a *App) createAppCmd() *cobra.Command {
 			if port > 0 {
 				fields["port"] = port
 			}
-			if _, err := api.CreateApp(cmd.Context(), fields); err != nil {
+			answer, err := api.CreateApp(cmd.Context(), fields)
+			if err != nil {
 				return err
 			}
 			if deploy {
+				// A Geass older than this command line ignores deploy and saves a draft: say so, and do not say it is deploying.
+				if answer["deployed"] != true {
+					return fmt.Errorf("%s was created, but this Geass did not deploy it (is it older than this command line?): run `geass deploy %s`", args[0], args[0])
+				}
 				a.printf("Created %s and started deploying it. Follow it with `geass status %s`.\n", args[0], args[0])
 			} else {
 				a.printf("Created %s as a draft. Deploy it with `geass deploy %s`.\n", args[0], args[0])

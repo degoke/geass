@@ -413,6 +413,11 @@ func (s *Server) v1AppStatus(w http.ResponseWriter, r *http.Request) {
 		"state": view.State, "message": view.Message, "url": app.Status.URL, "pendingChanges": view.PendingChanges,
 		"ready": view.State == stateReady,
 	}
+	// Whether a service that asked to sleep when idle can is the operator's to say, and a caller that has just asked
+	// reads it here, in the one read it already makes, instead of loading every resource for it.
+	if sleep, ok := view.Details["scaleToZero"]; ok {
+		status["scaleToZero"] = sleep
+	}
 	if namespace, err := resourceNamespaceForApp(*app); err == nil {
 		var deploy appsv1.Deployment
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: app.Name, Namespace: namespace}, &deploy); err == nil {
@@ -527,14 +532,15 @@ func (s *Server) v1AppLogRequest(w http.ResponseWriter, r *http.Request) (*geass
 
 // v1AppLogs reads a service's recent logs. It is the project's logs narrowed to one service, so it answers the
 // way the project does (and the stream below does): {"lines": [...]} with one entry per line, carrying its
-// time, pod, container, text and level, for the tail, since, q and level filters to act on. The dashboard's
+// time, pod, container, text and level, for the tail, since, q and level filters to act on. The tail is the
+// newest lines across the service's copies, and the answer names no service but this one. The dashboard's
 // own route of the same name answers a block of text, which a program should not have to take apart.
 func (s *Server) v1AppLogs(w http.ResponseWriter, r *http.Request) {
 	app, narrowed, ok := s.v1AppLogRequest(w, r)
 	if !ok {
 		return
 	}
-	s.handleAPIProjectLogs(w, narrowed, app.Spec.Project)
+	s.writeProjectLogs(w, narrowed, app.Spec.Project, app.Name)
 }
 
 // v1AppLogStream follows a service's logs as server-sent events: recent lines first, then new ones as they

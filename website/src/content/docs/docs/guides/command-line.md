@@ -194,8 +194,9 @@ for one command.
 
 A login belongs to its address, and its token is sent only there. `--url` (or `GEASS_URL`) with another address does not
 carry the current login's token to it: the command uses the login you saved for that address, or stops with
-``not signed in to ADDRESS: run `geass login --url ADDRESS` `` if there is none. A token you give with `--token` or
-`GEASS_TOKEN` is used as you gave it.
+``not signed in to ADDRESS: run `geass login --url ADDRESS` `` if there is none, or if there are several (say which
+with `--context`). A login you chose with `--context` or `GEASS_CONTEXT` is never swapped for another. A token you give
+with `--token` or `GEASS_TOKEN` is used as you gave it.
 
 ### Set a default project and environment
 
@@ -637,6 +638,10 @@ whole address.
 
 **`the API answered something that is not JSON`.** The address does not point at the Geass dashboard, or something in
 front of it answers with a web page. Open the address in a browser, and see [Sign in](/docs/getting-started/sign-in/).
+
+**`the API answered in a shape this client does not know (...): is Geass a different version?`** The address is a Geass,
+but one whose answer this command line does not expect, usually an older dashboard than the command line. Update
+whichever is older.
 
 **A certificate error such as `x509: certificate signed by unknown authority`.** The command line checks the server's
 certificate and has no option to skip the check. Fix the certificate (see [Domains and TLS](/docs/guides/domains-and-tls/))

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/degoke/geass/internal/testshapes"
 )
 
 // ---- a saved token goes only to the address it was issued for ----
@@ -52,24 +54,23 @@ func TestTheSavedTokenIsNotSentToAnotherAddress(t *testing.T) {
 	h.signedIn(t, "", "")
 	other := newSpy(t)
 
-	for name, set := range map[string]func(){
-		"--url": func() {},
-		"$GEASS_URL": func() {
-			h.app.Getenv = func(key string) string { return map[string]string{"GEASS_URL": other.server.URL}[key] }
-		},
+	// In this order, and each with only its own way of naming the address, so one cannot stand in for the other.
+	for _, tt := range []struct {
+		name string
+		args []string
+		env  map[string]string
+	}{
+		{name: "--url", args: []string{"--url", other.server.URL, "apps", "list"}},
+		{name: "$GEASS_URL", args: []string{"apps", "list"}, env: map[string]string{"GEASS_URL": other.server.URL}},
 	} {
-		args := []string{"apps", "list"}
-		if name == "--url" {
-			args = append([]string{"--url", other.server.URL}, args...)
-		}
-		set()
+		h.app.Getenv = func(key string) string { return tt.env[key] }
 
-		code, _, stderr := h.run(args...)
+		code, _, stderr := h.run(tt.args...)
 
-		require.Equal(t, ExitDenied, code, "%s: %s", name, stderr)
-		require.Contains(t, stderr, "geass login --url "+other.server.URL, "%s: it says how to sign in to that address", name)
-		require.Empty(t, other.requests(), "%s: nothing is sent to an address the saved token was not issued for", name)
-		require.Empty(t, home, "%s: and nothing is sent anywhere else", name)
+		require.Equal(t, ExitDenied, code, "%s: %s", tt.name, stderr)
+		require.Contains(t, stderr, "geass login --url "+other.server.URL, "%s: it says how to sign in to that address", tt.name)
+		require.Empty(t, other.requests(), "%s: nothing is sent to an address the saved token was not issued for", tt.name)
+		require.Empty(t, home, "%s: and nothing is sent anywhere else", tt.name)
 	}
 }
 
@@ -148,8 +149,22 @@ func TestResolveBindsASavedLoginToItsOwnAddress(t *testing.T) {
 		"another saved login's address": {
 			flags: Resolved{URL: "https://prod.example.com"}, token: "prod-token", project: "proj-p", contextName: "prod",
 		},
-		"a login chosen by name whose address was overridden to another login's": {
-			flags: Resolved{URL: "https://staging.example.com"}, contextFlag: "prod", token: "staging-token", project: "proj-s", contextName: "staging",
+		"a login chosen by name is not swapped for another when the address is overridden to the other's": {
+			flags: Resolved{URL: "https://staging.example.com"}, contextFlag: "prod", token: "",
+		},
+		"a login chosen by $GEASS_CONTEXT is not swapped either": {
+			flags: Resolved{URL: "https://staging.example.com"}, env: map[string]string{"GEASS_CONTEXT": "prod"}, token: "",
+		},
+		"a login chosen by name is still used for its own address": {
+			flags: Resolved{URL: "https://prod.example.com"}, contextFlag: "prod", token: "prod-token", project: "proj-p", contextName: "prod",
+		},
+		"several logins for the address match none of them": {
+			config: &Config{Current: "elsewhere", Contexts: map[string]Context{
+				"elsewhere":      {URL: "https://elsewhere.example.com", Token: "elsewhere-token"},
+				"staging-admin":  {URL: "https://staging.example.com", Token: "admin-token"},
+				"staging-viewer": {URL: "https://staging.example.com", Token: "viewer-token"},
+			}},
+			flags: Resolved{URL: "https://staging.example.com"}, token: "",
 		},
 		"a login chosen by name whose address was overridden elsewhere": {
 			flags: Resolved{URL: "https://other.example.com"}, contextFlag: "prod", token: "",
@@ -209,10 +224,12 @@ func TestDescribingWhenATokenExpires(t *testing.T) {
 	at := func(d time.Duration) *time.Time { v := now.Add(d); return &v }
 
 	require.Equal(t, "never", describeExpiry(nil, now))
+	require.Equal(t, "2026-10-12 12:00 UTC (in under a minute)", describeExpiry(at(30*time.Second), now), "not 'in 0 minutes'")
 	require.Equal(t, "2026-10-12 12:30 UTC (in 30 minutes)", describeExpiry(at(30*time.Minute), now))
 	require.Equal(t, "2026-10-13 00:00 UTC (in 12 hours)", describeExpiry(at(12*time.Hour), now))
 	require.Equal(t, "2026-11-11 12:00 UTC (in 30 days)", describeExpiry(at(30*24*time.Hour), now))
-	require.Contains(t, describeExpiry(at(-time.Minute), now), "expired")
+	require.Equal(t, "2026-10-12 11:59 UTC (expired 1m ago)", describeExpiry(at(-time.Minute), now), "measured from now as given, not from the wall clock")
+	require.Equal(t, "2026-10-09 12:00 UTC (expired 3d ago)", describeExpiry(at(-72*time.Hour), now))
 }
 
 func TestLoginRemembersWhenTheTokenExpiresAndLogoutForgetsIt(t *testing.T) {
@@ -308,7 +325,7 @@ func TestScaleSaysSoWhenTheServiceCannotSleep(t *testing.T) {
 	var requests []string
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			reply(w, 200, sleepDetail(false, "The serverless add-on is not installed"))
+			reply(w, 200, testshapes.SleepStatus("web", false, "The serverless add-on is not installed"))
 			return
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -332,7 +349,7 @@ func TestScaleStillScalesWhenTheServiceCannotSleep(t *testing.T) {
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet:
-			reply(w, 200, sleepDetail(false, "The service has no public host"))
+			reply(w, 200, testshapes.SleepStatus("web", false, "The service has no public host"))
 		case strings.HasSuffix(r.URL.Path, "/scale"):
 			scaled = true
 			reply(w, 200, map[string]any{"ok": true})
@@ -355,7 +372,7 @@ func TestScaleDoesNotClaimWhatTheClusterHasNotConfirmed(t *testing.T) {
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			// The operator has not looked yet: no active, no message.
-			reply(w, 200, map[string]any{"resource": map[string]any{"name": "web", "details": map[string]any{"scaleToZero": map[string]any{"idleSeconds": 600}}}})
+			reply(w, 200, testshapes.SleepUnanswered("web"))
 			return
 		}
 		reply(w, 200, map[string]any{"ok": true})
@@ -484,4 +501,60 @@ func TestListingVariablesAsJSONCarriesPlainConfigurationValues(t *testing.T) {
 
 	require.Contains(t, stdout, `"LOG_LEVEL": "debug"`, "plain configuration is not secret, and the help says so")
 	require.NotContains(t, stdout, "sk_")
+}
+
+// ---- what a login keeps when its name is pointed at another address ----
+
+func TestLoginKeepsTheDefaultsOfTheSameAddressAndDropsThoseOfAnother(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 200, map[string]any{"username": "token:ci", "role": "admin", "authentication": "token"})
+	})
+	h.signedIn(t, "shop", "production")
+
+	code, _, stderr := h.run("login", "--url", h.server.URL, "--token", savedToken, "--name", "stub")
+	require.Equal(t, ExitOK, code, stderr)
+	config, _ := LoadConfig(h.config)
+	require.Equal(t, "shop", config.Contexts["stub"].Project, "signing in again to the same Geass keeps the defaults")
+	require.Equal(t, "production", config.Contexts["stub"].Environment)
+
+	other := newSpy(t)
+	code, _, stderr = h.run("login", "--url", other.server.URL, "--token", savedToken, "--name", "stub")
+	require.Equal(t, ExitOK, code, stderr)
+	config, _ = LoadConfig(h.config)
+	require.Equal(t, other.server.URL, config.Contexts["stub"].URL)
+	require.Empty(t, config.Contexts["stub"].Project, "a project ID from the old Geass means nothing on the new one")
+	require.Empty(t, config.Contexts["stub"].Environment)
+}
+
+// ---- creating a service on a Geass that does not deploy it ----
+
+func TestCreatingWithDeployOnAGeassThatSavesADraftSaysSo(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		// What a Geass older than this command line answers: it ignores deploy, and has no `deployed` to report.
+		reply(w, 200, map[string]any{"ok": true, "name": "web", "kind": "apps"})
+	})
+	h.signedIn(t, "shop", "production")
+
+	code, stdout, stderr := h.run("apps", "create", "web", "--image", "nginx:alpine", "--deploy")
+
+	require.Equal(t, ExitError, code, "the service is not deploying, so this did not do what was asked")
+	require.Contains(t, stderr, "did not deploy it")
+	require.Contains(t, stderr, "geass deploy web")
+	require.NotContains(t, stdout, "started deploying")
+}
+
+func TestListingLoginsMarksAnExpiredTokenAsExpired(t *testing.T) {
+	h := newHarness(t, func(http.ResponseWriter, *http.Request) {})
+	past, future := time.Now().Add(-48*time.Hour), time.Now().Add(48*time.Hour)
+	config := Config{Current: "old", Contexts: map[string]Context{
+		"old": {URL: "https://old.example", Token: "t1", ExpiresAt: &past},
+		"new": {URL: "https://new.example", Token: "t2", ExpiresAt: &future},
+	}}
+	require.NoError(t, config.Save(h.config))
+
+	_, stdout, _ := h.run("config", "get-contexts")
+
+	require.Contains(t, stdout, past.UTC().Format("2006-01-02")+" (expired)")
+	require.Contains(t, stdout, future.UTC().Format("2006-01-02"))
+	require.NotContains(t, stdout, future.UTC().Format("2006-01-02")+" (expired)")
 }

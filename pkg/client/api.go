@@ -135,7 +135,15 @@ type AppStatus struct {
 	PendingChanges int       `json:"pendingChanges"`
 	Replicas       *Replicas `json:"replicas,omitempty"`
 	// Sleeping is a service that stops when idle and has stopped: it is waiting for its next request, not down.
-	Sleeping    bool         `json:"sleeping,omitempty"`
+	Sleeping bool `json:"sleeping,omitempty"`
+	// ScaleToZero is present for a service that asked to sleep when idle. Active is whether it does, which the
+	// operator decides; Message says why not once it has.
+	ScaleToZero *struct {
+		IdleSeconds int32  `json:"idleSeconds"`
+		MaxReplicas int32  `json:"maxReplicas"`
+		Active      bool   `json:"active"`
+		Message     string `json:"message,omitempty"`
+	} `json:"scaleToZero,omitempty"`
 	Build       *BuildStatus `json:"build,omitempty"`
 	LastAttempt *Attempt     `json:"lastAttempt,omitempty"`
 }
@@ -216,26 +224,32 @@ type SleepState struct {
 	Message string
 }
 
-// SleepState reads whether a service that sleeps when idle is doing so.
+// Why says why a service that asked to sleep when idle is not doing so: the operator's message, or that it has not
+// said yet.
+func (s SleepState) Why() string {
+	if s.Message != "" {
+		return s.Message
+	}
+	return "the cluster has not said yet: check scaleToZero in the service's details (resource.details.scaleToZero)"
+}
+
+// SleepState reads whether a service that sleeps when idle is doing so, from the service's status.
 func (c *Client) SleepState(ctx context.Context, name string) (SleepState, error) {
-	detail, err := c.Get(ctx, "apps", name)
+	status, err := c.AppStatus(ctx, name)
 	if err != nil {
 		return SleepState{}, err
 	}
-	details, ok := detail.Resource.Details["scaleToZero"].(map[string]any)
-	if !ok {
+	if status.ScaleToZero == nil {
 		return SleepState{}, nil
 	}
-	state := SleepState{Requested: true}
-	state.Active, _ = details["active"].(bool)
-	state.Message, _ = details["message"].(string)
-	return state, nil
+	return SleepState{Requested: true, Active: status.ScaleToZero.Active, Message: status.ScaleToZero.Message}, nil
 }
 
-// WaitForSleep gives the operator a moment to say whether a service that asked to sleep will, and returns what
-// it last said: as soon as the service is sleeping-capable, or when the wait runs out. A state that is not Active
-// when it returns means the service cannot sleep (Message says why when the operator has said) or the operator
-// had not yet answered. Timeout defaults to ten seconds and Interval to one.
+// WaitForSleep gives the operator a moment to say whether a service that was just asked to sleep will, and returns
+// what it last said: as soon as the service sleeps, or when the wait runs out. It keeps waiting while the service
+// shows no request to sleep at all, because the read can lag the change that made the request. A state that is not
+// Active when it returns means the service cannot sleep (Message says why when the operator has said) or the
+// operator had not yet answered. Timeout defaults to ten seconds and Interval to one.
 func (c *Client) WaitForSleep(ctx context.Context, name string, options WaitOptions) (SleepState, error) {
 	timeout, interval := options.Timeout, options.Interval
 	if timeout <= 0 {
@@ -258,7 +272,7 @@ func (c *Client) WaitForSleep(ctx context.Context, name string, options WaitOpti
 			return last, err
 		}
 		last = state
-		if !state.Requested || state.Active {
+		if state.Active {
 			return state, nil
 		}
 		select {
@@ -378,14 +392,8 @@ func (c *Client) Logs(ctx context.Context, app string, options LogOptions) ([]Lo
 	var out struct {
 		Lines []LogLine `json:"lines"`
 	}
-	if err := c.Do(ctx, http.MethodGet, "/apps/"+url.PathEscape(app)+"/logs", options.values(), nil, &out); err != nil {
-		return nil, err
-	}
-	// The count is kept per container, so a service with several copies answers with more lines than were asked for.
-	if options.Tail > 0 && len(out.Lines) > options.Tail {
-		out.Lines = out.Lines[len(out.Lines)-options.Tail:]
-	}
-	return out.Lines, nil
+	err := c.Do(ctx, http.MethodGet, "/apps/"+url.PathEscape(app)+"/logs", options.values(), nil, &out)
+	return out.Lines, err
 }
 
 // FollowLogs streams a service's logs, recent lines first and then new ones, until the context ends. Tail

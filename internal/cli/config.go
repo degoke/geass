@@ -123,17 +123,22 @@ type Resolved struct {
 // whatever the person typed; GEASS_URL, GEASS_TOKEN, GEASS_PROJECT and GEASS_ENVIRONMENT are for scripts.
 //
 // A saved login belongs to the address it was made for. When --url or GEASS_URL points somewhere else, the
-// chosen login does not apply there: a login saved for that address is used if there is one, and none
-// otherwise. Without this the saved token, which only the address it was issued for should ever see, would be
-// sent to whatever address was typed, and a saved project and environment would be applied to a Geass they
-// are not from. A token given with --token or GEASS_TOKEN is the person's own choice for this run and is used
-// as it is.
+// current login does not apply there: the one login saved for that address is used if there is exactly one, and
+// none otherwise. A login the person chose by name (--context or GEASS_CONTEXT) is never swapped for another,
+// which could be one with more access than they meant to use. Without this the saved token, which only the
+// address it was issued for should ever see, would be sent to whatever address was typed, and a saved project
+// and environment would be applied to a Geass they are not from. A token given with --token or GEASS_TOKEN is
+// the person's own choice for this run and is used as it is.
 func (c Config) Resolve(flags Resolved, contextFlag string, getenv func(string) string) Resolved {
-	name := firstSet(contextFlag, getenv("GEASS_CONTEXT"), c.Current)
+	chosen := firstSet(contextFlag, getenv("GEASS_CONTEXT"))
+	name := firstSet(chosen, c.Current)
 	saved := c.Contexts[name]
 	address := strings.TrimRight(firstSet(flags.URL, getenv("GEASS_URL"), saved.URL), "/")
 	if !sameAddress(saved.URL, address) {
-		name, saved = c.contextForAddress(address)
+		name, saved = "", Context{}
+		if chosen == "" {
+			name, saved = c.contextForAddress(address)
+		}
 	}
 	return Resolved{
 		ContextName: name,
@@ -144,15 +149,20 @@ func (c Config) Resolve(flags Resolved, contextFlag string, getenv func(string) 
 	}
 }
 
-// contextForAddress is the saved login made for an address, or none (an empty name and login). When several were
-// made for it, the first by name is used, so the choice does not change from one run to the next.
+// contextForAddress is the saved login made for an address, or none (an empty name and login) when there is no
+// such login or there are several: which of them was meant is for the person to say with --context.
 func (c Config) contextForAddress(address string) (string, Context) {
+	found := ""
 	for _, name := range c.ContextNames() {
-		if sameAddress(c.Contexts[name].URL, address) {
-			return name, c.Contexts[name]
+		if !sameAddress(c.Contexts[name].URL, address) {
+			continue
 		}
+		if found != "" {
+			return "", Context{}
+		}
+		found = name
 	}
-	return "", Context{}
+	return found, c.Contexts[found]
 }
 
 // sameAddress reports whether two Geass addresses are the same place: the same scheme, host and port, and path.

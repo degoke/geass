@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +17,10 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/internal/testshapes"
 	geass "github.com/degoke/geass/pkg/client"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -38,10 +44,20 @@ func serveLogs(t *testing.T, f tokenFixture) *logFixture {
 	require.NoError(t, f.srv.Client.Create(ctx, logPod(namespace, logsPodQ, "api-prod", 0)))
 	// A neighbour in the same environment, whose lines the api-prod service must never show.
 	require.NoError(t, f.srv.Client.Create(ctx, logPod(namespace, "draft-prod-5f7d8c9b6-zzzzz", "draft-prod", 0)))
+	// A database in the same environment, which a project token cannot list and must not learn the name of from a
+	// service's logs.
+	require.NoError(t, f.srv.Client.Create(ctx, &geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-db", Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassDatabaseSpec{
+			Project: testProjectName, Environment: geassv1alpha1.EnvironmentProduction, Engine: geassv1alpha1.DatabaseEnginePostgres,
+		},
+	}))
+	require.NoError(t, f.srv.Client.Create(ctx, logPod(namespace, "orders-db-1", "orders-db", 0)))
 	logs := &logFixture{logs: map[string]string{
 		namespace + "/" + logsPodX + "/app":           stamp(1) + " listening on 8080\n" + stamp(3) + " level=error msg=\"connect ECONNREFUSED\"\n" + stamp(5) + " GET /healthz 200\n",
 		namespace + "/" + logsPodQ + "/app":           stamp(2) + " listening on 8080\n" + stamp(4) + " warn: slow query\n" + stamp(6) + " GET /healthz 200\n",
 		namespace + "/draft-prod-5f7d8c9b6-zzzzz/app": stamp(7) + " the neighbour's private line\n",
+		namespace + "/orders-db-1/app":                stamp(8) + " the database's own line\n",
 	}}
 	f.srv.podLogs = logs.open
 	return logs
@@ -152,22 +168,66 @@ func TestAServiceCannotBeWidenedToItsNeighboursByTheQuery(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "neighbour", "the service and environment come from the service asked for, not from the query")
 	var body struct {
-		Lines []geass.LogLine `json:"lines"`
+		Lines    []geass.LogLine `json:"lines"`
+		Services []string        `json:"services"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Lines, 6)
+	require.Equal(t, []string{"api-prod"}, body.Services, "a project token reads one service's logs, and learns no other name from them")
+	require.NotContains(t, rec.Body.String(), "orders-db", "least of all a database's, which it cannot list")
+	require.NotContains(t, rec.Body.String(), "draft-prod")
+}
+
+func TestTheProjectsOwnLogsStillListEveryServiceForItsFilter(t *testing.T) {
+	f := newTokenFixture(t)
+	serveLogs(t, f)
+
+	rec := f.do(jsonRequest(f.workspaceToken(t, "admin"), http.MethodGet, "/api/v1/projects/"+testProjectName+"/logs?environment=production", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "orders-db", "the project's route is the project's, and the dashboard's service filter needs the list")
+	require.Contains(t, rec.Body.String(), "api-prod")
 }
 
 func TestTheAppLogsRouteAnswersStructuredLinesAndNotText(t *testing.T) {
 	f := newTokenFixture(t)
 	serveLogs(t, f)
 
-	rec := f.do(jsonRequest(f.workspaceToken(t, "admin"), http.MethodGet, "/api/v1/apps/api-prod/logs?tail=1", nil))
+	token := f.workspaceToken(t, "admin")
+
+	rec := f.do(jsonRequest(token, http.MethodGet, "/api/v1/apps/api-prod/logs?tail=1", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	require.True(t, strings.HasPrefix(string(raw["lines"]), "["), "lines is a list of entries: %s", rec.Body.String())
+	var lines []geass.LogLine
+	require.NoError(t, json.Unmarshal(raw["lines"], &lines))
+	require.Len(t, lines, 1, "the tail counts the newest lines across both copies, not one from each")
+	require.Equal(t, "GET /healthz 200", lines[0].Text)
+	require.Equal(t, logsPodQ, lines[0].Pod, "and it is the newest of them")
+
+	// The stubs of the clients' tests answer in the shape the testshapes package gives. It is held to the real one here.
+	shared, err := json.Marshal(testshapes.LogsAnswer("api-prod"))
+	require.NoError(t, err)
+	var want map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(shared, &want))
+	require.ElementsMatch(t, keysOf(want), keysOf(raw), "the keys of the real answer are the keys the stubs use")
+
+	four := f.do(jsonRequest(token, http.MethodGet, "/api/v1/apps/api-prod/logs?tail=4", nil))
+	var fourLines struct {
+		Lines []geass.LogLine `json:"lines"`
+	}
+	require.NoError(t, json.Unmarshal(four.Body.Bytes(), &fourLines))
+	require.Len(t, fourLines.Lines, 4)
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func TestTheClientFollowsLogsThroughTheRealStream(t *testing.T) {
@@ -371,6 +431,24 @@ func TestTheClientSeesWhetherAServiceCanSleep(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, geass.SleepState{Requested: true, Active: false, Message: "The serverless add-on is not installed"}, state)
 
+	// It comes in the status read, which does not load every resource, in the shape the clients' stubs use.
+	rec := f.do(jsonRequest(f.workspaceToken(t, "admin"), http.MethodGet, "/api/v1/apps/api-prod/status", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var status struct {
+		ScaleToZero map[string]any `json:"scaleToZero"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	var sample struct {
+		ScaleToZero map[string]any `json:"scaleToZero"`
+	}
+	shared, err := json.Marshal(testshapes.SleepStatus("api-prod", false, "x"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(shared, &sample))
+	require.NotEmpty(t, sample.ScaleToZero)
+	for key := range sample.ScaleToZero {
+		require.Contains(t, status.ScaleToZero, key, "the real answer has what the stubs say it has")
+	}
+
 	waited, err := c.WaitForSleep(ctx, "api-prod", geass.WaitOptions{Timeout: 50 * time.Millisecond, Interval: 5 * time.Millisecond})
 	require.NoError(t, err)
 	require.False(t, waited.Active, "it gives the operator a moment and then says what it last said")
@@ -398,4 +476,88 @@ func TestWhoAmIReportsWhenATokenExpires(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, me.ExpiresAt, "the client reads the expiry the API sends")
 	require.WithinDuration(t, time.Now().Add(30*24*time.Hour), *me.ExpiresAt, time.Hour)
+}
+
+// ---- deploy is read the way draft is ----
+
+func TestDeployIsReadLikeDraftIsOnTheFormRoutes(t *testing.T) {
+	f := newTokenFixture(t)
+	token := f.workspaceToken(t, "admin")
+	create := func(name string, extra url.Values) *httptest.ResponseRecorder {
+		form := url.Values{"project": {testProjectName}, "environment": {"production"}, "name": {name}, "source": {"image"}, "image": {"nginx:alpine"}}
+		maps.Copy(form, extra)
+		return f.do(bearer(token, http.MethodPost, "/api/v1/apps", form))
+	}
+
+	for i, value := range []string{"on", "true", "1", "yes", "TRUE"} {
+		name := fmt.Sprintf("by-form-%d", i)
+		rec := create(name, url.Values{"deploy": {value}})
+		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", value, rec.Body.String())
+		require.Contains(t, rec.Body.String(), `"deployed":true`, value)
+		var app geassv1alpha1.GeassApp
+		require.NoError(t, f.srv.Client.Get(context.Background(), client.ObjectKey{Name: name, Namespace: platform.SystemNamespace}, &app))
+		require.True(t, app.Spec.Deploy.Enabled, "deploy=%s deploys, and does not quietly save a draft", value)
+	}
+
+	both := create("both-ways", url.Values{"draft": {"true"}, "deploy": {"true"}})
+	require.Equal(t, http.StatusBadRequest, both.Code, "a draft and a deploy are refused however they are spelled: %s", both.Body.String())
+	require.Contains(t, both.Body.String(), "not both")
+
+	off := create("not-asked", url.Values{"deploy": {"false"}})
+	require.Equal(t, http.StatusOK, off.Code, off.Body.String())
+	require.NotContains(t, off.Body.String(), "deployed")
+}
+
+// ---- when the deploy that follows the save does not work ----
+
+func TestAServiceThatCannotBeDeployedAfterItIsSavedIsLeftAsADraftAndSaysSo(t *testing.T) {
+	f := newTokenFixture(t)
+	token := f.workspaceToken(t, "admin")
+	// The save works and the deploy after it does not: the only update a create makes is the deploy's.
+	f.srv.Client = interceptor.NewClient(f.srv.Client.(client.WithWatch), interceptor.Funcs{
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, isApp := obj.(*geassv1alpha1.GeassApp); isApp {
+				return errors.New("the API server is unavailable")
+			}
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+
+	rec := f.do(jsonRequest(token, http.MethodPost, "/api/v1/apps", map[string]any{
+		"project": testProjectName, "environment": "production", "name": "half", "source": "image", "image": "nginx:alpine", "deploy": true,
+	}))
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	message, _ := decodeError(t, rec)
+	require.Contains(t, message, "saved as a draft, but deploying it failed", "the answer says what state it is in")
+	var app geassv1alpha1.GeassApp
+	require.NoError(t, f.srv.Client.Get(context.Background(), client.ObjectKey{Name: "half", Namespace: platform.SystemNamespace}, &app))
+	require.False(t, app.Spec.Deploy.Enabled, "and it is the draft the message says")
+	var history geassv1alpha1.GeassDeploymentList
+	require.NoError(t, f.srv.Client.List(context.Background(), &history, client.MatchingLabels{platform.LabelApp: "half"}))
+	require.Empty(t, history.Items, "with no deployment recorded for it")
+}
+
+func TestCreatingFromARepositoryWithDeployNeedsGitHubWhereADraftDoesNot(t *testing.T) {
+	f := newTokenFixture(t)
+	c := clientFor(t, f, f.workspaceToken(t, "admin"))
+	ctx := context.Background()
+	repository := func(name string, extra map[string]any) map[string]any {
+		fields := map[string]any{"project": testProjectName, "environment": "production", "name": name, "source": "git", "repository": "acme/api", "branch": "main"}
+		maps.Copy(fields, extra)
+		return fields
+	}
+
+	_, err := c.CreateApp(ctx, repository("built", map[string]any{"deploy": true}))
+
+	require.Error(t, err, "nothing here is linked to GitHub, so a repository cannot be built")
+	require.Contains(t, err.Error(), "not configured", "the readiness a deploy needs is checked before anything is saved: %v", err)
+	_, err = c.Get(ctx, "apps", "built")
+	require.True(t, geass.IsNotFound(err), "so no draft is left behind")
+
+	_, err = c.CreateApp(ctx, repository("held", map[string]any{"draft": true}))
+	require.NoError(t, err, "while a draft does not need it")
+	detail, err := c.Get(ctx, "apps", "held")
+	require.NoError(t, err)
+	require.Equal(t, "draft", detail.Resource.State)
 }

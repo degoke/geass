@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/degoke/geass/internal/testshapes"
 	"github.com/degoke/geass/pkg/client"
 )
 
@@ -279,23 +280,13 @@ func TestARefusalTellsTheAgentNotToRetry(t *testing.T) {
 	require.Contains(t, text, "do not retry")
 }
 
-// realLogsAnswer is what the dashboard sends for a service's logs: the lines under "lines", an entry each,
-// beside the services the project has and a note. (The tool once looked under "logs", which is not there, and
-// its stub answered under "logs" too, so it returned nothing and no test noticed.)
-func realLogsAnswer(lines ...map[string]any) map[string]any {
-	return map[string]any{
-		"lines": lines, "services": []string{"web"}, "truncated": false,
-		"note": "These are the logs the nodes still hold. Output from pods that have been replaced or deleted is not kept.",
-	}
-}
-
 func TestLogsAreReturnedAsPlainLines(t *testing.T) {
 	var logsQuery string
 	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
 		switch r.URL.Path {
 		case "/api/v1/apps/web/logs":
 			logsQuery = r.URL.RawQuery
-			respond(w, 200, realLogsAnswer(
+			respond(w, 200, testshapes.LogsAnswer("web",
 				map[string]any{"t": "2026-01-01T10:00:00Z", "service": "web", "pod": "web-1", "container": "app", "line": "listening on 8080", "level": "info"},
 				map[string]any{"t": "2026-01-01T10:00:01Z", "service": "web", "pod": "web-2", "container": "app", "line": "Error: boom", "level": "error"},
 			))
@@ -318,28 +309,9 @@ func TestLogsAreReturnedAsPlainLines(t *testing.T) {
 	require.NotEmpty(t, empty)
 }
 
-func TestLogsAreBoundedToTheTailWhateverTheServiceSends(t *testing.T) {
-	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
-		entries := make([]map[string]any, 0, 8)
-		for i := range 8 {
-			entries = append(entries, map[string]any{"t": "2026-01-01T10:00:0" + string(rune('0'+i)) + "Z", "pod": "web-1", "line": "line " + string(rune('0'+i))})
-		}
-		respond(w, 200, realLogsAnswer(entries...))
-		return true
-	}}).serve(t)
-	_, session := connect(t, Options{Client: api})
-
-	text, isError := call(t, session, "get_logs", map[string]any{"app": "web", "tail": 3})
-
-	require.False(t, isError)
-	require.Equal(t, 3, strings.Count(text, "\n"), "three lines even though the dashboard counts the tail per copy: %q", text)
-	require.Contains(t, text, "line 7")
-	require.NotContains(t, text, "line 4")
-}
-
 func TestNoLogLinesSaysSo(t *testing.T) {
 	api := (&stub{me: observer(), handler: func(w http.ResponseWriter, r *http.Request) bool {
-		respond(w, 200, realLogsAnswer())
+		respond(w, 200, testshapes.LogsAnswer("web"))
 		return true
 	}}).serve(t)
 	_, session := connect(t, Options{Client: api})
@@ -355,7 +327,7 @@ func TestAProjectTokenCanReadLogs(t *testing.T) {
 		if r.URL.Path != "/api/v1/apps/web/logs" {
 			return false
 		}
-		respond(w, 200, realLogsAnswer(map[string]any{"t": "2026-01-01T10:00:00Z", "pod": "web-1", "line": "hello"}))
+		respond(w, 200, testshapes.LogsAnswer("web", map[string]any{"t": "2026-01-01T10:00:00Z", "pod": "web-1", "line": "hello"}))
 		return true
 	}}).serve(t)
 	_, session := connect(t, Options{Client: api})
@@ -542,23 +514,12 @@ func TestSettingAVariableIsPendingUntilDeployed(t *testing.T) {
 	require.NotContains(t, text, "debug", "the value is not echoed back")
 }
 
-// sleepDetail is the answer for a service that asked to sleep when idle, as the dashboard describes it once the
-// operator has looked: active, or not with the reason.
-func sleepDetail(active bool, message string) map[string]any {
-	return map[string]any{
-		"resource": map[string]any{"kind": "app", "name": "web", "state": "ready", "details": map[string]any{
-			"scaleToZero": map[string]any{"idleSeconds": 600, "maxReplicas": 3, "active": active, "message": message},
-		}},
-		"spec": map[string]any{}, "status": map[string]any{},
-	}
-}
-
 func TestSleepWhenIdleIsASettingNotAScale(t *testing.T) {
 	var method, path string
 	var body map[string]any
 	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodGet {
-			respond(w, 200, sleepDetail(true, "Sleeps when idle"))
+			respond(w, 200, testshapes.SleepStatus("web", true, "Sleeps when idle"))
 			return true
 		}
 		method, path = r.Method, r.URL.Path
@@ -712,7 +673,7 @@ func TestAServiceThatCannotSleepIsReportedAsSuch(t *testing.T) {
 	var patched bool
 	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodGet {
-			respond(w, 200, sleepDetail(false, "The serverless add-on is not installed"))
+			respond(w, 200, testshapes.SleepStatus("web", false, "The serverless add-on is not installed"))
 			return true
 		}
 		patched = true
@@ -856,4 +817,43 @@ func TestAnAdminInReadOnlyModeSeesWhatAnObserverSeesAndTheConnection(t *testing.
 	slices.Sort(got)
 
 	require.Equal(t, want, got)
+}
+
+func TestASleepSettingThatIsSavedIsNotAnErrorWhenTheCheckFails(t *testing.T) {
+	var patched bool
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet {
+			respond(w, 500, map[string]string{"error": "could not load the service", "code": "internal_error"})
+			return true
+		}
+		patched = true
+		respond(w, 200, map[string]any{"ok": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api, PollInterval: time.Millisecond, SleepCheckTimeout: 30 * time.Millisecond})
+
+	text, isError := call(t, session, "set_sleep_when_idle", map[string]any{"app": "web", "enabled": true})
+
+	require.True(t, patched)
+	require.False(t, isError, "the setting is saved: an error would read as if it were not")
+	require.Contains(t, text, `"sleepWhenIdle": true`)
+	require.Contains(t, text, "saved, but whether the service can sleep when idle could not be checked")
+	require.Contains(t, text, "could not load the service", "and why the check failed")
+}
+
+func TestCreateAppWithDeployOnAGeassThatSavesADraftSaysSo(t *testing.T) {
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		// A Geass older than this server ignores deploy, saves a draft and has no `deployed` to report.
+		respond(w, 200, map[string]any{"ok": true, "name": "web", "kind": "apps"})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "create_app", map[string]any{"project": "shop", "environment": "production", "name": "web", "image": "nginx:alpine", "deploy": true})
+
+	require.False(t, isError, text)
+	require.Contains(t, text, `"draft": true`, "it is a draft, whatever was asked")
+	require.NotContains(t, text, "deploying")
+	require.Contains(t, text, "did not deploy it")
+	require.Contains(t, text, "deploy_app")
 }

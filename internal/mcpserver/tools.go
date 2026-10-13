@@ -289,14 +289,13 @@ func (s *Server) register() {
 			// sleep keeps running, and the agent is told so instead of being told it sleeps.
 			state, err := api.WaitForSleep(ctx, in.App, client.WaitOptions{Timeout: s.opts.SleepCheckTimeout, Interval: s.opts.PollInterval})
 			if err != nil {
-				return nil, err
+				// The setting is saved, which the agent must not lose sight of: an error here would read as if it were not.
+				out["note"] = "saved, but whether the service can sleep when idle could not be checked (" + err.Error() + "): call get_app and read resource.details.scaleToZero"
+				return out, nil
 			}
 			out["active"] = state.Active
 			if !state.Active {
-				out["reason"] = state.Message
-				if state.Message == "" {
-					out["reason"] = "the cluster has not said yet: call get_app and read resource.details.scaleToZero"
-				}
+				out["reason"] = state.Why()
 				out["note"] = "saved, but the service cannot sleep when idle yet and stays running"
 			}
 			return out, nil
@@ -402,13 +401,19 @@ func (s *Server) register() {
 			if in.Port > 0 {
 				fields["port"] = in.Port
 			}
-			if _, err := api.CreateApp(ctx, fields); err != nil {
+			answer, err := api.CreateApp(ctx, fields)
+			if err != nil {
 				return nil, err
 			}
-			out := map[string]any{"created": in.Name, "draft": !in.Deploy}
-			if in.Deploy {
+			// Only what the API says it did is reported: a Geass older than this server ignores deploy and saves a draft.
+			deployed := in.Deploy && answer["deployed"] == true
+			out := map[string]any{"created": in.Name, "draft": !deployed}
+			switch {
+			case deployed:
 				out["deploying"] = true
 				out["next"] = "call app_status to see how it is going"
+			case in.Deploy:
+				out["note"] = "saved as a draft: this Geass did not deploy it (it may be older than this server). Call deploy_app"
 			}
 			return out, nil
 		})

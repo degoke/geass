@@ -274,11 +274,14 @@ func dash(value string) string {
 	return value
 }
 
-func age(t time.Time) string {
+func age(t time.Time) string { return ageAt(t, time.Now()) }
+
+// ageAt is how long before now t was, in the units a table shows.
+func ageAt(t, now time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	elapsed := time.Since(t)
+	elapsed := now.Sub(t)
 	switch {
 	case elapsed < time.Minute:
 		return fmt.Sprintf("%ds", int(elapsed.Seconds()))

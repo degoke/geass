@@ -78,6 +78,11 @@ func (a *App) loginCmd() *cobra.Command {
 			}
 			contextID := firstSet(name, a.flags.context, contextName(resolved.URL))
 			saved := config.Contexts[contextID]
+			// The project and environment a login kept are IDs from the Geass it was made for: a name that is pointed at
+			// another address starts afresh, and keeps them only when the address is the same.
+			if !sameAddress(saved.URL, resolved.URL) {
+				saved = Context{}
+			}
 			saved.URL, saved.Token, saved.User, saved.Role = resolved.URL, token, me.Username, me.Role
 			saved.ExpiresAt = me.ExpiresAt
 			if config.Contexts == nil {
@@ -161,7 +166,9 @@ func describeExpiry(expires *time.Time, now time.Time) string {
 	remaining := expires.Sub(now)
 	switch {
 	case remaining <= 0:
-		return fmt.Sprintf("%s (expired %s ago)", when, age(*expires))
+		return fmt.Sprintf("%s (expired %s ago)", when, ageAt(*expires, now))
+	case remaining < time.Minute:
+		return fmt.Sprintf("%s (in under a minute)", when)
 	case remaining < time.Hour:
 		return fmt.Sprintf("%s (in %d minutes)", when, int(remaining.Minutes()))
 	case remaining < 48*time.Hour:
@@ -295,6 +302,9 @@ func (a *App) configCmd() *cobra.Command {
 					expires := "-"
 					if saved.ExpiresAt != nil {
 						expires = saved.ExpiresAt.UTC().Format("2006-01-02")
+						if saved.ExpiresAt.Before(time.Now()) {
+							expires += " (expired)"
+						}
 					}
 					rows = append(rows, []string{current, name, saved.URL, dash(saved.User), dash(saved.Project), dash(saved.Environment), expires})
 				}

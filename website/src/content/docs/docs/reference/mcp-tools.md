@@ -212,6 +212,7 @@ Shows whether a service is up and what its last deploy did. Call it to find out 
 | `pendingChanges` | How many changes wait for a deploy. |
 | `replicas` | `desired`, `ready` and `available` copies. Present once the service has a Deployment. |
 | `sleeping` | `true` for a service that sleeps when idle and has stopped. It is waiting for a request, not down. |
+| `scaleToZero` | For a service that asked to sleep when idle: `idleSeconds`, `maxReplicas`, and `active` and `message` once the operator has said whether it does and why not. |
 | `build` | The latest build: `name`, `phase` (`Pending`, `WaitingForCI`, `Running`, `Succeeded`, `Failed` or `Cancelled`), `failureReason`, `sourceRevision`, `ciState`, `startedAt`, `completedAt`. |
 | `lastAttempt` | The latest deploy attempt: `id`, `phase` (`Running`, `Succeeded` or `Failed`), `startedAt`, `completedAt`, `summary` and `errors` (each with `recordedAt` and `message`). |
 
@@ -543,11 +544,14 @@ seconds for the cluster to say whether the service can sleep. See [Scale to zero
 | `idle_seconds` | integer | no | How long without requests before it stops, 30 to 86400. The API's default is 300. Anything else is refused with `idle_seconds must be between 30 and 86400`. |
 
 - **Calls:** `PATCH /apps/{app}` with `{"scaleToZero": "on" | "off", "idleSeconds": ...}`, then, when `enabled` is
-  true, `GET /apps/{app}` until `resource.details.scaleToZero.active` is `true` or the wait ends.
+  true, `GET /apps/{app}/status` until `scaleToZero.active` is `true` or the wait ends. A service that shows no request
+  to sleep yet is waited for too, since the read can lag the change.
 - **Returns:** `{"app": "web", "sleepWhenIdle": true, "active": true}` when the service sleeps when idle. When it
   cannot, because the add-on is missing, the service has no public host or CPU autoscaling is on, the setting stays
   saved, the service stays running, and the result says so: `"active": false`, a `reason` (the cluster's message, or
-  that it has not said yet) and a `note`. With `enabled` false: `{"app": "web", "sleepWhenIdle": false}`.
+  that it has not said yet) and a `note`. With `enabled` false: `{"app": "web", "sleepWhenIdle": false}`. When the
+  setting was saved but reading the state back failed, the result is not an error: it has `sleepWhenIdle` and a `note`
+  that says the check could not be made and why.
 
 ### `set_variable`
 
@@ -601,7 +605,9 @@ Creates a service from an image or a GitHub repository. It is saved as a draft u
 - **Needs:** Full access. Hidden from project tokens. **Calls:** `POST /apps` with `draft`, or with `deploy` when the
   argument is set.
 - **Returns:** `{"created": "web", "draft": true}`. With `deploy`: `{"created": "web", "draft": false, "deploying":
-  true, "next": "call app_status to see how it is going"}`, and the service is deploying. With neither `image` nor
+  true, "next": "call app_status to see how it is going"}`, and the service is deploying. The tool reports that only
+  when the API says it deployed the service. A Geass older than the tool saves a draft instead, and the result then
+  says `"draft": true` with a `note` that it did not deploy it: call `deploy_app`. With neither `image` nor
   `repository` the call fails with `give an image or a repository to run`. If you give both, `image` wins. A function
   cannot be created with this tool.
 - With `deploy`, the deploy is checked before anything is saved: a cluster with no room for the service fails the
