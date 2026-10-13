@@ -79,7 +79,7 @@ export function StatCard({ label, value, detail, children }) {
 }
 
 export function Badge({ children, tone = "neutral" }) {
-  const color = tone === "success" ? "green" : tone === "danger" ? "red" : tone === "warning" ? "yellow" : tone === "signal" ? "yellow" : "gray";
+  const color = tone === "success" ? "signal" : tone === "danger" ? "red" : tone === "warning" ? "yellow" : tone === "signal" ? "yellow" : "gray";
   return <MantineBadge color={color} variant={tone === "neutral" ? "outline" : "light"} tt="none" fw={500} radius="sm">{children}</MantineBadge>;
 }
 
@@ -183,7 +183,7 @@ export function DataTable({ columns, rows, empty, getRowKey, onRowClick, rowClas
             <MantineTable.Tr
               key={getRowKey ? getRowKey(row, index) : index}
               onClick={onRowClick ? () => onRowClick(row, index) : undefined}
-              bg={String(mark).includes("selected") ? "#f3f7ff" : undefined}
+              bg={String(mark).includes("selected") ? "rgba(124, 224, 160, 0.08)" : undefined}
               style={{ cursor: onRowClick ? "pointer" : undefined, opacity: String(mark).includes("disabled") ? 0.45 : 1 }}
             >
               {columns.map((col) => (
@@ -247,7 +247,7 @@ export function PageHeader({ leading, title, description, actions }) {
         {leading}
         <div>
           {title && (typeof title === "string" ? <Title order={1}>{title}</Title> : title)}
-          {description && <Text size="sm" c="dimmed">{description}</Text>}
+          {description && <Text size="sm" c="dimmed" className="rw-page-description">{description}</Text>}
         </div>
       </Group>
       {actions ? <Group gap="xs">{actions}</Group> : null}
@@ -505,7 +505,7 @@ export function PageStack({ children }) {
 
 export function PageSection({ title, description, actions, children, plain = false }) {
   const body = plain ? children : (
-    <Paper withBorder radius={8} p="md" shadow="none" className="rw-settings-mantine-panel">{children}</Paper>
+    <Paper withBorder radius={0} p="md" shadow="none" className="rw-settings-mantine-panel">{children}</Paper>
   );
   return (
     <Stack gap={6} className="rw-page-section">
@@ -579,7 +579,7 @@ export function PendingBanner({ message, action }) {
 }
 
 export function CapacityBar({ value }) {
-  const color = value >= 90 ? "red" : value >= 70 ? "yellow" : "green";
+  const color = value >= 90 ? "red" : value >= 70 ? "yellow" : "signal";
   return <Progress value={value} color={color} size="sm" mt="sm" aria-label={`${value}% utilized`} />;
 }
 
@@ -589,13 +589,12 @@ export function EndpointBox({ children }) {
 
 export function LoginPanel({ children }) {
   return (
-    <Center mih="100vh" p="md" bg="#0e0e10">
-      <Paper withBorder radius={8} p="xl" shadow="none" maw={420} w="100%" bg="#17171a">
-        <Stack align="center" gap="lg">
-          <img src="/geass-symbol.svg" alt="" width={40} height={40} />
-          {children}
-        </Stack>
-      </Paper>
-    </Center>
+    <div className="rw-login">
+      <div className="rw-login-card">
+        <img className="rw-login-logo" src="/geass-logo-dark.svg" alt="Geass" height={30} width={113} />
+        {children}
+        <p className="rw-login-foot">Absolute command over servers you already own.</p>
+      </div>
+    </div>
   );
 }

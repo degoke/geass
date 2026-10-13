@@ -1,6 +1,6 @@
 import { Group, Text } from "@mantine/core";
-import { Check } from "lucide-react";
 
+/** A state is a shape and a colour, never colour alone: round is fine, square is broken, a ring is in progress. */
 export function Status({ value }) {
   const ready = value === "True" || value === "Ready" || value === "healthy" || value === true;
   const failed = value === "False" || value === "Failed" || value === "Error";
@@ -8,7 +8,7 @@ export function Status({ value }) {
   const deleting = value === "Deleting";
   const unavailable = value === "Unavailable";
   const settingUp = value === "Setting up" || value === "Pending";
-  const color = ready ? "#59c77a" : failed ? "#e66a6a" : unavailable ? "#e8a84a" : deleting ? "#e8a84a" : "#a3a3ab";
+  const color = ready ? "#7ce0a0" : failed ? "#ff8a8a" : unavailable ? "#e8a84a" : deleting ? "#e8a84a" : "#a1a1a1";
   const label = ready
     ? "Ready"
     : failed
@@ -22,11 +22,19 @@ export function Status({ value }) {
             : settingUp
               ? "Setting up"
               : "Pending";
+  const inProgress = !ready && !failed && !deleting && !unavailable;
+  const mark = {
+    width: 8,
+    height: 8,
+    flex: "none",
+    display: "inline-block",
+    borderRadius: failed ? 0 : 99,
+    background: inProgress ? "transparent" : color,
+    boxShadow: inProgress ? `inset 0 0 0 1.5px ${color}` : "none",
+  };
   return (
-    <Group gap={6} wrap="nowrap">
-      {ready ? <Check size={14} color={color} strokeWidth={2.5} /> : (
-        <span style={{ width: 8, height: 8, borderRadius: 99, background: color, display: "inline-block" }} />
-      )}
+    <Group gap={8} wrap="nowrap">
+      <span style={mark} aria-hidden="true" />
       <Text size="sm" c={color} fw={500}>{label}</Text>
     </Group>
   );

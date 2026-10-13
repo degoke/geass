@@ -1,0 +1,179 @@
+---
+title: Geass documentation
+description: Everything about running your own cloud with Geass, from the first install to day-two operations.
+tableOfContents: false
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Geass turns servers you already own, from a single VPS to a rack of bare metal, into a managed cloud. You ship apps
+and databases from one dashboard, a command line or an AI agent, scale across machines, back up your data, and
+connect the clouds you already use, while everything runs on hardware you control.
+
+These docs describe what Geass does today: what each feature is for, how to use it, what it does under the hood,
+and what to check when something goes wrong.
+
+## Start here
+
+<CardGrid>
+  <LinkCard
+    title="What is Geass"
+    href="/docs/overview/introduction/"
+    description="What it is, who it is for, and when it is the right tool."
+  />
+  <LinkCard
+    title="Install Geass"
+    href="/docs/getting-started/install/"
+    description="One command on a fresh server. Requirements, what the installer does, how to confirm it worked."
+  />
+  <LinkCard
+    title="Deploy your first app"
+    href="/docs/getting-started/first-app/"
+    description="From a fresh install to a running, reachable app."
+  />
+  <LinkCard
+    title="Core concepts"
+    href="/docs/overview/concepts/"
+    description="Projects, environments, resources, pending changes, nodes and connections."
+  />
+</CardGrid>
+
+## Build and deploy
+
+<CardGrid>
+  <LinkCard
+    title="Apps"
+    href="/docs/guides/apps/"
+    description="Run code from a Git repository or a container image."
+  />
+  <LinkCard
+    title="GitHub and builds"
+    href="/docs/guides/github-and-builds/"
+    description="Connect repositories and deploy on every push."
+  />
+  <LinkCard
+    title="Pull-request environments"
+    href="/docs/guides/pull-request-environments/"
+    description="A throwaway copy of your project for every pull request."
+  />
+  <LinkCard
+    title="Domains and TLS"
+    href="/docs/guides/domains-and-tls/"
+    description="Put your apps and the dashboard on your own domain."
+  />
+</CardGrid>
+
+## Data and storage
+
+<CardGrid>
+  <LinkCard
+    title="Databases"
+    href="/docs/guides/databases/"
+    description="Postgres, MySQL, Redis and SQLite, with the connect string wired into your apps."
+  />
+  <LinkCard
+    title="Backups and restore"
+    href="/docs/guides/backups-and-restore/"
+    description="Back up to your own AWS account and restore to a new database."
+  />
+  <LinkCard
+    title="Object storage"
+    href="/docs/guides/object-storage/"
+    description="Buckets for your apps, in the cluster or in AWS."
+  />
+  <LinkCard
+    title="Storage and volumes"
+    href="/docs/guides/storage/"
+    description="Local storage, the Longhorn add-on, and resizing volumes."
+  />
+</CardGrid>
+
+## Run and scale
+
+<CardGrid>
+  <LinkCard
+    title="Scaling and placement"
+    href="/docs/guides/scaling-and-placement/"
+    description="Replicas, regions, and how workloads land on nodes."
+  />
+  <LinkCard
+    title="Sleep when idle"
+    href="/docs/guides/scale-to-zero/"
+    description="Stop a service while nobody uses it and start it on the next request."
+  />
+  <LinkCard
+    title="Compliance node tags"
+    href="/docs/guides/compliance-tags/"
+    description="Keep a project's work on the servers you choose, and other projects off them."
+  />
+  <LinkCard
+    title="Network isolation"
+    href="/docs/guides/network-isolation/"
+    description="Projects are private by default. Open exactly what you need."
+  />
+  <LinkCard
+    title="Logs, metrics and terminal"
+    href="/docs/guides/observability/"
+    description="See what your services are doing and get a shell in them."
+  />
+  <LinkCard
+    title="Troubleshooting"
+    href="/docs/operations/troubleshooting/"
+    description="Symptoms, causes and fixes, in the dashboard and with kubectl."
+  />
+</CardGrid>
+
+## Automate
+
+<CardGrid>
+  <LinkCard
+    title="Command line"
+    href="/docs/guides/command-line/"
+    description="Install geass, sign in with a code you approve in the dashboard, then deploy, watch and scale from a terminal or CI."
+  />
+  <LinkCard
+    title="MCP server for AI agents"
+    href="/docs/guides/mcp-server/"
+    description="Let an AI agent inspect and run services as an API token, limited by that token's role."
+  />
+  <LinkCard
+    title="Users and API tokens"
+    href="/docs/guides/users-and-tokens/"
+    description="Dashboard roles, and tokens for scripts, CI, the command line and agents."
+  />
+</CardGrid>
+
+## Reference
+
+<CardGrid>
+  <LinkCard
+    title="REST API"
+    href="/docs/reference/rest-api/"
+    description="The versioned /api/v1 and the dashboard routes, with API tokens."
+  />
+  <LinkCard
+    title="CLI commands"
+    href="/docs/reference/cli/"
+    description="Every geass command, flag, environment variable and exit code."
+  />
+  <LinkCard
+    title="MCP tools"
+    href="/docs/reference/mcp-tools/"
+    description="Every tool the geass MCP server offers an agent."
+  />
+  <LinkCard
+    title="Resources"
+    href="/docs/reference/resources/overview/"
+    description="Every custom resource, field by field."
+  />
+  <LinkCard
+    title="Configuration"
+    href="/docs/reference/configuration/"
+    description="Installer variables, operator flags and platform settings."
+  />
+  <LinkCard
+    title="Glossary"
+    href="/docs/reference/glossary/"
+    description="The words Geass uses, in one place."
+  />
+</CardGrid>

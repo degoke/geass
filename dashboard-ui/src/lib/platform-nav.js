@@ -8,7 +8,7 @@ export const ACCOUNT_PRIMARY = [
     icon: "projects",
     label: "Projects",
     to: "/projects",
-    active: (path) => path === "/" || path === "/projects",
+    active: (path) => path === "/" || path === "/projects" || path.startsWith("/projects/"),
   },
   {
     id: "templates",

@@ -1,6 +1,12 @@
-# Geass
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="geass-brand/logos/geass-horizontal-dark.svg">
+    <img alt="geass" src="geass-brand/logos/geass-horizontal-light.svg" height="56">
+  </picture>
+</h1>
 
-> Managed cloud experience on your VPS or bare-metal — powered by K3s.
+<p align="center"><strong>Absolute command over servers you already own.</strong><br>
+Managed cloud experience on your VPS or bare-metal, powered by K3s.</p>
 
 [![License: ELv2](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/degoke/geass)](https://github.com/degoke/geass/releases/latest)
