@@ -29,6 +29,28 @@ type GeassProjectNetwork struct {
 	// +listType=set
 	// +optional
 	AllowFromProjects []string `json:"allowFromProjects,omitempty"`
+	// BlockNodeAddresses stops the project's services from opening connections to the machines the cluster
+	// runs on: every node's own addresses, including the one it has on the pod network. What is left open on
+	// them is the Kubernetes API port of the control plane, which some workloads (Postgres instances) need.
+	// A service that reaches another through a node's address, such as its own public address when DNS points
+	// straight at a node, stops working, so a project that does not say is not blocked: this field has no
+	// default, because a default would reach the projects that existed before it did. Projects created by the
+	// dashboard or the API say true. Geass keeps the rule in step with the cluster's nodes
+	// as they join and leave.
+	// +optional
+	BlockNodeAddresses bool `json:"blockNodeAddresses,omitempty"`
+}
+
+// NewProjectNetwork is the network a project is created with by the dashboard and the API:
+// isolated from other projects, and kept away from the cluster's machines. A project made any other way, with a
+// manifest, says what it wants, and a project that existed before the block did stays as it was.
+func NewProjectNetwork() *GeassProjectNetwork {
+	return &GeassProjectNetwork{Isolation: NetworkIsolationProject, BlockNodeAddresses: true}
+}
+
+// ProjectBlocksNodeAddresses reports whether a project's services are cut off from the cluster's machines.
+func ProjectBlocksNodeAddresses(project *GeassProject) bool {
+	return project != nil && project.Spec.Network != nil && project.Spec.Network.BlockNodeAddresses
 }
 
 // ProjectNetworkIsolation is the isolation a project runs with. A project that never chose one is

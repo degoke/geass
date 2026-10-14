@@ -244,8 +244,29 @@ Without this block, databases that turn on backups report that they need storage
 | --- | --- | --- | --- | --- |
 | `spec.network.isolation` | string | `Project` | `Project` or `None` | `Project` lets only the project itself, the platform and visitors who arrive through your domains reach the project's services. `None` leaves them open to every service in the cluster. |
 | `spec.network.allowFromProjects` | list of strings | empty | At most 20 unique items. Each matches `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, 63 characters at most | Other projects, by project ID, whose services may reach this project's services. It has no effect when isolation is `None`. |
+| `spec.network.blockNodeAddresses` | boolean | none: `false` when absent | none | `true` stops the project's services from opening connections to the cluster's machines: every node address and the two lowest addresses of every node's pod range. The Kubernetes API stays open on the control plane. It is independent of `isolation`, and Geass keeps the rule in step with the nodes as they join and leave. Projects created by the dashboard or the API set it to `true`, and one that existed before it does not have it. |
 
-A project with no `spec.network` is isolated. The policies apply to every environment of the project and change within seconds of a save. See [Network isolation](/docs/guides/network-isolation/).
+A project with no `spec.network` is isolated and not blocked from the machines. The policies apply to every environment of the project and change within seconds of a save. See [Network isolation](/docs/guides/network-isolation/).
+
+### Quota
+
+Without `spec.projectQuota` and `spec.environmentQuota` nothing is capped. `spec.projectQuota` caps the project as a whole, added up over its environments. `spec.environmentQuota` caps **each** environment of the project, pull request environments included. An environment is held to the lower of the two.
+
+| Field | Type | Default | Validation | Meaning |
+| --- | --- | --- | --- | --- |
+| `spec.projectQuota.cpu` | quantity | none | none | The most CPU the project's pods may ask for in total, such as `8`. |
+| `spec.projectQuota.memory` | quantity | none | none | The most memory they may ask for in total, such as `16Gi`. |
+| `spec.projectQuota.storage` | quantity | none | none | The most disk their volumes may ask for in total, such as `200Gi`. |
+| `spec.projectQuota.pods` | integer | none | At least 1 | The most pods the project may have running or waiting at once. |
+
+| Field | Type | Default | Validation | Meaning |
+| --- | --- | --- | --- | --- |
+| `spec.environmentQuota.cpu` | quantity | none | none | The most CPU one environment's pods may ask for in total, such as `4` or `500m`. |
+| `spec.environmentQuota.memory` | quantity | none | none | The most memory they may ask for in total, such as `8Gi`. |
+| `spec.environmentQuota.storage` | quantity | none | none | The most disk their volumes may ask for in total, such as `50Gi`. |
+| `spec.environmentQuota.pods` | integer | none | At least 1 | The most pods one environment may have running or waiting at once. |
+
+A field left out is not capped. The caps count requests, not use. Each environment may ask for what the others leave of the project's cap, so the environments' own caps are rewritten as usage changes. See [Project limits](/docs/guides/project-limits/).
 
 ## Status
 
@@ -289,7 +310,8 @@ The operator retries a failing project every 30 seconds. Errors that the operato
 | **Project Settings**, **Shared Variables** | Adds or removes entries in `spec.sharedVariables`. Turning on **Secret** stores the value in the Secret `<project>-shared-secrets` and sets `secretRef`. |
 | **Project Settings**, **Webhooks** | Edits `spec.webhooks`. The actions are **New webhook**, **Send test**, **Edit**, **Pause** or **Enable**, **Rotate signing secret** and **Delete**. |
 | **Project Settings**, **Backups** | Writes `spec.backupStorage` when you choose an AWS connection and click **Use this connection**. **Remove** clears it. |
-| **Project Settings**, **Network** | Writes `spec.network`. The switch is **Keep this project's services private**, and the list is **Projects allowed to reach this one**. |
+| **Project Settings**, **Network** | Writes `spec.network`. The switches are **Keep this project's services private** and **Keep this project's services away from the cluster's machines**, and the list is **Projects allowed to reach this one**. |
+| **Project Settings**, **Limits** | Writes `spec.projectQuota` (**Whole project**) and `spec.environmentQuota` (**Each environment**). The fields in each are **CPU**, **Memory**, **Storage** and **Pods**. Emptying a field removes that limit. |
 | **Project Settings**, **Compliance** | Writes `spec.requiredTags`. The list is the tags that nodes in the project's region carry. **Save** applies the checks above. Only an admin can save. |
 | **Project Settings**, **Integrations**, **Connect to GitHub** or **Disconnect** | Sets or clears `spec.githubConnectionRef`. Disconnecting does not delete the connection object or its Secret. |
 | **Project Settings**, **Danger**, **Manage Services**, **Remove** | Deletes one service, database, logical database or bucket of the project, after a confirmation. |
@@ -328,7 +350,9 @@ For each environment the operator creates and maintains these objects. `<ns>` is
 | --- | --- | --- |
 | Namespace | `<ns>` | Labels `geass.dev/managed-by=geass`, `geass.dev/project=<project>`, `geass.dev/environment=<environment>` and `geass.dev/cluster=<cluster>`. The operator adds `geass.dev/project` to an existing namespace that lacks it. |
 | NetworkPolicy | `geass-project-isolation` | Created when isolation is `Project`, deleted when it is `None`. It allows ingress from namespaces labeled with the project or an allowed project, and from `kube-system`, `geass-system`, `monitoring`, `cnpg-system` and `keda`. |
-| NetworkPolicy | `geass-block-cloud-metadata` | Always present. It lets pods reach everything except the cloud provider's instance metadata range `169.254.0.0/16`. |
+| NetworkPolicy | `geass-block-cloud-metadata` | Always present. It lets pods reach everything except the cloud provider's instance metadata range `169.254.0.0/16`. When `spec.network.blockNodeAddresses` is `true` it also excepts the cluster's node addresses, and allows the Kubernetes API port on the control plane. |
+| ResourceQuota | `geass-project-quota` | Present only when `spec.environmentQuota` or `spec.projectQuota` sets a cap. Holds `requests.cpu`, `requests.memory`, `requests.storage` and `pods` for the caps that are set: the environment's own, or what the others leave of the project's, whichever is lower. |
+| LimitRange | `geass-project-defaults` | Present only when the quota caps CPU or memory. It gives a container that asks for none a default request, so the quota can count it. |
 | Annotation on the namespace | `geass.dev/required-tags` | The required tags, comma-separated and sorted. The admission policy `geass-required-node-tags` reads it. Removed when the project requires nothing. |
 | ConfigMap | `geass-shared-variables` | Plain shared variables of the environment, when there are any. |
 | Secret | `geass-shared-secrets` | Secret shared variables of the environment, when there are any. |

@@ -51,7 +51,7 @@ func TestAProjectEnvironmentGetsIsolationAndTheMetadataBlock(t *testing.T) {
 	c := networkTestClient(networkNamespace("shop-production", map[string]string{platform.LabelProject: "shop"}))
 	r := &GeassProjectReconciler{Client: c}
 
-	require.NoError(t, r.reconcileProjectNetwork(context.Background(), networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(context.Background(), networkTestProject(nil), "shop-production", nil))
 
 	_, isolated := getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	_, blocked := getPolicy(t, c, "shop-production", platform.CloudMetadataPolicyName)
@@ -64,13 +64,13 @@ func TestNetworkPoliciesFollowTheAllowList(t *testing.T) {
 	r := &GeassProjectReconciler{Client: c}
 	ctx := context.Background()
 
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production"))
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(&geassv1alpha1.GeassProjectNetwork{AllowFromProjects: []string{"web"}}), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production", nil))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(&geassv1alpha1.GeassProjectNetwork{AllowFromProjects: []string{"web"}}), "shop-production", nil))
 
 	policy, _ := getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	require.Equal(t, []string{"shop", "web"}, policy.Spec.Ingress[0].From[0].NamespaceSelector.MatchExpressions[0].Values)
 
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production", nil))
 	policy, _ = getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	require.Equal(t, []string{"shop"}, policy.Spec.Ingress[0].From[0].NamespaceSelector.MatchExpressions[0].Values,
 		"taking a project off the list closes the door again")
@@ -81,23 +81,23 @@ func TestOpeningAProjectRemovesIsolationButKeepsTheMetadataBlock(t *testing.T) {
 	r := &GeassProjectReconciler{Client: c}
 	ctx := context.Background()
 
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production", nil))
 	open := networkTestProject(&geassv1alpha1.GeassProjectNetwork{Isolation: geassv1alpha1.NetworkIsolationNone})
-	require.NoError(t, r.reconcileProjectNetwork(ctx, open, "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, open, "shop-production", nil))
 
 	_, isolated := getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	_, blocked := getPolicy(t, c, "shop-production", platform.CloudMetadataPolicyName)
 	require.False(t, isolated)
 	require.True(t, blocked, "opting out of isolation must not hand cloud credentials to the project's pods")
 
-	require.NoError(t, r.reconcileProjectNetwork(ctx, open, "shop-production"), "reconciling an already-open project is not an error")
+	require.NoError(t, r.reconcileProjectNetwork(ctx, open, "shop-production", nil), "reconciling an already-open project is not an error")
 }
 
 func TestANamespaceMissingItsProjectLabelIsRepairedSoTheProjectIsNotCutOffFromItself(t *testing.T) {
 	c := networkTestClient(networkNamespace("shop-production", map[string]string{"keep": "me"}))
 	r := &GeassProjectReconciler{Client: c}
 
-	require.NoError(t, r.reconcileProjectNetwork(context.Background(), networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(context.Background(), networkTestProject(nil), "shop-production", nil))
 
 	ns := &corev1.Namespace{}
 	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "shop-production"}, ns))
@@ -109,13 +109,13 @@ func TestAPolicyChangedByHandIsPutBack(t *testing.T) {
 	c := networkTestClient(networkNamespace("shop-production", map[string]string{platform.LabelProject: "shop"}))
 	r := &GeassProjectReconciler{Client: c}
 	ctx := context.Background()
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production", nil))
 
 	policy, _ := getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	policy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
 	require.NoError(t, c.Update(ctx, policy))
 
-	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production"))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, networkTestProject(nil), "shop-production", nil))
 	policy, _ = getPolicy(t, c, "shop-production", platform.ProjectIsolationPolicyName)
 	require.NotEmpty(t, policy.Spec.Ingress[0].From, "an empty ingress rule would admit everyone")
 }

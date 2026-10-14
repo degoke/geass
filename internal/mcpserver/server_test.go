@@ -789,12 +789,12 @@ func TestHowManyToolsEachKindOfTokenSees(t *testing.T) {
 		options Options
 		count   int
 	}{
-		"a viewer":                          {me: viewer(), count: 12},
-		"an observer":                       {me: observer(), count: 15},
+		"a viewer":                          {me: viewer(), count: 14},
+		"an observer":                       {me: observer(), count: 17},
 		"a project token":                   {me: projectToken(), count: 18},
-		"an admin":                          {me: admin(), count: 26},
-		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 27},
-		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 16},
+		"an admin":                          {me: admin(), count: 29},
+		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 30},
+		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 18},
 		"a project token in read-only mode": {me: projectToken(), options: Options{ReadOnly: true}, count: 9},
 	} {
 		tt.options.Client = (&stub{me: tt.me}).serve(t)
@@ -856,4 +856,109 @@ func TestCreateAppWithDeployOnAGeassThatSavesADraftSaysSo(t *testing.T) {
 	require.NotContains(t, text, "deploying")
 	require.Contains(t, text, "did not deploy it")
 	require.Contains(t, text, "deploy_app")
+}
+
+// ---- project limits ----
+
+func TestEveryTokenWithAWorkspaceSeesTheLimitsButOnlyAnAdminCanChangeQuota(t *testing.T) {
+	for name, tt := range map[string]struct {
+		me        map[string]any
+		wantWrite bool
+	}{
+		"admin":    {admin(), true},
+		"observer": {observer(), false},
+		"viewer":   {viewer(), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, session := connect(t, Options{Client: (&stub{me: tt.me}).serve(t)})
+			names := toolNames(t, session)
+			require.Contains(t, names, "project_quota")
+			require.Contains(t, names, "project_network")
+			require.Equal(t, tt.wantWrite, slices.Contains(names, "set_project_quota"))
+			require.NotContains(t, names, "set_project_network", "opening a project to the cluster, or letting it reach the machines, is for a person to choose")
+		})
+	}
+}
+
+func TestAProjectTokenAndReadOnlyModeNeverSeeTheQuotaTool(t *testing.T) {
+	_, session := connect(t, Options{Client: (&stub{me: projectToken()}).serve(t)})
+	for _, hidden := range []string{"project_quota", "project_network", "set_project_quota"} {
+		require.NotContains(t, toolNames(t, session), hidden, "outside a project token's environment")
+	}
+
+	_, session = connect(t, Options{Client: (&stub{me: admin()}).serve(t), ReadOnly: true})
+	names := toolNames(t, session)
+	require.Contains(t, names, "project_quota")
+	require.NotContains(t, names, "set_project_quota")
+}
+
+func TestTheQuotaToolSendsOnlyTheLimitsTheAgentNamed(t *testing.T) {
+	var posted map[string]any
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.URL.Path == "/api/v1/projects/shop/quota" && r.Method == http.MethodPost:
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			respond(w, 200, map[string]any{"ok": true})
+		case r.URL.Path == "/api/v1/projects/shop/quota":
+			respond(w, 200, map[string]any{"project": map[string]any{"cpu": "8"}, "used": map[string]any{"cpu": "2"}})
+		default:
+			return false
+		}
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "set_project_quota", map[string]any{"project": "shop", "project_cpu": "8", "memory": ""})
+
+	require.False(t, isError, text)
+	require.Equal(t, map[string]any{"projectCpu": "8", "memory": ""}, posted, "a limit that was left out is not sent, and an empty one is, which removes it")
+	require.Contains(t, text, `"cpu": "8"`, "the agent is shown the limits as they are now")
+
+	text, isError = call(t, session, "set_project_quota", map[string]any{"project": "shop"})
+	require.True(t, isError)
+	require.Contains(t, text, "name at least one limit")
+
+	text, isError = call(t, session, "project_quota", map[string]any{"project": "shop"})
+	require.False(t, isError, text)
+	require.Contains(t, text, `"used"`)
+}
+
+// Agents send a count as a number, and a CPU of 4 as one too. A field that accepted only strings would refuse them
+// before the tool ran, with a type error.
+func TestTheQuotaToolTakesNumbersAsWellAsStrings(t *testing.T) {
+	var posted map[string]any
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.URL.Path == "/api/v1/projects/shop/quota" && r.Method == http.MethodPost:
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			respond(w, 200, map[string]any{"ok": true})
+		case r.URL.Path == "/api/v1/projects/shop/quota":
+			respond(w, 200, map[string]any{})
+		default:
+			return false
+		}
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "set_project_quota", map[string]any{"project": "shop", "pods": 20, "project_cpu": 4, "memory": "8Gi", "project_pods": 0.5e2})
+
+	require.False(t, isError, text)
+	require.Equal(t, map[string]any{"pods": "20", "projectCpu": "4", "memory": "8Gi", "projectPods": "50"}, posted)
+}
+
+func TestTheNetworkToolReadsAndNothingElse(t *testing.T) {
+	var methods []string
+	api := (&stub{me: admin(), handler: func(w http.ResponseWriter, r *http.Request) bool {
+		methods = append(methods, r.Method)
+		respond(w, 200, map[string]any{"isolation": "Project", "allowFromProjects": []string{}, "blockNodeAddresses": true})
+		return true
+	}}).serve(t)
+	_, session := connect(t, Options{Client: api})
+
+	text, isError := call(t, session, "project_network", map[string]any{"project": "shop"})
+
+	require.False(t, isError, text)
+	require.Contains(t, text, `"blockNodeAddresses": true`)
+	require.NotContains(t, methods, http.MethodPost)
 }

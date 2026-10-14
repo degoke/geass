@@ -57,6 +57,10 @@ func run(args []string) int {
 	switch mode {
 	case installer.ModeUpgrade:
 		steps = upgradeSteps(opts)
+	case installer.ModeJoinServer:
+		steps = installer.JoinServerSteps(opts)
+	case installer.ModeRefreshServer:
+		steps = installer.RefreshServerSteps()
 	case installer.ModeReinstall:
 		steps = append([]installer.Step{
 			&installer.ConfirmReinstall{Yes: opts.Yes, SkipSnapshot: opts.Upgrade.SkipSnapshot},

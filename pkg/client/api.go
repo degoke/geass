@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -569,4 +571,96 @@ func (c *Client) DeployEnvironment(ctx context.Context, project, environment str
 func (c *Client) APISpec(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
 	return out, c.Do(ctx, http.MethodGet, "/openapi.json", nil, nil, &out)
+}
+
+// ProjectNetwork is who can reach a project's services.
+type ProjectNetwork struct {
+	// Isolation is "Project" (only the project itself, the platform and public domains) or "None" (every service in
+	// the cluster).
+	Isolation         string   `json:"isolation"`
+	AllowFromProjects []string `json:"allowFromProjects"`
+	// BlockNodeAddresses keeps the project's services away from the machines the cluster runs on.
+	BlockNodeAddresses bool `json:"blockNodeAddresses"`
+}
+
+// ProjectNetwork reads who can reach a project's services.
+func (c *Client) ProjectNetwork(ctx context.Context, project string) (ProjectNetwork, error) {
+	var out ProjectNetwork
+	return out, c.Do(ctx, http.MethodGet, "/projects/"+url.PathEscape(project)+"/network", nil, nil, &out)
+}
+
+// NetworkChange is what to change about a project's network. A field that is nil is left as it is.
+type NetworkChange struct {
+	Isolation          *string
+	AllowFromProjects  *[]string
+	BlockNodeAddresses *bool
+}
+
+// SetProjectNetwork changes part of a project's network and leaves the rest as it was, and returns what it is now. The
+// API takes the whole of who may reach a project each time, so what is not being changed is read first and sent back.
+func (c *Client) SetProjectNetwork(ctx context.Context, project string, change NetworkChange) (ProjectNetwork, error) {
+	current, err := c.ProjectNetwork(ctx, project)
+	if err != nil {
+		return ProjectNetwork{}, err
+	}
+	body := map[string]any{"isolation": current.Isolation, "allowFromProjects": current.AllowFromProjects}
+	if change.Isolation != nil {
+		body["isolation"] = *change.Isolation
+	}
+	if change.AllowFromProjects != nil {
+		body["allowFromProjects"] = *change.AllowFromProjects
+	}
+	if change.BlockNodeAddresses != nil {
+		body["blockNodeAddresses"] = *change.BlockNodeAddresses
+	}
+	if err := c.Do(ctx, http.MethodPost, "/projects/"+url.PathEscape(project)+"/network", nil, body, nil); err != nil {
+		return ProjectNetwork{}, err
+	}
+	return c.ProjectNetwork(ctx, project)
+}
+
+// QuotaLimits is a set of limits on what pods ask for. A limit that is not set is empty.
+type QuotaLimits struct {
+	CPU     string `json:"cpu,omitempty"`
+	Memory  string `json:"memory,omitempty"`
+	Storage string `json:"storage,omitempty"`
+	Pods    int    `json:"pods,omitempty"`
+}
+
+// IsZero reports whether no limit is set.
+func (q QuotaLimits) IsZero() bool { return q == QuotaLimits{} }
+
+// ProjectQuota is what a project is capped at.
+type ProjectQuota struct {
+	// Environment is the cap on each environment of the project.
+	Environment QuotaLimits `json:"environment"`
+	// Project is the cap on the project as a whole, added up over its environments.
+	Project QuotaLimits `json:"project"`
+	// Used is what the project's environments ask for together, for what the whole-project cap covers.
+	Used QuotaLimits `json:"used"`
+}
+
+// ProjectQuota reads a project's limits and what it uses of them.
+func (c *Client) ProjectQuota(ctx context.Context, project string) (ProjectQuota, error) {
+	var out ProjectQuota
+	return out, c.Do(ctx, http.MethodGet, "/projects/"+url.PathEscape(project)+"/quota", nil, nil, &out)
+}
+
+// QuotaFields are the names of the limits the API takes: the environment's own, and the project's as a whole.
+var QuotaFields = []string{"cpu", "memory", "storage", "pods", "projectCpu", "projectMemory", "projectStorage", "projectPods"}
+
+// SetProjectQuota changes the limits named in fields and returns the limits as they are now. A limit that is not in
+// fields keeps its value, and one whose value is empty is removed. The names are QuotaFields.
+func (c *Client) SetProjectQuota(ctx context.Context, project string, fields map[string]string) (ProjectQuota, error) {
+	body := make(map[string]any, len(fields))
+	for name, value := range fields {
+		if !slices.Contains(QuotaFields, name) {
+			return ProjectQuota{}, fmt.Errorf("%q is not a limit: use one of %s", name, strings.Join(QuotaFields, ", "))
+		}
+		body[name] = value
+	}
+	if err := c.Do(ctx, http.MethodPost, "/projects/"+url.PathEscape(project)+"/quota", nil, body, nil); err != nil {
+		return ProjectQuota{}, err
+	}
+	return c.ProjectQuota(ctx, project)
 }

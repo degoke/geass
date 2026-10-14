@@ -185,6 +185,10 @@ type clusterView struct {
 	target string
 	// controlPlane is the oldest K3s version a control plane node reports.
 	controlPlane string
+	// controlPlanes counts the control plane servers, and controlPlanesBehind names the ones that run an older K3s
+	// than the target, in name order.
+	controlPlanes       int
+	controlPlanesBehind []string
 	// workers are the nodes that Geass manages and can reach over SSH, in name order.
 	workers []managedWorker
 	// unmanaged are worker nodes that have no GeassNode, so there is no way to reach them: they are left to be
@@ -192,6 +196,20 @@ type clusterView struct {
 	unmanaged []string
 	// notReady are the nodes that are not ready, and degraded the Longhorn volumes that are not healthy.
 	notReady, degraded []string
+}
+
+// waitingForControlPlane says why workers are not moved yet, and how to move the control plane. With one control plane
+// server the installer does it. With several it upgrades only the server it runs on, and the others are upgraded by hand,
+// so naming them is what tells a person where to go.
+func (v clusterView) waitingForControlPlane() string {
+	if v.controlPlanes <= 1 {
+		return fmt.Sprintf("the control plane runs %s, and workers are not moved ahead of it. Upgrade it first: "+
+			"run the installer on the control plane machine with --k3s-version %s", v.controlPlane, v.target)
+	}
+	return fmt.Sprintf("%d of %d control plane servers run an older K3s than %s (%s), and workers are not moved ahead of them. "+
+		"The installer upgrades only the server it runs on, with --k3s-version %s. Upgrade each of the others, one at a time and "+
+		"waiting for its node to be ready, with K3s's install script: INSTALL_K3S_VERSION=%s INSTALL_K3S_EXEC=server",
+		len(v.controlPlanesBehind), v.controlPlanes, v.target, strings.Join(v.controlPlanesBehind, ", "), v.target, v.target)
 }
 
 type managedWorker struct {
@@ -217,7 +235,14 @@ func (r *GeassK3sUpgradeReconciler) observe(
 	controlPlane []corev1.Node,
 	target string,
 ) (clusterView, error) {
-	view := clusterView{target: target, controlPlane: oldestK3sVersion(controlPlane)}
+	view := clusterView{target: target, controlPlane: oldestK3sVersion(controlPlane), controlPlanes: len(controlPlane)}
+	for i := range controlPlane {
+		version := controlPlane[i].Status.NodeInfo.KubeletVersion
+		if order, err := release.CompareK3s(version, target); release.ValidK3s(version) && err == nil && order < 0 {
+			view.controlPlanesBehind = append(view.controlPlanesBehind, controlPlane[i].Name)
+		}
+	}
+	slices.Sort(view.controlPlanesBehind)
 
 	byName := make(map[string]*corev1.Node, len(k8sNodes))
 	for i := range k8sNodes {
@@ -313,8 +338,7 @@ func (r *GeassK3sUpgradeReconciler) advance(
 	}
 	if order, err := release.CompareK3s(view.controlPlane, view.target); err == nil && order < 0 {
 		status.Phase = geassv1alpha1.K3sUpgradeWaitingForControlPlane
-		status.Message = fmt.Sprintf("the control plane runs %s, and workers are not moved ahead of it. Upgrade it first: "+
-			"run the installer on the control plane machine with --k3s-version %s", view.controlPlane, view.target)
+		status.Message = view.waitingForControlPlane()
 		return r.wait(ctx, cluster, observed, status, k3sUpgradeWaitForControlPlane)
 	}
 

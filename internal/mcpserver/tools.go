@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,42 @@ type nameInput struct {
 
 type projectInput struct {
 	Project string `json:"project" jsonschema:"the project's name"`
+}
+
+// setQuotaInput names the limits to change. A limit that is left out keeps its value, and one given as an empty
+// string is removed, which is why these can be absent: "not given" and "empty" are different things. A limit is an
+// amount such as "500m" or "8Gi", or a plain number, and agents send numbers as numbers (4, 20) as often as strings, so a
+// field takes either.
+type setQuotaInput struct {
+	Project        string `json:"project" jsonschema:"the project's name"`
+	CPU            any    `json:"cpu,omitempty" jsonschema:"the most CPU one environment's pods may ask for, such as 4 or 500m; empty removes the limit"`
+	Memory         any    `json:"memory,omitempty" jsonschema:"the most memory one environment's pods may ask for, such as 8Gi; empty removes the limit"`
+	Storage        any    `json:"storage,omitempty" jsonschema:"the most disk one environment's volumes may ask for, such as 50Gi; empty removes the limit"`
+	Pods           any    `json:"pods,omitempty" jsonschema:"the most pods one environment may have at once, such as 20; empty removes the limit"`
+	ProjectCPU     any    `json:"project_cpu,omitempty" jsonschema:"the most CPU the whole project's pods may ask for, added up over its environments; empty removes the limit"`
+	ProjectMemory  any    `json:"project_memory,omitempty" jsonschema:"the most memory the whole project's pods may ask for; empty removes the limit"`
+	ProjectStorage any    `json:"project_storage,omitempty" jsonschema:"the most disk the whole project's volumes may ask for; empty removes the limit"`
+	ProjectPods    any    `json:"project_pods,omitempty" jsonschema:"the most pods the whole project may have at once; empty removes the limit"`
+}
+
+// fields is the limits the agent named, by the names the API uses.
+func (in setQuotaInput) fields() map[string]string {
+	fields := map[string]string{}
+	for name, value := range map[string]any{
+		"cpu": in.CPU, "memory": in.Memory, "storage": in.Storage, "pods": in.Pods,
+		"projectCpu": in.ProjectCPU, "projectMemory": in.ProjectMemory, "projectStorage": in.ProjectStorage, "projectPods": in.ProjectPods,
+	} {
+		switch typed := value.(type) {
+		case nil:
+		case string:
+			fields[name] = strings.TrimSpace(typed)
+		case float64:
+			fields[name] = strconv.FormatFloat(typed, 'f', -1, 64)
+		default:
+			fields[name] = strings.TrimSpace(fmt.Sprint(typed))
+		}
+	}
+	return fields
 }
 
 type metricsInput struct {
@@ -202,6 +239,25 @@ func (s *Server) register() {
 	add(s, toolSpec{name: "project_compliance", description: "Show the node tags a project requires (such as hipaa) and where it falls short of them.", level: readAccess, workspaceOnly: true, readOnly: true},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (any, error) {
 			return api.Compliance(ctx, in.Project)
+		})
+
+	add(s, toolSpec{name: "project_network", description: "Show who can reach a project's services (only the project itself, or the whole cluster, and any other projects let in) and whether they are kept away from the machines the cluster runs on. This tool reads it and cannot change it.", level: readAccess, workspaceOnly: true, readOnly: true},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (any, error) {
+			return api.ProjectNetwork(ctx, in.Project)
+		})
+
+	add(s, toolSpec{name: "project_quota", description: "Show what a project is capped at (per environment, and for the project as a whole) and what its environments ask for together. A project with no limits can ask for everything the cluster has.", level: readAccess, workspaceOnly: true, readOnly: true},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (any, error) {
+			return api.ProjectQuota(ctx, in.Project)
+		})
+
+	add(s, toolSpec{name: "set_project_quota", description: "Change a project's limits on what its pods may ask for. Name the limits to change: one you leave out keeps its value, and one given as an empty string is removed. A service that no longer fits stays unavailable until the limit is raised, so check project_quota first. Takes effect within a moment.", level: workspaceAdmin, idempotent: true},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in setQuotaInput) (any, error) {
+			fields := in.fields()
+			if len(fields) == 0 {
+				return nil, fmt.Errorf("name at least one limit to change, such as cpu or project_memory")
+			}
+			return api.SetProjectQuota(ctx, in.Project, fields)
 		})
 
 	add(s, toolSpec{name: "app_metrics", description: "CPU, memory, network and request use over time, for a service, database or project.", level: readAccess, readOnly: true},

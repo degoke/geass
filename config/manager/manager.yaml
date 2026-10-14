@@ -77,6 +77,22 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+        # A pod is evicted from a node that stops answering after 300 seconds unless it says otherwise. On a cluster with
+        # more than one control plane server the operator then starts on another one, and what the cluster waits is these
+        # seconds. 30 is long enough not to move it for a node that is only slow.
+        # It is a trade. A restart is not free: the operator reads the whole cluster again, which takes about 9 seconds
+        # per 1,000 services (see the Cluster size page). And on a cluster with one server the taint evicts the pod after
+        # these seconds all the same, with nowhere to move it: it starts again on that node when the node is back, so
+        # an outage of more than about 70 seconds (the 40 of the node monitor, and these 30) now restarts the operator, where the
+        # default tolerated it for five minutes.
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       securityContext:
         # Projects are configured by default to adhere to the "restricted" Pod Security Standards.
         # This ensures that deployments meet the highest security requirements for Kubernetes.
@@ -97,10 +113,12 @@ spec:
         # generate a password.
         image: geass-operator:v0.0.1
         env:
-        # Makes the Go runtime collect harder as it nears the container limit (512Mi) instead of being
-        # killed for it. Below the limit, so the runtime's own overhead still fits.
+        # Makes the Go runtime collect harder as it nears the container limit (1Gi) instead of being
+        # killed for it. Below the limit, so the runtime's own overhead still fits. Measured with 20,000 services
+        # (see the Cluster size page): 785 MiB at rest and 830 MiB at the heaviest moment of a restart. The
+        # operator held to 512Mi and 400MiB did not survive a restart at that size.
         - name: GOMEMLIMIT
-          value: 400MiB
+          value: 800MiB
         name: manager
         ports:
         - containerPort: 8086
@@ -138,10 +156,12 @@ spec:
           periodSeconds: 10
         # TODO(user): Configure the resources accordingly based on the project requirements.
         # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+        # A limit is not a reservation: the scheduler places the pod by its request, and a small cluster's
+        # operator uses about a tenth of the limit.
         resources:
           limits:
             cpu: 500m
-            memory: 512Mi
+            memory: 1Gi
           requests:
             cpu: 10m
             memory: 128Mi

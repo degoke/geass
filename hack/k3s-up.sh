@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 mkdir -p "$DIR"
 if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker rm -fv "$NAME" >/dev/null 2>&1 || true
   docker run -d --name "$NAME" --privileged --tmpfs /run --tmpfs /var/run \
     -p "127.0.0.1:${API_PORT}:6443" -p "127.0.0.1:${HTTP_PORT}:80" \
     -e K3S_KUBECONFIG_MODE=644 "$IMAGE" server --tls-san 127.0.0.1 >/dev/null

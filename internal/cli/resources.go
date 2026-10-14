@@ -110,7 +110,7 @@ func (a *App) getCmd(kind, use string) *cobra.Command {
 
 func (a *App) projectsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "projects", Aliases: []string{"project"}, Short: "List and inspect projects"}
-	cmd.AddCommand(a.listCmd("projects", "list", "ls"), a.getCmd("projects", "get NAME"))
+	cmd.AddCommand(a.listCmd("projects", "list", "ls"), a.getCmd("projects", "get NAME"), a.projectQuotaCmd(), a.projectNetworkCmd())
 	return cmd
 }
 

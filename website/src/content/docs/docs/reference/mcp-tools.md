@@ -15,7 +15,7 @@ an agent, read [MCP server for AI agents](/docs/guides/mcp-server/).
   (`dev` when the build did not set one).
 - **Instructions.** When an agent connects, the server sends it a short briefing (see [Instructions](#instructions)).
 - **Transports.** Standard input and output, or Streamable HTTP with `--listen`.
-- **27 tools in all**, 26 without `delete_resource`. Which of them an agent sees depends on its token
+- **30 tools in all**, 29 without `delete_resource`. Which of them an agent sees depends on its token
   (see [Which tools an agent sees](#which-tools-an-agent-sees)).
 
 Every tool takes a JSON object. An argument that is not in the tool's schema is rejected. A tool's result is one block
@@ -62,6 +62,9 @@ fails while the agent waits for it is not an error: it is a result that says why
 | [`list_buckets`](#list_buckets) | Lists object storage buckets | Any workspace token | read-only |
 | [`list_nodes`](#list_nodes) | Lists the cluster's nodes and their tags | Any workspace token | read-only |
 | [`project_compliance`](#project_compliance) | A project's required node tags | Any workspace token | read-only |
+| [`project_network`](#project_network) | Who can reach a project's services | Any workspace token | read-only |
+| [`project_quota`](#project_quota) | A project's limits and what it uses of them | Any workspace token | read-only |
+| [`set_project_quota`](#set_project_quota) | Changes a project's limits | Full access | idempotent |
 | [`deploy_app`](#deploy_app) | Deploys a service's pending changes | Full access or project token | |
 | [`rollback_app`](#rollback_app) | Returns a service to an earlier deployment | Full access or project token | |
 | [`scale_app`](#scale_app) | Sets the number of copies | Full access or project token | idempotent |
@@ -88,10 +91,10 @@ access** token, because that tool only reads. `--allow-delete` adds `delete_reso
 
 | Token | Tools |
 | --- | --- |
-| **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance` (12) |
-| **Read only, with logs** (`observer`) | The 12 above, plus `get_logs`, `deployment_logs`, `list_variables` (15) |
-| **Full access** (`admin`) | All except `delete_resource` (26), and `delete_resource` with `--allow-delete` (27) |
-| **Full access** with `--read-only` | The 15 of an `observer`, plus `database_connection` (16). |
+| **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance`, `project_network`, `project_quota` (14) |
+| **Read only, with logs** (`observer`) | The 14 above, plus `get_logs`, `deployment_logs`, `list_variables` (17) |
+| **Full access** (`admin`) | All except `delete_resource` (29), and `delete_resource` with `--allow-delete` (30) |
+| **Full access** with `--read-only` | The 17 of an `observer`, plus `database_connection` (18). |
 | Project token | `whoami`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `get_logs`, `deployment_logs`, `list_variables`, `deploy_app`, `rollback_app`, `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable`, `set_function_trigger`, `remove_function_trigger`, `invoke_function` (18) |
 
 A project token with `--read-only` gets the first nine tools in its list. Hiding a tool is a convenience. The API
@@ -427,9 +430,37 @@ Shows the node tags a project requires, such as `hipaa`, and where it falls shor
   the nodes that carry a required tag without being reserved for it. See
   [Compliance tags](/docs/guides/compliance-tags/).
 
+### `project_network`
+
+Shows who can reach a project's services: only the project itself (with the platform and public domains) or every
+service in the cluster, any other projects let in, and whether the services are kept away from the machines the cluster
+runs on. This tool only reads. There is no tool that changes it, because opening a project up, or letting it reach the
+machines, is a choice for a person.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `project` | string | yes | The project's ID. |
+
+- **Needs:** any workspace token. **Calls:** `GET /projects/{project}/network`.
+- **Returns:** `isolation` (`Project` or `None`), `allowFromProjects` and `blockNodeAddresses`. See
+  [Network isolation](/docs/guides/network-isolation/).
+
+### `project_quota`
+
+Shows what a project is capped at, per environment and for the project as a whole, and what its environments ask for
+together. A project with no limits can ask for everything the cluster has.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `project` | string | yes | The project's ID. |
+
+- **Needs:** any workspace token. **Calls:** `GET /projects/{project}/quota`.
+- **Returns:** `environment`, `project` and `used`, each with `cpu`, `memory`, `storage` and `pods` where they are set.
+  See [Project limits](/docs/guides/project-limits/).
+
 ## Deploying and changing services
 
-These tools need **Full access** or a project token, and are absent with `--read-only`.
+These tools need **Full access** or a project token (`set_project_quota` needs **Full access**), and are absent with `--read-only`.
 
 ### `deploy_app`
 
@@ -518,6 +549,21 @@ Returns a service to an earlier deployment.
 - It fails with `<app> has no earlier deployment to go back to` when there is only one deployment, and for a function
   (functions cannot be rolled back). A rollback records a deployment of its own, so a second call with no `deployment`
   goes to the entry before that one. Pass `deployment` to choose.
+
+### `set_project_quota`
+
+Changes a project's limits on what its pods may ask for. Name the limits to change. One you leave out keeps its value,
+and one you give as an empty string is removed. A service that no longer fits stays unavailable until the limit is
+raised, so read [`project_quota`](#project_quota) first. It takes effect within a moment.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `project` | string | yes | The project's ID. |
+| `cpu`, `memory`, `storage`, `pods` | string or number | no | The most one environment's pods may ask for, such as `4`, `8Gi`, `50Gi` and `20`. A plain number is as good as a string. |
+| `project_cpu`, `project_memory`, `project_storage`, `project_pods` | string or number | no | The most the whole project may ask for, added up over its environments. |
+
+- **Needs:** **Full access** only: a project token cannot raise its own limit. **Calls:** `POST /projects/{project}/quota`.
+- **Returns:** the limits as they are afterwards, as `project_quota` does. It is an error to name no limit.
 
 ### `scale_app`
 

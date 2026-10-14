@@ -95,6 +95,42 @@ spec:
                 description: DisplayName is the user-facing project name shown by
                   the dashboard (lowercase slug, e.g. morning-beach).
                 type: string
+              environmentQuota:
+                description: |-
+                  EnvironmentQuota caps what each environment of this project can use. Without it nothing is capped
+                  and one project can use all the room the cluster has.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the most CPU the pods of one environment may
+                      ask for in total, such as "4" or "500m".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the most memory the pods of one environment
+                      may ask for in total, such as "8Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  pods:
+                    description: Pods is the most pods one environment may have running
+                      or waiting at once. Finished pods are not counted.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the most disk the volumes of one environment
+                      may ask for in total, such as "50Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
               environments:
                 description: Environments are the isolated environments enabled for
                   this project.
@@ -135,6 +171,17 @@ spec:
                     maxItems: 20
                     type: array
                     x-kubernetes-list-type: set
+                  blockNodeAddresses:
+                    description: |-
+                      BlockNodeAddresses stops the project's services from opening connections to the machines the cluster
+                      runs on: every node's own addresses, including the one it has on the pod network. What is left open on
+                      them is the Kubernetes API port of the control plane, which some workloads (Postgres instances) need.
+                      A service that reaches another through a node's address, such as its own public address when DNS points
+                      straight at a node, stops working, so a project that does not say is not blocked: this field has no
+                      default, because a default would reach the projects that existed before it did. Projects created by the
+                      dashboard or the API say true. Geass keeps the rule in step with the cluster's nodes
+                      as they join and leave.
+                    type: boolean
                   isolation:
                     default: Project
                     description: Isolation defaults to Project.
@@ -165,6 +212,42 @@ spec:
                     type: integer
                 required:
                 - enabled
+                type: object
+              projectQuota:
+                description: |-
+                  ProjectQuota caps what the whole project can ask for, added up over its environments. It can be set
+                  with an environment quota, and an environment is held to whichever of the two is lower.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the most CPU the pods of the project may ask
+                      for in total, such as "8".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the most memory the pods of the project
+                      may ask for in total, such as "16Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  pods:
+                    description: Pods is the most pods the project may have running
+                      or waiting at once. Finished pods are not counted.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the most disk the volumes of the project
+                      may ask for in total, such as "200Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
                 type: object
               region:
                 description: |-
@@ -384,6 +467,38 @@ spec:
                   type: object
                 maxItems: 50
                 type: array
+              quotaUsage:
+                description: |-
+                  QuotaUsage is what the project's environments ask for together. Present while the project has a
+                  project quota, and as current as the last time an environment's usage changed.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the CPU the project's pods ask for.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the memory the project's pods ask for.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  pods:
+                    description: Pods is how many pods the project has running or
+                      waiting.
+                    format: int32
+                    type: integer
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the disk the project's volumes ask for.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
               reconcileRetry:
                 description: ReconcileRetry tracks provision retries before reconciliation
                   gives up.

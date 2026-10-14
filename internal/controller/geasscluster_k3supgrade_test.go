@@ -306,6 +306,36 @@ func TestWorkersAreNotMovedAheadOfTheControlPlane(t *testing.T) {
 	}
 }
 
+// With several control plane servers the installer upgrades only the one it runs on, so the message has to say which
+// servers are behind and that they are upgraded by hand. It said "run the installer on the control plane machine", which
+// does not apply to them: the installer refuses to upgrade K3s on a server that joined.
+func TestTheWaitForSeveralControlPlanesNamesTheOnesBehindAndHowToUpgradeThem(t *testing.T) {
+	nodes := []worldNode{
+		{name: "cp1", version: upgradeTarget, controlPlane: true},
+		{name: "cp2", version: upgradeOldK3s, controlPlane: true},
+		{name: "cp3", version: upgradeOldK3s, controlPlane: true},
+		{name: "w1", version: upgradeOldK3s},
+	}
+	w := newUpgradeWorld(t, upgradeTarget, nodes...)
+
+	w.reconcile(10)
+
+	require.Empty(t, w.ssh.upgraded)
+	status := w.status()
+	require.Equal(t, geassv1alpha1.K3sUpgradeWaitingForControlPlane, status.Phase)
+	require.Contains(t, status.Message, "2 of 3 control plane servers")
+	require.Contains(t, status.Message, "cp2, cp3")
+	require.NotContains(t, status.Message, "cp1,", "the server that is up to date is not named")
+	require.Contains(t, status.Message, "INSTALL_K3S_VERSION="+upgradeTarget+" INSTALL_K3S_EXEC=server")
+
+	// Once the others have been upgraded by hand, the worker is moved.
+	for _, name := range []string{"cp2", "cp3"} {
+		w.setNode(name, func(n *corev1.Node) { n.Status.NodeInfo.KubeletVersion = upgradeTarget })
+	}
+	w.reconcile(40)
+	require.Equal(t, []string{"w1"}, w.order)
+}
+
 func TestNoNodeIsStartedWhileAnotherIsNotReady(t *testing.T) {
 	nodes := standardNodes()
 	nodes[2].notReady = true

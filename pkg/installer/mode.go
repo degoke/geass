@@ -22,6 +22,11 @@ const (
 	ModeUpgrade Mode = "upgrade"
 	// ModeReinstall removes K3s and builds a new cluster in its place, deleting what the old one held.
 	ModeReinstall Mode = "reinstall"
+	// ModeJoinServer makes a machine that has no K3s an additional control plane server of an existing cluster.
+	ModeJoinServer Mode = "join-server"
+	// ModeRefreshServer is what a server that joined a cluster is asked to do when the installer is run on it again:
+	// keep the operator's image current.
+	ModeRefreshServer Mode = "refresh-server"
 )
 
 // Options are what the installer was asked to do.
@@ -34,6 +39,9 @@ type Options struct {
 	Upgrade UpgradeOptions
 	// K3sVersion pins the K3s release of a new cluster, or (upgrade) the release the control plane is moved to.
 	K3sVersion string
+	// JoinServer and JoinToken make this machine an additional control plane server of the cluster at that
+	// address, with that server token.
+	JoinServer, JoinToken string
 	// Version and Help ask the installer to print something and stop.
 	Version, Help bool
 }
@@ -53,11 +61,20 @@ updates the Geass that is already here, keeping everything it holds. It never re
                          back to the one that ran before
   --force                update although the cluster is not healthy (not ready, degraded volumes)
   --reinstall            DELETE the cluster on this machine and build a new one
+  --join-server <url>    do not build a cluster: make this machine an additional control plane server of the one at
+                         this address (https://host:6443), so that the cluster survives losing one. The server token
+                         is in /var/lib/rancher/k3s/server/token on the first server; give it in GEASS_JOIN_TOKEN
+                         (or --join-token, which other users of this machine can read in the process list). A server
+                         has to run the cluster's K3s, which a machine that has not joined cannot ask it: say which with
+                         --k3s-version (or GEASS_K3S_VERSION), as "k3s --version" on the first server prints it
   --yes                  do not ask for confirmation of --reinstall
   --version              print the release this installer is
   --help                 print this
 
-Environment: GEASS_REINSTALL=1, GEASS_YES=1 and GEASS_NO_ROLLBACK=1 are the same as the options. GEASS_K3S_VERSION is the same as
+Run on a server that joined a cluster, with no options, the installer only puts the operator's image on it, which is what
+lets the operator run there when the first server is gone. Run it on each of them after the first one is updated.
+
+Environment: GEASS_REINSTALL=1, GEASS_YES=1, GEASS_NO_ROLLBACK=1 and GEASS_JOIN_SERVER=<url> are the same as the options. GEASS_K3S_VERSION is the same as
 --k3s-version when a cluster is being built, and is ignored when one is being updated: only the option upgrades its K3s. The settings
 of a new cluster (GEASS_ACME_EMAIL, GEASS_MULTI_SITE, GEASS_NODE_EXTERNAL_IP) apply only when one is being built.
 `
@@ -78,6 +95,8 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	fs.BoolVar(&opts.Upgrade.NoRollback, "no-rollback", false, "")
 	fs.BoolVar(&opts.Upgrade.AllowUntestedK3s, "allow-untested-k3s", false, "")
 	fs.StringVar(&opts.K3sVersion, "k3s-version", "", "")
+	fs.StringVar(&opts.JoinServer, "join-server", "", "")
+	fs.StringVar(&opts.JoinToken, "join-token", "", "")
 	fs.BoolVar(&opts.Version, "version", false, "")
 	fs.BoolVar(&opts.Help, "help", false, "")
 	fs.BoolVar(&opts.Help, "h", false, "")
@@ -108,6 +127,12 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	if opts.K3sVersion == "" {
 		opts.K3sVersion = strings.TrimSpace(getenv("GEASS_K3S_VERSION"))
 	}
+	if opts.JoinServer == "" {
+		opts.JoinServer = strings.TrimSpace(getenv("GEASS_JOIN_SERVER"))
+	}
+	if opts.JoinToken == "" {
+		opts.JoinToken = strings.TrimSpace(getenv("GEASS_JOIN_TOKEN"))
+	}
 	reinstall = reinstall || truthy(getenv("GEASS_REINSTALL"))
 	opts.Upgrade.NoRollback = opts.Upgrade.NoRollback || truthy(getenv("GEASS_NO_ROLLBACK"))
 	opts.Yes = opts.Yes || truthy(getenv("GEASS_YES"))
@@ -115,6 +140,13 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	switch {
 	case reinstall && upgrade:
 		return Options{}, errors.New("--reinstall and --upgrade contradict each other: one deletes the cluster and the other keeps it")
+	case opts.JoinServer != "" && (reinstall || upgrade):
+		return Options{}, errors.New("--join-server adds this machine to a cluster that exists, and cannot be combined with --reinstall or --upgrade")
+	case opts.JoinServer != "":
+		if err := (JoinOptions{ServerURL: opts.JoinServer, Token: opts.JoinToken}).Validate(); err != nil {
+			return Options{}, err
+		}
+		opts.Mode = ModeJoinServer
 	case reinstall:
 		opts.Mode = ModeReinstall
 	case upgrade:
@@ -143,6 +175,9 @@ type Existing struct {
 	K3sPresent bool
 	// Agent says that it is an agent (a worker) and not a server.
 	Agent bool
+	// JoinedServer says that it is a server that joined a cluster another server started, so what is here is one copy
+	// of a cluster and not a cluster of its own.
+	JoinedServer bool
 	// GeassPresent says that the K3s has Geass in it.
 	GeassPresent bool
 	// Unreachable is why the K3s server could not be asked, when it could not be.
@@ -152,9 +187,20 @@ type Existing struct {
 // ChooseMode decides what to do from what was asked for and what is here. It is where the installer stops being
 // willing to delete a cluster on its own account: the only way to Reinstall is to ask for it.
 func ChooseMode(want Mode, here Existing) (Mode, error) {
+	if want == ModeJoinServer {
+		if here.K3sPresent {
+			return "", errors.New("this machine already has K3s, and a machine can only join a cluster before it has one. The installer will not replace a K3s that is here: " +
+				"remove it yourself (and, if it was a server of that cluster, delete its node from the cluster first) and run the installer again")
+		}
+		return ModeJoinServer, nil
+	}
 	if want == ModeReinstall {
 		if !here.K3sPresent {
 			return ModeInstall, nil
+		}
+		if here.JoinedServer {
+			return "", errors.New("--reinstall would delete this server's copy of a cluster that other servers hold too, and leave a member in the cluster's database " +
+				"that no longer exists. Delete this node from the cluster first (kubectl delete node <name>, from another server), then run the installer again")
 		}
 		return ModeReinstall, nil
 	}
@@ -176,6 +222,13 @@ func ChooseMode(want Mode, here Existing) (Mode, error) {
 	case here.Unreachable != nil:
 		return "", fmt.Errorf("K3s is installed here but its API server did not answer (%v), so the installer cannot tell what it would be updating. "+
 			"Check `systemctl status k3s` and run it again. %s", here.Unreachable, wipe)
+	case here.JoinedServer && want == ModeUpgrade:
+		return "", errors.New("this machine is a server that joined a cluster, and the installer updates a cluster from its first server. Run it there: " +
+			"it updates Geass and the cluster's K3s. Then run the installer here with no options, to put the new operator image on this server")
+	case here.JoinedServer && want == ModeInstall:
+		return "", errors.New("this machine already is a server of a cluster. Run the installer here with no options to refresh its operator image")
+	case here.JoinedServer:
+		return ModeRefreshServer, nil
 	case !here.GeassPresent:
 		return "", fmt.Errorf("K3s is installed here but Geass is not in it. The installer will not remove a K3s that it did not set up for Geass. %s", wipe)
 	case want == ModeInstall:
@@ -194,6 +247,10 @@ func DetectExisting() Existing {
 	_, agent := os.Stat("/etc/systemd/system/k3s-agent.service")
 	if server != nil && agent == nil {
 		here.Agent = true
+		return here
+	}
+	if config, err := os.ReadFile(k3sConfigPath); err == nil && joinedServerConfig(string(config)) {
+		here.JoinedServer = true
 		return here
 	}
 	installed, err := GeassInstalled()

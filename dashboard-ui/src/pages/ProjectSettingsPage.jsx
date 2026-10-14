@@ -9,6 +9,7 @@ import {
   Braces,
   Check,
   Database,
+  Gauge,
   GitBranch,
   HardDrive,
   KeyRound,
@@ -33,6 +34,7 @@ import { PREnvironments } from "@/components/PREnvironments";
 import { ProjectBackups } from "@/components/ProjectBackups";
 import { ProjectCompliance } from "@/components/ProjectCompliance";
 import { ProjectNetwork } from "@/components/ProjectNetwork";
+import { ProjectQuota } from "@/components/ProjectQuota";
 import { ProjectWebhooks } from "@/components/ProjectWebhooks";
 import { ServiceMetrics } from "@/components/ServiceMetrics";
 import { UsagePanel } from "@/components/UsagePanel";
@@ -54,6 +56,7 @@ const SECTIONS = [
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "backups", label: "Backups", icon: ShieldCheck },
   { id: "network", label: "Network", icon: Network },
+  { id: "limits", label: "Limits", icon: Gauge },
   { id: "compliance", label: "Compliance", icon: Lock },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
@@ -444,6 +447,12 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       {section === "network" && (
         <SettingsSection title="Network" flat>
           <ProjectNetwork project={project} data={data} mutable={mutable} reload={reload} />
+        </SettingsSection>
+      )}
+
+      {section === "limits" && (
+        <SettingsSection title="Limits" flat>
+          <ProjectQuota project={project} mutable={mutable} reload={reload} />
         </SettingsSection>
       )}
 

@@ -87,9 +87,22 @@ var v1Operations = []v1Operation{
 		{"requiredTags", jsonArray, "Tags such as hipaa. Every one must be a compliance tag on the nodes that carry it", false},
 	}, false},
 	{http.MethodGet, "/projects/{name}/compliance", "The project's required tags and where it falls short of them", accessViewer, kindProjects, nil, false},
+	{http.MethodGet, "/projects/{name}/network", "Who can reach the project's services, and whether they are kept away from the cluster's machines", accessViewer, kindProjects, nil, false},
 	{http.MethodPost, "/projects/{name}/network", "Choose who can reach the project's services", accessAdmin, kindProjects, []v1Field{
 		{"isolation", jsonString, "Project or None", true},
 		{"allowFromProjects", jsonArray, "Other projects allowed to reach this one", false},
+		{formBlockNodeAddresses, "boolean", "Keep the project's services away from the machines the cluster runs on. Left as it is when not sent", false},
+	}, false},
+	{http.MethodGet, "/projects/{name}/quota", "What the project is capped at, and what its environments ask for together", accessViewer, kindProjects, nil, false},
+	{http.MethodPost, "/projects/{name}/quota", "Cap what each environment, and the whole project, can use. A limit that is not sent stays as it is; one sent empty is removed", accessAdmin, kindProjects, []v1Field{
+		{formQuotaCPU, jsonString, "The most CPU one environment's pods may ask for, such as 4 or 500m", false},
+		{formQuotaMemory, jsonString, "The most memory one environment's pods may ask for, such as 8Gi", false},
+		{formQuotaStorage, jsonString, "The most disk one environment's volumes may ask for, such as 50Gi", false},
+		{formQuotaPods, jsonInteger, "The most pods one environment may have at once", false},
+		{formProjectQuotaCPU, jsonString, "The most CPU the whole project's pods may ask for, added up over its environments", false},
+		{formProjectQuotaMemory, jsonString, "The most memory the whole project's pods may ask for", false},
+		{formProjectQuotaStorage, jsonString, "The most disk the whole project's volumes may ask for", false},
+		{formProjectQuotaPods, jsonInteger, "The most pods the whole project may have at once", false},
 	}, false},
 	{http.MethodPost, "/projects/{name}/variables/save", "Set a shared variable", accessAdmin, kindProjects, []v1Field{
 		{pathNameParam, jsonString, "The variable's name", true}, {formEnvironment, jsonString, "The environment", true},

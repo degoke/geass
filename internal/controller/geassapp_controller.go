@@ -59,6 +59,8 @@ type GeassAppReconciler struct {
 	Scheme *runtime.Scheme
 	// Webhooks receives deployment outcomes; nil disables webhook notifications.
 	Webhooks webhooks.Emitter
+	// PodUsage is what the cluster's pods ask of its nodes, for the check that a new service fits. Nil reads the pods.
+	PodUsage *platform.PodUsageIndex
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassapps,verbs=get;list;watch;create;update;patch;delete
@@ -168,7 +170,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
 	pullSecret, err := r.reconcileRegistryPullSecret(ctx, &app, wsNS)
@@ -231,6 +233,9 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					return ctrl.Result{RequeueAfter: platform.RequeueAfterDefault}, nil
 				}
 			}
+		}
+		if problem := quotaProblem(deploy); problem != "" {
+			return r.setNotReady(ctx, &app, problem)
 		}
 		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}

@@ -246,7 +246,7 @@ func (s *Server) createProjectIn(ctx context.Context, region string) (string, in
 			return "", http.StatusBadRequest, err
 		}
 	}
-	p := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{DisplayName: displayName, ClusterRef: corev1.LocalObjectReference{Name: cluster}, Environments: environments, Region: region}}
+	p := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{DisplayName: displayName, ClusterRef: corev1.LocalObjectReference{Name: cluster}, Environments: environments, Region: region, Network: geassv1alpha1.NewProjectNetwork()}}
 	if err := s.Client.Create(ctx, p); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return "", http.StatusConflict, fmt.Errorf("project already exists")
@@ -341,6 +341,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectBackupStorage(w, r, name)
 		case len(parts) == 2 && parts[1] == "network":
 			s.handleProjectNetwork(w, r, name)
+		case len(parts) == 2 && parts[1] == "quota":
+			s.handleProjectQuota(w, r, name)
 		case len(parts) == 2 && parts[1] == "compliance":
 			s.handleProjectCompliance(w, r, name)
 		case len(parts) == 3 && parts[1] == "github" && parts[2] == "install":

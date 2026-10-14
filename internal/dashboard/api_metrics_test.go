@@ -317,7 +317,7 @@ func TestOperatorMetricsReadTheOperatorsOwnSeriesAndNoWorkloads(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	require.True(t, payload.Available)
-	for _, key := range []string{"reconcileErrors", "reconcileTime", "apiLatency", "apiRequests", "queueDepth", "statusWrites", "statusSkipped"} {
+	for _, key := range []string{"reconcileErrors", "reconcileTime", "apiLatency", "apiRequests", "queueDepth", "statusWrites", "statusSkipped", "memory"} {
 		require.Contains(t, payload.Series, key)
 	}
 }

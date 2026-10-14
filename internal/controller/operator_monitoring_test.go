@@ -48,7 +48,7 @@ func TestOperatorAlertsAreCreatedAndSayWhatIsWrong(t *testing.T) {
 	for _, rule := range rules.Spec.Groups[0].Rules {
 		alerts[rule.Alert] = rule
 	}
-	for _, name := range []string{"GeassOperatorDown", "GeassReconcileErrors", "GeassSlowReconciles", "GeassWorkqueueBacklog", "GeassAPIServerSlow", "GeassAPIServerErrors"} {
+	for _, name := range []string{"GeassOperatorDown", "GeassReconcileErrors", "GeassSlowReconciles", "GeassWorkqueueBacklog", "GeassOperatorMemoryHigh", "GeassAPIServerSlow", "GeassAPIServerErrors"} {
 		rule, ok := alerts[name]
 		require.True(t, ok, name)
 		require.NotNil(t, rule.For, "%s waits for the problem to last", name)

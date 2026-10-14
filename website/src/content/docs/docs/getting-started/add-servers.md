@@ -3,7 +3,7 @@ title: "Add servers"
 description: "Join more servers over SSH, tag them with a region, site and tags, watch them come up and remove them. Covers credentials, node states and failures."
 ---
 
-A new install is a single server that runs everything. You add capacity by joining more servers as workers. Geass connects to each new server over SSH, installs the K3s agent on it and waits for it to appear in the cluster. Neither the dashboard nor the `geass` command line can join a server today: you describe the worker in a `GeassNode` object with `kubectl` on the control plane, then watch it in the dashboard under **Usage** in the left rail.
+A new install is a single server that runs everything. You add capacity by joining more servers as workers. (To add servers to the control plane itself, so that the cluster survives losing one, see [High availability](/docs/operations/high-availability/#run-three-control-plane-servers).) Geass connects to each new server over SSH, installs the K3s agent on it and waits for it to appear in the cluster. Neither the dashboard nor the `geass` command line can join a server today: you describe the worker in a `GeassNode` object with `kubectl` on the control plane, then watch it in the dashboard under **Usage** in the left rail.
 
 ## Before you start
 
