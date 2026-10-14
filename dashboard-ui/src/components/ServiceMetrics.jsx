@@ -191,6 +191,7 @@ export const OPERATOR_CHARTS = [
   { key: "queueDepth", title: "Work waiting", format: formatCount },
   { key: "statusWrites", title: "Status writes", format: formatPerSecond },
   { key: "statusSkipped", title: "Status writes avoided", format: formatPerSecond },
+  { key: "memory", title: "Operator memory", format: formatBytes },
 ];
 
 export { CHARTS as METRIC_CHARTS };

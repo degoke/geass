@@ -35,6 +35,12 @@ func ComputeClusterSnapshot(nodes []corev1.Node, pods []corev1.Pod) ClusterSnaps
 // running on those nodes, so a reserved node's capacity is not offered to general work and its
 // reservations are not charged against it.
 func ComputeClusterSnapshotFor(nodes []corev1.Node, pods []corev1.Pod, placement Placement) ClusterSnapshot {
+	return ComputeClusterSnapshotFromUsage(nodes, UsageOfPods(pods), placement)
+}
+
+// ComputeClusterSnapshotFromUsage is ComputeClusterSnapshotFor for pods whose usage is already worked out, which is
+// what a PodUsageIndex holds.
+func ComputeClusterSnapshotFromUsage(nodes []corev1.Node, usage PodUsage, placement Placement) ClusterSnapshot {
 	snapshot := ClusterSnapshot{Where: placement.Describe()}
 	var eligible []*corev1.Node
 	for i := range nodes {
@@ -61,7 +67,19 @@ func ComputeClusterSnapshotFor(nodes []corev1.Node, pods []corev1.Pod, placement
 			snapshot.LargestNodeMemoryBytes = memBytes
 		}
 	}
-	requestedCPU, requestedMem := podRequestedResources(podsOnOrFor(pods, eligible))
+	var requestedCPU, requestedMem int64
+	for _, node := range eligible {
+		requested := usage.PerNode[node.Name]
+		requestedCPU += requested.CPUMillis
+		requestedMem += requested.MemoryBytes
+	}
+	for _, pod := range usage.Unplaced {
+		if podCouldRunOnAny(pod, eligible) {
+			cpu, memory := PodRequests(pod)
+			requestedCPU += cpu
+			requestedMem += memory
+		}
+	}
 	snapshot.CPURequestedMillis = requestedCPU
 	snapshot.MemoryRequestedBytes = requestedMem
 	snapshot.CPUAvailableMillis = max(snapshot.CPUAllocatableMillis-requestedCPU, 0)
@@ -72,29 +90,6 @@ func ComputeClusterSnapshotFor(nodes []corev1.Node, pods []corev1.Pod, placement
 		snapshot.Known = true
 	}
 	return snapshot
-}
-
-// podsOnOrFor keeps the pods that use the given nodes: those running on one, and those not yet placed
-// that could be.
-func podsOnOrFor(pods []corev1.Pod, nodes []*corev1.Node) []corev1.Pod {
-	byName := make(map[string]bool, len(nodes))
-	for _, node := range nodes {
-		byName[node.Name] = true
-	}
-	kept := make([]corev1.Pod, 0, len(pods))
-	for i := range pods {
-		pod := &pods[i]
-		if pod.Spec.NodeName != "" {
-			if byName[pod.Spec.NodeName] {
-				kept = append(kept, *pod)
-			}
-			continue
-		}
-		if podCouldRunOnAny(pod, nodes) {
-			kept = append(kept, *pod)
-		}
-	}
-	return kept
 }
 
 // podCouldRunOnAny reports whether a pod that has no node yet could be placed on one of the nodes,
@@ -178,19 +173,6 @@ func (c ClusterSnapshot) Fits(est WorkloadEstimate) (bool, string) {
 		return false, InsufficientCapacityMessage(est, c.CPUAvailable, c.MemoryAvailable)
 	}
 	return true, ""
-}
-
-func podRequestedResources(pods []corev1.Pod) (cpuMillis, memoryBytes int64) {
-	for i := range pods {
-		pod := &pods[i]
-		if !pod.DeletionTimestamp.IsZero() || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-			continue
-		}
-		cpu, memory := PodRequests(pod)
-		cpuMillis += cpu
-		memoryBytes += memory
-	}
-	return cpuMillis, memoryBytes
 }
 
 // PodRequests is the CPU and memory a pod asks the scheduler for: its containers' requests plus the

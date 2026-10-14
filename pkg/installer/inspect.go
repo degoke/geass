@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 
 	"github.com/degoke/geass/pkg/release"
 )
@@ -52,9 +56,15 @@ type ClusterState struct {
 	SchemaVersion int
 	// OperatorImage is the image the operator Deployment runs.
 	OperatorImage string
+	// NewOperatorImage is the operator image this installer carries, and ControlPlanesWithoutNewImage the control plane
+	// nodes, other than the one it runs on, that do not report having it.
+	NewOperatorImage             string
+	ControlPlanesWithoutNewImage []string
 	// K3sVersion is the oldest K3s that a control plane node reports, and ControlPlanes how many there are.
 	K3sVersion    string
 	ControlPlanes int
+	// ControlPlaneVersions is the K3s release each control plane node reports, by node name.
+	ControlPlaneVersions map[string]string
 	// Workers is how many nodes are not control plane nodes.
 	Workers int
 	// NodesNotReady names the nodes that are not ready.
@@ -264,6 +274,9 @@ type nodeInfo struct {
 	Ready        bool
 	// Version is the kubelet's version, which for K3s is the K3s release.
 	Version string
+	// Images are the names of the images the node reports. A node reports at most 50, the largest first, so an image that is
+	// not listed is not certainly missing.
+	Images []string
 }
 
 func readNodes(step string) ([]nodeInfo, error) {
@@ -283,12 +296,18 @@ func readNodes(step string) ([]nodeInfo, error) {
 				NodeInfo struct {
 					KubeletVersion string `json:"kubeletVersion"`
 				} `json:"nodeInfo"`
+				Images []struct {
+					Names []string `json:"names"`
+				} `json:"images"`
 			} `json:"status"`
 		}
 		if json.Unmarshal(raw, &n) != nil {
 			continue
 		}
 		info := nodeInfo{Name: n.Metadata.Name, Version: n.Status.NodeInfo.KubeletVersion}
+		for _, image := range n.Status.Images {
+			info.Images = append(info.Images, image.Names...)
+		}
 		_, info.ControlPlane = n.Metadata.Labels["node-role.kubernetes.io/control-plane"]
 		for _, c := range n.Status.Conditions {
 			if c.Type == "Ready" && c.Status == "True" {
@@ -305,6 +324,8 @@ func inspectNodes(step string, state *ClusterState) error {
 	if err != nil {
 		return err
 	}
+	state.NewOperatorImage = embeddedOperatorImage()
+	state.ControlPlanesWithoutNewImage = controlPlanesWithoutImage(nodes, thisNode(), state.NewOperatorImage)
 	for _, n := range nodes {
 		if !n.Ready {
 			state.NodesNotReady = append(state.NodesNotReady, n.Name)
@@ -314,6 +335,10 @@ func inspectNodes(step string, state *ClusterState) error {
 			continue
 		}
 		state.ControlPlanes++
+		if state.ControlPlaneVersions == nil {
+			state.ControlPlaneVersions = map[string]string{}
+		}
+		state.ControlPlaneVersions[n.Name] = n.Version
 		if v := n.Version; release.ValidK3s(v) {
 			if state.K3sVersion == "" {
 				state.K3sVersion = v
@@ -324,6 +349,76 @@ func inspectNodes(step string, state *ClusterState) error {
 	}
 	slices.Sort(state.NodesNotReady)
 	return nil
+}
+
+// embeddedOperatorImage is the image that the operator's Deployment inside this installer names, or "" when it cannot be
+// told.
+func embeddedOperatorImage() string {
+	docs, err := manifestDocs(embeddedOperatorManifests)
+	if err != nil {
+		return ""
+	}
+	for _, doc := range docs {
+		var object unstructured.Unstructured
+		if yaml.Unmarshal(doc, &object.Object) != nil || object.GetKind() != "Deployment" || object.GetName() != operatorDeployment {
+			continue
+		}
+		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+		for _, raw := range containers {
+			container, _ := raw.(map[string]any)
+			if image, _ := container["image"].(string); container["name"] == "manager" && image != "" {
+				return image
+			}
+		}
+	}
+	return ""
+}
+
+// thisNode is how this machine's node is named, a variable so that tests can say.
+var thisNode = thisNodeName
+
+// thisNodeName is what the cluster calls this machine's node: the name K3s was given in its configuration file, and
+// otherwise the host name in lower case, which is what K3s uses.
+func thisNodeName() string {
+	if raw, err := os.ReadFile(k3sConfigPath); err == nil {
+		var settings map[string]any
+		if yaml.Unmarshal(raw, &settings) == nil {
+			if name, _ := settings["node-name"].(string); strings.TrimSpace(name) != "" {
+				return strings.TrimSpace(name)
+			}
+		}
+	}
+	host, _ := os.Hostname()
+	return strings.ToLower(host)
+}
+
+// controlPlanesWithoutImage names the control plane nodes other than self that do not report an image. The operator's
+// Deployment may start on any control plane node, and the image is in no registry: it is imported by the installer, one
+// machine at a time. So an update that names a new image starts an operator that cannot pull it, if it lands on a node
+// the installer has not been run on.
+func controlPlanesWithoutImage(nodes []nodeInfo, self, image string) []string {
+	// A node can have a name other than the machine's host name (--node-name), so a cluster with one control plane node
+	// is not asked about it: there is nobody else to give the image to.
+	controlPlanes := 0
+	for _, node := range nodes {
+		if node.ControlPlane {
+			controlPlanes++
+		}
+	}
+	if image == "" || controlPlanes < 2 {
+		return nil
+	}
+	var missing []string
+	for _, node := range nodes {
+		if !node.ControlPlane || node.Name == self {
+			continue
+		}
+		if !slices.ContainsFunc(node.Images, func(name string) bool { return name == image || strings.HasSuffix(name, "/"+image) }) {
+			missing = append(missing, node.Name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 // inspectVolumes finds Longhorn volumes that are not healthy. Longhorn may not be installed, which is no volumes.

@@ -66,8 +66,9 @@ func ensureNamespaceLabels(ctx context.Context, c client.Client, name string, wa
 	return c.Patch(ctx, ns, patch)
 }
 
-// reconcileProjectNetwork applies the network policies of one project environment.
-func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string) error {
+// reconcileProjectNetwork applies the network policies of one project environment. nodes describes the
+// cluster's machines for a project that keeps its services away from them, and is nil for one that does not.
+func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string, nodes *platform.NodeNetwork) error {
 	if err := ensureNamespaceLabels(ctx, r.Client, namespace, map[string]string{platform.LabelProject: project.Name}); err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, pr
 	} else if err := deleteNetworkPolicy(ctx, r.Client, platform.ProjectIsolationPolicyName, namespace); err != nil {
 		return err
 	}
-	return applyNetworkPolicy(ctx, r.Client, platform.CloudMetadataPolicy(project.Name, namespace))
+	return applyNetworkPolicy(ctx, r.Client, platform.CloudMetadataPolicy(project.Name, namespace, nodes))
 }
 
 // projectsForNetworkPolicy maps a policy the operator owns back to its project, so that a policy that

@@ -23,11 +23,12 @@ From top to bottom the page shows:
 | --- | --- |
 | **Summary** | CPU available, memory available and healthy nodes for the whole cluster. |
 | **Capacity and node pressure** | One line for each node problem and each shortage. Only present when there is something to report. |
+| **Network isolation** | Whether the cluster's network plugin acts on network policies, which project isolation depends on. Present once the first check has run (see [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies)). |
 | **Version** | Which Geass release and which K3s the cluster runs, and how an upgrade of the workers' K3s is going while one is asked for. |
 | **Nodes** | One row per node, with its role, the K3s version it runs, region, tags, size, pressure and status. |
 | **Usage by project** | What each project reserves, what it uses, and its share of the capacity it runs on. |
 | **Cluster metrics** | Charts of what services use across the cluster and what the machines are doing. |
-| **Geass health** | Charts of how the operator is doing: failed and slow reconciles, work waiting, and how the Kubernetes API server answers it. |
+| **Geass health** | Charts of how the operator is doing: failed and slow reconciles, work waiting, how the Kubernetes API server answers it, and its memory. |
 | **Regions** | The default region for new projects. Only present once at least one node has a region. |
 | **HA readiness** | Whether the cluster meets the prerequisites for highly available databases (see [High availability](/docs/operations/high-availability/)). |
 
@@ -40,6 +41,8 @@ Three different numbers describe a workload. The page uses the first for capacit
 | **Request** (shown as "reserved" or "requested") | The CPU and memory a container asks the scheduler for. The scheduler places a pod only on a node that has this much unreserved. | Every capacity figure and the capacity check on deploy. |
 | **Limit** | The most a container may use. Above its CPU limit it is slowed down; above its memory limit it is killed and restarted. | When you pick a size in the dashboard, Geass sets the limit equal to the request, so a service cannot use more than it reserved. |
 | **Actual usage** | What the container consumes now, measured by Prometheus. | The "using" figures in **Usage by project** and the cluster charts. Absent when monitoring is not installed. |
+
+The capacity check looks at the whole cluster. To stop one project from using all of it, set [project limits](/docs/guides/project-limits/), which cap what each environment of a project can ask for.
 
 A node can look full on this page while its CPU is idle, because services reserved the room. A node can also be busy while the page shows spare capacity, if a pod runs without requests. Use the page to decide whether something new fits, and the charts to see whether the machines are working hard.
 
@@ -167,7 +170,7 @@ Each project's own **Settings** page, under **Usage**, shows the same table for 
 
 ## Geass health
 
-**Geass health** charts the operator itself, and has its own **Time range** menu. Look at it when the platform feels slow: a deploy that takes long to start, a status that is late to change.
+**Geass health** charts the operator itself (its failures, its speed, its queues, how the API server treats it, and its memory), and has its own **Time range** menu. Look at it when the platform feels slow: a deploy that takes long to start, a status that is late to change.
 
 | Chart | What it shows | What it means |
 | --- | --- | --- |
@@ -178,6 +181,7 @@ Each project's own **Settings** page, under **Usage**, shows the same table for 
 | **Work waiting** | Items waiting in the Geass controllers' queues. | A number that keeps growing means the operator is behind. |
 | **Status writes** | Status updates the operator actually wrote, per second. | |
 | **Status writes avoided** | Status updates the operator skipped because nothing had changed. | A healthy, steady cluster is mostly this. |
+| **Operator memory** | The memory the operator's process holds. | It grows with the number of services, about 36 KiB each. Near 700 MiB, the limit it ships with is close: see [Cluster size](/docs/operations/sizing/). |
 
 The charts need the monitoring add-on, like every other chart. See [Logs, metrics and terminal](/docs/guides/observability/#metrics-and-alerts-for-the-operator) for the alerts that watch the same numbers.
 
@@ -239,6 +243,8 @@ Prometheus is not installed, or the dashboard cannot reach it. See [Logs, metric
 ## Related
 
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
+- [Project limits](/docs/guides/project-limits/)
+- [Cluster size](/docs/operations/sizing/)
 - [Logs, metrics and terminal](/docs/guides/observability/)
 - [High availability](/docs/operations/high-availability/)
 - [Troubleshooting](/docs/operations/troubleshooting/)

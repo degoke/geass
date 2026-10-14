@@ -93,6 +93,14 @@ type GeassProjectSpec struct {
 	// Network sets who can reach this project's services. Without it the project is isolated.
 	// +optional
 	Network *GeassProjectNetwork `json:"network,omitempty"`
+	// EnvironmentQuota caps what each environment of this project can use. Without it nothing is capped
+	// and one project can use all the room the cluster has.
+	// +optional
+	EnvironmentQuota *GeassEnvironmentQuota `json:"environmentQuota,omitempty"`
+	// ProjectQuota caps what the whole project can ask for, added up over its environments. It can be set
+	// with an environment quota, and an environment is held to whichever of the two is lower.
+	// +optional
+	ProjectQuota *GeassProjectQuota `json:"projectQuota,omitempty"`
 }
 
 // GeassWebhook is an outbound webhook for project events.
@@ -174,6 +182,10 @@ type GeassProjectStatus struct {
 	// +kubebuilder:validation:MaxItems=50
 	// +optional
 	PullRequests []GeassPullRequestEnvironment `json:"pullRequests,omitempty"`
+	// QuotaUsage is what the project's environments ask for together. Present while the project has a
+	// project quota, and as current as the last time an environment's usage changed.
+	// +optional
+	QuotaUsage *GeassQuotaUsage `json:"quotaUsage,omitempty"`
 }
 
 // +kubebuilder:object:root=true

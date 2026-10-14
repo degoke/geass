@@ -10,6 +10,17 @@ const (
 	ConditionReady       = "Ready"
 	ConditionAddonsReady = "AddonsReady"
 	ConditionReasonReady = "Ready"
+
+	// ConditionNetworkPolicyEnforced says whether the cluster's network plugin acts on network policies. False
+	// means project isolation and every other policy Geass writes is only words. Unknown means the check could not
+	// tell.
+	ConditionNetworkPolicyEnforced = "NetworkPolicyEnforced"
+
+	// AnnotationNetworkPolicyChecked is when the cluster was last checked for enforcing network policies.
+	AnnotationNetworkPolicyChecked = "geass.dev/network-policy-checked-at"
+	// AnnotationRecheckNetworkPolicy, set on a GeassCluster to any value, asks for the check to be run again now.
+	// It is removed when the check has run.
+	AnnotationRecheckNetworkPolicy = "geass.dev/recheck-network-policy"
 )
 
 // SetCondition upserts a condition on the provided slice and returns the updated slice.

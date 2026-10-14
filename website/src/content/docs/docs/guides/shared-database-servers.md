@@ -210,7 +210,7 @@ The connection call needs a workspace token with Full access. It shows the host,
 
 ## Limits and tradeoffs
 
-- **One server, shared fate.** All projects share the server's CPU, memory, disk and connection slots. A busy project can slow the others, and Geass applies no per-project CPU or memory limit. The only per-project limit is the connection limit on the login.
+- **One server, shared fate.** All projects share the server's CPU, memory, disk and connection slots. A busy project can slow the others, and Geass applies no per-project CPU or memory limit to it, because the server runs in `geass-system` and [project limits](/docs/guides/project-limits/) cap a project's own environments only. The only per-project limit is the connection limit on the login.
 - **One volume.** The server's disk is shared. One project can fill it. Increasing the size is a change to the server, not to a project, and the dashboard offers no control for it. See [Storage and volumes](/docs/guides/storage/).
 - **No backups.** Shared servers and logical databases are not backed up and cannot be restored to a point in time. Take your own dumps with `pg_dump` or `mysqldump` if you need them.
 - **Only PostgreSQL and MySQL.** Redis and SQLite cannot be shared.

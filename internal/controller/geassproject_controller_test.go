@@ -56,6 +56,46 @@ func TestProjectReconcilerCreatesEnvironmentNamespaces(t *testing.T) {
 	require.Len(t, updated.Status.Environments, 2)
 }
 
+func TestProjectReconcilerAppliesTheNodeBlockAndTheQuotaToEveryEnvironment(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
+	cluster := &geassv1alpha1.GeassCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassClusterSpec{
+			Version: "v1", ServerURL: "https://cluster.example",
+			TokenSecretRef: corev1.SecretReference{Name: "token"},
+		},
+		Status: geassv1alpha1.GeassClusterStatus{Conditions: []metav1.Condition{{Type: platform.ConditionReady, Status: metav1.ConditionTrue}}},
+	}
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec: geassv1alpha1.GeassProjectSpec{
+			ClusterRef:       corev1.LocalObjectReference{Name: testClusterName},
+			Environments:     []string{testEnvDev, testEnvStaging},
+			Network:          &geassv1alpha1.GeassProjectNetwork{BlockNodeAddresses: true},
+			EnvironmentQuota: quotaOf("4", "8Gi"),
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(project, cluster).
+		WithObjects(project, cluster, clusterNode("cp", "10.0.0.5", "10.42.0.0/24", true)).Build()
+	r := &GeassProjectReconciler{Client: c, Scheme: scheme}
+
+	_, err := r.Reconcile(context.Background(), requestFor(project))
+	require.NoError(t, err)
+
+	for _, env := range project.Spec.Environments {
+		namespace := testProjectName + "-" + env
+		var policy networkingv1.NetworkPolicy
+		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: platform.CloudMetadataPolicyName, Namespace: namespace}, &policy))
+		require.Contains(t, policy.Spec.Egress[0].To[1].IPBlock.Except, "10.0.0.5/32", "%s: the control plane's own address is blocked", namespace)
+		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: platform.ProjectQuotaName, Namespace: namespace}, &corev1.ResourceQuota{}),
+			"%s: every environment is capped, preview environments included", namespace)
+		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: platform.ProjectDefaultsName, Namespace: namespace}, &corev1.LimitRange{}))
+	}
+}
+
 func TestProjectReconcilerCleansSharedSecretOnDeletion(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))

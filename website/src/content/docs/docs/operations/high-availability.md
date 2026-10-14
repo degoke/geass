@@ -1,9 +1,9 @@
 ---
 title: "High availability"
-description: "What high availability means in Geass today: how HA databases are gated and placed, what survives losing a node, and what is not highly available."
+description: "High availability in Geass: three control plane servers, HA databases, what survives losing a node, and what is still a single point of failure."
 ---
 
-Geass has one high availability feature today: a database that runs as three instances on three nodes, so that it keeps serving when one node is lost. It does not make the control plane, the dashboard, your services or object storage highly available. This page says what the feature does, how Geass decides a cluster is ready for it, and, plainly, what is a single point of failure.
+Geass has two high availability features today. A database can run as three instances on three nodes, so that it keeps serving when one node is lost. And the control plane can run on three servers, so that the cluster's API and its data survive losing one. Neither makes your services, ingress or object storage highly available by itself. This page says what each feature does, how to set it up, and, plainly, what is still a single point of failure.
 
 ## What is and is not highly available
 
@@ -12,8 +12,98 @@ Geass has one high availability feature today: a database that runs as three ins
 | Postgres with **High availability** | Yes, with three instances | Replicas and failover come from the Postgres operator (CloudNativePG). Needs at least three healthy nodes. |
 | MySQL and Redis with **High availability** | Replicated, with no automatic failover | Geass asks for a primary with replicas and configures no failover. See [MySQL and Redis](#mysql-and-redis). |
 | Services | Only as far as replicas go | Replicas are not spread by any Geass rule. See [Services](#services). |
-| Control plane (K3s server, operator, dashboard) | **No** | One server, one operator. See [What is not highly available](#what-is-not-highly-available). |
+| Control plane: the Kubernetes API and etcd | Yes, with three servers | Join two more servers to the first. The cluster works with one lost and stops with two. See [Run three control plane servers](#run-three-control-plane-servers). |
+| The operator and the dashboard | Restarts on another server | One pod, which starts on another server when its own is lost, in one to two minutes. Nothing is reconciled and the dashboard is down in between. |
 | Single-instance databases, the object storage server, SQLite | No | One instance each. |
+
+## Run three control plane servers
+
+The control plane is the Kubernetes API, the database that holds every object in the cluster (etcd), and Geass's operator. On a new install it is one K3s server. You can join two more, so that the API and the cluster's data are on three machines and survive losing one.
+
+**What you get.** The three servers hold a copy of the cluster's database each, and any of them answers the API. With one server lost, the API keeps answering from the other two, reads and writes keep working, and the cluster's data is all there. With two lost, the database has no majority and the cluster stops answering until one comes back. Containers that already run on any node keep running either way.
+
+**What you do not get.** Geass runs one operator, and it is the operator that deploys, scales, reconciles and serves the dashboard. It is a pod, and the installer puts its image on every server you join, so when the server it runs on is lost it starts on another one. That takes between 75 seconds and two minutes (76 to 112 seconds in tests, 87 on the last real three-server cluster). Kubernetes decides a node has stopped answering after about 40 seconds, and longer when the lost server also held the lock that Kubernetes's own controllers run under, because the next one starts counting from when it takes over. The operator's pod is then given 30 more seconds before it is moved, and the new pod starts in a few, because the image is already there. Nothing is deployed or reconciled, and the dashboard is down, until it has. Two operators would not make this faster and would double its memory, so there is one.
+
+### Before you start
+
+- A cluster that the installer built. Its K3s runs with embedded etcd (`--cluster-init`), which is what lets a second server join. A K3s that was started another way, or one that uses an external database, cannot take a server this way.
+- Two more machines that meet the [requirements](/docs/getting-started/requirements/), on the **same private network** as the first, with fast links. Servers carry etcd's traffic to each other all the time, so keep them at one site and do not use [multi-site mode](/docs/operations/multi-provider/) for them. The installer refuses a join with `GEASS_MULTI_SITE` set.
+- **Three servers, not two.** A cluster needs a majority of its servers to answer. With three it tolerates one lost, with two it tolerates none: losing either stops it, and two servers fail more often than one. Use three, or five to tolerate two.
+- The ports in the next table open between the servers, in the host firewall and in the provider's security group. The installer opens them on the machine that joins, if it finds a host firewall, and checks that it can reach them on the server it joins before it changes anything. **It cannot open them on the first server**, so open them there yourself:
+
+| Port | Between | What it is for |
+| --- | --- | --- |
+| 6443/tcp | Every node and every server | The Kubernetes API |
+| 2379/tcp and 2380/tcp | The servers | etcd, the cluster's database: its clients and its peers |
+| 8472/udp | Every node | The VXLAN overlay |
+| 10250/tcp | Every node | The kubelet |
+
+```bash
+sudo ufw allow 2379/tcp && sudo ufw allow 2380/tcp     # on each server, if ufw is active
+```
+
+### Join a server
+
+1. On the **first** server, read the token that lets a server join, and the K3s release the cluster runs:
+
+   ```bash
+   sudo cat /var/lib/rancher/k3s/server/token
+   sudo k3s --version
+   ```
+
+2. On the **new** machine, as root, run the installer with the first server's address, that token and that K3s release. Pass the token in the environment, where the process list does not show it. Join one machine at a time, and wait for it to finish before you start the next:
+
+   ```bash
+   curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | \
+     sudo env GEASS_JOIN_SERVER=https://10.0.0.5:6443 GEASS_JOIN_TOKEN='K10…::server:…' \
+     GEASS_K3S_VERSION=v1.36.5+k3s1 sh
+   ```
+
+   A server has to run the same K3s as the others, and a machine that has not joined cannot ask the cluster which that is: K3s answers questions about its version only to clients it knows, and a join token is not one. So the installer asks you (`GEASS_K3S_VERSION`, or `--k3s-version` after `sh -s --`) and, once the new server has joined, compares it with the cluster's other servers and stops with what to do if they differ. Before that it checks the machine, the address and the two database ports, and installs K3s as a server with the same settings as the first, waits for the new node to be a ready control plane node, and imports the operator's image. It does not touch a machine that already has K3s: that is refused, and the installer never replaces one.
+
+3. Check that the cluster has the servers:
+
+   ```bash
+   sudo k3s kubectl get nodes -L node-role.kubernetes.io/control-plane,node-role.kubernetes.io/etcd
+   ```
+
+   Each server shows `true` in both columns. The **Usage** page lists them too, and counts them in **Healthy nodes**.
+
+### What each server keeps current
+
+An update of Geass is made on the first server, as always, and it leaves the operator's Deployment naming a new image. That image is in no registry: it is inside the installer, and the installer puts it on the machine it runs on and on no other. The operator's pod can start on any control plane server, so **before you update the first server, run the new release's installer on each of the other servers with no options**:
+
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh
+```
+
+Run on a server that joined a cluster, it does only that: it puts the operator's new image on the server, next to the old one, and changes nothing else. It does not update the cluster, and it refuses `--upgrade`, `--reinstall` and anything else that would change one. The order matters. If the first server is updated before the others have the image, the new operator can be scheduled to one of them, cannot pull the image, and the installer sees the pod cannot pull its image, gives up and puts the previous operator back. Nothing is lost, but the update did not happen, and the installer tells you before it starts which servers do not report the image yet. A server that you have only just refreshed can still be named for some seconds, until its node reports the image; if you have refreshed it, go on.
+
+To move the cluster's K3s to a new release, use `--k3s-version` on the first server as usual, then upgrade each of the other servers **one at a time**, waiting for the node to be ready before the next, with K3s's own install script and the version you gave the first server. The server keeps its settings, because they are in its configuration file:
+
+```bash
+curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION=v1.36.5+k3s1 INSTALL_K3S_EXEC=server sh -
+```
+
+Geass does not move the workers until the oldest control plane server runs the new version, because a worker is not allowed to be newer than the API servers it talks to. The cluster object says which server it is waiting for.
+
+### Take a server away
+
+Do not stop two servers of three: the cluster stops. To remove one for good, delete its node **from another server** while the cluster has its majority, then remove K3s from the machine:
+
+```bash
+sudo k3s kubectl delete node <name>            # on another server
+sudo /usr/local/bin/k3s-uninstall.sh           # on the machine being removed
+```
+
+K3s takes the machine out of etcd's membership when its node is deleted. Removing K3s first leaves a member in the database that is not there, and with three servers that is one more failure the cluster has to survive.
+
+### What is still one of something
+
+- **The operator and the dashboard.** One pod, one to two minutes to move. See above.
+- **Ingress.** Traefik and CoreDNS are K3s's own, one replica each. They start on another node when theirs is lost, after Kubernetes's default five minutes, which Geass does not change. A domain that points at one address is only as available as that address. Point it at several servers, or put a load balancer in front.
+- **The address workers join.** `spec.serverURL` on the cluster object names one server. Workers that have joined keep working when it is lost, because K3s's agents learn every server. A worker you add after that fails to join until you set `spec.serverURL` to a server that is up.
+- **The cluster's backups.** Three copies of etcd protect against losing a machine, not against a mistake that is written to all three. The snapshot the installer takes before an update, on the first server's disk, is the way back from that. See [Upgrade Geass](/docs/operations/upgrading/#go-back).
 
 ## Before you start
 
@@ -126,20 +216,21 @@ A service with several replicas keeps serving while some of them are up. Geass a
 | A single-instance database | It is unavailable until it runs again. Whether it can restart on another node depends on its storage. See [Storage](/docs/guides/storage/). |
 | A service replica | Kubernetes starts a replacement on another node that matches the project's region and tags and has room. By default it waits five minutes before it does; Geass does not change that. A service with one replica is down in the meantime. |
 | A MySQL or Redis primary | Nothing promotes a replica. See [MySQL and Redis](#mysql-and-redis). |
-| The control plane | See below. |
+| A control plane server (of three) | The API and the cluster's data stay available from the other two. The operator starts on another server in one to two minutes if it was on the lost one. |
+| The only control plane server | See below. |
 
 A worker that Geass joined over SSH and that stays not ready for more than five minutes is provisioned again: the operator connects to the machine and reinstalls the K3s agent. If the machine is gone, that fails and the node's `GeassNode` shows the error (see [Troubleshooting](/docs/operations/troubleshooting/)). Backups are your protection against losing every copy: a Postgres database's continuous backups can be restored to a new database (see [Backups and restore](/docs/guides/backups-and-restore/)).
 
 ## What is not highly available
 
-:::danger
-The control plane is a single point of failure. Geass installs one K3s server with embedded etcd and one operator pod. There is no second control plane node, and Geass has no way to add one.
+:::caution
+The control plane is only as available as the servers you give it. A new install has one, and is a single point of failure until you [join two more](#run-three-control-plane-servers).
 :::
 
-- **The K3s server.** The installer runs `k3s server --cluster-init` on one machine. A `GeassNode` with the `ControlPlane` role only waits for an existing node to register; it does not provision a server. Workers always join as agents.
-- **The operator and the dashboard.** The dashboard is part of the operator process. The operator runs as one replica, and its Deployment requires a node with the control-plane label, because the operator image is imported on the control plane only. While that machine is down, the dashboard is unreachable, nothing is reconciled, and nothing can be deployed, scaled or restored.
+- **A single control plane server.** The installer builds one K3s server with embedded etcd. With one, the API server, the cluster's database and the operator are all on that machine.
+- **The operator and the dashboard.** The dashboard is part of the operator process. The operator is one pod, and its Deployment requires a node with the control-plane label, because its image is imported only on control plane servers. With one server, while that machine is down the dashboard is unreachable, nothing is reconciled, and nothing can be deployed, scaled or restored. With three servers it starts on another within about two minutes.
 - **What keeps running.** Containers that are already running on other nodes generally keep running while the control plane is down, but nothing can be changed, restarted elsewhere or rescheduled until it returns.
-- **Recovery data for the cluster itself.** K3s takes its own etcd snapshots by default on the server's disk. That is a K3s feature that Geass does not configure or copy off the machine. Geass takes one more snapshot before it updates the cluster, and [Upgrade Geass](/docs/operations/upgrading/#go-back) shows how to restore one. Neither survives losing the disk, so treat the control plane machine as something to protect with your provider's snapshots.
+- **Recovery data for the cluster itself.** K3s takes its own etcd snapshots by default on each server's disk. That is a K3s feature that Geass does not configure or copy off the machine. Geass takes one more snapshot before it updates the cluster, and [Upgrade Geass](/docs/operations/upgrading/#go-back) shows how to restore one. Neither survives losing the disk, so treat the control plane machine as something to protect with your provider's snapshots.
 - **Ingress and DNS.** Public traffic enters through the K3s Traefik on your nodes. A domain that points at one address is only as available as that machine. Geass does not manage failover between addresses.
 - **Object storage and monitoring.** The object storage server (SeaweedFS or Garage), Prometheus and the log store each run one instance on one volume. With Longhorn the object storage server's volume has copies on other nodes (up to three), which protects its data when a node is lost but does not make the server highly available.
 - **A whole site.** A cluster spread over several providers is experimental (see [Nodes at more than one provider](/docs/operations/multi-provider/)), and its control plane still sits at one site.

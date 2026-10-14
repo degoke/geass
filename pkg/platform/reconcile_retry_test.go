@@ -111,3 +111,48 @@ func TestApplyNotReady_aMissingRegistryIsAWaitNotAFailure(t *testing.T) {
 		t.Fatalf("expected retry state cleared and a requeue so setting the registry is noticed, got %+v / %v", out.Retry, out.RequeueAfter)
 	}
 }
+
+// A quota that is used up frees itself when something stops or the project raises it, and neither touches the
+// service's own spec. Counting it would end in ProvisionFailed, which pauses the service until that spec is edited.
+func TestAQuotaThatIsUsedUpIsWaitedOutNotCountedAsAFailure(t *testing.T) {
+	for _, message := range []string{
+		MessageQuotaUsedUp + ": geass-project-quota, requested: requests.cpu=500m, used: requests.cpu=3500m, limited: requests.cpu=4",
+		`persistentvolumeclaims "data" is forbidden: exceeded quota: geass-project-quota, requested: requests.storage=10Gi`,
+	} {
+		if ReconcileFailureShouldCount(message) {
+			t.Fatalf("counted as a failure: %s", message)
+		}
+		started := metav1.NewTime(time.Now().Add(-ReconcileFailureMaxDuration - time.Minute))
+		state := ReconcileRetryState{Failures: ReconcileFailureThreshold, FailureStarted: &started}
+		outcome := ApplyNotReady(nil, state, 1, message)
+		if outcome.Terminal || outcome.RequeueAfter == 0 {
+			t.Fatalf("a quota that is used up must be retried, not given up on: %+v", outcome)
+		}
+	}
+}
+
+// A service that is applied together with its project meets a project that is not ready yet. The retries come
+// milliseconds apart, so counting that used the five tries up at once and the service stayed paused after the project
+// was ready. It was found on a real cluster with one kubectl apply of both.
+func TestAProjectThatIsNotReadyYetIsWaitedForNotCountedAsAFailure(t *testing.T) {
+	for _, message := range []string{
+		`project "shop" is not ready`,
+		`project "shop" cluster "default" is not ready`,
+		`project "shop" does not exist`,
+	} {
+		if ReconcileFailureShouldCount(message) {
+			t.Fatalf("counted as a failure: %s", message)
+		}
+		state := ReconcileRetryState{Failures: ReconcileFailureThreshold - 1}
+		outcome := ApplyNotReady(nil, state, 1, message)
+		if outcome.Terminal || outcome.RequeueAfter == 0 {
+			t.Fatalf("a project that is not ready yet must be waited for: %+v", outcome)
+		}
+	}
+	// What is wrong for good still counts: a project with no such environment will not fix itself.
+	for _, message := range []string{`project "shop" has no staging environment`, `project is required`} {
+		if !ReconcileFailureShouldCount(message) {
+			t.Fatalf("should still count: %s", message)
+		}
+	}
+}

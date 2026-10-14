@@ -192,7 +192,7 @@ The operator serves its own metrics on port 8443 over HTTPS (the Service `geass-
 With the monitoring add-on on, the cluster controller creates the objects that collect and watch them:
 
 - The `ServiceMonitor` `geass-operator` has Prometheus scrape that Service every 30 seconds. The endpoint needs a login, so Prometheus sends its own service account's token. A ClusterRoleBinding `geass-metrics-reader-prometheus`, which ships with the operator, lets that account read it. The operator's certificate is the self-signed one it makes for itself, so Prometheus does not verify it.
-- The `PrometheusRule` `geass-operator` defines six alerts, each of which waits for the problem to last:
+- The `PrometheusRule` `geass-operator` defines seven alerts, each of which waits for the problem to last:
 
 | Alert | Fires when | For |
 | --- | --- | --- |
@@ -200,6 +200,7 @@ With the monitoring add-on on, the cluster controller creates the objects that c
 | `GeassReconcileErrors` | A controller fails more than 0.05 reconciles per second over 10 minutes. | 15 minutes |
 | `GeassSlowReconciles` | The slowest one percent of a controller's reconciles take over 30 seconds. | 15 minutes |
 | `GeassWorkqueueBacklog` | A Geass controller has more than 25 items waiting. | 15 minutes |
+| `GeassOperatorMemoryHigh` | The operator's memory stays above 700 MiB, most of the 1 GiB it is allowed. See [Cluster size](/docs/operations/sizing/). | 15 minutes |
 | `GeassAPIServerSlow` | The slowest one percent of the API server's answers take over a second. | 10 minutes |
 | `GeassAPIServerErrors` | More than one in twenty requests to the API server fail. | 10 minutes |
 

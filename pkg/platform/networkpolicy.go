@@ -123,19 +123,38 @@ func ProjectIsolationPolicy(project *geassv1alpha1.GeassProject, namespace strin
 // run on, and with them whatever that machine's role may do. It is on whether or not a project is
 // isolated.
 //
+// Given nodes, it also keeps the pods away from the machines the cluster runs on: their own addresses,
+// where the kubelet, the node's metrics and anything else listening on the host answer. The Kubernetes API
+// port stays open on the control plane, because the Postgres instances in a project's namespace use it.
+//
 // Listing every namespace's pods as well as the address range is deliberate: an egress policy that
 // named only addresses would cut the pods off from cluster DNS and from other services, because
 // those are pod addresses and not every network plugin counts pod addresses as part of 0.0.0.0/0.
-func CloudMetadataPolicy(project, namespace string) *networkingv1.NetworkPolicy {
+//
+// It is one policy, with the node addresses in the same exception list, because policies add up: a second
+// policy that excepted the nodes would be cancelled by this one allowing them.
+func CloudMetadataPolicy(project, namespace string, nodes *NodeNetwork) *networkingv1.NetworkPolicy {
+	except := []string{cloudMetadataCIDR}
+	if nodes != nil {
+		except = append(except, nodes.Blocked...)
+	}
+	egress := []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{
+		{NamespaceSelector: &metav1.LabelSelector{}},
+		{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: except}},
+	}}}
+	if nodes != nil && len(nodes.APIAddresses) > 0 {
+		api := make([]networkingv1.NetworkPolicyPeer, 0, len(nodes.APIAddresses))
+		for _, address := range nodes.APIAddresses {
+			api = append(api, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: address}})
+		}
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{To: api, Ports: []networkingv1.NetworkPolicyPort{tcpPort(nodes.APIPort)}})
+	}
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: policyMeta(CloudMetadataPolicyName, namespace, map[string]string{LabelProject: project}),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress: []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{}},
-				{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: []string{cloudMetadataCIDR}}},
-			}}},
+			Egress:      egress,
 		},
 	}
 }
