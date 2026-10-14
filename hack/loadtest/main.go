@@ -158,7 +158,8 @@ func printTable(results []result) {
 			continue
 		}
 		fmt.Printf("| %d | %d | %d | %.0f MiB | %.0f MiB | %.0f s | %.0f MiB | %.0f s |\n",
-			r.Apps, r.Projects, r.TotalObjects, r.RSSMiB, r.HeapLiveMiB, r.SettleSeconds, r.RestartPeakRSSMiB, r.RestartSettleSecs)
+			r.Apps, r.Projects, r.TotalObjects, r.RSSMiB, r.HeapLiveMiB, r.SettleSeconds,
+			r.RestartPeakRSSMiB, r.RestartSettleSecs)
 	}
 	last := results[len(results)-1]
 	if last.Error != "" || len(last.Objects) == 0 {
