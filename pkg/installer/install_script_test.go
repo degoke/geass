@@ -26,7 +26,8 @@ func runInstallScript(t *testing.T, script, fakeCurl string, args ...string) (ex
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", append([]string{filepath.Join("..", "..", "scripts", script)}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+tmp, "GEASS_VERSION=v9.9.9")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+tmp, "GEASS_VERSION=v9.9.9",
+		"GEASS_TEST_INSTALLER_NAME=geass-linux-"+runtime.GOARCH)
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
 	err := cmd.Run()
@@ -46,14 +47,29 @@ const fakeCurlFails = `echo "curl: (22) The requested URL returned error: 404" >
 exit 22
 `
 
-// A fake download whose "installer" ends with the status in $FAKE_STATUS-less form: it prints a line and
-// exits 7, so the status the script ends with can be told from a status of its own.
-const fakeCurlInstaller = `while [ $# -gt 0 ]; do
-	if [ "$1" = "-o" ]; then out="$2"; fi
+// fakeCurlServing is a stand-in for curl that serves a release: body (a printf format) for the installer, and for
+// SHA256SUMS a file that lists that installer, as install.sh checks what it downloaded against it.
+func fakeCurlServing(body string) string {
+	return `url=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o) out="$2"; shift ;;
+	https://*) url="$1" ;;
+	esac
 	shift
 done
-printf '#!/bin/sh\necho installer-ran\nexit 7\n' > "$out"
+body='` + body + `'
+sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
+case "$url" in
+*/SHA256SUMS) printf '%s  %s\n' "$(printf "$body" | sum | awk '{ print $1 }')" "$GEASS_TEST_INSTALLER_NAME" > "$out" ;;
+*) printf "$body" > "$out" ;;
+esac
 `
+}
+
+// A fake download whose "installer" prints a line and exits 7, so the status the script ends with can be told from
+// a status of its own.
+var fakeCurlInstaller = fakeCurlServing(`#!/bin/sh\necho installer-ran\nexit 7\n`)
 
 // The download used to fail with no message at all: curl ran silent, set -e ended the script, and all that
 // was left was the line that said it had started.
@@ -96,12 +112,7 @@ func TestInstallShCleansUpTheInstallerItDownloadedAndKeepsItsExitStatus(t *testi
 // Whatever follows the script's name goes to the installer, so that `curl ... | sudo sh -s -- --reinstall --yes` can
 // say what it wants: the installer no longer assumes it, because deleting a cluster is not a default.
 func TestInstallShPassesItsArgumentsToTheInstaller(t *testing.T) {
-	const fakeCurlEchoingArgs = `while [ $# -gt 0 ]; do
-	if [ "$1" = "-o" ]; then out="$2"; fi
-	shift
-done
-printf '#!/bin/sh\necho "args:$*"\n' > "$out"
-`
+	fakeCurlEchoingArgs := fakeCurlServing(`#!/bin/sh\necho "args:$*"\n`)
 	code, stdout, stderr, _ := runInstallScript(t, "install.sh", fakeCurlEchoingArgs, "--k3s-version", "v1.36.5+k3s1", "--force")
 	if code != 0 {
 		t.Fatalf("exit status = %d:\nstdout: %s\nstderr: %s", code, stdout, stderr)
