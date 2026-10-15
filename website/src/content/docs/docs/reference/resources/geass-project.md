@@ -1,6 +1,6 @@
 ---
 title: "GeassProject"
-description: "Reference for GeassProject: environments, variables, webhooks, pull request environments, GitHub reporting, backups, network isolation, region and required node tags."
+description: "Reference for GeassProject: environments, variables, webhooks, pull request environments, GitHub reporting, backups, network isolation, region and node tags."
 sidebar:
   order: 1
 ---

@@ -1,6 +1,6 @@
 ---
 title: "GitHub and builds"
-description: "Deploy a GitHub repository: link a project, choose a repository, set the registry Geass builds into, run and read builds, see them on GitHub as commit statuses and deployments, and use webhooks."
+description: "Deploy a GitHub repository: link a project, set the build registry, run and read builds, see commit statuses and deployments on GitHub, and use webhooks."
 ---
 
 Geass can build a service from a GitHub repository. You link a project to your GitHub account, choose a repository, and

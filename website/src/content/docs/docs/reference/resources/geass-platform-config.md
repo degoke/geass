@@ -1,6 +1,6 @@
 ---
 title: "GeassPlatformConfig"
-description: "Reference for GeassPlatformConfig, the single resource that holds the dashboard domain, Cloudflare and GitHub App links, metrics address, build registry and sign-in method."
+description: "Reference for GeassPlatformConfig, the one resource that holds the dashboard domain, Cloudflare and GitHub App links, metrics address, registry and sign-in."
 sidebar:
   order: 9
 ---

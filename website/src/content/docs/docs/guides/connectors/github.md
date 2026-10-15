@@ -1,6 +1,6 @@
 ---
 title: "Connect GitHub"
-description: "Connect GitHub to Geass: register the GitHub App and its permissions, link a project, test the webhook and the permissions, and rotate or remove credentials so pushes and pull requests deploy and report back."
+description: "Connect GitHub to Geass: register the GitHub App and its permissions, link a project, test the webhook and permissions, and rotate or remove credentials."
 sidebar:
   label: GitHub
 ---

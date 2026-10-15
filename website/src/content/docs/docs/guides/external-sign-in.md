@@ -1,6 +1,6 @@
 ---
 title: "Sign in with an identity provider"
-description: "Let an identity provider such as Better Auth, Keycloak or Okta decide who signs in to the dashboard and with which role: set it up, test it, turn it on, and what happens when someone leaves."
+description: "Let an identity provider such as Better Auth, Keycloak or Okta decide who signs in to the dashboard and with which role: set it up, test it, turn it on."
 ---
 
 By default the people who can sign in to the dashboard are the users in a Kubernetes Secret, each with a password. That is enough for a few people, and it has no invitations, no sign-in by email code or link, and no organizations or teams. If you want those, connect an identity provider. It owns the people: who exists, how they prove who they are, who was invited, which organization and team they are in. Geass does not grow any of that. It verifies the provider's signed answer and turns one claim of it into one of its two roles, **admin** or **viewer**.

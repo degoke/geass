@@ -1,6 +1,6 @@
 ---
 title: "Users and API tokens"
-description: "Dashboard users and roles, plus API tokens and deploy hooks for scripts, CI, the CLI and agents: create, scope, sign in with a device code, rotate and revoke them."
+description: "Dashboard users and roles, plus API tokens and deploy hooks for scripts, CI, the CLI and agents: create, scope, sign in with a device code, rotate, revoke."
 ---
 
 Geass has two ways to sign in. People use the dashboard with a username and password, and each user is either an **admin** or a
