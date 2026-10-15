@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, list } from "@/lib/api";
 import { ApiTokens } from "@/components/ApiTokens";
+import { AlertSettings } from "@/components/AlertSettings";
 import { AuthSettings } from "@/components/AuthSettings";
 import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
@@ -90,6 +91,13 @@ export function PlatformSettingsPage({ data, page, reload }) {
     return (
       <SettingsSection title="Sign-in" flat>
         <AuthSettings mutable={canMutate(data)} />
+      </SettingsSection>
+    );
+  }
+  if (page === "alerts") {
+    return (
+      <SettingsSection title="Alerts" flat>
+        <AlertSettings mutable={canMutate(data)} projects={list(data, "projects")} />
       </SettingsSection>
     );
   }

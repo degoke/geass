@@ -165,7 +165,7 @@ The installer turns on both add-ons. Neither has a dashboard switch. You change 
 
 | Add-on | Installs | Where |
 | --- | --- | --- |
-| **Monitoring** (default on) | The `kube-prometheus-stack` chart (69.8.2): Prometheus, the Prometheus operator, kube-state-metrics and a node exporter on each node. With the default `lite` profile there is no Grafana, no Alertmanager and no default alert rules. | Namespace `monitoring` |
+| **Monitoring** (default on) | The `kube-prometheus-stack` chart (69.8.2): Prometheus, the Prometheus operator, kube-state-metrics and a node exporter on each node. With the default `lite` profile there is no Grafana and no default alert rules. Alertmanager is installed in both profiles: it sends the alerts of [Alerts](/docs/guides/alerts/). | Namespace `monitoring` |
 | **Monitoring**, for the operator | A `ServiceMonitor` and a `PrometheusRule`, both named `geass-operator`. See [Metrics and alerts for the operator](#metrics-and-alerts-for-the-operator). | Namespace `monitoring` |
 | **Logging** (opt-in, on after install) | The `victoria-logs-single` chart (0.13.10) and the `fluent-bit` chart (0.58.3): a VictoriaLogs server, and one Fluent Bit pod on every node. | Namespace `geass-logging` |
 
@@ -204,7 +204,9 @@ With the monitoring add-on on, the cluster controller creates the objects that c
 | `GeassAPIServerSlow` | The slowest one percent of the API server's answers take over a second. | 10 minutes |
 | `GeassAPIServerErrors` | More than one in twenty requests to the API server fail. | 10 minutes |
 
-The `lite` profile has no Alertmanager, so nothing in Geass sends these anywhere. The `full` profile leaves Alertmanager and the chart's other components at the chart's defaults. The operator puts the two objects back if you edit or delete them.
+These alerts are **cluster problems** to the channels an admin sets up under **Settings** → **Alerts**, so a channel that is not limited to projects is told when the operator is down, or is not getting through its work. See [Alerts](/docs/guides/alerts/). Geass makes more alerts than these, for builds, deploys, services, backups, nodes, crashing pods and filling storage, in the `PrometheusRule` `geass-alerts`, which that page describes.
+
+Prometheus loads these rules because the monitoring chart is installed with its rule selector open. The chart's default selects only rules with the label `release: geass-kube-prometheus-stack`, which Geass's rules do not have, and clusters installed before that was fixed never loaded them: the alerts above existed and were never evaluated. The next update of the monitoring chart, which Geass makes when it updates, puts that right. The `full` profile leaves the chart's other components, and its default rules, at the chart's defaults. The operator puts the objects back if you edit or delete them.
 
 To change the add-ons, edit the cluster (`kubectl -n geass-system edit geasscluster default`, or the patch below). The fragment shows only the fields involved. Do not apply it as a whole manifest: `kubectl apply` can drop the cluster's other fields.
 

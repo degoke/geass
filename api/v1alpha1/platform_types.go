@@ -572,6 +572,10 @@ type GeassPlatformConfigSpec struct {
 	// default), or through an identity provider.
 	// +optional
 	Auth *GeassPlatformAuthSpec `json:"auth,omitempty"`
+	// Alerting says where Geass tells people that something went wrong: a build or deploy that failed, a service
+	// that is down, backups that are failing, a node that is not ready.
+	// +optional
+	Alerting *GeassAlertingSpec `json:"alerting,omitempty"`
 }
 
 // GeassPlatformAuthSpec says whose word Geass takes for who a person is.

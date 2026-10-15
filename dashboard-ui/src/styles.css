@@ -1249,7 +1249,9 @@ button.rw-side-link.rw-side-on {
 }
 
 /* —— Railway settings: flat forms + native controls —— */
-.rw-rail-settings {
+/* .rw-alert-form is a form in a modal: a modal is rendered outside .rw-rail-settings, where these colours are defined. */
+.rw-rail-settings,
+.rw-alert-form {
   --rail-field-bg: #1a1a1a;
   --rail-field-border: #333333;
   --rail-field-border-focus: #7ce0a0;
@@ -4905,6 +4907,21 @@ code,
 
 .rw-webhook-log tr.is-failed td:last-child {
   color: var(--geass-critical);
+}
+
+.rw-alerts {
+  gap: 26px;
+}
+
+.rw-alert-form .rw-rail-field {
+  max-width: none;
+}
+
+/* A list of choices that can be long, such as a workspace's projects. */
+.rw-alert-checks {
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 2px 4px 2px 0;
 }
 
 .rw-webhook-secret {

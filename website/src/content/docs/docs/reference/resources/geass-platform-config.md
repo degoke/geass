@@ -1,11 +1,11 @@
 ---
 title: "GeassPlatformConfig"
-description: "Reference for GeassPlatformConfig, the one resource that holds the dashboard domain, Cloudflare and GitHub App links, metrics address, registry and sign-in."
+description: "Reference for GeassPlatformConfig, the one resource for the dashboard domain, Cloudflare and GitHub App links, metrics address, registry, sign-in and alerts."
 sidebar:
   order: 9
 ---
 
-The `GeassPlatformConfig` holds the settings that belong to the whole platform rather than to one project: the dashboard's domain and how it is published, the link to the Cloudflare connection, the link to the GitHub App, where to find Prometheus, the registry that repository builds push to, and how people sign in (passwords from a Secret, or an identity provider). There is one, named `platform`, in `geass-system`. The dashboard creates it the first time you save a domain, a Cloudflare connection or a GitHub App, and edits it from **Settings**. You can also create and edit it with `kubectl`.
+The `GeassPlatformConfig` holds the settings that belong to the whole platform rather than to one project: the dashboard's domain and how it is published, the link to the Cloudflare connection, the link to the GitHub App, where to find Prometheus, the registry that repository builds push to, how people sign in (passwords from a Secret, or an identity provider), and where alerts about builds, deploys, services, backups and nodes are sent (Slack or email). There is one, named `platform`, in `geass-system`. The dashboard creates it the first time you save a domain, a Cloudflare connection or a GitHub App, and edits it from **Settings**. You can also create and edit it with `kubectl`.
 
 For the settings as a whole, with the operator flags and environment variables, see [Configuration](/docs/reference/configuration/). For the connections it points at, see [Cloud connectors](/docs/guides/connectors/).
 
@@ -98,6 +98,22 @@ Setting `mode: external` by hand skips the checks the dashboard makes before it 
 | `spec.auth.oidc.requireClaim` | map of strings | none | At most 10 entries | Claims the ID token must have, with these values (or a list that contains them), for a person to sign in. |
 | `spec.auth.oidc.sessionMinutes` | integer | `60` | 5 to 720 | How long a sign-in lasts before the person goes back to the provider. |
 | `spec.auth.oidc.revokeTokensOnLogout` | boolean | `true` | none | Whether a back-channel logout from the provider also revokes the API tokens and deploy hooks the person made. It always ends their sessions. Turn it off when CI depends on tokens made from the accounts of people who sign out. |
+| `spec.alerting.smtp.host` | string | none | 1 to 253 characters | The mail server email channels send through. Required when `smtp` is set. Alertmanager sends the mail, from the `monitoring` namespace. |
+| `spec.alerting.smtp.port` | integer | `587` | 1 to 65535 | The mail server's port. |
+| `spec.alerting.smtp.security` | string | `starttls` | `starttls`, `tls` or `none` | How the connection is protected: `starttls` upgrades a plain connection (port 587), `tls` is encrypted from the first byte and Alertmanager does that only on port 465, `none` sends in the clear and cannot have a username, because Alertmanager will not send a password unencrypted. |
+| `spec.alerting.smtp.username` | string | none | At most 256 characters | The user to sign in as. Leave it out for a server that does not ask. |
+| `spec.alerting.smtp.credentialRef.name` | string | none | none | A Secret in `geass-system` whose `password` key is the password. The dashboard makes the Secret `geass-alert-smtp`. |
+| `spec.alerting.smtp.from` | string | none | 3 to 320 characters; an address, or `Name <address>` | The address alerts come from. Required when `smtp` is set. |
+| `spec.alerting.channels` | list | none | At most 20 | The places alerts go. |
+| `spec.alerting.channels[].id` | string | none | `^[a-z0-9]{8}$` | Identifies the channel, and names its secret. |
+| `spec.alerting.channels[].name` | string | none | 1 to 60 characters | What the dashboard calls it. |
+| `spec.alerting.channels[].type` | string | none | `slack` or `email` | A Slack incoming webhook (or anything that takes the same JSON), or email. |
+| `spec.alerting.channels[].recipients` | list of strings | none | At most 20 | The addresses an email channel writes to. |
+| `spec.alerting.channels[].events` | list of strings | every kind | `build.failed`, `deploy.failed`, `service.down`, `backup.failed`, `node.unhealthy`, `cluster.issue`, `workload.crashlooping`, `storage.filling` | Which alerts the channel hears. Empty means all, including kinds added later. |
+| `spec.alerting.channels[].projects` | list of strings | every project | At most 100 | Limits the channel to these projects. Only a channel with none also hears about the cluster itself. |
+| `spec.alerting.channels[].environments` | list of strings | every environment | At most 100 | Limits the channel to these environments. Alerts about the cluster are not narrowed by it. |
+| `spec.alerting.channels[].notifyResolved` | boolean | `true` | none | Whether the channel is also told when a problem is resolved. |
+| `spec.alerting.channels[].disabled` | boolean | `false` | none | Pauses the channel without deleting it. |
 
 :::caution
 `spec.registry.repository` is the full destination image of every build that does not set its own, and Geass adds neither a service name nor a tag. Every service that relies on it pushes to the same reference. Set `build.registry.repository` on each service instead. Without any registry setting, a repository service waits with `no container registry is set for builds`: Geass has no registry of its own. See [GeassBuild](/docs/reference/resources/geass-build/).
@@ -150,6 +166,8 @@ While `CloudflareReady` is true, services without a host get a default one under
 | **Settings** → **Connectors** → **Cloudflare** → **Connect** | `cloudflareConnectionRef` (the Secret `platform-cloudflare`) and `cloudflareZoneID`. **Disconnect** clears both. |
 | **Settings** → **Connectors** → **GitHub** | `githubAppRef` (the Secret `platform-github-app`). **Remove GitHub App** clears it. |
 | **Settings** → **Sign-in** → **Also revoke the tokens and deploy hooks they made** | `auth.oidc.revokeTokensOnLogout`. Changes at once, in either mode. |
+| **Settings** → **Alerts** → **Set up mail server**, **Remove** | `alerting.smtp` (and `alerting.smtp.credentialRef`, the Secret `geass-alert-smtp`, key `password`). **Remove** clears it and deletes that Secret. |
+| **Settings** → **Alerts** → **Slack channel**, **Email**, a channel's **Edit**, **Pause**, **Delete** | An entry of `alerting.channels`. A Slack channel's webhook URL is the key of its id in the Secret `geass-alert-channels`, which **Delete** removes. See [Alerts](/docs/guides/alerts/). |
 | **Settings** → **Sign-in** → **Save**, **Use ... to sign in**, **Remove** | `auth.oidc` (and `auth.oidc.credentialRef`, the Secret `platform-auth`, key `clientSecret`), then `auth.mode`. **Switch back to passwords** sets `auth.mode` to `local`. **Remove** clears `auth` and deletes that Secret. |
 
 The dashboard has no screen for `prometheusURL`, `defaultClusterRef` or `registry`. Set the first two with `kubectl`. An admin can set `registry` with `POST /api/settings/registry/save` (see the [REST API](/docs/reference/rest-api/)), which stores the login as the Secret `platform-registry`, or with `kubectl`.
