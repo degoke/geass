@@ -87,7 +87,7 @@ func instructions(me client.Identity, opts Options) string {
 	if !canWrite(me, opts) {
 		b.WriteString("You can only read: nothing here can change anything. ")
 	} else {
-		b.WriteString("Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. ")
+		b.WriteString("Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. To build a service from its repository again without a push, call rebuild_app (also with wait=true). ")
 	}
 	b.WriteString("Secret values are never returned by any tool. Plain configuration is not secret and is returned as it is, so keep anything sensitive in a secret.")
 	return b.String()

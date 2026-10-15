@@ -313,6 +313,21 @@ code `6`. The service is not rolled back: look at it with `geass status web`.
 
 Deploying a service records a new deployment even when nothing was pending.
 
+### Build again
+
+A service that is built from a repository is built again by `geass build`, which does what a push to its branch does:
+
+```bash
+geass build web --wait
+geass build -p proj-1a2b3c4d -e production --wait --timeout 20m
+```
+
+It takes the same `--wait` and `--timeout`, prints `web: build started` and then the same progress lines, and exits
+`5` or `6` in the same cases. With no names it builds every repository service of the environment. It does not apply
+changes saved to the service and not yet deployed: use `geass deploy` for those. A service that runs an image or a
+function has no build to run, and the command says so. For a pipeline that builds on a schedule, see
+[Build from GitHub Actions](/docs/guides/github-and-builds/#build-from-github-actions).
+
 ## Read logs
 
 ```bash
@@ -550,7 +565,7 @@ Add `GEASS_PROJECT` and `GEASS_ENVIRONMENT` if the script works in one environme
 | **Read only, with logs** | Monitoring, reports and agents that only watch. |
 | **Full access** | Scripts that create services, change nodes or delete things. |
 
-A project token works with `whoami`, `version`, `apps list` and `get`, `status`, `deploy NAME`, `logs -f`, `env`, `scale`,
+A project token works with `whoami`, `version`, `apps list` and `get`, `status`, `deploy NAME`, `build`, `logs -f`, `env`, `scale`,
 `rollback`, `metrics`, `functions` and the parts of `geass api` that its routes allow. It is refused by `projects`,
 `databases`, `stores`, `nodes`, `compliance`, `apps create` and `apps delete`, `openapi`, and `logs` without `-f`. Name
 the services in `geass deploy`: `geass deploy` with no names deploys by project and is refused for a project token.
@@ -582,6 +597,9 @@ jobs:
 
 The first command saves the new image as a pending change. The second deploys it and fails the job (exit code `5` or
 `6`) if the service does not come up.
+
+For a service built from a repository, `geass build web --wait` runs its build again and follows it through to the
+rollout, with the same exit codes. See [Build from GitHub Actions](/docs/guides/github-and-builds/#build-from-github-actions).
 
 In CI nobody can answer a question, so `geass apps delete` needs `--yes`. If the job runs where there is no home
 directory, such as a bare container, set `GEASS_CONFIG` to any path, for example `GEASS_CONFIG=/tmp/geass.json`:

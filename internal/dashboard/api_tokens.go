@@ -34,6 +34,7 @@ const tokenUseRecordInterval = 10 * time.Minute
 var (
 	errTokenNotFound  = errors.New("token was not found")
 	errTooManyTokens  = errors.New("too many API tokens; revoke some before creating more")
+	errHookExists     = errors.New("this service already has a deploy hook; delete it to make a new one")
 	errInvalidToken   = errors.New("invalid or expired API token")
 	errTokensViewOnly = errors.New("API tokens can only be managed from the dashboard by an admin")
 )
@@ -144,7 +145,9 @@ func (s *Server) mutateAPITokens(ctx context.Context, mutate func(records map[st
 // authenticateAPIToken resolves a presented token to its stored record.
 func (s *Server) authenticateAPIToken(ctx context.Context, presented string) (*apitokens.Record, error) {
 	id, secret, scope, ok := apitokens.Parse(presented)
-	if !ok {
+	// A deploy hook's secret is in a URL, where logs and proxies see it, so it is good for that URL and nothing
+	// else: it is no credential for the API.
+	if !ok || scope == apitokens.ScopeService {
 		return nil, errInvalidToken
 	}
 	records, err := s.listAPITokens(ctx)
@@ -307,6 +310,7 @@ type apiTokenView struct {
 	Scope       string     `json:"scope"`
 	Project     string     `json:"project,omitempty"`
 	Environment string     `json:"environment,omitempty"`
+	App         string     `json:"app,omitempty"`
 	Role        string     `json:"role"`
 	CreatedBy   string     `json:"createdBy,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
@@ -317,7 +321,7 @@ type apiTokenView struct {
 
 func viewOfToken(record apitokens.Record, now time.Time) apiTokenView {
 	return apiTokenView{
-		ID: record.ID, Name: record.Name, Scope: record.Scope, Project: record.Project, Environment: record.Environment,
+		ID: record.ID, Name: record.Name, Scope: record.Scope, Project: record.Project, Environment: record.Environment, App: record.App,
 		Role: record.Role, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
 		LastUsedAt: record.LastUsedAt, Expired: record.Expired(now),
 	}
@@ -474,8 +478,10 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 		Scope:         strings.TrimSpace(r.FormValue("scope")),
 		Project:       strings.TrimSpace(r.FormValue("project")),
 		Environment:   strings.TrimSpace(r.FormValue("environment")),
+		App:           strings.TrimSpace(r.FormValue("app")),
 		Role:          strings.TrimSpace(r.FormValue("role")),
 		CreatedBy:     s.currentSession(r).Username,
+		CreatedByID:   s.currentSession(r).Identity,
 		ExpiresInDays: days,
 	}
 	token, record, err := apitokens.New(request, time.Now())
@@ -483,7 +489,7 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
 		return
 	}
-	if record.Scope == apitokens.ScopeProject {
+	if record.Scope == apitokens.ScopeProject || record.Scope == apitokens.ScopeService {
 		var project geassv1alpha1.GeassProject
 		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: record.Project, Namespace: systemNamespace}, &project); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "project was not found"})
@@ -494,22 +500,37 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if record.Scope == apitokens.ScopeService {
+		app := &geassv1alpha1.GeassApp{}
+		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: record.App, Namespace: systemNamespace}, app); err != nil ||
+			app.Spec.Project != record.Project || string(app.Spec.Environment) != record.Environment {
+			writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "service was not found in this project and environment"})
+			return
+		}
+	}
 	err = s.mutateAPITokens(r.Context(), func(records map[string]apitokens.Record) (bool, error) {
 		if len(records) >= apitokens.MaxTokens {
 			return false, errTooManyTokens
+		}
+		if record.Scope == apitokens.ScopeService {
+			for _, existing := range records {
+				if existing.Scope == apitokens.ScopeService && existing.App == record.App {
+					return false, errHookExists
+				}
+			}
 		}
 		records[record.ID] = record
 		return true, nil
 	})
 	switch {
-	case errors.Is(err, errTooManyTokens):
+	case errors.Is(err, errTooManyTokens), errors.Is(err, errHookExists):
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
 		return
 	case err != nil:
 		redirectFormInternalError(w, r, "/")
 		return
 	}
-	ctrllog.FromContext(r.Context()).Info("Created API token", "id", record.ID, "scope", record.Scope, "project", record.Project, "environment", record.Environment, "createdBy", record.CreatedBy)
+	ctrllog.FromContext(r.Context()).Info("Created API token", "id", record.ID, "scope", record.Scope, "project", record.Project, "environment", record.Environment, "service", record.App, "createdBy", record.CreatedBy)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "token": token, "item": viewOfToken(record, time.Now())})
 }
@@ -535,6 +556,7 @@ func (s *Server) handleAPITokenRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.tokenUsed.Delete(id)
+	s.releaseHook(id)
 	ctrllog.FromContext(r.Context()).Info("Revoked API token", "id", id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -548,6 +570,7 @@ func (s *Server) deleteAPITokensFor(ctx context.Context, project, environment st
 			if record.Project == project && (environment == "" || record.Environment == environment) {
 				delete(records, id)
 				s.tokenUsed.Delete(id)
+				s.releaseHook(id)
 				changed = true
 			}
 		}

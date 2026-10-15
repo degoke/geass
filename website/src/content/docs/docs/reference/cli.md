@@ -20,13 +20,13 @@ to see the command list, and `geass help <command>` (or `geass <command> --help`
 | Group | Commands |
 | --- | --- |
 | Account | `login`, `logout`, `whoami`, `version`, `config` |
-| Services | `apps`, `deploy`, `status`, `logs`, `env`, `scale`, `rollback`, `metrics` |
+| Services | `apps`, `deploy`, `build`, `status`, `logs`, `env`, `scale`, `rollback`, `metrics` |
 | Functions | `functions` |
 | Data and cluster | `projects`, `databases`, `stores`, `nodes`, `compliance` |
 | Raw API and agents | `api`, `openapi`, `mcp` |
 | Built in | `help`, `completion`, `--help` (`-h`), `--version` (`-v`) |
 
-`deploy`, `status`, `logs`, `env`, `scale` and `rollback` also exist under `geass apps`, where they do the same
+`deploy`, `build`, `status`, `logs`, `env`, `scale` and `rollback` also exist under `geass apps`, where they do the same
 thing. `metrics` exists only at the top level, and `deployments` only under `geass apps`.
 
 ## Global flags
@@ -140,6 +140,7 @@ creates its folder with mode `0700`, and replaces it atomically. A file that is 
 - Lists and statuses print an aligned table by default. With `--json` they print a JSON object with an `items` array.
 - `geass apps get`, `geass projects get`, `geass databases get`, `geass stores get`, `geass api` and `geass openapi`
   always print JSON.
+- `geass deploy` and `geass build` print `{"deployed": [...]}` or `{"building": [...]}` with `--json` when they do not wait, and `{"items": [...]}` (the services' statuses) when they do.
 - These commands print plain text lines whatever `--json` says: `scale`, `rollback`, `env set`, `env unset`,
   `apps create`, `apps delete`, `nodes tag`, `compliance set`, `compliance clear`, `functions triggers add`,
   `functions triggers remove`, `logout`, `config use-context` and `config set-context`.
@@ -425,6 +426,50 @@ gets `403` there, so name the services.
 ```bash
 geass deploy web --wait
 geass deploy -p proj-1a2b3c4d -e production --wait
+```
+
+### `geass build`
+
+Runs the build of services that are built from a repository again (also `geass apps build`). It is what a push to the
+branch does, for a pipeline that has pushed nothing.
+
+```text
+geass build [APP...] [--wait] [--timeout DURATION]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--wait` | boolean | `false` | Follow each build through to the rollout, and wait until the service is ready. Exits `5` if the build or the rollout fails. |
+| `--timeout` | duration | `10m` | How long `--wait` waits for each service. The waits run one after another. |
+
+- **With names,** each named service's build is run again, from the head of its branch (or the commit it pins). A service
+  that runs an image or a function has no build to run: the command stops with `<name>: the app has no repository
+  build` (exit 1). A service that was never deployed has none yet, and the command says `the app has not been built
+  yet: its build is made when it is deployed`.
+- **With no names,** every service built from a repository in the environment given by `--project` and `--environment`
+  is built, leaving out drafts and services being deleted. Without both values it stops with `say what to build: name
+  services, or give --project and --environment to build every service built from a repository` (exit 2). When the
+  environment has none, it says so on standard error and exits `0`.
+- **Progress** goes to standard error: `web: build started`, then, with `--wait`, lines such as `web: build running`,
+  `web: pending (1 of 2 ready)` and `web: ready at https://web.example.com`, one each time the state changes.
+- **With `--wait`** the build as it was before the command is read first. A status that still shows that finished
+  build is not taken for the answer, until 15 seconds have passed: a build that restarts shows as not finished within
+  moments, and one that really ends exactly as the last did (it fails at once, the same way) is accepted after that. The
+  final statuses are printed as a table (or `{"items": [...]}` with `--json`). A service is done when it is ready, has no
+  pending changes and its build succeeded. It has failed when its state is `failed` or its build phase is `Failed`: the
+  exit code is `5` and the message gives the build's failure reason. A wait that runs past `--timeout` exits `6`.
+- **Without `--wait`** and with `--json`, it prints `{"building": ["web"]}`.
+
+A service that is already running keeps serving from its current image until the new one is built, and is then rolled
+out onto it. Changes saved to the service and not yet deployed are not applied: use `geass deploy` for those.
+
+**API calls:** `POST /apps/{name}/build` for each name, or `GET /apps` when there are none; with `--wait`,
+`GET /apps/{name}/status` once before the build is started and then every 3 seconds. **Needs:** Full access or a project
+token for the service's environment.
+
+```bash
+geass build web --wait
+geass build -p proj-1a2b3c4d -e production --wait --timeout 20m
 ```
 
 ### `geass apps deployments`

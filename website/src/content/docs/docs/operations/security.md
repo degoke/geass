@@ -13,6 +13,7 @@ had no independent audit, and nothing here should be read as one.
 | Surface | Protected by |
 | --- | --- |
 | Dashboard and REST API | Username and password (bcrypt), a signed session cookie, or an API token; users are `admin` or `viewer`, tokens can also be `observer` |
+| A deploy hook URL | A 160-bit secret in the path that deploys one service and does nothing else; refused as an API credential |
 | Writes from a browser | Same-origin check on every mutation (the request's `Origin` or `Referer` must match the dashboard host) |
 | Writes from scripts | API tokens sent in a header, stored only as hashes |
 | Command line and agents | A device code that a signed-in admin approves in the dashboard, then an ordinary API token; the MCP server acts as that token |
@@ -25,6 +26,7 @@ had no independent audit, and nothing here should be read as one.
 | Secrets | Kubernetes Secrets, not encrypted by Geass |
 | Outbound webhooks | Signed with a per-webhook secret; private and loopback addresses refused |
 | GitHub webhooks into Geass | HMAC-SHA256 signature check |
+| Geass reporting to GitHub | The GitHub App's short-lived installation token, with write access only to commit statuses, deployments and pull requests; one switch per project turns it off |
 | Servers | Your OS, your firewall, SSH keys you supply |
 
 ## Authentication
@@ -36,10 +38,14 @@ password you write into the Secret is replaced by its hash the first time Geass 
 password `CHANGE_ME`, and it does not enforce a minimum length. Creating and changing users, and the two roles, are in
 [Users and API tokens](/docs/guides/users-and-tokens/).
 
-A successful sign-in sets the cookie `geass_session`. It is HTTP only, `SameSite=Lax`, valid for 12 hours, and signed
+A successful sign-in sets the cookie `__Host-geass_session`. It is HTTP only, `SameSite=Lax`, valid for 12 hours, and signed
 with an HMAC key kept in the same Secret (`session-key`). The cookie carries the username, role, an expiry and an epoch;
 Geass checks the user's current role and epoch on every request. Signing out bumps the epoch, which ends every session of
-that user. The cookie is marked `Secure`, except when the request is plain HTTP to a loopback address.
+that user. The cookie is marked `Secure`, except when the request is plain HTTP to a loopback address, where it is `geass_session`.
+The `__Host-` prefix is what keeps a sibling subdomain from planting a cookie: a browser sets such a cookie only for the exact
+host that sent it, over https, with `Path=/` and no `Domain`, and refuses a page of another host the same name. Tenants' services
+run on subdomains of the dashboard's domain, so without it one could set a session cookie, or the sign-in state cookie, for the whole domain.
+A cookie under the plain name is ignored where Geass sets the prefixed one.
 
 Five failed sign-ins for one username in a minute lock that username for a minute, and the reply is the same while
 locked. The counter lives in the Secret, so it survives restarts. Only usernames that are configured are recorded: a
@@ -50,27 +56,86 @@ next time the Secret is written, and the Secret never keeps more than 256 record
 A sign-in for a name that is not configured is checked against a dummy password hash, so it takes as long as one for a
 real user and the time of the reply does not reveal which names exist.
 
-The lock is per username, not per client address, so an attacker can keep a known username locked. On top of it, a
-client address that causes 20 failed sign-ins in a minute is refused for a minute, whatever username it tries. That count
-is kept in memory (it starts over when the operator restarts), and an IPv6 client counts as its `/64`. Geass sees only
-the address of whatever connects to it, so this limit applies only to a client that connects directly from a public
-address. Behind a reverse proxy, a Cloudflare Tunnel or the cluster's ingress, every visitor arrives from the same
-private address, and limiting it would let anyone lock everyone out; private, loopback, link-local and shared
-(`100.64.0.0/10`) addresses are therefore never limited by address, and there the per-username lock is the protection.
-A client that rotates through IPv6 `/64` prefixes gets a fresh allowance for each, so the limit slows a flood without
-stopping it. Put a rate limit in front of the dashboard if you need one that tells visitors apart.
+Five failures for a username from one client address lock that username for that address, so a client that keeps guessing is shut out
+and the owner of the account, signing in from elsewhere, is not (an attacker can no longer keep a known username locked for everyone by
+failing from one address). Twenty-five failures for it from all clients together lock it for everyone, which is the backstop for many
+clients guessing at once. On top of both, a client address that causes 20 failed sign-ins in a minute, whatever username it tries, is
+refused for a minute. The counts for a username and an address, and for an address, are kept in memory (they start over when the operator
+restarts), and an IPv6 client counts as its `/64`, so a client that rotates through prefixes gets a fresh allowance for each.
 
-There is no two-factor authentication and no single sign-on. Use long unique passwords and restrict who can reach the
-dashboard.
+Geass takes a client's address from the connection when it comes from a public address. When it comes from a private one, as everything
+does through the cluster's ingress or a Cloudflare Tunnel, Geass reads `X-Forwarded-For` from the right and uses the right-most address
+that is public: the nearest proxy wrote it, and what a client put before it is not believed. When that cannot be told (no header, or an entry that cannot be read), the visitors cannot be told apart, and
+five failures lock the username for everyone, as before. Anything inside the cluster can write the header and choose its address; that
+gets it another client's allowance and never more than 25 failures a minute for a username in all. A load balancer that does not
+add the address of what connected to it does not help: put one in front that does, or a rate limit that tells visitors apart.
+
+Open streams and terminals are checked again about every 15 seconds. The stream of changes, the logs streams and terminals are checked
+against their credentials when they are opened, and then again while they stay open: a person who signed out (or was signed out by the
+identity provider), a token that was revoked and a user who was demoted lose what they had open within about 20 seconds (the checks of all the open streams share one view of the users that is a few seconds old, so that a few dozen open tabs do not each read the Secret). A terminal says
+`Your session ended` before it closes, and its audit record says the session ended, not that the terminal was closed. When the check cannot be made (the API server did not answer), the stream stays open until the next one.
+
+There is no two-factor authentication of its own. To get it, with invitations and sign-in by email, connect an identity
+provider (see below). Use long unique passwords and restrict who can reach the dashboard.
+
+### Signing in through an identity provider
+
+With `spec.auth.mode` set to `external`, an OpenID Connect provider decides who signs in, and Geass only checks its answer.
+Setting it up and its limits are in [Sign in with an identity provider](/docs/guides/external-sign-in/). What protects it:
+
+- **The sign-in is bound to the browser that began it.** Geass starts with a random state, a nonce and a PKCE verifier (S256),
+  keeps them in a short-lived (ten minutes), signed `__Host-` cookie (plain over http on this machine), and checks them when the
+  browser comes back. A callback without that cookie, with another sign-in's cookie, with a changed state, or with a state that already came
+  back (the operator remembers the ones used) is refused before the provider is asked anything, and so is an answer whose `iss`
+  is not the configured issuer or that has no code. The address the provider is told to send the browser back to is the dashboard's
+  published address once its domain is verified, not the Host header of the request, so a provider with a permissive redirect list cannot
+  be made to deliver a code to a host an attacker chose. The page a person lands on afterwards is only ever a path on the dashboard.
+- **The ID token is verified, not trusted.** Its signature (with the provider's published keys, fetched again when a token names a
+  key that is not known, at most once every 15 seconds, so forged tokens cannot make the operator call the provider over and over, and
+  again after six hours), issuer, audience, expiry and nonce are checked. Only public-key algorithms are accepted: never a shared-secret
+  algorithm, which anyone holding the public key could forge, and never an unsigned token. The token is taken from the provider's
+  token endpoint over TLS, not from the browser.
+- **A role is the one the provider gave.** The role claim is mapped through the list an admin set, and a person whose roles map to
+  nothing, or who lacks a required claim (compared whole, never split at commas), or whose email the provider does not say is
+  verified (`true`, or the text `true`), or whose token names no subject, cannot sign in. Without a required claim, everyone the
+  provider signs in with a mapped role gets in: that is the setting to restrict when anyone can sign up at the provider. The role is
+  fixed in the signed session cookie at sign-in, so a change at the provider applies when the session ends (an hour by
+  default, 5 to 720 minutes).
+- **Only a signed-in admin can change it, never a token.** The settings, the test and the switch are refused for every API
+  token, observers included. Turning it on needs a test sign-in of exactly the settings as saved, by someone who maps to admin,
+  in the last half hour, and an admin who has a password. Saving is refused while people sign in through the provider.
+- **The way in that does not depend on the provider stays.** A user in the Secret who is an admin and has a password can still
+  sign in. While the provider decides, the password of a user who is not an admin is refused, and turning the provider on in the
+  dashboard ends their open sessions (a switch made by editing the resource by hand does not, so those end when they expire).
+- **The operator does not become a probe.** The issuer, and every address its discovery document lists, has to be `https`. The
+  operator does not connect to this machine, link-local addresses (where the cloud's metadata service is), the metadata
+  addresses of the clouds that put it elsewhere, or an IPv4 address written as NAT64, checked when the issuer is saved and again at
+  every connection, so a redirect to one fails too. It reads at most 1 MiB of a response and gives up after ten seconds. Private
+  network addresses are allowed, which includes addresses inside the cluster: that is why only a signed-in admin can set the address. `GEASS_ALLOW_LOOPBACK=true`, an operator setting no admin or token can
+  change, lets a developer use a provider on their own machine, and lets through loopback only.
+- **The client secret is not shown, and is bound to its provider.** It lives in the Secret `platform-auth`, and a change of
+  issuer or client ID needs it entered again.
+- **Leaving.** Signing out ends every session a person has, in every browser. The provider can end them too with a back-channel
+  logout, which Geass accepts only when it is signed by the provider and recent, and acts on once. It also revokes the tokens and
+  deploy hooks that person made, unless an admin turned that off (`revokeTokensOnLogout`, on by default) because CI depends on tokens
+  made from the accounts of people who sign out. Without it, or with it off, a token outlives their access until it expires or is revoked.
 
 ### API tokens
 
-Tokens have a prefix (`gsw_` for a workspace token, `gsp_` for a project token), a public identifier and a 160-bit random
+Tokens have a prefix (`gsw_` for a workspace token, `gsp_` for a project token, `gsh_` for a deploy hook), a public identifier and a 160-bit random
 secret. Geass stores a SHA-256 hash of the secret in the Secret `geass-api-tokens`, compares in constant time, and shows
 the token once. Workspace tokens are `admin`, `observer` or `viewer`. A project token can act on one environment of one project, through
 a fixed list of endpoints, and cannot create resources, open terminals or change settings. Tokens can expire (up to ten
 years, or never) and can be revoked at once. Only a signed-in admin can create, list or revoke tokens, or approve a device code. A
-token is not tied to the account of the admin who created it, so removing that user does not revoke it.
+token is not tied to the account of the admin who created it, so removing that user does not revoke it. The exception is a person who
+signed in through an [identity provider](/docs/guides/external-sign-in/): what they make is tied to who they are there, and is
+revoked when the provider signs them out.
+
+A deploy hook's secret lives in a URL, where proxies and logs can see it, so it is built to do little: it deploys one service, is
+refused as a Bearer token everywhere, answers only `POST`, and looks the same as a missing hook when it is wrong, revoked or expired.
+Anyone who has the URL can deploy that service, so treat it like a token, and delete the hook if it may have leaked. A hook answers once
+every 30 seconds, so a leaked URL in a loop cannot keep builds from finishing. The operator's own request log redacts the path, but a reverse
+proxy in front of it may not.
 
 ### Roles
 
@@ -177,7 +242,7 @@ Paths that work without a login:
 | `/api/login`, `/api/logout`, `/api/session` | Sign in, sign out, and ask whether you are signed in |
 | `POST /api/v1/auth/device`, `POST /api/v1/auth/token` (also under `/api/auth/`) | Start a command-line sign-in and collect its token. Starting one only creates a request that a signed-in admin has to approve |
 | `/geass-probe` | A small JSON answer used to verify the public address |
-| `/webhooks/github` | GitHub cannot sign in; every request needs a valid HMAC signature |
+| `/webhooks/github` | GitHub cannot sign in; every request needs a valid HMAC signature. The delivery ID GitHub sends is logged and echoed in the answer, and never used to skip a delivery |
 | `/assets/*` and other page loads | The dashboard's static files. They hold no data |
 
 Everything under `/api/` other than those needs a session or a token. The unauthenticated surface is small, but it is on
@@ -350,7 +415,19 @@ loopback and link-local addresses always, and private ranges (RFC 1918 and share
 | AWS | Create and delete S3 buckets, and create and delete IAM users named `geass-*` | Use the policy in [Connect AWS](/docs/guides/connectors/aws/#permissions-the-aws-key-needs); restrict S3 resources to a name prefix |
 | PlanetScale | Create databases, branch passwords and Postgres roles in the organization, delete the logins Geass made, and read cluster sizes | Use a token limited to what Geass needs |
 | Cloudflare | Edit DNS in the zone, edit tunnels in the account | Scope the token to one zone |
-| GitHub App | Read contents, metadata and pull requests of the repositories where it is installed | Install it only on the repositories you deploy |
+| GitHub App | Read contents, metadata and checks of the repositories where it is installed. Write commit statuses, deployments and pull requests (comments) there. It cannot push code or merge a pull request, which need Contents write | Install it only on the repositories you deploy, and turn **Report to GitHub** off for a project that should not be written to |
+
+**What Geass writes to GitHub.** Geass reports each build as a commit status (`geass/build/<service>`), each deploy as a GitHub
+Deployment, and each pull request environment as one comment on the pull request. What it writes is a state, a short
+reason such as `kaniko Job failed`, a service's public address and a link to the dashboard. Everyone who can see the
+repository can see them, so the address of a service built from a private repository is shown to that repository's
+readers, and to nobody else. The write permissions are needed for this and for nothing else. **Pull requests** write is the narrowest permission GitHub offers
+for commenting, and it also allows editing a pull request's title, body and reviews, so Geass's installation token can do
+that too, though Geass does not. The permissions are all or nothing per app: an app registered before Geass reported to
+GitHub does not have them, and the owner has to approve them in GitHub. Until they do, the reports are refused and
+dropped, and the connection's `GitHubReporting` condition says so. See
+[Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github). The setting is `spec.githubReporting`
+on the project, and viewers do not see it.
 
 AWS and PlanetScale connections belong to one project and are only usable by it. The Cloudflare and GitHub credentials belong
 to the whole cluster. Per-bucket AWS keys given to apps reach only their own bucket.

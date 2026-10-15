@@ -33,9 +33,14 @@ import (
 const dashboardSessionTTL = 12 * time.Hour
 
 const (
-	dashboardRoleAdmin              = "admin"
-	dashboardRoleViewer             = "viewer"
-	loginFailureLimit               = 5
+	dashboardRoleAdmin  = "admin"
+	dashboardRoleViewer = "viewer"
+	loginFailureLimit   = 5
+	// loginUserFailureLimit is how many failed sign-ins for one username, from every client together, lock it for
+	// everyone, when the clients can be told apart (see loginSourceKey). Each client has its own lock after
+	// loginFailureLimit of its own, so one that keeps guessing is shut out without shutting out the person who owns the
+	// account; this is the backstop for many clients guessing at once.
+	loginUserFailureLimit           = 25
 	loginFailureWindow              = time.Minute
 	loginLockout                    = time.Minute
 	dashboardSessionKeyPrefix       = "hex:"
@@ -75,6 +80,11 @@ type dashboardAuth struct {
 	users      []dashboardUser
 	sessionKey []byte
 	epochs     map[string]int64
+	// ssoRevoked is, for each person who signed in through an identity provider, the moment (Unix milliseconds)
+	// before which their sessions no longer count.
+	ssoRevoked map[string]int64
+	// ssoNotBefore is the moment (Unix milliseconds) before which no session of a person from the provider counts.
+	ssoNotBefore int64
 }
 
 type dashboardSessionInfo struct {
@@ -84,6 +94,9 @@ type dashboardSessionInfo struct {
 	// CanReadSensitive is whether the session may read what is kept from viewers: logs, the names of a
 	// service's variables, and the like. Admins can, and so can an observer token, which changes nothing.
 	CanReadSensitive bool `json:"-"`
+	// Identity names a person who signed in through an identity provider (their stable key there), and is empty for
+	// a local user. It is what the tokens they make are tied to.
+	Identity string `json:"-"`
 }
 
 type loginAttempt struct {
@@ -114,6 +127,10 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			}
 		}
 		session := s.currentSession(r)
+		if session != nil {
+			// What the handlers below ask again is answered from here, not by reading the users Secret once more.
+			r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, session))
+		}
 		if session == nil {
 			if isJSONRequest(r) || strings.HasPrefix(r.URL.Path, "/api/") {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{dashboardLiteralError: "authentication required"})
@@ -127,6 +144,9 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "viewer role cannot access this"})
 			return
 		}
+		// A stream or a terminal that stays open is checked against its credentials again from time to time.
+		r, stop := s.guardStream(r)
+		defer stop()
 		next.ServeHTTP(w, r)
 	})
 }
@@ -162,7 +182,7 @@ func dashboardSensitiveRead(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/projects/") && (strings.HasSuffix(path, "/logs") || strings.HasSuffix(path, "/logs/stream") || strings.HasSuffix(path, "/logs/history")):
 		return true
-	case path == "/api/settings/github", path == "/api/templates", path == "/api/tokens", path == "/api/planetscale/cluster-sizes":
+	case path == "/api/settings/github", path == "/api/settings/auth", path == "/api/templates", path == "/api/tokens", path == "/api/planetscale/cluster-sizes":
 		return true
 	default:
 		return false
@@ -175,6 +195,13 @@ func dashboardPublicPath(r *http.Request) bool {
 	case path == platform.GeassDashboardProbePath, path == "/webhooks/github":
 		return true
 	case path == "/api/login", path == "/api/logout", path == "/api/session":
+		return true
+	// A deploy hook is called by a tool that cannot sign in: the secret in its URL is the credential. Every method
+	// gets through to the handler, which answers anything but POST with 405.
+	case strings.HasPrefix(path, deployHookPrefix):
+		return true
+	// The identity provider tells Geass that a person signed out there. Its signature on the token is the credential.
+	case path == oidcLogoutPath && r.Method == http.MethodPost:
 		return true
 	// Signing in from a program: it starts and collects a request, and approving one takes a signed-in admin.
 	case path == "/api/auth/device" && r.Method == http.MethodPost, path == "/api/auth/token" && r.Method == http.MethodPost:
@@ -204,6 +231,15 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := auth.lookup(username)
+	// While an identity provider decides who signs in, a password works only for an admin. A name it does not allow is
+	// treated as one that does not exist, so the answer does not say which names are users. Whether the provider decides
+	// is read for every attempt, whatever the name, so that the work does not depend on whether the name exists. If it cannot
+	// be told, it is assumed that the provider does: a password that should be refused must not be accepted because a read
+	// failed.
+	config, configErr := s.platformConfig(r.Context())
+	if user != nil && normalizeDashboardRole(user.Role) != dashboardRoleAdmin && (configErr != nil || ssoSettingsOf(config).External()) {
+		user = nil
+	}
 	// Every name costs one bcrypt comparison, a configured user's against its own hash and any other name's
 	// against a dummy, before anything else is decided: neither the time of the reply nor the lock tells a
 	// caller whether a name exists.
@@ -214,7 +250,7 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 	passwordOK := passwordMatches(r.FormValue("password"), stored)
 	// Only a configured user can have a lock, so any other name skips reading the stored lockouts.
 	if user != nil {
-		locked, err := s.loginLocked(r, user.Username)
+		locked, err := s.loginLocked(r, user.Username, source)
 		if err != nil {
 			redirectFormError(w, r, "/", dashboardAuthUnavailable)
 			return
@@ -226,14 +262,14 @@ func (s *Server) handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if user == nil || !passwordOK {
 		s.noteLoginSourceFailure(source)
-		if err := s.recordLoginFailure(r, user); err != nil {
+		if err := s.recordLoginFailure(r, user, source); err != nil {
 			redirectFormError(w, r, "/", dashboardAuthUnavailable)
 			return
 		}
 		redirectFormError(w, r, "/", "invalid username or password")
 		return
 	}
-	if err := s.clearLoginFailures(r, username); err != nil {
+	if err := s.clearLoginFailures(r, username, source); err != nil {
 		redirectFormError(w, r, "/", "could not create a session")
 		return
 	}
@@ -259,7 +295,13 @@ func (s *Server) handleDashboardLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if session := s.currentSession(r); session != nil {
-		if err := s.revokeDashboardSession(r, session.Username); err != nil {
+		var err error
+		if session.Identity != "" {
+			err = s.revokeSSOIdentity(r.Context(), session.Identity)
+		} else {
+			err = s.revokeDashboardSession(r, session.Username)
+		}
+		if err != nil {
 			redirectFormError(w, r, "/", "could not sign out")
 			return
 		}
@@ -275,7 +317,15 @@ func (s *Server) handleDashboardLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardSession(w http.ResponseWriter, r *http.Request) {
 	session := s.currentSession(r)
 	if session == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+		// sso tells the sign-in page to offer the identity provider, and what to call it.
+		answer := map[string]any{"authenticated": false}
+		// Only the configuration is read, not the client secret: this answer is public.
+		if config, err := s.platformConfig(r.Context()); err == nil {
+			if settings := ssoSettingsOf(config); settings.External() {
+				answer["sso"] = map[string]any{"name": settings.ssoName()}
+			}
+		}
+		writeJSON(w, http.StatusOK, answer)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": session.Username, "role": session.Role, "canMutate": session.CanMutate})
@@ -286,17 +336,27 @@ func (s *Server) sessionCanMutate(r *http.Request) bool {
 	return session != nil && session.CanMutate
 }
 
+// sessionContextKey carries the session that withAuth worked out for a request, so that the handlers that ask who is
+// signed in again (several do, for the name and for the role) do not each read and parse the users Secret.
+type sessionContextKey struct{}
+
 func (s *Server) currentSession(r *http.Request) *dashboardSessionInfo {
+	if cached, ok := r.Context().Value(sessionContextKey{}).(*dashboardSessionInfo); ok {
+		return cached
+	}
 	if record := tokenFromRequest(r); record != nil {
 		return tokenSession(record)
 	}
-	cookie, err := r.Cookie(platform.DashboardSessionCookie)
+	cookie, err := r.Cookie(cookieName(r, platform.DashboardSessionCookie))
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return nil
 	}
-	auth, err := s.dashboardAuth(r)
+	auth, err := s.authForRequest(r)
 	if err != nil {
 		return nil
+	}
+	if claims, ok := parseSSOSession(auth.sessionKey, cookie.Value, time.Now()); ok {
+		return s.ssoSession(r, auth, claims)
 	}
 	username, _, epoch, ok := dashboardSessionClaims(auth.sessionKey, cookie.Value)
 	if !ok {
@@ -335,7 +395,7 @@ func (s *Server) dashboardAuth(r *http.Request) (*dashboardAuth, error) {
 			return nil, persistErr
 		}
 	}
-	auth := &dashboardAuth{users: users, sessionKey: sessionKey, epochs: epochs}
+	auth := &dashboardAuth{users: users, sessionKey: sessionKey, epochs: epochs, ssoRevoked: parseSSORevocations(secret), ssoNotBefore: parseSSONotBefore(secret)}
 	s.authMu.Lock()
 	s.auth = auth
 	s.authMu.Unlock()
@@ -731,9 +791,22 @@ func hashDashboardUsers(users []dashboardUser) (bool, error) {
 	return upgraded, nil
 }
 
+// cookieName is the name a cookie is set and read under for this request. Where the cookie is Secure it carries the
+// "__Host-" prefix, which a browser accepts only for a Secure cookie with Path=/ and no Domain, and which a page of another
+// host cannot set. That matters because tenants' services run on sibling subdomains of the dashboard: without the prefix, such
+// a page could set a cookie of the same name for the whole domain, and the dashboard would read the planted one (a session of
+// the planter's choosing, or a state that lets a forged sign-in through). Over plain http on this machine, where a Secure cookie
+// is not wanted, the plain name is used.
+func cookieName(r *http.Request, name string) string {
+	if dashboardCookieSecure(r) {
+		return "__Host-" + name
+	}
+	return name
+}
+
 func dashboardSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	return &http.Cookie{
-		Name:     platform.DashboardSessionCookie,
+		Name:     cookieName(r, platform.DashboardSessionCookie),
 		Value:    value,
 		Path:     "/",
 		MaxAge:   maxAge,
@@ -841,14 +914,19 @@ func randomDashboardBytes(size int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (s *Server) loginLocked(r *http.Request, username string) (bool, error) {
+func (s *Server) loginLocked(r *http.Request, username, source string) (bool, error) {
 	username = normalizeDashboardUsername(username)
 	s.loginMu.Lock()
 	if s.loginFailures == nil {
 		s.loginFailures = map[string]loginAttempt{}
 	}
 	attempt := s.loginFailures[username]
+	pair := s.loginPairs[loginPairKey(username, source)]
 	s.loginMu.Unlock()
+	// A client that was locked out of this username by its own failures stays locked out; the others are not.
+	if source != "" && loginAttemptLocked(pair) {
+		return true, nil
+	}
 	if loginAttemptLocked(attempt) {
 		return true, nil
 	}
@@ -862,22 +940,32 @@ func (s *Server) loginLocked(r *http.Request, username string) (bool, error) {
 // recordLoginFailure counts a failed sign-in against the configured user it was for. user is nil for any other
 // name, and nothing is kept for it: a name typed into the form must never decide what the Secret, or the
 // operator's memory, holds.
-func (s *Server) recordLoginFailure(r *http.Request, user *dashboardUser) error {
+func (s *Server) recordLoginFailure(r *http.Request, user *dashboardUser, source string) error {
 	if user == nil {
 		return nil
 	}
 	username := normalizeDashboardUsername(user.Username)
+	// Where the client can be told apart from the others, its failures lock it (alone) after loginFailureLimit, and the
+	// username is locked for everyone only after loginUserFailureLimit of them from all clients. Where it cannot (every
+	// visitor arrives from one private address), the username is all there is to lock, after loginFailureLimit.
+	limit := loginFailureLimit
+	if source != "" {
+		limit = loginUserFailureLimit
+	}
 	s.loginMu.Lock()
 	if s.loginFailures == nil {
 		s.loginFailures = map[string]loginAttempt{}
 	}
 	now := time.Now()
+	if source != "" {
+		s.noteLoginPairFailureLocked(loginPairKey(username, source), now)
+	}
 	attempt := s.loginFailures[username]
 	if now.Sub(attempt.WindowStart) > loginFailureWindow {
 		attempt = loginAttempt{WindowStart: now}
 	}
 	attempt.Count++
-	if attempt.Count >= loginFailureLimit {
+	if attempt.Count >= limit {
 		attempt.LockedUntil = now.Add(loginLockout)
 	}
 	s.loginMu.Unlock()
@@ -893,10 +981,11 @@ func (s *Server) recordLoginFailure(r *http.Request, user *dashboardUser) error 
 	return nil
 }
 
-func (s *Server) clearLoginFailures(r *http.Request, username string) error {
+func (s *Server) clearLoginFailures(r *http.Request, username, source string) error {
 	username = normalizeDashboardUsername(username)
 	s.loginMu.Lock()
 	delete(s.loginFailures, username)
+	delete(s.loginPairs, loginPairKey(username, source))
 	s.loginMu.Unlock()
 	return s.persistLoginLockout(r, username, loginAttempt{})
 }
@@ -916,12 +1005,12 @@ func loginAttemptExpired(attempt loginAttempt, now time.Time) bool {
 // one address stands for every visitor, so limiting it would let anyone lock everybody out; those are left to
 // the per-username lock. An IPv4-mapped IPv6 address counts as the IPv4 one, and an IPv6 address as its /64.
 func loginSourceKey(r *http.Request) string {
-	addr, err := netip.ParseAddr(clientAddress(r))
+	addr, err := netip.ParseAddr(clientIP(r))
 	if err != nil {
 		return ""
 	}
 	addr = addr.Unmap().WithZone("")
-	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() || loginSharedPeers.Contains(addr) {
+	if privateAddress(addr) {
 		return ""
 	}
 	if addr.Is6() {
@@ -1119,4 +1208,79 @@ func parseDashboardLoginLockouts(secret *corev1.Secret) (map[string]loginAttempt
 		lockouts = map[string]loginAttempt{}
 	}
 	return lockouts, nil
+}
+
+// privateAddress is whether an address is one a visitor from the internet cannot have: private, this machine, link-local
+// or in the shared space that clusters and VPNs hand out. A connection from one is a proxy's, a tunnel's or a neighbour's.
+func privateAddress(addr netip.Addr) bool {
+	addr = addr.Unmap().WithZone("")
+	return addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() || loginSharedPeers.Contains(addr)
+}
+
+// clientIP is the address of whoever is really making a request. One that comes from a public address is from that
+// address, whatever its headers say. One that comes from a private address, as everything does through the cluster's
+// ingress or a tunnel, says who it is for in X-Forwarded-For, which is read from the right: each proxy adds the address it
+// was spoken to from, so the right-most address that is not itself private is the one the nearest proxy saw, and what a
+// client wrote before it is not believed. When the header is missing or cannot be read the answer is the peer's address.
+//
+// A caller inside the cluster can write that header too, and choose its address. What that buys it is another client's
+// allowance of failed sign-ins, no more than loginUserFailureLimit of them for a username in all, so it is not a way past the
+// lock on an account.
+func clientIP(r *http.Request) string {
+	peer := clientAddress(r)
+	addr, err := netip.ParseAddr(peer)
+	if err != nil || !privateAddress(addr) {
+		return peer
+	}
+	if forwarded := forwardedClient(r); forwarded != "" {
+		return forwarded
+	}
+	return peer
+}
+
+// forwardedClient is the right-most public address in X-Forwarded-For, or "" when there is none or an entry cannot be read
+// (then nothing in the header is trusted).
+func forwardedClient(r *http.Request) string {
+	lines := r.Header.Values("X-Forwarded-For")
+	entries := make([]string, 0, len(lines))
+	for _, line := range lines {
+		entries = append(entries, strings.Split(line, ",")...)
+	}
+	for _, entry := range slices.Backward(entries) {
+		entry = strings.TrimSpace(entry)
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			// Some proxies write the port too.
+			withPort, portErr := netip.ParseAddrPort(entry)
+			if portErr != nil {
+				return ""
+			}
+			addr = withPort.Addr()
+		}
+		if !privateAddress(addr) {
+			return addr.Unmap().WithZone("").String()
+		}
+	}
+	return ""
+}
+
+func loginPairKey(username, source string) string { return username + "|" + source }
+
+// noteLoginPairFailureLocked counts one failed sign-in for a username from a client address, with loginMu held.
+func (s *Server) noteLoginPairFailureLocked(key string, now time.Time) {
+	if s.loginPairs == nil {
+		s.loginPairs = map[string]loginAttempt{}
+	}
+	attempt, tracked := s.loginPairs[key]
+	if !tracked && len(s.loginPairs) >= loginSourceMaxEntries {
+		evictLoginSources(s.loginPairs, now)
+	}
+	if now.Sub(attempt.WindowStart) > loginFailureWindow {
+		attempt = loginAttempt{WindowStart: now}
+	}
+	attempt.Count++
+	if attempt.Count >= loginFailureLimit {
+		attempt.LockedUntil = now.Add(loginLockout)
+	}
+	s.loginPairs[key] = attempt
 }

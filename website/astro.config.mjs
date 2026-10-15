@@ -107,6 +107,7 @@ export default defineConfig({
             "docs/guides/command-line",
             "docs/guides/mcp-server",
             "docs/guides/users-and-tokens",
+            "docs/guides/external-sign-in",
           ],
         },
         {

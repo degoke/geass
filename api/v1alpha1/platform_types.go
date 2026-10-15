@@ -86,6 +86,13 @@ type GeassProjectSpec struct {
 	// PREnvironments creates a temporary copy of an environment for every pull request.
 	// +optional
 	PREnvironments *GeassPREnvironments `json:"prEnvironments,omitempty"`
+	// GitHubReporting turns on what Geass reports back to GitHub for this project's repository services: a
+	// commit status for each build, a GitHub Deployment for each deploy, and one comment on each pull request
+	// that has an environment. Unset means on. It only does anything once the project is connected to GitHub,
+	// and a GitHub App registered before Geass reported needs the new permissions approved first.
+	// +kubebuilder:default=true
+	// +optional
+	GitHubReporting *bool `json:"githubReporting,omitempty"`
 	// BackupStorage is where this project's databases keep their backups. Without it, databases
 	// that have backups turned on report that they need storage.
 	// +optional
@@ -549,6 +556,82 @@ type GeassPlatformConfigSpec struct {
 	CloudflareZoneID  string                     `json:"cloudflareZoneID,omitempty"`
 	Registry          GeassPlatformRegistrySpec  `json:"registry,omitempty"`
 	TraefikAccessLogs GeassTraefikAccessLogsSpec `json:"traefikAccessLogs,omitempty"`
+	// Auth says how people sign in to the dashboard: with the users in the Secret geass-dashboard-auth (the
+	// default), or through an identity provider.
+	// +optional
+	Auth *GeassPlatformAuthSpec `json:"auth,omitempty"`
+}
+
+// GeassPlatformAuthSpec says whose word Geass takes for who a person is.
+type GeassPlatformAuthSpec struct {
+	// Mode is local, where the users are the ones in the Secret geass-dashboard-auth, or external, where an
+	// identity provider that speaks OpenID Connect decides who may sign in and with which role. Unset means
+	// local. A user of the Secret who has a password and the admin role can still sign in while the mode is
+	// external, so that a provider that is down or set up wrong does not lock everyone out.
+	// +kubebuilder:validation:Enum=local;external
+	// +kubebuilder:default=local
+	// +optional
+	Mode string `json:"mode,omitempty"`
+	// OIDC is the identity provider. It is used only while Mode is external, but it can be filled in and tested
+	// before that.
+	// +optional
+	OIDC *GeassPlatformOIDCSpec `json:"oidc,omitempty"`
+}
+
+// GeassPlatformOIDCSpec says how to reach an OpenID Connect identity provider and how its claims become a Geass
+// role. The client secret is never in this spec: it is the "clientSecret" key of the Secret CredentialRef names.
+type GeassPlatformOIDCSpec struct {
+	// DisplayName is what the sign-in button calls the provider ("Sign in with Acme").
+	// +kubebuilder:validation:MaxLength=60
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+	// Issuer is the provider's issuer URL, exactly as its discovery document names it. It must be https, and
+	// cannot be this machine or a link-local address.
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
+	// ClientID is the id Geass was registered with at the provider.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	ClientID string `json:"clientID,omitempty"`
+	// CredentialRef names the Secret in the system namespace whose "clientSecret" key is the client secret.
+	// Leave it empty for a public client that relies on PKCE alone.
+	// +optional
+	CredentialRef *corev1.LocalObjectReference `json:"credentialRef,omitempty"`
+	// Scopes are asked for besides openid. Empty means email and profile.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+	// RoleClaim is the claim of the ID token that holds a person's role at the provider: a name, or a dotted
+	// path into nested claims. Its value may be a string, a list, or a comma-separated string.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	RoleClaim string `json:"roleClaim,omitempty"`
+	// RoleMap says which Geass role (admin or viewer) each role at the provider is. A person whose roles map to
+	// none cannot sign in.
+	// +kubebuilder:validation:MaxProperties=50
+	// +optional
+	RoleMap map[string]string `json:"roleMap,omitempty"`
+	// RequireClaim limits sign-in to people whose ID token has each of these claims with the value given, for
+	// example {"organization_id": "org_123"} to let only the members of one organization in.
+	// +kubebuilder:validation:MaxProperties=10
+	// +optional
+	RequireClaim map[string]string `json:"requireClaim,omitempty"`
+	// SessionMinutes is how long a sign-in lasts before the person is sent back to the provider, which is how a
+	// role that changed or a person who was removed there is noticed here.
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=720
+	// +kubebuilder:default=60
+	// +optional
+	SessionMinutes int32 `json:"sessionMinutes,omitempty"`
+	// RevokeTokensOnLogout is whether a back-channel logout from the provider (someone signed out there, or was removed)
+	// also revokes the API tokens and deploy hooks that person made. It always ends their sessions here. Unset means true,
+	// which is the safe choice for offboarding: a provider cannot say whether someone signed out or was removed. Turn it off
+	// when tokens that CI depends on are made from the accounts of people who sign out; their tokens then last until they
+	// expire or are revoked by hand.
+	// +kubebuilder:default=true
+	// +optional
+	RevokeTokensOnLogout *bool `json:"revokeTokensOnLogout,omitempty"`
 }
 
 type GeassTraefikAccessLogsSpec struct {

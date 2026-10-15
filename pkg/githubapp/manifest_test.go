@@ -19,13 +19,28 @@ func TestNewGeassAppManifest(t *testing.T) {
 	require.Equal(t, "https://geass.example.com/settings/github/manifest/callback", manifest.RedirectURL)
 	require.Equal(t, []string{"https://geass.example.com/github/callback"}, manifest.CallbackURLs)
 	require.Equal(t, "read", manifest.DefaultPermissions["contents"])
-	require.Equal(t, "read", manifest.DefaultPermissions["pull_requests"], "pull request environments need to read pull requests")
 	require.Equal(t, "read", manifest.DefaultPermissions["checks"], "Wait for CI lists the check runs of a commit, which needs the Checks permission")
+	require.Equal(t, "read", manifest.DefaultPermissions["metadata"])
+	require.Equal(t, "write", manifest.DefaultPermissions["pull_requests"], "pull request environments read pull requests, and Geass comments on them")
+	require.Equal(t, "write", manifest.DefaultPermissions["statuses"], "a commit status is reported for every build")
+	require.Equal(t, "write", manifest.DefaultPermissions["deployments"], "a GitHub Deployment is made for every deploy")
+	require.Len(t, manifest.DefaultPermissions, 6, "nothing is asked for that Geass does not use")
 	require.Equal(t, []string{"push", "pull_request"}, manifest.DefaultEvents)
 
 	raw, err := ManifestJSON(manifest)
 	require.NoError(t, err)
 	require.Contains(t, raw, `"name":"Geass Dev"`)
+}
+
+// The permissions the manifest asks for and the ones an existing app is checked against are the same list: a
+// permission added to one and not the other would be asked of new apps and never reported missing on old ones.
+func TestTheManifestAsksForExactlyWhatTheTestGitHubAppCheckLooksFor(t *testing.T) {
+	asked := NewGeassAppManifest("https://geass.example.com", "Geass").DefaultPermissions
+	needed := map[string]string{}
+	for _, need := range NeededPermissions {
+		needed[need.Key] = need.Level
+	}
+	require.Equal(t, asked, needed)
 }
 
 func TestDefaultGeassAppNameIsInstanceSpecific(t *testing.T) {

@@ -19,7 +19,7 @@ func (a *App) appsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "apps", Aliases: []string{"app", "services", "service"}, Short: "Manage services"}
 	cmd.AddCommand(
 		a.listCmd("apps", "list", "ls"), a.getCmd("apps", "get NAME"),
-		a.statusCmd(), a.deployCmd(), a.deploymentsCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(),
+		a.statusCmd(), a.deployCmd(), a.buildCmd(), a.deploymentsCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(),
 		a.createAppCmd(), a.deleteCmd("apps"),
 	)
 	return cmd
@@ -29,13 +29,20 @@ func (a *App) appsCmd() *cobra.Command {
 
 // waitFor waits for services to be ready, printing progress as it changes, and returns what each ended as.
 func (a *App) waitFor(ctx context.Context, api *client.Client, names []string, timeout time.Duration) ([]client.AppStatus, error) {
+	return a.waitForAfter(ctx, api, names, timeout, nil)
+}
+
+// waitForAfter is waitFor for services whose build was just run again. after is each one's build as it was before
+// that was asked for, which is how a status that still shows the old run is told from the new one.
+func (a *App) waitForAfter(ctx context.Context, api *client.Client, names []string, timeout time.Duration, after map[string]*client.BuildStatus) ([]client.AppStatus, error) {
 	results := make([]client.AppStatus, 0, len(names))
 	var failed []string
 	for _, name := range names {
 		var lastLine string
 		status, err := api.WaitForApp(ctx, name, client.WaitOptions{
-			Timeout:  timeout,
-			Interval: a.PollInterval,
+			Timeout:    timeout,
+			Interval:   a.PollInterval,
+			AfterBuild: after[name],
 			OnStatus: func(s client.AppStatus) {
 				line := progressLine(s)
 				if line != lastLine {

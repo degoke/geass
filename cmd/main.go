@@ -251,6 +251,8 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Webhooks: webhookDispatcher,
+		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
+		AsyncReports: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
 		os.Exit(1)
@@ -259,6 +261,8 @@ func main() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Kube:   kubernetes.NewForConfigOrDie(restConfig),
+		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
+		AsyncReports: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassbuild")
 		os.Exit(1)

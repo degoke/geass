@@ -133,7 +133,31 @@ func (s *Server) handlePlatformGitHubTest(w http.ResponseWriter, r *http.Request
 		redirectProbe(w, r, "/settings/github", dashboardLiteralError, fmt.Sprintf("GitHub webhook URL is %s, expected %s", hook.URL, expected))
 		return
 	}
+	// The webhook is right. The permissions are a separate question: an app registered before Geass reported to
+	// GitHub works for everything it did then and silently cannot do what it does now, so they are checked here
+	// and the owner is told which are missing and how to approve them.
+	info, err := gh.GetApp()
+	if err != nil {
+		redirectProbe(w, r, "/settings/github", "warning", "The webhook matches this dashboard, but the app's permissions could not be read from GitHub, so it is not known whether Geass can report builds and deploys back.")
+		return
+	}
+	if missing := githubapp.MissingPermissions(info.Permissions); len(missing) > 0 {
+		redirectProbe(w, r, "/settings/github", "warning", githubPermissionWarning(info.Slug, missing))
+		return
+	}
 	redirectProbe(w, r, "/settings/github", "success", "")
+}
+
+// githubPermissionWarning tells the owner of the GitHub App what it lacks and what that costs. The webhook is
+// fine, and builds and deploys carry on: what is lost is reporting back to GitHub, and the one permission that was
+// asked for before (Checks) is what Wait for CI needs.
+func githubPermissionWarning(slug string, missing []githubapp.Permission) string {
+	lost := make([]string, 0, len(missing))
+	for _, permission := range missing {
+		lost = append(lost, permission.Label+" ("+permission.Used+")")
+	}
+	return "The webhook matches this dashboard, but the GitHub App does not have every permission Geass needs. Missing: " + strings.Join(lost, "; ") +
+		". Without them those features do nothing (builds and deploys are not affected). " + githubapp.ApprovePermissionsHelp(slug, missing)
 }
 
 func (s *Server) handlePlatformGitHubClear(w http.ResponseWriter, r *http.Request) {

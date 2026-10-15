@@ -5,7 +5,7 @@ sidebar:
   order: 11
 ---
 
-A `GeassGitHubConnection` links one project to GitHub. It holds no credentials itself. It points at a Secret that holds a GitHub token, and at the Secret of the platform GitHub App that supplies the webhook secret. Geass uses it to list your repositories, to clone them and to read the status of CI checks when it builds a Git service.
+A `GeassGitHubConnection` links one project to GitHub. It holds no credentials itself. It points at a Secret that holds a GitHub token, and at the Secret of the platform GitHub App that supplies the webhook secret. Geass uses it to list your repositories, to clone them, to read the status of CI checks when it builds a Git service, and to report builds, deploys and pull request environments back to GitHub.
 
 The dashboard creates it when you click **Connect to GitHub** on a project and finish the GitHub installation. You do not normally create or edit it yourself. It lives in `geass-system`.
 
@@ -62,23 +62,40 @@ The dashboard writes the Secret `<project>-github-token` with these keys:
 | `account` | The GitHub account that installed the app. |
 | `account_type` | `User` or `Organization`. |
 
-An installation token is short lived. Whenever Geass uses the connection, it asks GitHub for a new installation token with the platform GitHub App's credentials and writes it back into the `token` key. This needs the platform GitHub App to be configured. See [Connect GitHub](/docs/guides/connectors/github/).
+An installation token is short lived. When Geass uses the connection it asks GitHub for a new installation token with the platform GitHub App's credentials and writes it back into the `token` key, together with `token_minted_at`. A token minted less than 30 minutes ago is used again, so a burst of reports does not mint one for each. This needs the platform GitHub App to be configured. See [Connect GitHub](/docs/guides/connectors/github/).
 
 ## Status
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `status.ready` | boolean | Required in the status object. `true` when the Secret named in `spec.secretRef` exists and, if `spec.webhookSecretRef` is set, that Secret exists too. |
-| `status.conditions` | list | The `Ready` condition. |
+| `status.conditions` | list | The `Ready` condition, and `GitHubReporting` once Geass has tried to report to GitHub with this connection. |
 
 ### Conditions
 
-The operator sets one condition type, `Ready`.
+The operator sets the condition type `Ready`, and `GitHubReporting` when it reports to GitHub.
 
 | Status | Reason | Message | Meaning |
 | --- | --- | --- | --- |
 | `True` | `ConnectionReady` | `GitHub connection Secret is available` | Every referenced Secret exists. |
 | `False` | `SecretUnavailable` | `GitHub authentication or webhook Secret is unavailable` | A referenced Secret is missing. |
+
+`GitHubReporting` says whether GitHub takes what Geass reports with this connection: a commit status for each build, a GitHub
+Deployment for each deploy and a comment on each pull request that has an environment. It is not there until a report has
+been made.
+
+| Status | Reason | Meaning |
+| --- | --- | --- |
+| `True` | `Reporting` | A report went through, and none of the kinds of report is being held back. |
+| `False` | `PermissionMissing` | GitHub refused a report because the GitHub App does not have the permission it needs. The message names the permission (Commit statuses, Deployments or Pull requests, at read and write) and says how to approve it. Reports of that kind are held back for ten minutes, and the next one after that finds out whether it was approved. |
+
+A refusal is `401` or `403` from GitHub, or `404` for a repository the app cannot see, which is how GitHub answers for a
+permission the installation was never given. A `404` for one particular GitHub Deployment is that deployment having been
+deleted, not a missing permission, and does not set the condition. A failure that may pass (GitHub not answering, a `5xx`, a
+rate limit) does not set the condition either: it is retried up to three times. A report that was refused or that failed
+all its tries is not forgotten: it is sent again after ten minutes, and the state it was about is not recorded as reported
+until it has been. The condition does not affect `status.ready` or any build or deploy. See
+[Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github).
 
 The operator checks that the Secrets exist. It does not check that the token is valid or that GitHub accepts it. It also does not watch Secrets, so the condition changes when the connection object changes or the operator restarts, and not at the moment a Secret appears or disappears. Dashboard actions do not depend on `status.ready`. They read the Secret directly.
 

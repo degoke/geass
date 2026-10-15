@@ -15,7 +15,7 @@ an agent, read [MCP server for AI agents](/docs/guides/mcp-server/).
   (`dev` when the build did not set one).
 - **Instructions.** When an agent connects, the server sends it a short briefing (see [Instructions](#instructions)).
 - **Transports.** Standard input and output, or Streamable HTTP with `--listen`.
-- **27 tools in all**, 26 without `delete_resource`. Which of them an agent sees depends on its token
+- **28 tools in all**, 27 without `delete_resource`. Which of them an agent sees depends on its token
   (see [Which tools an agent sees](#which-tools-an-agent-sees)).
 
 Every tool takes a JSON object. An argument that is not in the tool's schema is rejected. A tool's result is one block
@@ -63,6 +63,7 @@ fails while the agent waits for it is not an error: it is a result that says why
 | [`list_nodes`](#list_nodes) | Lists the cluster's nodes and their tags | Any workspace token | read-only |
 | [`project_compliance`](#project_compliance) | A project's required node tags | Any workspace token | read-only |
 | [`deploy_app`](#deploy_app) | Deploys a service's pending changes | Full access or project token | |
+| [`rebuild_app`](#rebuild_app) | Runs a repository service's build again, and rolls it out | Full access or project token | |
 | [`rollback_app`](#rollback_app) | Returns a service to an earlier deployment | Full access or project token | |
 | [`scale_app`](#scale_app) | Sets the number of copies | Full access or project token | idempotent |
 | [`set_sleep_when_idle`](#set_sleep_when_idle) | Makes a service sleep when idle, or stay running | Full access or project token | idempotent |
@@ -90,9 +91,9 @@ access** token, because that tool only reads. `--allow-delete` adds `delete_reso
 | --- | --- |
 | **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance` (12) |
 | **Read only, with logs** (`observer`) | The 12 above, plus `get_logs`, `deployment_logs`, `list_variables` (15) |
-| **Full access** (`admin`) | All except `delete_resource` (26), and `delete_resource` with `--allow-delete` (27) |
+| **Full access** (`admin`) | All except `delete_resource` (27), and `delete_resource` with `--allow-delete` (28) |
 | **Full access** with `--read-only` | The 15 of an `observer`, plus `database_connection` (16). |
-| Project token | `whoami`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `get_logs`, `deployment_logs`, `list_variables`, `deploy_app`, `rollback_app`, `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable`, `set_function_trigger`, `remove_function_trigger`, `invoke_function` (18) |
+| Project token | `whoami`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `get_logs`, `deployment_logs`, `list_variables`, `deploy_app`, `rebuild_app`, `rollback_app`, `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable`, `set_function_trigger`, `remove_function_trigger`, `invoke_function` (19) |
 
 A project token with `--read-only` gets the first nine tools in its list. Hiding a tool is a convenience. The API
 checks the token on every call, so a tool that is shown can still fail with a `403` for something the token may not
@@ -109,7 +110,8 @@ token:
 - For a token that cannot change anything, or with `--read-only`: `You can only read: nothing here can change
   anything.`
 - Otherwise: `Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and
-  know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed.`
+  know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. To
+  build a service from its repository again without a push, call rebuild_app (also with wait=true).`
 
 Every version ends with `Secret values are never returned by any tool. Plain configuration is not secret and is returned
 as it is, so keep anything sensitive in a secret.`
@@ -499,6 +501,32 @@ Running`.
     }
   }
 }
+```
+
+### `rebuild_app`
+
+Runs the build of a service that is built from a repository again, from the head of its branch (or the commit it pins),
+and rolls the service out onto the new image. It is what a push does. It does not apply changes that were saved to the
+service and not yet deployed: call `deploy_app` for those. With `wait`, waits until the build has finished and the service
+is ready or has failed, and returns the outcome, including why the build failed.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `app` | string | yes | The service to build again. |
+| `wait` | boolean | no | Wait for the build and the rollout, and return the outcome (recommended). |
+| `timeout_seconds` | integer | no | How long to wait. Default 300, at most 900. |
+
+- **Calls:** `POST /apps/{app}/build`, preceded with `wait` by `GET /apps/{app}/status` to learn which build ran before,
+  and followed by `GET /apps/{app}/status` every 3 seconds. A status that still shows the build that ran before is not
+  taken for the outcome until 15 seconds have passed.
+- **Returns without `wait`:** `{"app": "web", "building": true, "next": "call app_status to see how it is going"}`.
+- **Returns with `wait`:** the same outcome as `deploy_app`: `app`, `status`, `ready`, and `failed` and `error` when the
+  build or the rollout failed.
+- **Errors:** a service that runs an image or a function answers `the app has no repository build`, and one that was
+  never deployed `the app has not been built yet: its build is made when it is deployed`.
+
+```json title="Example call"
+{ "app": "web", "wait": true, "timeout_seconds": 600 }
 ```
 
 ### `rollback_app`

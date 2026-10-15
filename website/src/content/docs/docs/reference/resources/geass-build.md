@@ -129,11 +129,17 @@ The current build is the one in the service's `status.currentBuild`, which the o
 Every build the operator makes carries the labels `geass.dev/app=<app>`, `geass.dev/name=<app>`, `geass.dev/kind=GeassBuild`, `geass.dev/managed-by`, `geass.dev/system-namespace`, `geass.dev/project` and `geass.dev/environment`. `geass.dev/app` is the one a service's builds are found by:
 
 - The GitHub push webhook, which re-runs the current build of each service the push matches.
-- `POST /api/apps/<app>/build` and `/build/cancel`.
+- `POST /api/apps/<app>/build` and `/build/cancel`, which the command line calls as `geass build` and the MCP server as `rebuild_app`.
 - The link between a deploy and its build: the dashboard attaches the current build to a deploy when it starts, so **Build Logs** has something to show. `geass status`, `geass deploy --wait` and the `app_status` tool report the current build the same way, and say why it failed.
 - The operator's own tidy-up. After each successful build it deletes the oldest finished builds of the service beyond the newest 10, never the build the service runs.
 
 A build made before `geass.dev/app` was put on every build gets it when the operator starts, so those builds are found too.
+
+## What the build tells GitHub
+
+A build with a `repository` reports to GitHub as it goes, as a commit status named `geass/build/<service>` (the service's name in the dashboard) on the commit in `status.sourceRevision`: `pending` while it is `WaitingForCI` or `Running`, `success` when it has `Succeeded` with a digest, `failure` when its Job failed or a CI check did (`status.ciState` is `failure`), and `error` for any other failed or `Cancelled` build. See [Reporting back to GitHub](/docs/guides/github-and-builds/#the-commit-status-of-a-build).
+
+The annotation `geass.dev/github-status` records the last report as `<commit>:<phase>`, so each phase of a commit is sent once. A build is reported when its phase changes, or when it already carries the annotation, so the builds that exist when you upgrade Geass are not reported. The value `owed` means the first report did not get through and is being tried again. A project with **Report to GitHub** off, and a GitHub App without the **Commit statuses** permission, send nothing, and the build goes on.
 
 ## Re-run a build
 
@@ -159,7 +165,7 @@ Do not create builds yourself. A build with a name that no service owns builds a
 
 ## What happens under the hood
 
-For each build the operator creates the Job `<build>-kaniko` in `geass-system` with an owner reference to the build, so deleting the build deletes the Job and its pods. The Job's pods run on nodes in the project's region and on the nodes the project requires. The build also reads the GitHub API: `GET /repos/<repository>/commits/<branch or sha>` to resolve the commit, and `GET /repos/<repository>/commits/<sha>/check-runs` when `waitForCI` is on, using the connection's token, which Geass refreshes through the GitHub App. When a build finishes and `spec.logStoreRef` names a ready object store, the operator uploads the Kaniko log to `builds/<build>.log` in the store's bucket. A finished build that has succeeded is not reconciled again, so a restart of the operator does not ask GitHub about every build it ever made.
+For each build the operator creates the Job `<build>-kaniko` in `geass-system` with an owner reference to the build, so deleting the build deletes the Job and its pods. The Job's pods run on nodes in the project's region and on the nodes the project requires. The build also reads the GitHub API: `GET /repos/<repository>/commits/<branch or sha>` to resolve the commit, and `GET /repos/<repository>/commits/<sha>/check-runs` when `waitForCI` is on, using the connection's token, which Geass refreshes through the GitHub App. It writes to it too, to report the build: `POST /repos/<repository>/statuses/<sha>` (see [What the build tells GitHub](#what-the-build-tells-github)), which a project can turn off. When a build finishes and `spec.logStoreRef` names a ready object store, the operator uploads the Kaniko log to `builds/<build>.log` in the store's bucket. A finished build that has succeeded is not reconciled again, so a restart of the operator does not ask GitHub about every build it ever made.
 
 ```bash title="Inspect builds"
 kubectl -n geass-system get geassbuilds -l geass.dev/app=storefront
@@ -177,7 +183,7 @@ Read the logs within the hour: after that the Job and its pods are gone. Kaniko 
 
 **The build is `WaitingForCI` and never moves.** With `waitForCI` the commit needs at least one check run, and every check run has to be `completed` with the conclusion `success`. A commit with no check runs waits forever. Turn off **Wait for CI**, or add a workflow that runs on that branch.
 
-**The build fails with `GitHub API returned 403 Forbidden: reading check runs needs the Checks: Read permission…` while waiting for CI.** Listing check runs needs the Checks permission. The GitHub App that Geass registers now asks for it, together with Contents, Metadata and Pull requests, but an app registered by an earlier version did not. Add **Checks: Read** to the app in GitHub, and accept the new permission on the installation.
+**The build fails with `GitHub API returned 403 Forbidden: reading check runs needs the Checks: Read permission…` while waiting for CI.** Listing check runs needs the Checks permission. The GitHub App that Geass registers now asks for it, together with Contents, Metadata, Pull requests, Commit statuses and Deployments, but an app registered by an earlier version did not. Add **Checks: Read** to the app in GitHub, and accept the new permission on the installation.
 
 **The build fails with `GitHub API returned 404 Not Found` or `401 Unauthorized`.** GitHub did not accept the connection's token for that repository. Check that the installation includes the repository, and that the repository name is right. See [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/).
 

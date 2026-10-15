@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { BarChart3, Globe, HardDrive, KeyRound, Plug, Settings } from "lucide-react";
+import { BarChart3, Globe, HardDrive, KeyRound, LogIn, Plug, Settings } from "lucide-react";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
 import { SettingsShell } from "@/layout/SettingsShell";
 
@@ -9,6 +9,7 @@ const SETTINGS_ICONS = {
   domain: Globe,
   connectors: Plug,
   tokens: KeyRound,
+  auth: LogIn,
   object: HardDrive,
 };
 

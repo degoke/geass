@@ -7,6 +7,9 @@ const (
 	LabelApp             = "geass.dev/app"
 	LabelCluster         = "geass.dev/cluster"
 	LabelLogicalDatabase = "geass.dev/logical-database"
+	// LabelPullRequest is on every service and database made for a pull request environment. Its value is the
+	// pull request's number.
+	LabelPullRequest     = "geass.dev/pull-request"
 	K8sLabelManagedBy    = "app.kubernetes.io/managed-by"
 	K8sLabelAppName      = "app.kubernetes.io/name"
 	ManagedByValue       = "geass"

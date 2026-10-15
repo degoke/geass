@@ -51,6 +51,11 @@ type Server struct {
 	// Webhooks delivers project events; nil disables automatic notifications.
 	Webhooks *webhooks.Dispatcher
 
+	// GitHubReports holds back reports to GitHub that it refused; nil uses the guard the whole operator shares.
+	GitHubReports *githubapp.Guard
+	// reports counts the reports to GitHub that are being made in the background.
+	reports sync.WaitGroup
+
 	// consoleExec attaches interactive terminals; nil uses the Kubernetes exec API (tests replace it).
 	consoleExec consoleExecFunc
 
@@ -70,10 +75,24 @@ type Server struct {
 	// sign-ins per client address and is bounded by loginSourceMaxEntries. Both are guarded by loginMu.
 	loginFailures map[string]loginAttempt
 	loginSources  map[string]loginAttempt
-	eventHub      *dashboardEventHub
+	// loginPairs counts failed sign-ins for a username from one client address, in memory and bounded like loginSources.
+	loginPairs map[string]loginAttempt
+	eventHub   *dashboardEventHub
 
 	// devices are the command-line sign-ins waiting to be approved.
 	devices deviceFlows
+
+	// sso is what is kept in memory about signing in through an identity provider.
+	sso ssoState
+
+	// streamSnap is the users and sign-in mode as of streamSnapTaken, shared by the rechecks of open streams (stream_guard.go).
+	streamMu        sync.Mutex
+	streamSnap      *authSnapshot
+	streamSnapTaken time.Time
+
+	// hookLast is when each deploy hook last ran, to keep a loop from calling one without end.
+	hookMu   sync.Mutex
+	hookLast map[string]time.Time
 
 	// v1Mux serves the reads that exist only in the v1 API; it is built on first use.
 	v1Once sync.Once
@@ -94,10 +113,30 @@ func (s *Server) Start(ctx context.Context) error {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.Background())
 	}()
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	err := srv.ListenAndServe()
+	// A report to GitHub that was started in the background (a removed pull request environment's) is given a moment to
+	// finish, instead of being cut off with the process.
+	s.drainReports(reportDrainTimeout)
+	if err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// reportDrainTimeout is how long shutting down waits for the reports to GitHub that are still being made.
+const reportDrainTimeout = 10 * time.Second
+
+// drainReports waits for the background reports to end, for at most d.
+func (s *Server) drainReports(d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		s.reports.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }
 
 type dashboardResponseWriter struct {
@@ -153,17 +192,27 @@ func (w *dashboardResponseWriter) Flush() {
 	}
 }
 
+// loggedPath is the path of a request as the operator's log may show it. A deploy hook's secret is its path, so
+// the log must not carry it: whoever can read the operator's logs would have a deploy credential for every service.
+func loggedPath(path string) string {
+	if strings.HasPrefix(path, deployHookPrefix) {
+		return deployHookPrefix + "<redacted>"
+	}
+	return path
+}
+
 func logDashboardRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger := ctrllog.FromContext(r.Context())
 		started := time.Now()
-		logger.Info("Dashboard request started", "method", r.Method, "path", r.URL.Path)
+		path := loggedPath(r.URL.Path)
+		logger.Info("Dashboard request started", "method", r.Method, "path", path)
 
 		response := &dashboardResponseWriter{ResponseWriter: w}
 		defer func() {
 			logger.Info("Dashboard request completed",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"status", response.statusCode(),
 				"bytes", response.bytes,
 				"duration", time.Since(started).String(),
@@ -180,6 +229,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner.HandleFunc(platform.GeassDashboardProbePath, s.handleGeassProbe)
 	inner.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
+	inner.HandleFunc(deployHookPrefix, s.handleDeployHook)
+	inner.HandleFunc(oidcLoginPath, s.handleOIDCLogin)
+	inner.HandleFunc(oidcCallbackPath, s.handleOIDCCallback)
+	inner.HandleFunc(oidcLogoutPath, s.handleOIDCBackchannelLogout)
 	inner.HandleFunc("/github/callback", s.handleGitHubCallback)
 	inner.HandleFunc("/", s.handleSPA)
 	mux.Handle("/", securityHeaders(s.v1Adapter(s.withAuth(inner))))
@@ -335,6 +388,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectEnvironmentArchive(w, r, name)
 		case len(parts) == 3 && parts[1] == "pr-environments":
 			s.handleProjectPREnvironments(w, r, name, parts[2])
+		case len(parts) == 3 && parts[1] == "github-reporting" && parts[2] == "save":
+			s.handleProjectGitHubReporting(w, r, name)
 		case len(parts) == 3 && parts[1] == "webhooks":
 			s.handleProjectWebhooks(w, r, name, parts[2])
 		case len(parts) == 2 && parts[1] == "backup-storage":
@@ -3198,6 +3253,9 @@ func (s *Server) deleteResource(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	s.notifyResourceMutation(obj, "delete")
+	if _, isApp := obj.(*geassv1alpha1.GeassApp); isApp {
+		s.deleteAPITokensForApp(r.Context(), name)
+	}
 	if store, ok := obj.(*geassv1alpha1.GeassObjectStore); ok && isClusterObjectStore(store) {
 		redirect(w, r, "/object-storage")
 		return

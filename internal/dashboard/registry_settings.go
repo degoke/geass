@@ -68,19 +68,12 @@ func (s *Server) handlePlatformRegistrySave(w http.ResponseWriter, r *http.Reque
 			Type:       corev1.SecretTypeDockerConfigJson,
 			Data:       map[string][]byte{corev1.DockerConfigJsonKey: login},
 		}
-		previous := &corev1.Secret{}
-		hadLogin := s.Client.Get(r.Context(), client.ObjectKeyFromObject(secret), previous) == nil
-		if err := s.persistSecret(r.Context(), secret); err != nil {
+		rollback, err := s.persistSecretWithRollback(r.Context(), secret)
+		if err != nil {
 			fail("could not save the registry login")
 			return
 		}
-		rollbackLogin = func() {
-			if hadLogin {
-				_ = s.persistSecret(r.Context(), &corev1.Secret{ObjectMeta: secret.ObjectMeta, Data: previous.Data})
-			} else {
-				_ = s.Client.Delete(r.Context(), secret)
-			}
-		}
+		rollbackLogin = rollback
 		config.Spec.Registry.CredentialRef = &corev1.LocalObjectReference{Name: platform.PlatformRegistrySecretName}
 	case keepExisting && config.Spec.Registry.CredentialRef != nil:
 		// The login stays as it is, for a change of repository alone.
@@ -99,7 +92,7 @@ func (s *Server) handlePlatformRegistrySave(w http.ResponseWriter, r *http.Reque
 		fail("could not save the registry")
 		return
 	}
-	if err := s.deletePlatformRegistryLogin(r.Context(), staleLogin); err != nil {
+	if err := s.deleteSystemSecret(r.Context(), staleLogin); err != nil {
 		fail("the registry was saved, but its old login could not be removed")
 		return
 	}
@@ -124,7 +117,7 @@ func (s *Server) handlePlatformRegistryClear(w http.ResponseWriter, r *http.Requ
 			redirectProbe(w, r, registrySettingsPath, dashboardLiteralError, "could not clear the registry")
 			return
 		}
-		if err := s.deletePlatformRegistryLogin(r.Context(), staleLogin); err != nil {
+		if err := s.deleteSystemSecret(r.Context(), staleLogin); err != nil {
 			redirectProbe(w, r, registrySettingsPath, dashboardLiteralError, "the registry was cleared, but its login could not be removed")
 			return
 		}
@@ -144,7 +137,26 @@ func dropPlatformRegistryLogin(config *geassv1alpha1.GeassPlatformConfig) string
 	return ""
 }
 
-func (s *Server) deletePlatformRegistryLogin(ctx context.Context, name string) error {
+// persistSecretWithRollback writes a Secret and returns what puts it back as it was (its earlier contents, or no Secret at
+// all) for a caller whose next step fails, so that what a configuration names and what is stored do not disagree.
+func (s *Server) persistSecretWithRollback(ctx context.Context, secret *corev1.Secret) (rollback func(), err error) {
+	previous := &corev1.Secret{}
+	existed := s.Client.Get(ctx, client.ObjectKeyFromObject(secret), previous) == nil
+	if err := s.persistSecret(ctx, secret); err != nil {
+		return func() {}, err
+	}
+	return func() {
+		if existed {
+			_ = s.persistSecret(ctx, &corev1.Secret{ObjectMeta: secret.ObjectMeta, Data: previous.Data})
+		} else {
+			_ = s.Client.Delete(ctx, secret)
+		}
+	}, nil
+}
+
+// deleteSystemSecret deletes a Secret of the system namespace that the configuration no longer names; one that is not
+// there is not an error. An empty name is nothing to delete.
+func (s *Server) deleteSystemSecret(ctx context.Context, name string) error {
 	if name == "" {
 		return nil
 	}

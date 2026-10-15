@@ -16,6 +16,11 @@ sends to the dashboard.
   [GitHub and builds](/docs/guides/github-and-builds/).
 - A GitHub App that is subscribed to the **Pull request** event and can read pull requests. The app Geass registers for you
   already is. If you created the app yourself, check **Permissions & events** in the app's settings in GitHub.
+- To get the comment, the deployments and the commit statuses that Geass writes on the pull request (see
+  [What Geass writes on the pull request](#what-geass-writes-on-the-pull-request)), the app also needs **Pull requests**,
+  **Deployments** and **Commit statuses** at **Read and write**. An app that Geass registered before it wrote to GitHub
+  does not have them, and its pull request environments work without them: see
+  [Give an existing GitHub App the new permissions](/docs/guides/github-and-builds/#give-an-existing-github-app-the-new-permissions).
 - A dashboard address that GitHub can reach over HTTPS, because the webhook is delivered to `<dashboard URL>/webhooks/github`.
   See [Domains and TLS](/docs/guides/domains-and-tls/).
 - Spare capacity for the copies (see [Limits and cost](#limits-and-cost)).
@@ -112,7 +117,45 @@ The copy of a service has no domain of its own. How you reach it depends on your
 A copy without a public host cannot [sleep when idle](#sleep-when-idle), because it is the request to a host that wakes it.
 
 The address Geass stores for a pull request, and shows as a link in **Open pull requests**, is the pull request on GitHub, not
-a running service.
+a running service. The addresses of the copies are in the comment that Geass keeps on the pull request, below.
+
+## What Geass writes on the pull request
+
+Geass reports on the pull request, as well as in the dashboard, so reviewers find the preview without being told where
+to look. It writes three things, each with its own GitHub App permission, and turns them all off with the project's
+**Report to GitHub** switch (see [Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github)).
+
+**One comment, edited in place.** As soon as the environment has services, Geass adds a comment to the pull request. It
+lists each service of the environment with its state (`Queued`, `Building`, `Build failed`, `Deploying`, `Ready` or
+`Failed`) and, once it is ready, its address, the commit it was built from, and a link to the environment in the
+dashboard. It is the only comment Geass makes: when a service changes state, Geass edits it, and does not add another.
+
+```markdown title="The comment"
+### Geass preview environment `pr-12`
+
+| Service | Status | Preview |
+| --- | --- | --- |
+| api | Ready | <https://api-pr12-proj-1a2b3c4d-pr-12.example.com/> |
+| web | Building | - |
+
+Built from commit `9f3c2a1`. [Open it in Geass](https://geass.example.com/projects/proj-1a2b3c4d?environment=pr-12).
+```
+
+The first line of the comment is an HTML comment, `<!-- geass:pr-environment project=proj-1a2b3c4d -->`, which GitHub
+does not show. It is how Geass finds the comment again, so do not delete it from the comment's source. The project is in
+it, so two Geass projects that watch one repository each keep their own comment, and Geass only edits a comment that its
+own GitHub App wrote. When the pull request closes or the environment is removed, the comment is edited to say the
+environment was removed. A pull request that never got a comment does not get one then.
+
+**A GitHub Deployment for each service.** Each repository service of the copy is a deployment in an environment named
+`pr-<number>`, marked transient, with the service's address as the environment URL. When the environment is removed, the
+deployments are made inactive. The environment is reported as a pull request's preview, never as production.
+
+**A commit status for each build.** The head commit of the pull request shows `geass/build/<service name>`, as it does
+for any other build, one for each service of the copy that builds the repository. See
+[The commit status of a build](/docs/guides/github-and-builds/#the-commit-status-of-a-build).
+
+Pull requests from forks never get an environment, so they get none of this.
 
 ## Sleep when idle
 
@@ -128,7 +171,9 @@ before, and its `ScaleToZero` condition says why. See [Sleep when idle](/docs/gu
 
 When the pull request is closed or merged, Geass deletes the environment: its services and databases and their data, its
 shared variables, and the API tokens that were limited to it. The tab and the entry under **Open pull requests**
-go away.
+go away. The GitHub Deployments of the copies are made inactive, and the comment on the pull request is edited to say that
+the environment was removed. This is done in the background, after the environment is gone, so it never holds up the
+removal and a refusal from GitHub does not undo it.
 
 To remove one earlier, open **Settings** → **Environments** → **Open pull requests** and choose **Close** beside it.
 Confirm in **Close pull request environment?**. The pull request on GitHub is not changed. Use **Close** rather than the
@@ -164,6 +209,13 @@ curl -X POST https://geass.example.com/api/projects/proj-1a2b3c4d/pr-environment
   copy of a function has no `triggers`.
 - The environment is an ordinary entry in `spec.environments`, so everything in
   [Projects and environments](/docs/guides/projects-and-environments/) applies to it.
+- The comment is kept by the operator. Each service of the environment, as it changes, writes the whole comment from what
+  the cluster says, so it ends up right whichever service wrote last, and the operator remembers what it last wrote so a
+  pass with nothing new sends nothing. It only writes while the project still lists the pull request in
+  `status.pullRequests`, which is what stops it from writing over the comment that says the environment was removed. A
+  connection that is not made through the GitHub App cannot tell which comments are the app's, and goes by the marker alone.
+- A copy's GitHub Deployment is recorded on the service in the annotation `geass.dev/github-deployment`, which is how the
+  dashboard finds it to make it inactive.
 - The answer to GitHub's webhook lists what Geass did, for example `{"accepted":true,"environments":[{"project":"proj-1a2b3c4d","action":"ensure","environment":"pr-12","created":3}]}`.
 
 ```bash title="Inspect pull request environments"
@@ -195,6 +247,17 @@ the registry and **Build Logs** ([GitHub and builds](/docs/guides/github-and-bui
 be out of capacity ([Usage and capacity](/docs/guides/usage-and-capacity/)).
 
 **The copy has no URL.** Copies get no domain of their own. See [URLs](#urls).
+
+**There is no comment on the pull request.** Check that **Report to GitHub** is on for the project, that the pull request
+has an environment (it is listed under **Open pull requests**), and that the GitHub App has the **Pull requests**
+permission at **Read and write**. An app registered before Geass wrote to GitHub has it at read only: the connection's
+`GitHubReporting` condition then says `PermissionMissing`, and **Test GitHub App** lists what is missing. See
+[Give an existing GitHub App the new permissions](/docs/guides/github-and-builds/#give-an-existing-github-app-the-new-permissions).
+
+**The comment shows a service as `Building` or `Deploying` long after it came up.** The comment is written when a
+service changes state. Look at the service in the dashboard, and at the operator's log for `Could not report to GitHub`.
+A comment that GitHub could not take is tried three times and then tried again after ten minutes, and it is rewritten at
+the next change of state in any case.
 
 **The first request to a copy is slow.** The copy was asleep. See [Sleep when idle](#sleep-when-idle).
 

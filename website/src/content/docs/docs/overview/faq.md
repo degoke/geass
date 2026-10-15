@@ -108,7 +108,7 @@ Nothing to install or to deploy a service. Each account unlocks specific feature
 | Account | Unlocks | What Geass needs |
 | --- | --- | --- |
 | Cloudflare | DNS records for the dashboard and services, Cloudflare Tunnel | An API token with Account → Cloudflare Tunnel → Edit, Zone → DNS → Edit and Zone → Zone → Read |
-| GitHub | Repository deploys, push-to-deploy, pull request environments | A GitHub App that Geass registers. The dashboard needs a public domain first |
+| GitHub | Repository deploys, push-to-deploy, pull request environments, builds and deploys reported back to GitHub | A GitHub App that Geass registers. The dashboard needs a public domain first |
 | AWS | S3 buckets, database backups | An access key that can create and delete S3 buckets and objects, and create and delete IAM users with their keys and policy |
 | PlanetScale | PlanetScale databases | A service token and the organization name |
 
@@ -153,7 +153,7 @@ Uninstalling K3s deletes the cluster's database and its local volumes. Longhorn'
 
 ### Who can sign in, and can I use single sign-on?
 
-Users come from a Kubernetes Secret, and each is an admin or a viewer. There is no single sign-on and no per-project permission. Scripts, the command line and agents use API tokens: **Full access**, **Read only, with logs** (the `observer` role), **Read only**, or a project token scoped to one environment of one project. See [Users and API tokens](/docs/guides/users-and-tokens/).
+By default users come from a Kubernetes Secret, and each is an admin or a viewer. For invitations, sign-in by email, organizations and teams, connect an identity provider that speaks OpenID Connect (Better Auth, Keycloak, Okta and others) under **Settings** → **Sign-in**: it owns the people and Geass takes an admin or viewer role from its token. See [Sign in with an identity provider](/docs/guides/external-sign-in/). There is no per-project permission. Scripts, the command line and agents use API tokens: **Full access**, **Read only, with logs** (the `observer` role), **Read only**, or a project token scoped to one environment of one project. See [Users and API tokens](/docs/guides/users-and-tokens/).
 
 ### Are my secrets safe?
 

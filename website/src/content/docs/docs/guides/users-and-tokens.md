@@ -1,15 +1,19 @@
 ---
 title: "Users and API tokens"
-description: "Dashboard users and roles, plus API tokens for scripts, CI, the CLI and agents: create, scope, sign in with a device code, rotate and revoke them."
+description: "Dashboard users and roles, plus API tokens and deploy hooks for scripts, CI, the CLI and agents: create, scope, sign in with a device code, rotate and revoke them."
 ---
 
 Geass has two ways to sign in. People use the dashboard with a username and password, and each user is either an **admin** or a
 **viewer**. Programs use API tokens: a workspace token that acts as an admin, an observer or a viewer, and a project token that can
 deploy and edit variables in one environment of one project. The [command line](/docs/guides/command-line/) gets its token without
-anyone typing a password into it: it shows a code, and an admin approves it in the dashboard. This page covers users, tokens and
-that approval, and ends with `curl` examples for CI.
+anyone typing a password into it: it shows a code, and an admin approves it in the dashboard. A tool that can call a URL but cannot
+send a header uses a deploy hook, a URL that deploys one service. This page covers users, tokens, deploy hooks and that approval, and
+ends with `curl` examples for CI.
 
-Roles are global. There are no per-project permissions for users, and there is no single sign-on: users come from a Kubernetes Secret.
+Roles are global. There are no per-project permissions for users. By default users come from a Kubernetes Secret, which has no invitations,
+sign-in by email or organizations. To get those, sign people in through an identity provider such as Better Auth instead: it owns the people,
+and Geass takes their role from its token. See [Sign in with an identity provider](/docs/guides/external-sign-in/). Tokens and deploy hooks
+work the same either way.
 
 ## Roles
 
@@ -123,20 +127,29 @@ Tokens an admin created or approved are not tied to that admin's account: removi
 
 ### Sessions and lockout
 
-Signing in sets the cookie `geass_session` (HTTP only, `SameSite=Lax`, valid for 12 hours, not extended by use). It is
-marked `Secure`, except when the request is plain HTTP to a loopback address (`localhost`, `127.0.0.1` or `::1`). A
-browser does not send a `Secure` cookie over plain HTTP, so open the dashboard over HTTPS or through
-`kubectl port-forward` to `localhost`.
+Signing in sets the cookie `__Host-geass_session` (HTTP only, `SameSite=Lax`, valid for 12 hours, not extended by use). It is
+marked `Secure`, except when the request is plain HTTP to a loopback address (`localhost`, `127.0.0.1` or `::1`), where it is
+`geass_session` and not `Secure`. A browser does not send a `Secure` cookie over plain HTTP, so open the dashboard over HTTPS or through
+`kubectl port-forward` to `localhost`. The `__Host-` prefix means the browser accepts the cookie only from the dashboard's own host, with
+no `Domain`, so a service running on a sibling subdomain of yours cannot plant a cookie of the same name for the whole domain. Upgrading
+from a version that used the plain name signs everyone out once.
 
 Signing out ends every session of that user, in every browser. To sign everyone out, delete the `session-key` key from
 the Secret; Geass generates a new one and every old cookie stops working.
 
-Five failed sign-ins for one username within a minute lock that username for a minute. The reply is the same
-`invalid username or password` while locked. The counter is stored in the Secret key `login-lockouts`, so it survives
-an operator restart. Only your configured users get a record there, and a record is dropped once its minute is over. A
-client that connects directly from a public address and fails 20 sign-ins in a minute is also refused for a minute,
-whatever username it uses; that count is kept in memory. Behind a proxy or a tunnel every visitor arrives from one
-private address, so that limit does not apply there.
+Five failed sign-ins for one username from one client address within a minute lock that username for that address for a
+minute, so someone who keeps guessing is shut out and the person who owns the account, signing in from elsewhere, is not. Twenty-five
+failures for one username from all clients together lock it for everyone for a minute. Where clients cannot be told apart, five failures
+lock the username for everyone. The reply is the same `invalid username or password` while locked. The count for a username is
+stored in the Secret key `login-lockouts`, so it survives an operator restart; the count for a username and an address is kept in memory.
+Only your configured users get a record there, and a record is dropped once its minute is over. A client that fails 20 sign-ins in a
+minute is also refused for a minute, whatever username it uses; that count is kept in memory too.
+
+Geass takes a client's address from the connection when it comes from a public address. When it comes from a private one, as everything
+does through the cluster's ingress or a Cloudflare Tunnel, Geass reads `X-Forwarded-For` from the right and uses the right-most address
+that is public: the nearest proxy wrote it, and what a client put before it is not believed.
+A caller inside the cluster can write that header itself and pick its address. What that buys it is another client's allowance, and
+never more than 25 failed sign-ins for a username in a minute in all.
 
 ## API tokens
 
@@ -144,7 +157,8 @@ An API token lets a script call the [REST API](/docs/reference/rest-api/) withou
 when you create it, and stores only a hash.
 
 A token looks like `gsw_1a2b3c4d_` followed by 40 hexadecimal characters. The prefix tells the kind, the next part is a
-public identifier used to find it, and the rest is the secret.
+public identifier used to find it, and the rest is the secret. A third kind, the [deploy hook](#deploy-hooks) (`gsh_`), is a URL
+rather than a credential for the API.
 
 | | Workspace token | Project token |
 | --- | --- | --- |
@@ -171,7 +185,7 @@ admin token (`403`: "API tokens can only be managed from the dashboard by an adm
    only once.
 
 The API accepts any lifetime from 1 to 3650 days, and treats a missing `expiresInDays`, or `0`, as no expiration. A project
-token needs a project and an environment that exist. At most 100 tokens can exist at once.
+token needs a project and an environment that exist. At most 200 tokens, deploy hooks included, can exist at once.
 
 Create one with the API from a dashboard session (a token cannot do this). Sign in first and keep the cookie:
 
@@ -286,6 +300,52 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.
 then buckets. If the cluster lacks room for one of the services or databases, the call stops there and fails with `400`
 and the capacity shortfall as the message. Anything it deployed before that point stays deployed, and `GET /api/v1/token/services`
 shows which services still have `pendingChanges`.
+
+### Deploy hooks
+
+A deploy hook is a URL that deploys one service when something calls it with `POST`. Use one from a tool that can call a URL but cannot
+send a header: a registry that notifies when an image is pushed, a scheduler, a CMS, a button on a page. Anything that can send
+`Authorization: Bearer` should use a project token instead.
+
+```bash title="Call a deploy hook"
+curl -X POST https://geass.example.com/hooks/deploy/gsh_1a2b3c4d_0123456789abcdef0123456789abcdef01234567
+```
+
+```json title="Response"
+{ "ok": true, "action": "build", "service": "storefront" }
+```
+
+What it does depends on the service:
+
+| The service is | `action` | What happens |
+| --- | --- | --- |
+| Built from a repository | `build` | Its current build starts over from the head of the branch, and the service rolls out when the build succeeds. A service with no build yet, one that was never deployed, or one that pins a commit answers `409`, as a push to the branch skips them too. |
+| An image or a function | `deploy` | Its pending changes are deployed, which is what **Deploy changes** and **Redeploy** do in the dashboard, so changes someone saved but did not deploy go out too, and a draft is deployed for the first time. It is held to the same capacity check: a cluster with no room answers `400` and deploys nothing. |
+
+Make one in the service's settings: open the service, **Settings** → **Deploy**, **Deploy hook**, and choose **Create deploy hook**. The URL
+is shown once, with a copy button. A service has one hook. To get a new URL, delete the hook and make another, and the old URL stops
+working at once. A hook appears in **Settings** → **Tokens** (and in the project's **Tokens**) as `Deploy hook · <service> · <environment>`,
+where it shows when it was last called and can be revoked. The API makes one with `scope: "service"`, a `project`, an `environment` and an
+`app`: only a signed-in admin can.
+
+The secret is in the URL, because that is the only place such a tool can put it. So it is built to be harmless if it leaks into a proxy's
+log:
+
+- It is good for one service and one action. It is refused as a Bearer token on every API endpoint (`401`), whatever it is asked.
+- Only `POST` does anything. `GET`, `HEAD`, `PUT` and `DELETE` answer `405`, so a link preview or a crawler cannot deploy anything.
+- A hook that does not exist, is revoked, has expired or belongs to a service that is gone all answer `404` `hook not found`, so a caller
+  cannot tell which. A token of another kind put in the URL is a `404` too.
+- Deleting the service, its environment or its project revokes its hook.
+- A hook that was called less than 30 seconds ago answers `429` with a `Retry-After` header and does nothing, so a URL that leaked into a
+  loop cannot keep a service's builds from ever finishing or fill its deployment history. A call that did nothing (the cluster had no
+  room, a `409`) does not start the wait.
+- A client that keeps guessing is slowed down like one guessing passwords: after 20 misses in a minute even a good URL gets `429` for a
+  minute (this limit applies to clients that connect from a public address, not through a proxy or tunnel).
+- The operator's request log shows the path as `/hooks/deploy/<redacted>`, so reading the log does not hand over a hook. A reverse proxy or
+  ingress in front of the dashboard may log the URL itself; check what yours writes down.
+- The token list never shows the secret again.
+
+Anyone who has the URL can deploy that service, so keep it as secret as a token.
 
 ### Rotate a token
 
@@ -459,7 +519,7 @@ project token. Check `GET /api/v1/token/services`.
 **`400` with `request origin could not be verified`.** A cookie-authenticated write has no `Origin` or `Referer` header
 matching the dashboard host. Browsers add one. For scripts, use a token instead.
 
-**`400` with `too many API tokens; revoke some before creating more`.** The 100-token limit is reached. Approving a device code counts
+**`400` with `too many API tokens; revoke some before creating more`.** The 200-token limit is reached. Deploy hooks and approving a device code count
 too.
 
 **`geass login` says the sign-in was not approved in time.** Nobody approved the code within 10 minutes, or the operator restarted
@@ -477,7 +537,20 @@ non-loopback address. Use HTTPS or `localhost`.
 **Nobody can sign in: "dashboard authentication is unavailable".** The Secret has no usable user, has duplicate usernames,
 still has only `CHANGE_ME`, or its `users` value is not valid JSON. Fix `users`.
 
-**A user is locked out.** Wait one minute after five failed attempts. The lock is counted per username, not per address. A separate limit of 20 failed sign-ins a minute applies to each client that connects directly from a public address; behind a proxy or a tunnel it does not apply.
+**A user is locked out.** Wait one minute after five failed attempts from your address (or from anywhere, 25 for the username, or five when clients cannot be told apart). A separate limit of 20 failed sign-ins a minute applies to each client, whichever name it tries.
+
+**A deploy hook answers `404` `hook not found`.** The URL is wrong or incomplete, the hook was deleted or has expired, or its service,
+environment or project was deleted. It is the same answer for all of these. Make a new hook in the service's settings.
+
+**A deploy hook answers `405`.** It only accepts `POST`.
+
+**A deploy hook answers `409`.** The service is built from a repository and has no build yet, was never deployed, or pins a commit. Deploy it
+once from the dashboard, or unpin the commit.
+
+**A deploy hook answers `429`.** Either the hook was called less than 30 seconds ago (the `Retry-After` header says how long to wait), or the
+client address missed too many hook URLs in a minute. Wait and call it again.
+
+**A deploy hook answers `401` when used as `Authorization: Bearer`.** A hook is not a credential for the API. Use a project token for that.
 
 ## Related
 

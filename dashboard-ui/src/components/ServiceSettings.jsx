@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, ExternalLink, Gauge, GitBranch, Globe, Hammer, Rocket, Settings } from "lucide-react";
-import { action } from "@/lib/api";
+import { action, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { settingsSavedMessage } from "@/lib/services";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
+import { DeployHook } from "@/components/DeployHook";
 import { RunOnField } from "@/components/RunOnField";
 import { defaultSizeForKind } from "@/lib/capacity";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
@@ -84,7 +85,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
       { id: "networking", label: "Networking", icon: Globe, keywords: ["networking", "domain", "host", "tls", "https", "port", "private", "dns", "public"] },
       { id: "scale", label: "Scale", icon: Gauge, keywords: ["scale", "cpu", "memory", "replicas", "autoscaling", "limits"] },
       { id: "build", label: "Build", icon: Hammer, keywords: ["build", "dockerfile", "watch paths", "cache"] },
-      { id: "deploy", label: "Deploy", icon: Rocket, keywords: ["deploy", "start command", "healthcheck", "restart", "metrics", "args", "working directory"] },
+      { id: "deploy", label: "Deploy", icon: Rocket, keywords: ["deploy", "start command", "healthcheck", "restart", "metrics", "args", "working directory", "hook", "webhook", "url"] },
       { id: "general", label: "General", icon: Settings, keywords: ["general", "project", "environment", "id", name] },
       { id: "danger", label: "Danger", icon: AlertTriangle, danger: true, keywords: ["danger", "delete", "remove"] },
   ], [name]);
@@ -399,6 +400,9 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                   </ResourceSettingsBlock>
                   {saveButton("deploy")}
                 </FormStack>
+                <ResourceSettingsBlock title="Deploy hook" description="A URL that deploys this service when something calls it.">
+                  <DeployHook project={resourceName(project)} environment={spec.environment} app={name} gitSource={Boolean(git)} />
+                </ResourceSettingsBlock>
               </ResourceSettingsSection>
             )}
 

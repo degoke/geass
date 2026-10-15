@@ -113,7 +113,7 @@ func TestAnAdminAgentSeesEveryToolExceptDeletion(t *testing.T) {
 
 	names := toolNames(t, session)
 
-	for _, want := range []string{"whoami", "list_apps", "app_status", "get_logs", "deploy_app", "scale_app", "rollback_app", "set_variable", "create_app", "database_connection", "list_nodes"} {
+	for _, want := range []string{"whoami", "list_apps", "app_status", "get_logs", "deploy_app", "rebuild_app", "scale_app", "rollback_app", "set_variable", "create_app", "database_connection", "list_nodes"} {
 		require.Contains(t, names, want)
 	}
 	require.NotContains(t, names, "delete_resource", "deleting is a choice, not a default")
@@ -135,7 +135,7 @@ func TestAnObserverIsNotEvenShownATooThatChangesThings(t *testing.T) {
 
 	require.Contains(t, names, "get_logs", "an observer reads logs")
 	require.Contains(t, names, "app_status")
-	for _, forbidden := range []string{"deploy_app", "scale_app", "rollback_app", "set_variable", "unset_variable", "create_app", "delete_resource", "database_connection", "set_function_trigger", "remove_function_trigger", "invoke_function", "set_sleep_when_idle"} {
+	for _, forbidden := range []string{"deploy_app", "rebuild_app", "scale_app", "rollback_app", "set_variable", "unset_variable", "create_app", "delete_resource", "database_connection", "set_function_trigger", "remove_function_trigger", "invoke_function", "set_sleep_when_idle"} {
 		require.NotContains(t, names, forbidden, "the token cannot do it, so the agent never sees it")
 	}
 }
@@ -147,7 +147,7 @@ func TestAViewerCannotReadLogs(t *testing.T) {
 	names := toolNames(t, session)
 
 	require.Contains(t, names, "list_apps")
-	for _, hidden := range []string{"get_logs", "list_variables", "deployment_logs", "deploy_app"} {
+	for _, hidden := range []string{"get_logs", "list_variables", "deployment_logs", "deploy_app", "rebuild_app"} {
 		require.NotContains(t, names, hidden)
 	}
 }
@@ -158,7 +158,7 @@ func TestAProjectTokenAgentSeesOnlyTheToolsForItsEnvironment(t *testing.T) {
 
 	names := toolNames(t, session)
 
-	for _, want := range []string{"list_apps", "app_status", "deploy_app", "get_logs", "set_variable", "scale_app"} {
+	for _, want := range []string{"list_apps", "app_status", "deploy_app", "rebuild_app", "get_logs", "set_variable", "scale_app"} {
 		require.Contains(t, names, want)
 	}
 	for _, hidden := range []string{"list_projects", "list_nodes", "list_databases", "list_buckets", "create_app", "delete_resource", "database_connection", "project_compliance"} {
@@ -173,7 +173,7 @@ func TestReadOnlyModeHidesWritesEvenFromAnAdmin(t *testing.T) {
 	names := toolNames(t, session)
 
 	require.Contains(t, names, "get_logs")
-	for _, hidden := range []string{"deploy_app", "scale_app", "set_variable", "create_app", "delete_resource", "set_function_trigger", "invoke_function"} {
+	for _, hidden := range []string{"deploy_app", "rebuild_app", "scale_app", "set_variable", "create_app", "delete_resource", "set_function_trigger", "invoke_function"} {
 		require.NotContains(t, names, hidden)
 	}
 	require.Contains(t, names, "database_connection", "it changes nothing, and read-only mode hides what changes things")
@@ -212,6 +212,8 @@ func TestToolsSayWhetherTheyAreReadOnlyOrDestructive(t *testing.T) {
 
 	require.True(t, byName["app_status"].Annotations.ReadOnlyHint)
 	require.False(t, byName["deploy_app"].Annotations.ReadOnlyHint)
+	require.False(t, byName["rebuild_app"].Annotations.ReadOnlyHint)
+	require.False(t, *byName["rebuild_app"].Annotations.DestructiveHint, "a build again replaces nothing that cannot be built again")
 	require.True(t, *byName["delete_resource"].Annotations.DestructiveHint, "an agent host can ask before running it")
 	require.False(t, *byName["deploy_app"].Annotations.DestructiveHint)
 	require.NotNil(t, byName["deploy_app"].InputSchema, "the agent is told what to send")
@@ -665,6 +667,7 @@ func TestWaitTimeoutIsBounded(t *testing.T) {
 func TestInstructionsTellTheAgentWhatItMayDo(t *testing.T) {
 	require.Contains(t, instructions(client.Identity{CanMutate: false}, Options{}), "only read")
 	require.Contains(t, instructions(client.Identity{CanMutate: true}, Options{}), "deploy_app")
+	require.Contains(t, instructions(client.Identity{CanMutate: true}, Options{}), "rebuild_app")
 	require.Contains(t, instructions(client.Identity{CanMutate: true, Scope: "project", Project: "shop", Environment: "production"}, Options{}), "shop/production")
 	require.Contains(t, instructions(client.Identity{CanMutate: true}, Options{ReadOnly: true}), "only read")
 }
@@ -791,9 +794,9 @@ func TestHowManyToolsEachKindOfTokenSees(t *testing.T) {
 	}{
 		"a viewer":                          {me: viewer(), count: 12},
 		"an observer":                       {me: observer(), count: 15},
-		"a project token":                   {me: projectToken(), count: 18},
-		"an admin":                          {me: admin(), count: 26},
-		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 27},
+		"a project token":                   {me: projectToken(), count: 19},
+		"an admin":                          {me: admin(), count: 27},
+		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 28},
 		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 16},
 		"a project token in read-only mode": {me: projectToken(), options: Options{ReadOnly: true}, count: 9},
 	} {

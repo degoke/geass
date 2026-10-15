@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
@@ -59,68 +60,118 @@ func (p githubWebhookPayload) changedFiles() []string {
 	return files
 }
 
+// webhookDeliveryHeader carries the id GitHub gives each delivery of a webhook. A delivery that is redelivered by
+// hand from the app's settings keeps its id, so the id says which event this is and never that it is new: it is
+// logged and echoed, and never used to skip a delivery.
+const webhookDeliveryHeader = "X-GitHub-Delivery"
+
+// maxDeliveryIDLength bounds what is taken from the header. GitHub's ids are GUIDs of 36 characters.
+const maxDeliveryIDLength = 64
+
+// webhookDelivery is the id of the delivery that is being handled, or "" when the sender gave none or gave
+// something that is not an id. It ends up in log lines and in the answer, so it is only taken when it is made of
+// the characters an id is made of.
+func webhookDelivery(r *http.Request) string {
+	delivery := strings.TrimSpace(r.Header.Get(webhookDeliveryHeader))
+	if delivery == "" || len(delivery) > maxDeliveryIDLength {
+		return ""
+	}
+	for _, char := range delivery {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' && char != '.' {
+			return ""
+		}
+	}
+	return delivery
+}
+
+// writeWebhookAnswer answers a webhook that was accepted. The delivery id is in the answer when there was one, so
+// that the delivery GitHub lists in the app's settings, with the response it got, can be matched to what the
+// dashboard logged.
+func writeWebhookAnswer(w http.ResponseWriter, delivery string, answer map[string]any) {
+	answer["accepted"] = true
+	if delivery != "" {
+		answer["delivery"] = delivery
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
 func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if !requirePost(w, r) {
 		return
 	}
 	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
+	delivery := webhookDelivery(r)
+	// Everything the handler logs, and everything it calls with the request's context, carries the delivery.
+	logger := ctrllog.FromContext(r.Context()).WithValues("event", event)
+	if delivery != "" {
+		logger = logger.WithValues("delivery", delivery)
+	}
+	ctx := ctrllog.IntoContext(r.Context(), logger)
 	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 	if err != nil {
+		logger.Info("Could not read GitHub webhook body")
 		http.Error(w, "invalid webhook body", http.StatusBadRequest)
 		return
 	}
-	webhookSecret, err := s.platformGitHubWebhookSecret(r.Context())
+	webhookSecret, err := s.platformGitHubWebhookSecret(ctx)
 	if err != nil || webhookSecret == "" {
+		logger.Info("Refused GitHub webhook because its secret is not configured")
 		http.Error(w, "GitHub webhook secret is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	digest := hmacSHA256(webhookSecret, body)
 	if !hmac.Equal([]byte(digest), []byte(r.Header.Get("X-Hub-Signature-256"))) {
+		logger.Info("Refused GitHub webhook because its signature does not match")
 		http.Error(w, "invalid webhook signature", http.StatusUnauthorized)
 		return
 	}
 	if event == "ping" {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"accepted":true,"event":"ping"}`))
+		logger.Info("Accepted GitHub webhook")
+		writeWebhookAnswer(w, delivery, map[string]any{"event": "ping"})
 		return
 	}
 	if event == "pull_request" {
 		var payload githubPullRequestPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
+			logger.Info("Refused GitHub webhook because its payload is not valid")
 			http.Error(w, "invalid webhook payload", http.StatusBadRequest)
 			return
 		}
-		results, err := s.handlePullRequestEvent(r.Context(), payload)
+		results, err := s.handlePullRequestEvent(ctx, payload)
 		if err != nil {
+			logger.Error(err, "Could not process GitHub pull request webhook", "repository", payload.Repository.FullName, "number", payload.Number, "action", payload.Action)
 			http.Error(w, "could not process webhook", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "environments": results})
+		logger.Info("Processed GitHub pull request webhook", "repository", payload.Repository.FullName, "number", payload.Number, "action", payload.Action, "environments", len(results))
+		writeWebhookAnswer(w, delivery, map[string]any{"environments": results})
 		return
 	}
 	if event != "" && event != "push" {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"accepted":true,"ignored":true}`))
+		logger.Info("Ignored GitHub webhook of an event Geass does not use")
+		writeWebhookAnswer(w, delivery, map[string]any{"ignored": true})
 		return
 	}
 	var payload githubWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
+		logger.Info("Refused GitHub webhook because its payload is not valid")
 		http.Error(w, "invalid webhook payload", http.StatusBadRequest)
 		return
 	}
 	if payload.Repository.FullName == "" {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"accepted":true,"triggered":0}`))
+		logger.Info("Ignored GitHub webhook that names no repository")
+		writeWebhookAnswer(w, delivery, map[string]any{"triggered": 0})
 		return
 	}
-	triggered, err := s.triggerWebhookBuilds(r.Context(), payload)
+	triggered, err := s.triggerWebhookBuilds(ctx, payload)
 	if err != nil {
+		logger.Error(err, "Could not process GitHub push webhook", "repository", payload.Repository.FullName, "ref", payload.Ref, "triggered", triggered)
 		http.Error(w, "could not process webhook", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = fmt.Fprintf(w, `{"accepted":true,"triggered":%d}`, triggered)
+	logger.Info("Processed GitHub push webhook", "repository", payload.Repository.FullName, "ref", payload.Ref, "triggered", triggered)
+	writeWebhookAnswer(w, delivery, map[string]any{"triggered": triggered})
 }
 
 func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhookPayload) (int, error) {

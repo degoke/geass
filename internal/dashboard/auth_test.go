@@ -77,7 +77,7 @@ func TestDashboardLoginIssuesSessionCookie(t *testing.T) {
 
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -128,7 +128,7 @@ func TestDashboardViewerCannotMutate(t *testing.T) {
 
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -195,7 +195,7 @@ func TestDashboardLogoutRevokesSession(t *testing.T) {
 
 	var cookie *http.Cookie
 	for _, item := range loginRec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -334,7 +334,7 @@ func TestDashboardSessionAllowsColonInUsername(t *testing.T) {
 
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -362,7 +362,7 @@ func TestDashboardViewerCannotReadLogs(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -528,13 +528,14 @@ func TestDashboardLoginLockoutSurvivesRestart(t *testing.T) {
 	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: authFixtureAdminCred, Role: dashboardRoleAdmin})
 	c := newFakeClient(secret)
 	first := &Server{Client: c}
+	// Private addresses: clients that cannot be told apart (everyone arrives from the proxy), so the username is what is locked.
 	for range loginFailureLimit {
-		require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(first, "admin", "guess", "198.51.100.1:1000").Code)
+		require.Equal(t, http.StatusBadRequest, dashboardLoginAttempt(first, "admin", "guess", "10.0.0.5:1000").Code)
 	}
 
 	// A new Server has none of the in-memory state, only what the Secret kept.
 	second := &Server{Client: c}
-	rec := dashboardLoginAttempt(second, "admin", authFixtureAdminCred, "198.51.100.2:1000")
+	rec := dashboardLoginAttempt(second, "admin", authFixtureAdminCred, "10.0.0.6:1000")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "invalid username or password")
 	require.Empty(t, rec.Result().Cookies())
@@ -563,7 +564,8 @@ func TestDashboardLoginLockoutsDropExpiredRecords(t *testing.T) {
 	require.Contains(t, lockouts, "admin")
 	require.Contains(t, lockouts, "viewer")
 	// A lock that is still running is not the kind of record that gets dropped.
-	locked, err := srv.loginLocked(httptest.NewRequest(http.MethodPost, "/api/login", nil), "viewer")
+	lockedRequest := httptest.NewRequest(http.MethodPost, "/api/login", nil)
+	locked, err := srv.loginLocked(lockedRequest, "viewer", loginSourceKey(lockedRequest))
 	require.NoError(t, err)
 	require.True(t, locked)
 }
@@ -875,7 +877,7 @@ func TestDashboardLoginLockoutFailsClosedWhenPersistErrors(t *testing.T) {
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "unavailable")
-	locked, err := srv.loginLocked(req, "admin")
+	locked, err := srv.loginLocked(req, "admin", loginSourceKey(req))
 	require.NoError(t, err)
 	require.False(t, locked)
 
@@ -954,7 +956,7 @@ func TestDashboardAuthFailsClosedOnCorruptSessionEpochs(t *testing.T) {
 	token, err := issueDashboardSession([]byte("0123456789abcdef0123456789abcdef"), "admin", dashboardRoleAdmin, 0)
 	require.NoError(t, err)
 	sessionReq := httptest.NewRequest(http.MethodGet, "/api/session", nil)
-	sessionReq.AddCookie(&http.Cookie{Name: platform.DashboardSessionCookie, Value: token})
+	sessionReq.AddCookie(&http.Cookie{Name: testSessionCookie, Value: token})
 	require.Nil(t, srv.currentSession(sessionReq))
 }
 
@@ -1099,7 +1101,7 @@ func TestDashboardViewerBootstrapStripsSensitiveFields(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}
@@ -1168,7 +1170,7 @@ func TestViewerBootstrapDoesNotReadPlatformConfig(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var cookie *http.Cookie
 	for _, item := range rec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}

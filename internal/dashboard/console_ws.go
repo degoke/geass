@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -225,6 +226,18 @@ func (s *Server) handleAppConsoleWS(w http.ResponseWriter, r *http.Request, name
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
 	defer cancel()
+	// The terminal outlives its request's context, so it listens for the credentials it was opened with being lost itself.
+	var signedOut atomic.Bool
+	if lost := authLost(r.Context()); lost != nil {
+		go func() {
+			select {
+			case <-lost:
+				signedOut.Store(true)
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	conn.SetReadLimit(consoleWSMaxMessage)
 	_ = conn.SetReadDeadline(time.Now().Add(consoleWSPongWait))
@@ -302,6 +315,8 @@ func (s *Server) handleAppConsoleWS(w http.ResponseWriter, r *http.Request, name
 	exit := map[string]any{"type": "exit"}
 	var exitStatus utilexec.ExitError
 	switch {
+	case signedOut.Load():
+		exit["error"] = "Your session ended"
 	case timedOut:
 		exit["error"] = "Session time limit reached"
 	case errors.As(execErr, &exitStatus):
@@ -312,7 +327,12 @@ func (s *Server) handleAppConsoleWS(w http.ResponseWriter, r *http.Request, name
 	output.writeText(exit)
 	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(consoleWSWriteWait))
 
-	s.closeConsoleSession(context.WithoutCancel(r.Context()), sessionName, "Terminal closed")
+	closeReason := "Terminal closed"
+	if signedOut.Load() {
+		// The audit record says that access was cut off, not that someone closed the tab.
+		closeReason = "Session ended"
+	}
+	s.closeConsoleSession(context.WithoutCancel(r.Context()), sessionName, closeReason)
 }
 
 // closeConsoleSession records the end of a terminal on the audited session object.

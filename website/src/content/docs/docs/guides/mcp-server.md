@@ -30,8 +30,8 @@ it.
 | --- | --- | --- |
 | Look at what runs, read status, metrics and the list of resources | **Read only** | 12 |
 | Also read logs and the names of variables | **Read only, with logs** | 15 |
-| Deploy, scale, change variables and schedules in one environment | A project token for that environment | 18 |
-| Do all of that across every project, create services, read database connection details | **Full access** | 26 (27 with `--allow-delete`) |
+| Deploy, scale, change variables and schedules in one environment | A project token for that environment | 19 |
+| Do all of that across every project, create services, read database connection details | **Full access** | 27 (28 with `--allow-delete`) |
 
 **Read only, with logs** is the right choice for an agent that only watches. A project token is the right choice for an
 agent that deploys: it can reach one environment of one project and nothing else. **Full access** lets the agent do
@@ -55,7 +55,7 @@ with Geass before it starts and tells you what it offers on standard error, beca
 protocol:
 
 ```text
-geass MCP server ready with 26 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app
+geass MCP server ready with 27 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app
 ```
 
 The tools are decided once, when the server starts. To give the agent a different role, start a new server with
@@ -199,13 +199,13 @@ send your Geass API token as a Bearer token
 | See what runs | `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics` |
 | Read logs and variable names | `get_logs`, `deployment_logs`, `list_variables` |
 | Databases, buckets, nodes, compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
-| Deploy and recover | `deploy_app`, `rollback_app` |
+| Deploy and recover | `deploy_app`, `rebuild_app`, `rollback_app` |
 | Scale and configure | `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable` |
 | Functions | `set_function_trigger`, `remove_function_trigger`, `invoke_function` |
 | Create and delete | `create_app`, `delete_resource` (only with `--allow-delete`) |
 
-A tool that deploys can wait: `deploy_app` with `wait` set returns once the service is ready or has failed, with the
-reason, so the agent does not have to poll. See [MCP tools](/docs/reference/mcp-tools/) for every argument.
+A tool that deploys can wait: `deploy_app` and `rebuild_app` with `wait` set return once the service is ready or has
+failed, with the reason, so the agent does not have to poll. See [MCP tools](/docs/reference/mcp-tools/) for every argument.
 
 ## What an agent cannot do
 

@@ -120,6 +120,14 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              githubReporting:
+                default: true
+                description: |-
+                  GitHubReporting turns on what Geass reports back to GitHub for this project's repository services: a
+                  commit status for each build, a GitHub Deployment for each deploy, and one comment on each pull request
+                  that has an environment. Unset means on. It only does anything once the project is connected to GitHub,
+                  and a GitHub App registered before Geass reported needs the new permissions approved first.
+                type: boolean
               network:
                 description: Network sets who can reach this project's services. Without
                   it the project is isolated.

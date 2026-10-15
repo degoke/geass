@@ -74,9 +74,11 @@ Once you are signed in, publish the dashboard on a domain from **Settings → Do
 
 The page shows the title **Sign in**, a **Username** field (pre-filled with `admin`), a **Password** field and a **Continue** button. Enter the user from your Secret.
 
-Sessions last 12 hours. Usernames are matched without regard to letter case and surrounding spaces. After five failed attempts for one username within a minute, that username is locked for one minute; the page still says `invalid username or password`. The lock is saved in the Secret, so it survives an operator restart. Only usernames in your Secret are recorded, and a record is dropped once its minute is over. Separately, a client that connects directly from a public address and fails 20 sign-ins within a minute is refused for a minute, with the same message. Behind a proxy or a tunnel every visitor arrives from one private address, so that limit does not apply there.
+Sessions last 12 hours. Usernames are matched without regard to letter case and surrounding spaces. After five failed attempts for one username from one client address within a minute, that username is locked for that address for one minute; the page still says `invalid username or password`. Someone who keeps guessing is shut out, and you, signing in from another address, are not. Twenty-five failures from all clients together lock the username for everyone, and where clients cannot be told apart five do. The count for the username is saved in the Secret, so it survives an operator restart. Only usernames in your Secret are recorded, and a record is dropped once its minute is over. Separately, a client that fails 20 sign-ins within a minute, whatever names it tries, is refused for a minute, with the same message. Geass reads the client's address from `X-Forwarded-For` when the connection comes through a proxy or a tunnel (see [Security](/docs/operations/security/#dashboard-users)).
 
 To sign out, open the account menu at the top right (it shows your initial) and choose **Sign out**. Signing out ends every session of that user, in every browser, not only the current one.
+
+To invite people, let them sign in by email or keep organizations and teams, connect an identity provider under **Settings** → **Sign-in** once you are in; the sign-in page then leads with **Sign in with ...** and keeps the admin password below it. See [Sign in with an identity provider](/docs/guides/external-sign-in/).
 
 ## Sign in from the command line
 
@@ -163,7 +165,7 @@ Environment variables are a weaker choice. The password sits in plain text in th
 
 ## What happens under the hood
 
-- `/api/login` checks the user against the Secret (or the variables when the Secret has no valid users) with bcrypt and sets the cookie `geass_session`: `HttpOnly`, `SameSite=Lax`, signed with the session key, valid for 12 hours. It carries the user name, the role and the user's epoch.
+- `/api/login` checks the user against the Secret (or the variables when the Secret has no valid users) with bcrypt and sets the cookie `__Host-geass_session` (`geass_session` over plain http on this machine): `HttpOnly`, `SameSite=Lax`, signed with the session key, valid for 12 hours. It carries the user name, the role and the user's epoch.
 - Every API request needs that cookie, or an API token in an `Authorization: Bearer` header. Only the static page shell and its files, the login, logout and session endpoints, the two endpoints a program uses to start and collect a command-line sign-in (`POST /api/auth/device` and `POST /api/auth/token`, also under `/api/v1/auth/`), `/geass-probe` and the GitHub webhook endpoint are public. Approving a sign-in is not: it takes a signed-in admin.
 - Writes check the `Origin` or `Referer` header against the `Host` the dashboard was reached on, so a form on another site cannot act as you. Forwarded host headers are trusted only when the dashboard is reached by its in-cluster Service name. A reverse proxy in front of the dashboard must pass the `Host` header through unchanged. A request that carries an API token has no cookie to protect, so it skips this check.
 
@@ -171,7 +173,7 @@ Environment variables are a weaker choice. The password sits in plain text in th
 
 **`dashboard authentication is unavailable` when you press Continue.** Geass found no valid user. Check, in order: the Secret exists (`sudo k3s kubectl -n geass-system get secret geass-dashboard-auth`); `users` is valid JSON; every entry has a non-empty username and password; no password is `CHANGE_ME`; no role is other than `admin` or `viewer`; no two usernames are equal ignoring case. The same message appears when the Kubernetes API cannot be read.
 
-**`invalid username or password`.** The credentials do not match, the username is locked after five failures, or, if you connect directly from a public address, that address has caused 20 failed sign-ins in the last minute. Wait a minute and try once more.
+**`invalid username or password`.** The credentials do not match, your address has failed five times for this username (or the username has failed 25 times from everywhere), or your address has caused 20 failed sign-ins in the last minute. Wait a minute and try once more.
 
 **You sign in and return to the sign-in form.** The browser rejected the session cookie. Reach the dashboard on `localhost` or `127.0.0.1` through the tunnel, or on an HTTPS address.
 

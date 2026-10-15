@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,8 +38,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/githubapp"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -59,6 +62,16 @@ type GeassAppReconciler struct {
 	Scheme *runtime.Scheme
 	// Webhooks receives deployment outcomes; nil disables webhook notifications.
 	Webhooks webhooks.Emitter
+	// HTTPClient makes the requests that report deploys to GitHub; nil uses one with a timeout.
+	HTTPClient *http.Client
+	// GitHubGuard holds back reports to GitHub that it refused; nil uses the guard the whole operator shares.
+	GitHubGuard *githubapp.Guard
+	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
+	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
+	AsyncReports bool
+
+	retries reportRetries
+	reports reportDispatcher
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassapps,verbs=get;list;watch;create;update;patch;delete
@@ -77,14 +90,27 @@ type GeassAppReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassbuilds,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
 
 func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	result, err := r.reconcileApp(ctx, req)
+	// A report to GitHub that failed for a reason that may pass is tried again soon, even when the service has
+	// nothing more to do.
+	return r.retries.apply(req.NamespacedName, result), err
+}
+
+func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	var app geassv1alpha1.GeassApp
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	// Whether the service was already serving when this pass began, which is what tells a deploy that is
+	// happening from one that finished before this operator started to look.
+	wasReady := platform.IsConditionTrue(app.Status.Conditions, platform.ConditionReady)
 	if result, paused := beginProvisionReconcileUnlessDeleting(!app.DeletionTimestamp.IsZero(), app.Status.Conditions, app.Generation, &app.Status.ReconcileRetry); paused {
 		return result, nil
 	}
@@ -232,6 +258,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				}
 			}
 		}
+		r.reportToGitHub(ctx, &app, githubapp.DeploymentInProgress, "", wasReady)
 		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}
 	if app.Status.HealthCheckFailures != 0 {
@@ -244,18 +271,7 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
-	url := ""
-	if app.Spec.Ingress.Host != "" {
-		scheme := schemeHTTP
-		if app.Spec.Ingress.TLSEnabled {
-			scheme = schemeHTTPS
-		}
-		path := app.Spec.Ingress.Path
-		if path == "" {
-			path = "/"
-		}
-		url = fmt.Sprintf("%s://%s%s", scheme, app.Spec.Ingress.Host, path)
-	}
+	url := appPublicURL(&app)
 
 	latest := &geassv1alpha1.GeassApp{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&app), latest); err != nil {
@@ -311,9 +327,26 @@ func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	app.Status = latest.Status
 	r.notifyDeployOutcome(ctx, &app, webhooks.EventDeploymentSucceeded, "")
+	r.reportToGitHub(ctx, &app, githubapp.DeploymentSuccess, "", wasReady)
 
 	log.Info("Reconciled GeassApp", "environment", app.Spec.Environment, "namespace", wsNS)
 	return ctrl.Result{}, nil
+}
+
+// appPublicURL is the address a service answers on from outside the cluster, or "" when it has no host.
+func appPublicURL(app *geassv1alpha1.GeassApp) string {
+	if app.Spec.Ingress.Host == "" {
+		return ""
+	}
+	scheme := schemeHTTP
+	if app.Spec.Ingress.TLSEnabled {
+		scheme = schemeHTTPS
+	}
+	path := app.Spec.Ingress.Path
+	if path == "" {
+		path = "/"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, app.Spec.Ingress.Host, path)
 }
 
 func appPendingUpdates(app *geassv1alpha1.GeassApp) int {
@@ -789,6 +822,7 @@ func (r *GeassAppReconciler) resolveGitImage(ctx context.Context, app *geassv1al
 	}
 	app.Status.CurrentBuild = build.Name
 	if !ready {
+		r.dispatchReport(ctx, app, r.syncPullRequestComment)
 		result, err = r.setNotReady(ctx, app, "Git source is waiting for a successful build")
 		return result, true, err
 	}
@@ -1195,6 +1229,7 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 	}
 	if platform.ReadyConditionReason(latest.Status.Conditions) == platform.ConditionReasonProvisionFailed {
 		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.ProvisionFailedUserMessage)
+		r.reportToGitHub(ctx, latest, githubapp.DeploymentFailure, platform.ProvisionFailedUserMessage, false)
 	}
 	return result, nil
 }
@@ -1231,7 +1266,12 @@ func (r *GeassAppReconciler) ensureCloudflarePublicHost(ctx context.Context, app
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr)
+	if r.AsyncReports {
+		// What a report that runs on its own wants tried again arrives here, as the pause it asked for ends.
+		controllerBuilder = controllerBuilder.WatchesRawSource(source.Channel(r.reports.channel(), &handler.EnqueueRequestForObject{}))
+	}
+	return controllerBuilder.
 		For(&geassv1alpha1.GeassApp{}).
 		Owns(&geassv1alpha1.GeassBuild{}).
 		Owns(&geassv1alpha1.GeassDeployment{}).

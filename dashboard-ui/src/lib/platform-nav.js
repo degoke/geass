@@ -33,6 +33,7 @@ export const SETTINGS_PATHS = [
   "/settings/connectors",
   "/settings/github",
   "/settings/tokens",
+  "/settings/auth",
   "/object-storage",
   "/shared-databases",
   "/cluster",
@@ -49,6 +50,7 @@ export const SETTINGS_LINKS = [
   { id: "domain", label: "Domain", to: "/settings/domain", active: (path) => path.startsWith("/settings/domain") },
   { id: "connectors", label: "Connectors", to: "/settings/connectors", active: (path) => path.startsWith("/settings/connectors") || path.startsWith("/settings/github") },
   { id: "tokens", label: "Tokens", to: "/settings/tokens", active: (path) => path.startsWith("/settings/tokens") },
+  { id: "auth", label: "Sign-in", to: "/settings/auth", active: (path) => path.startsWith("/settings/auth") },
   { id: "object", label: "Object storage", to: "/object-storage", active: (path) => path.startsWith("/object-storage") },
   { id: "databases", label: "Databases", to: "/shared-databases", active: (path) => path.startsWith("/shared-databases") },
 ];

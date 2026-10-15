@@ -189,8 +189,10 @@ build: dashboard-build manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet install ## Run the controller and React dashboard from your host (refreshes CRDs on the current kube context).
 	$(MAKE) -j2 dashboard-backend dashboard-dev
 
+# GEASS_ALLOW_LOOPBACK lets Settings > Sign-in use an identity provider on this machine (Better Auth on localhost:3000, say).
+# It is only set here, where the operator runs on your host and loopback is your machine; an operator in a cluster leaves it off.
 dashboard-backend: ## Run the Geass backend for the dashboard (API :8085; health :8086).
-	go run ./cmd/main.go --dashboard-bind-address=:8085 --health-probe-bind-address=:8086
+	GEASS_ALLOW_LOOPBACK=true go run ./cmd/main.go --dashboard-bind-address=:8085 --health-probe-bind-address=:8086
 
 dashboard-dev: ## Run the Vite/React dashboard in development mode.
 	cd dashboard-ui && pnpm dev --host 127.0.0.1

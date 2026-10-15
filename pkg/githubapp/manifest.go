@@ -62,10 +62,16 @@ func NewGeassAppManifest(dashboardURL, appName string) AppManifest {
 		Public:       false,
 		DefaultPermissions: map[string]string{
 			// Checks is what "Wait for CI" reads: GET /commits/{sha}/check-runs is refused without it.
-			"checks":        "read",
-			"contents":      "read",
-			"metadata":      "read",
-			"pull_requests": "read",
+			"checks":   levelRead,
+			"contents": levelRead,
+			"metadata": levelRead,
+			// Geass reads pull requests for pull request environments and comments on them, which needs write.
+			"pull_requests": levelWrite,
+			// What Geass reports back: a commit status for every build, a GitHub Deployment for every deploy.
+			// Apps registered before these were asked for do not have them, and report nothing until the owner
+			// approves them (see NeededPermissions and the "Test GitHub App" check).
+			"statuses":    levelWrite,
+			"deployments": levelWrite,
 		},
 		DefaultEvents: []string{"push", "pull_request"},
 	}

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, list } from "@/lib/api";
 import { ApiTokens } from "@/components/ApiTokens";
+import { AuthSettings } from "@/components/AuthSettings";
 import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
@@ -82,6 +83,13 @@ export function PlatformSettingsPage({ data, page, reload }) {
     return (
       <SettingsSection title="API tokens" flat>
         <ApiTokens scope="workspace" projects={list(data, "projects")} mutable={canMutate(data)} />
+      </SettingsSection>
+    );
+  }
+  if (page === "auth") {
+    return (
+      <SettingsSection title="Sign-in" flat>
+        <AuthSettings mutable={canMutate(data)} />
       </SettingsSection>
     );
   }

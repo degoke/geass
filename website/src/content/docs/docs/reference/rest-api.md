@@ -36,7 +36,7 @@ surfaces, and why the tables for the dashboard routes below also tell you which 
 8085; put TLS in front of it (see [Security](/docs/operations/security/)).
 
 **Authentication.** Send `Authorization: Bearer <token>` with a workspace token (`gsw_...`) or a project token (`gsp_...`). A
-session cookie (`geass_session`, from `POST /api/login`) also works. A request with a Bearer header that fails never falls back to
+session cookie (`__Host-geass_session`, or `geass_session` over plain http on this machine, from `POST /api/login`) also works. A request with a Bearer header that fails never falls back to
 a cookie. Programs that cannot ask a person for a password sign in with a [device code](#sign-in-from-a-program).
 
 **Cookie writes need an origin.** A write made with a session cookie must carry an `Origin` or `Referer` header whose host is the
@@ -216,7 +216,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /auth/device/{code}` | Admin session | none (`{code}` is the user code; case and the dash do not matter) | `{"userCode", "clientName", "status", "expiresIn"}`, what the approval page shows |
 | `POST /auth/device/approve` | Admin session | `userCode`* (case and the dash do not matter), `role` (`admin`, `observer` or `viewer`; default `observer`), `expiresInDays` (0 to 3650; default 30), `deny` (`true` refuses) | `{"ok": true, "item": {...}}` with the new token's record but not the token, or `{"ok": true, "denied": true}` |
 | `GET /tokens` | Admin session | `?project=` | `{"items": [token, ...]}`, newest first |
-| `POST /tokens` | Admin session | `name`*, `scope`* (`workspace` or `project`), `role` (`admin`, `observer`, `viewer`; workspace only; default `viewer`), `project` and `environment` (project only), `expiresInDays` (0 to 3650; 0 or none means never) | `{"ok": true, "token": "gsw_...", "item": {...}}`; the token is shown once |
+| `POST /tokens` | Admin session | `name`*, `scope`* (`workspace`, `project` or `service`, a deploy hook), `role` (`admin`, `observer`, `viewer`; workspace only; default `viewer`), `project` and `environment` (project and service), `app` (service only: the service the hook deploys), `expiresInDays` (0 to 3650; 0 or none means never) | `{"ok": true, "token": "gsw_...", "item": {...}}`; the token is shown once. A hook's token starts `gsh_`; it is put in a [hook URL](/docs/guides/users-and-tokens/#deploy-hooks), and a service has one (`400` otherwise) |
 | `DELETE /tokens/{id}` | Admin session | none | `{"ok": true}`; `404` `token was not found` |
 
 #### Projects
@@ -508,9 +508,9 @@ JSON, whatever `Accept` header you send, except that a missing resource gets a p
 
 | Method and path | Access | Fields | Response |
 | --- | --- | --- | --- |
-| `POST /api/login` | Public | `username`, `password` | `{"ok":true,"authenticated":true,"username":"admin","role":"admin","canMutate":true}` and the `geass_session` cookie. `400` `invalid username or password` on failure or lockout |
+| `POST /api/login` | Public | `username`, `password` | `{"ok":true,"authenticated":true,"username":"admin","role":"admin","canMutate":true}` and the `__Host-geass_session` cookie (`geass_session` over plain http on this machine). `400` `invalid username or password` on failure or lockout |
 | `POST /api/logout` | Public | none | `{"ok":true,"authenticated":false}`; ends every session of that user |
-| `GET /api/session` | Public | none | `{"authenticated":true,"username":"admin","role":"admin","canMutate":true}`, or `{"authenticated":false}` |
+| `GET /api/session` | Public | none | `{"authenticated":true,"username":"admin","role":"admin","canMutate":true}`, or `{"authenticated":false}`. While people sign in through an identity provider the second form also has `"sso":{"name":"Acme"}`, which is what the sign-in page offers a button for |
 | `POST /api/auth/device`, `POST /api/auth/token` | Public | As in [Sign in from a program](#sign-in-from-a-program) | The same answers as `/api/v1/auth/...` |
 | `POST /api/auth/device/approve` | Admin session | `userCode`, `role`, `expiresInDays`, `deny` | The same as `/api/v1/auth/device/approve` |
 
@@ -522,7 +522,7 @@ curl -fsS -c cookies.txt -X POST $GEASS/api/login \
 curl -fsS -b cookies.txt $GEASS/api/session
 ```
 
-Password sign-in exists only here; there is no `/api/v1/login`. Dashboard users are `admin` or `viewer`; `observer` is a token role.
+Password sign-in exists only here; there is no `/api/v1/login`. Dashboard users are `admin` or `viewer`; `observer` is a token role. Signing in through an [identity provider](/docs/guides/external-sign-in/) is a browser flow (below), and ends with the same session cookie.
 
 ### API tokens
 
@@ -531,13 +531,22 @@ Only a signed-in admin session can manage tokens. Not even an admin token can.
 | Method and path | Access | Fields | Response |
 | --- | --- | --- | --- |
 | `GET /api/tokens` | Admin session | optional `project` | `{"items":[ token, ... ]}`, newest first |
-| `POST /api/tokens/create` | Admin session | `name`, `scope` (`workspace` or `project`), `role` (`admin`, `observer` or `viewer`, workspace only, default `viewer`), `project` and `environment` (project only), `expiresInDays` (0 to 3650, default never) | `{"ok":true,"token":"gsw_...","item":{...}}`; the token is shown once |
+| `POST /api/tokens/create` | Admin session | `name`, `scope` (`workspace`, `project` or `service`, a deploy hook), `role` (`admin`, `observer` or `viewer`, workspace only, default `viewer`), `project` and `environment` (project and service), `app` (service only), `expiresInDays` (0 to 3650, default never) | `{"ok":true,"token":"gsw_...","item":{...}}`; the token is shown once |
 | `POST /api/tokens/revoke` | Admin session | `id` | `{"ok":true}`; `404` `token was not found` |
 | `GET /api/token` | Any token | none | The calling token: `id`, `name`, `scope`, `project`, `environment`, `role`, `createdBy`, `createdAt`, `expiresAt`, `lastUsedAt`, `expired`. A session cookie gets `400` `this endpoint needs an API token` |
 | `GET /api/token/services` | Any token | `project` and `environment` (workspace tokens only) | `{"project","environment","services":[{"id","name","kind","source","ready","pendingChanges"}]}` |
 | `POST /api/token/deploy` | Project token | none | `{"ok":true,"deployed":2}`: deploys every pending change in the token's environment. Anyone else gets `403` |
 
 Details and CI examples are in [Users and API tokens](/docs/guides/users-and-tokens/).
+
+### Deploy hooks
+
+| Method and path | Access | Response |
+| --- | --- | --- |
+| `POST /hooks/deploy/{token}` | The `gsh_` token in the path | `{"ok":true,"action":"build","service":"web"}` for a service built from a repository (its build starts over), or `"action":"deploy"` for any other (its pending changes are deployed). `404` `hook not found` for a token that is wrong, revoked, expired or of another kind, or whose service is gone; `405` for any method but `POST`; `409` for a repository service with no build yet, never deployed, or pinned to a commit; `400` when the cluster has no room; `429` (with `Retry-After`) when the hook ran less than 30 seconds ago, or after too many wrong URLs from one client |
+
+It needs no cookie, no `Origin` and no `Authorization` header: the secret in the path is the credential, and it is good for that service only. A hook is
+refused as a Bearer token. See [Deploy hooks](/docs/guides/users-and-tokens/#deploy-hooks).
 
 ### Read model
 
@@ -620,6 +629,7 @@ All of these are admin writes.
 | `GET /api/projects/{project}/compliance` | none | Viewer. `{"requiredTags","region","databases":[{"name","compliant","missing"}],"openNodes"}`: what the project requires and which databases fall short |
 | `POST /api/projects/{project}/github/install` | `environment` | `{"ok":true,"url":"https://github.com/apps/..."}`: open it to install the GitHub App |
 | `POST /api/projects/{project}/github/disconnect` | `environment` | Unlinks the project from GitHub |
+| `POST /api/projects/{project}/github-reporting/save` | `enabled` (`on`, or `true`) | Turns [reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github) on, or off when `enabled` is left out. `{"ok":true,"enabled":true}`. Workspace admin only |
 | `GET /api/projects/{project}/github/repos` | none | `{"items":[{"FullName","DefaultBranch","Private","HTMLURL"}]}` (observer) |
 
 ### Services
@@ -635,7 +645,7 @@ A service is a `GeassApp`. `{app}` is its resource name.
 | `POST /api/apps/{app}/deploy` | none | Deploys the service |
 | `POST /api/apps/{app}/scale` | `replicas` (0 to 1000) | Changes the replica count at once, without a deploy |
 | `POST /api/apps/{app}/rollback` | `revision` (a `GeassDeployment` name) | Redeploys an earlier revision: an image service gets the earlier image, a Git service only gets the earlier replica count, and a function cannot be rolled back |
-| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its current build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds) |
+| `POST /api/apps/{app}/build` | none | Builds the service's branch again: puts its current build back to the start, and the operator builds the head of the branch as it is now. It makes no build of its own, and answers an error for a service that has none yet; see [GeassBuild](/docs/reference/resources/geass-build/#how-the-dashboard-uses-builds). The command line calls it as `geass build` and the MCP server as `rebuild_app` |
 | `POST /api/apps/{app}/build/cancel` | none | Cancels the current build while it is waiting or running. A build that has finished answers an error |
 | `POST /api/apps/{app}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/apps/{app}/delete` | `confirmName` (the app name) | Deletes the service |
@@ -807,7 +817,7 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/domain/save` | `domain`, `subdomain`, `exposure` (`ingress` or `cloudflare-tunnel`), `tunnelCNAMETarget`, `cloudflareZoneId` | Sets the dashboard domain |
 | `POST /api/settings/domain/verify` | none | `{"ok":true,"state":"success","message":"..."}`; `ok` is `false` for any other `state`. When HTTPS is not reachable, `message` can end with the cluster's `ClusterIssuerReady` message, for example when no `acmeEmail` is set |
 | `POST /api/settings/github/save` | `appID`, `clientID`, `slug`, `clientSecret`, `webhookSecret`, `privateKey` | Stores the GitHub App |
-| `POST /api/settings/github/test`, `/clear` | `confirm=remove-github` for clear | Tests or removes it |
+| `POST /api/settings/github/test`, `/clear` | `confirm=remove-github` for clear | Tests or removes it. The test checks the webhook URL, and then the app's permissions: it answers `{"ok":true,"warning":"..."}` when the webhook is right and permissions Geass needs are missing, with how to approve them |
 | `GET /api/settings/github` | none | Callback and webhook URLs and the state (observer; admins also get the manifest used to register the app) |
 | `POST /api/settings/cloudflare/discover` | `apiToken` | `{"accounts":[...],"zones":[...]}` without saving anything |
 | `POST /api/settings/cloudflare/save` | `apiToken`, `accountId`, `zoneId`, `zoneName`, `zonesJson`, `keepExisting` | Connects Cloudflare |
@@ -816,6 +826,11 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/registry/save` | `repository`, `username`, `password`, `keepExisting` | Sets the registry that repository builds push to. The login is optional: both `username` and `password`, or neither. It is stored as the Secret `platform-registry` in `geass-system`. `keepExisting=on` keeps the stored login when only the repository changes |
 | `POST /api/settings/registry/clear` | none | Removes the registry and its login |
 | `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |
+| `GET /api/settings/auth` | none | How people sign in: `{"mode","configured","displayName","issuer","clientID","hasSecret","scopes","roleClaim","roleMap","requireClaim","sessionMinutes","callbackURL","backchannelLogoutURL","revokeTokensOnLogout","test","hasPasswordAdmin","canEnable"}`. `test` is what the last test sign-in found (`ok`, `email`, `role`, `reason`, `detail`). It never returns the client secret. A signed-in admin only: any token, observers included, and viewers get `403` |
+| `POST /api/settings/auth/save` | `displayName`, `issuer`, `clientID`, `clientSecret`, `keepSecret`, `scopes`, `roleClaim`, `roleMap` (`provider-role=admin` or `=viewer`, one per line), `requireClaim` (`claim=value`, one per line), `sessionMinutes` (5 to 720) | Stores the identity provider's settings and the client secret (the Secret `platform-auth`). It does not connect and does not turn the provider on. `keepSecret=on` with no `clientSecret` keeps the saved one, only for the same issuer and client ID. `400` for an invalid setting and while people sign in through the provider. A signed-in admin only, not a token |
+| `POST /api/settings/auth/mode` | `mode` (`local` or `external`) | Switches how people sign in. `external` needs the settings to be complete, a test sign-in of exactly them in the last 30 minutes as someone who maps to admin, and an admin with a password; `400` says which is missing. Turning it on ends the open sessions of users of the Secret who are not admins. `local` is always allowed. A signed-in admin only, not a token |
+| `POST /api/settings/auth/logout-policy` | `revokeTokens` (`on` or `off`) | Sets whether a back-channel logout from the identity provider also revokes the tokens and deploy hooks the person made (their sessions always end). Default on. It does not change who can sign in, so it can be changed while people sign in through the provider. `400` for another value or while no provider is set up. A signed-in admin only, not a token |
+| `POST /api/settings/auth/clear` | none | Removes the identity provider and its client secret and goes back to local sign-in. A signed-in admin only, not a token |
 | `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project |
 
 Details of the last group are in [Cloud connectors](/docs/guides/connectors/).
@@ -846,8 +861,11 @@ These exist for the browser flow:
 | Path | Purpose |
 | --- | --- |
 | `GET /geass-probe` | A public health answer, `{"ok":true,"service":"geass-dashboard",...}`, used to verify the dashboard's address |
-| `POST /webhooks/github` | GitHub's webhook; checked by HMAC signature |
+| `POST /webhooks/github` | GitHub's webhook; checked by HMAC signature. The answer has `delivery`, the ID GitHub sent in `X-GitHub-Delivery`; see [Webhooks](/docs/guides/github-and-builds/#from-github-to-geass) |
 | `GET /github/callback`, `GET /settings/github/manifest/callback` | GitHub redirects here after install or app creation; signed-in admins only |
+| `GET /auth/oidc/login` | Sends the browser to the identity provider (`?next=/path` says where to land afterwards, on this dashboard only). It sets a signed, single-use state cookie. `?purpose=test` starts a test sign-in and needs a signed-in admin session, not a token. Without the provider turned on it goes back to `/?sso_error=disabled` |
+| `GET /auth/oidc/callback` | The provider sends the browser back here with a code. It checks the state cookie, the issuer and the ID token, and starts the session (or records the test). A failure goes to `/?sso_error=<code>`, where the code is one of `state`, `forbidden`, `unavailable`, `disabled`, `provider`, `provider_denied`, `no_email`, `email_unverified`, `required_claim` or `no_role` |
+| `POST /auth/oidc/backchannel-logout` | The provider calls this when someone signed out or was removed, with `logout_token` (form-encoded). It ends that person's sessions and, unless the setting above is off, revokes the tokens and deploy hooks they made. Its credential is the provider's signature on the token: `400` for a token that is not right, `429` for a source that keeps sending them, `200` for one it acted on or already had |
 | `GET /api/events`, `GET /api/apps/{app}/console/ws` | Streams used by the dashboard |
 | `POST /api/apps/{app}/console/stream`, `POST /api/object-stores/<server name>/console/create` and `.../console/stream` | An older streaming form of the service terminal, and the same pair for the object storage server. The dashboard uses neither |
 

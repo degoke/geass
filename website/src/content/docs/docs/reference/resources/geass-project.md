@@ -1,6 +1,6 @@
 ---
 title: "GeassProject"
-description: "Reference for GeassProject: environments, variables, webhooks, pull request environments, backups, network isolation, region and required node tags."
+description: "Reference for GeassProject: environments, variables, webhooks, pull request environments, GitHub reporting, backups, network isolation, region and required node tags."
 sidebar:
   order: 1
 ---
@@ -88,6 +88,7 @@ spec:
     enabled: true
     baseEnvironment: staging
     maxOpen: 5
+  githubReporting: true
   backupStorage:
     connectionRef:
       name: aws-main
@@ -167,6 +168,18 @@ The value field in the dashboard shows the placeholder `VALUE or ${{REF}}`. Noth
 | `spec.githubConnectionRef.name` | string | none | none | The [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) that gives this project access to GitHub. The dashboard sets it to `<project>-github` when you click **Connect to GitHub**. |
 
 The CRD describes this field as a reference to a Secret. The code resolves it as a `GeassGitHubConnection` in `geass-system`. The operator's project controller does not read the field. The dashboard reads it to list repositories, to validate Git services and to match incoming GitHub webhooks to the project.
+
+### GitHub reporting
+
+| Field | Type | Default | Validation | Meaning |
+| --- | --- | --- | --- | --- |
+| `spec.githubReporting` | boolean | `true` | Optional. The CRD defaults it to `true`, and unset is read as on. | Whether Geass reports this project's repository services back to GitHub: a commit status `geass/build/<service>` for each build, a GitHub Deployment for each deploy, and one comment on each pull request that has an environment. Set it to `false` to stop all three. |
+
+It does nothing until the project is connected to GitHub, and the three reports need the GitHub App's **Commit statuses**,
+**Deployments** and **Pull requests** permissions at read and write. An app registered before Geass reported to GitHub does
+not have them: the reports are refused, and the `GitHubReporting` condition of the project's
+[GeassGitHubConnection](/docs/reference/resources/geass-github-connection/#conditions) says so. Builds, deploys and pull request
+environments are not affected, whatever the value. See [Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github).
 
 ### Webhooks
 
@@ -292,12 +305,13 @@ The operator retries a failing project every 30 seconds. Errors that the operato
 | **Project Settings**, **Network** | Writes `spec.network`. The switch is **Keep this project's services private**, and the list is **Projects allowed to reach this one**. |
 | **Project Settings**, **Compliance** | Writes `spec.requiredTags`. The list is the tags that nodes in the project's region carry. **Save** applies the checks above. Only an admin can save. |
 | **Project Settings**, **Integrations**, **Connect to GitHub** or **Disconnect** | Sets or clears `spec.githubConnectionRef`. Disconnecting does not delete the connection object or its Secret. |
+| **Project Settings**, **Integrations**, **Report to GitHub** | Writes `spec.githubReporting`. The card appears when the project is connected to GitHub. Through the API it is `POST /api/projects/<project>/github-reporting/save`, with `enabled=on` to turn it on and no `enabled` to turn it off. |
 | **Project Settings**, **Danger**, **Manage Services**, **Remove** | Deletes one service, database, logical database or bucket of the project, after a confirmation. |
 | **Project Settings**, **Danger**, **Delete Project**, then **Delete** and **Delete permanently** | Deletes the project's services, databases, logical databases, buckets and cloud connections, the GitHub connection object, then the project, and revokes the project's API tokens. You type the project name to confirm. |
 
 Changes to a project take effect at once. The draft and **Deploy changes** flow applies to services, databases and buckets, not to the project itself. The top bar button **Deploy changes** deploys the pending changes of the resources in the selected environment, and it does not touch `spec` of the project.
 
-Read-only dashboard users see a project without its shared variables, GitHub connection, webhooks and backup storage. Workspace tokens with the admin role can set the required tags through `POST /api/projects/<project>/compliance`, and read the report from `GET`. Project tokens cannot.
+Read-only dashboard users see a project without its shared variables, GitHub connection, GitHub reporting switch, webhooks and backup storage. Workspace tokens with the admin role can set the required tags through `POST /api/projects/<project>/compliance`, and read the report from `GET`. Project tokens cannot.
 
 ## Editing by hand
 

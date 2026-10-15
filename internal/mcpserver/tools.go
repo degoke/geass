@@ -69,6 +69,12 @@ type deployInput struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"how long to wait (default 300, at most 900)"`
 }
 
+type rebuildInput struct {
+	App            string `json:"app" jsonschema:"the service to build again"`
+	Wait           bool   `json:"wait,omitempty" jsonschema:"wait for the build and rollout, and return the outcome (recommended)"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"how long to wait (default 300, at most 900)"`
+}
+
 type scaleInput struct {
 	App      string `json:"app" jsonschema:"the service to scale"`
 	Replicas int    `json:"replicas" jsonschema:"how many copies should run, 0 or more"`
@@ -262,7 +268,27 @@ func (s *Server) register() {
 			if !in.Wait {
 				return map[string]any{keyApp: in.App, "deploying": true, "next": "call app_status to see how it is going"}, nil
 			}
-			return s.wait(ctx, req, in.App, waitTimeout(in.TimeoutSeconds))
+			return s.wait(ctx, req, in.App, waitTimeout(in.TimeoutSeconds), nil)
+		})
+
+	add(s, toolSpec{name: "rebuild_app", description: "Build a service from its repository again, as a push does, and roll it out. With wait=true, return the outcome, including why the build failed. Pending changes still need deploy_app.", level: writeAccess},
+		func(ctx context.Context, req *mcp.CallToolRequest, in rebuildInput) (any, error) {
+			// The build as it is now, so that waiting is for the build about to start and not for the one before it.
+			var before *client.BuildStatus
+			if in.Wait {
+				status, err := api.AppStatus(ctx, in.App)
+				if err != nil {
+					return nil, err
+				}
+				before = status.Build
+			}
+			if err := api.RestartBuild(ctx, in.App); err != nil {
+				return nil, err
+			}
+			if !in.Wait {
+				return map[string]any{keyApp: in.App, "building": true, "next": "call app_status to see how it is going"}, nil
+			}
+			return s.wait(ctx, req, in.App, waitTimeout(in.TimeoutSeconds), before)
 		})
 
 	add(s, toolSpec{name: "scale_app", description: "Set how many copies of a service run. Takes effect at once.", level: writeAccess, idempotent: true},
@@ -358,7 +384,7 @@ func (s *Server) register() {
 			if !in.Wait {
 				return map[string]any{keyApp: in.App, "rollingBackTo": revision}, nil
 			}
-			return s.wait(ctx, req, in.App, waitTimeout(0))
+			return s.wait(ctx, req, in.App, waitTimeout(0), nil)
 		})
 
 	add(s, toolSpec{name: "set_variable", description: "Set a variable or a secret on a service. It applies when the service is deployed; pass deploy=true to deploy now.", level: writeAccess, idempotent: true},
@@ -466,14 +492,14 @@ func (s *Server) afterVariableChange(ctx context.Context, req *mcp.CallToolReque
 	if _, err := s.opts.Client.Deploy(ctx, app); err != nil {
 		return nil, err
 	}
-	status, err := s.wait(ctx, req, app, waitTimeout(0))
+	status, err := s.wait(ctx, req, app, waitTimeout(0), nil)
 	out["deploy"] = status
 	return out, err
 }
 
 // wait follows a deploy to its end, telling the agent how it is going, and returns the outcome. A failed
 // deploy comes back as a result that says why, not as a protocol error: the agent has to read the reason.
-func (s *Server) wait(ctx context.Context, req *mcp.CallToolRequest, app string, timeout time.Duration) (any, error) {
+func (s *Server) wait(ctx context.Context, req *mcp.CallToolRequest, app string, timeout time.Duration, buildBefore *client.BuildStatus) (any, error) {
 	var token any
 	if req != nil && req.Params != nil {
 		token = req.Params.GetProgressToken()
@@ -481,8 +507,9 @@ func (s *Server) wait(ctx context.Context, req *mcp.CallToolRequest, app string,
 	steps := 0.0
 	last := ""
 	status, err := s.opts.Client.WaitForApp(ctx, app, client.WaitOptions{
-		Timeout:  timeout,
-		Interval: s.opts.PollInterval,
+		Timeout:    timeout,
+		Interval:   s.opts.PollInterval,
+		AfterBuild: buildBefore,
 		OnStatus: func(status client.AppStatus) {
 			line := status.State
 			if status.Build != nil && status.Build.Phase != "" {

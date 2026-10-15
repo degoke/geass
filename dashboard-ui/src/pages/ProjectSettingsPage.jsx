@@ -151,6 +151,13 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
     );
   };
 
+  // Unset means on: a project made before the setting existed reports as soon as its GitHub App is allowed to.
+  const githubReporting = project.spec?.githubReporting !== false;
+  const setGitHubReporting = (on) => runBusy(
+    action(`/projects/${name}/github-reporting/save`, on ? { enabled: "on" } : {}),
+    "Reporting to GitHub saved",
+  );
+
   const disconnectGitHub = () => runBusy(
     action(`/projects/${name}/github/disconnect`, { environment: githubEnvironment }),
     "GitHub disconnected from this project",
@@ -482,6 +489,25 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               <Button variant="outline" component={Link} to="/settings/connectors">Set up GitHub</Button>
             )}
           </SettingsPanel>
+          {githubLinked ? (
+            <SettingsPanel className="rw-integration-card">
+              <GitBranch size={20} aria-hidden="true" />
+              <div className="rw-integration-copy">
+                <strong>Report to GitHub</strong>
+                <span>
+                  Show each build as a commit status, each deploy as a GitHub Deployment, and keep one comment on every pull
+                  request that has an environment. The GitHub App needs the Commit statuses, Deployments and Pull requests
+                  write permissions; Test GitHub App under Connectors checks them.
+                </span>
+              </div>
+              <Switch
+                checked={githubReporting}
+                disabled={!mutable || busy}
+                onChange={(event) => setGitHubReporting(event.currentTarget.checked)}
+                aria-label="Report builds and deploys to GitHub"
+              />
+            </SettingsPanel>
+          ) : null}
           <SettingsPanel className="rw-integration-card">
             <Plug size={20} aria-hidden="true" />
             <div className="rw-integration-copy">
