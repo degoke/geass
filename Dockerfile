@@ -1,4 +1,7 @@
-FROM node:24 AS dashboard
+# The build stages run on the machine doing the build (BUILDPLATFORM) and cross-compile for the image's platform
+# (TARGETARCH), so an arm64 image is built on an amd64 machine without emulation. The dashboard bundle is plain
+# JavaScript and the same for every platform.
+FROM --platform=$BUILDPLATFORM node:24 AS dashboard
 
 WORKDIR /workspace/dashboard-ui
 COPY dashboard-ui/package.json dashboard-ui/pnpm-lock.yaml ./
@@ -7,7 +10,7 @@ COPY dashboard-ui/ ./
 RUN pnpm build
 
 # Build the manager binary
-FROM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 # The release the operator is built as (pkg/release). It is how the cluster knows which operator it runs.
@@ -26,10 +29,9 @@ COPY . .
 COPY --from=dashboard /workspace/internal/dashboard/frontend/dist internal/dashboard/frontend/dist
 
 # Build
-# the GOARCH has no default value to allow the binary to be built according to the host where the command
-# was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
+# TARGETOS and TARGETARCH are the platform the image is built for (docker build --platform linux/arm64), which is the
+# platform of the machine building it unless that is said. BuildKit, the default builder of Docker 23 and later and
+# of Podman, provides them and BUILDPLATFORM.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags "-X github.com/degoke/geass/pkg/release.Version=${VERSION}" -o manager ./cmd/main.go
 
 # Use distroless as minimal base image to package the manager binary

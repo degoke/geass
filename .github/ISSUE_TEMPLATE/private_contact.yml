@@ -1,0 +1,19 @@
+name: Request a private contact
+description: Ask a maintainer for a private way to report a security or conduct problem. Put no details here.
+title: "Private contact request"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public: do not put the details of a vulnerability or a conduct problem in it.** Say only which
+        kind it is. A maintainer will reply with a private way to send the details. If the repository's **Security** tab
+        has **Report a vulnerability**, use that instead.
+  - type: dropdown
+    id: about
+    attributes:
+      label: What do you need to report?
+      options:
+        - A security vulnerability
+        - A conduct problem
+    validations:
+      required: true

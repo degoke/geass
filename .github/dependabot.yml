@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # The Go module: the operator, the installer, the command line.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+    open-pull-requests-limit: 5
+
+  # The dashboard bundle and the website.
+  - package-ecosystem: npm
+    directory: /dashboard-ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Workflow actions are pinned to a commit; this keeps the pins current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # The build images in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

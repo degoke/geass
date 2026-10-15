@@ -1,0 +1,57 @@
+# Changelog
+
+All notable changes to Geass are written here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and releases are numbered as described in [docs/releasing.md](docs/releasing.md): one version for the installer, the
+operator, the command line and its MCP server, which always ship together.
+
+Geass is before 1.0. The custom resources are `v1alpha1`, and until 1.0 a minor release (`0.x`) may change behaviour
+that a patch release (`0.x.y`) does not. What a release does to an existing cluster is always stated here, and the
+installer refuses a downgrade.
+
+Add your change under **Unreleased** in the pull request that makes it. The release process moves those notes under the
+new version.
+
+## [Unreleased]
+
+The first public release.
+
+### Added
+
+- **Installer.** One command installs K3s, the Geass operator and the dashboard on a fresh Linux server (amd64 or
+  arm64), and running a newer installer updates the cluster in place: it keeps the data, takes an etcd snapshot first,
+  checks that the custom resource definitions stay compatible with what is stored, runs data migrations, refuses a
+  downgrade and rolls the operator back if the new one does not take over. `--k3s-version` upgrades K3s one minor
+  version at a time, and the operator then upgrades the workers. Extra control plane servers can be joined with
+  `--join-server`.
+- **Projects and environments.** Services deployed from a Docker image, from a GitHub repository built in the cluster
+  with Kaniko, or as a function (Bun, Node.js or Python, as a server or as an event handler that Geass serves HTTP for,
+  with cron triggers). Review pending changes and deploy them together. Templates, pull request environments, signed
+  deployment webhooks and deploy hooks.
+- **Databases.** PostgreSQL, MySQL, Redis and SQLite in the cluster, shared database servers, external databases
+  (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
+  (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.
+- **Object storage.** Buckets on an in-cluster SeaweedFS or Garage server, or in AWS S3, isolated per project.
+- **Domains and HTTPS.** Domains through Cloudflare (including Tunnels and DNS records) and certificates from
+  Let's Encrypt through cert-manager.
+- **Scaling and placement.** Replicas, CPU autoscaling, regions, sites and node tags, compliance tags that keep a
+  project on chosen nodes, project limits, and services that sleep when idle (KEDA).
+- **Network isolation.** Projects are private by default, with an allow list per project.
+- **Observability.** Metrics, live logs with history, a terminal in a service and a query box for databases, and charts
+  of the operator's own health.
+- **Dashboard sign-in.** Local admin and viewer users, or an external OpenID Connect provider with a role claim mapped to
+  admin or viewer.
+- **Command line** (`geass`), installed with `install-cli.sh` for Linux and macOS (and as a download for Windows):
+  `geass login` signs in by approving a code in the dashboard, and commands print JSON with `--json` and exit with
+  codes a script can act on.
+- **MCP server** (`geass mcp`) so an AI agent can inspect, deploy and scale services, shown only the tools its token
+  allows.
+- **JSON API** under `/api/v1`, described by an OpenAPI document, with full access, read-only, read-only with logs and
+  per-environment project tokens.
+- **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
+  provenance that can be verified with `gh attestation verify`.
+
+### Security
+
+- Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+
+[Unreleased]: https://github.com/degoke/geass/commits/main

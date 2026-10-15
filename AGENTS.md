@@ -14,6 +14,10 @@ config/rbac/role.yaml          Generated RBAC (DO NOT EDIT)
 config/samples/*               Example CRs (edit these)
 Makefile                       Build/test/deploy commands
 PROJECT                        Kubebuilder metadata Auto-generated (DO NOT EDIT)
+cmd/geass, cmd/geass-cli       The installer, and the command line with its MCP server
+website/                       User documentation (Astro/Starlight); update it with any user-visible change
+docs/                          Contributor docs: development.md, releasing.md, design.md
+CHANGELOG.md                   Keep a Changelog; user-visible changes go under Unreleased
 ```
 
 **Multi-group layout** (for projects with multiple API groups):
@@ -49,6 +53,15 @@ Do NOT delete `// +kubebuilder:scaffold:*` comments. CLI injects code at these m
 ### API Changes Must Be Additive
 
 A cluster that is updated keeps its stored objects, and the API server prunes any field a CRD no longer has the next time an object is written. So `v1alpha1` only grows: no removed or renamed field, no changed type, no new `required` field (give it a `+kubebuilder:default` or make it `+optional`), no tighter bound, narrower enum or new validation rule. `make crd-compat` compares the generated CRDs with the release in `hack/crd-baseline-ref` and CI fails on a break; a deliberate one is listed with its reason in `hack/crd-compat-exceptions.yaml`. To reshape stored data, add the new field beside the old one and register a migration in `pkg/migrations` (idempotent, appended, never edited). Cutting a release moves the baseline: `make crd-baseline REF=<tag>`.
+
+### Releases Are One Version
+
+The installer, operator, command line and MCP server ship as one release, tagged `vX.Y.Z` on `main`. Do not create tags or
+edit `CHANGELOG.md` section headings by hand: `hack/release.sh prepare|tag` does it (see `docs/releasing.md`). A published
+tag is never moved or deleted, and the installer refuses a downgrade, so a bad release is fixed by a newer one. Add
+user-visible changes under **Unreleased** in `CHANGELOG.md`. After changing `.github/workflows/release.yml`, `Dockerfile`
+or the `release-*` Make targets, rehearse with Actions > Release > Run workflow (it publishes nothing when run by hand) or
+`make release-assets GEASS_VERSION=v0.0.0-test`.
 
 ### Keep Project Structure
 Do not move files around. The CLI expects files in specific locations.

@@ -306,7 +306,7 @@ Prefer the Mantine primitives and the existing `geass-ui.jsx` helpers before add
 
 ### Projects list
 
-The projects page is the default landing view (`/` and `/projects`). It follows Railway's card-grid pattern adapted to Geass:
+The projects page is the default landing view (`/` and `/projects`). It is a card grid:
 
 **Header**
 

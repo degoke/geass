@@ -62,9 +62,10 @@ itself sets `INSTALL_K3S_EXEC` to `server --cluster-init` and, if a version was 
 the installer sets no version, so K3s picks its default release. When it upgrades K3s on a running server it passes the server's own
 arguments, read from its systemd unit, to the K3s script.
 
-The convenience script `scripts/install.sh` reads two variables of its own: `GEASS_REPO` (default `degoke/geass`) and
-`GEASS_VERSION` (default `latest`). It downloads `geass-linux-amd64` or `geass-linux-arm64` from that repository's releases and
-runs it.
+The convenience script `scripts/install.sh` reads three variables of its own: `GEASS_REPO` (default `degoke/geass`),
+`GEASS_VERSION` (default `latest`) and `GEASS_DOWNLOAD_BASE` (a mirror or a `file://` directory to download from instead). It
+downloads `geass-linux-amd64` or `geass-linux-arm64` and the release's `SHA256SUMS` from that repository's releases, checks the
+one against the other, and runs the installer only if they match.
 
 What the installer does, in order: checks the system (Linux, amd64 or arm64, at least 2 GB of memory and 10 GB free on `/`, and
 `GEASS_ACME_EMAIL` if you set it);
@@ -237,13 +238,14 @@ current one. The file is JSON; the folder is created with mode `0700` and the fi
 --project ... --environment ...` sets the default project and environment for a login. `geass logout` clears the saved token only.
 
 The installer script for the command line, `scripts/install-cli.sh`, is separate from the cluster installer. It downloads
-`geass-cli-<os>-<arch>` (Linux and macOS, amd64 and arm64) from a release and saves it as `geass`. It reads three variables:
+`geass-cli-<os>-<arch>` (Linux and macOS, amd64 and arm64) from a release and saves it as `geass`. It reads four variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GEASS_VERSION` | `latest` | A release tag to install |
 | `GEASS_INSTALL_DIR` | `/usr/local/bin` when you can write to it, otherwise `~/.local/bin` | Where to put the binary |
 | `GEASS_REPO` | `degoke/geass` | The GitHub repository whose releases to download, for a fork |
+| `GEASS_DOWNLOAD_BASE` | the release on GitHub | Where to download the release files from instead: a mirror, or a directory as `file:///path` holding the build and `SHA256SUMS` |
 
 On Windows, download `geass-cli-windows-amd64.exe` from the release page. The MCP server (`geass mcp`) has no configuration of its own: it uses
 the same login, flags and variables, plus `--read-only`, `--allow-delete` and `--listen`; see [MCP server](/docs/guides/mcp-server/).

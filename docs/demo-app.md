@@ -1,6 +1,7 @@
-# Geass Demo Deployment
+# Demo deployment
 
-Use this lightweight public image to test deployment, ports, environment variables, and service access:
+A small public image for trying a deployment by hand: it exercises the image source, the container port, environment
+variables and service access. It is a scratch aid for contributors, not product documentation.
 
 ```text
 mendhak/http-https-echo:41
@@ -24,7 +25,8 @@ APP_ENV=staging
 FEATURE_FLAG=true
 ```
 
-After deployment, open the service URL. The response will include request details and an `env` object containing the configured variables.
+After deployment, open the service URL. The response includes request details and an `env` object containing the
+configured variables.
 
 Do not add real secrets: this demo image intentionally exposes environment variables in its response.
 

@@ -115,6 +115,7 @@ export default defineConfig({
           label: "Operations",
           items: [
             "docs/operations/upgrading",
+            "docs/operations/releases",
             "docs/operations/high-availability",
             "docs/operations/sizing",
             "docs/operations/multi-provider",

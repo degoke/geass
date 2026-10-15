@@ -40,13 +40,14 @@ geass version
 geass v0.2.0
 ```
 
-The script reads three variables:
+The script downloads the build and the release's `SHA256SUMS`, checks one against the other, and installs nothing that does not match. It reads four variables:
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `GEASS_VERSION` | The release tag to install. | `latest` |
 | `GEASS_INSTALL_DIR` | The folder to install `geass` into. It is created if it does not exist. | `/usr/local/bin` if writable, otherwise `~/.local/bin` |
 | `GEASS_REPO` | The GitHub `owner/name` to download releases from, for a fork. | `degoke/geass` |
+| `GEASS_DOWNLOAD_BASE` | Where to download the release files from instead: a mirror, or a directory as `file:///path`. It has to hold `geass-cli-<os>-<arch>` and `SHA256SUMS`. | the release on GitHub |
 
 The variables belong to `sh`, not to `curl`, so set them after the pipe. To install a given release into a folder of
 your choice:

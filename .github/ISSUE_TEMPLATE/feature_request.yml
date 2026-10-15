@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest something Geass should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before the solution. Geass keeps an upgrade path for the data a cluster already holds, so some
+        designs that look simple are not possible: it helps us if we agree the approach before you write code.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: What you do today, and what is hard, slow or impossible about it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Geass to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried or considered?
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to build it?
+      options:
+        - "No, I am only suggesting it"
+        - "Yes, if we agree the approach"
+        - "Yes, I have started"
+    validations:
+      required: true
