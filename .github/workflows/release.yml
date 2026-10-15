@@ -1,17 +1,109 @@
 name: Release
 
+# A release is a version tag. Pushing v0.2.0 (or v0.2.0-rc.1, for a pre-release) checks the tag, checks that CI passed
+# on the commit, builds the installer, the command line (which carries the MCP server) and the install scripts, and
+# publishes them with a SHA256SUMS file and signed build provenance. docs/releasing.md says how to cut one.
+#
+# Run it by hand (Actions > Release > Run workflow) with a version such as v0.0.0-dryrun to rehearse: it builds every
+# file, attests them, and creates the GitHub release as a draft that it deletes again, so every step that publishes runs
+# and nothing stays public. Do that before the first tag, and after changing this file.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, such as v0.1.0-rc.1. A manual run publishes nothing."
+        required: true
+        type: string
 
-permissions:
-  contents: write
+permissions: {}
+
+# One group per tag, so that tags pushed close together all run: a group holds only one waiting run, and a newer one
+# would cancel the one before it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish release assets
+  verify:
+    name: Check the version
+    permissions:
+      contents: read
+      checks: read # to see that CI passed on the commit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # The tag has to be shown to be on main, and the upgrade tests read the baseline release from history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ]; then
+            version="$GITHUB_REF_NAME"
+            publish=true
+          else
+            version="$INPUT_VERSION"
+            publish=false
+          fi
+
+          # The rule is the one hack/release.sh checks before a tag is made: vMAJOR.MINOR.PATCH, optionally -pre.release.
+          if ! out="$(hack/release.sh check "$version" 2>&1)"; then
+            echo "::error::$out"
+            exit 1
+          fi
+
+          if [ "$publish" = true ]; then
+            # Releases are cut from main, so that what is published has been through review and CI.
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::$version points at a commit that is not on main"
+              exit 1
+            fi
+            # A release without notes is not published.
+            hack/release-notes.sh "$version" >/dev/null
+            # The tests ran in CI when this commit landed on main, so they are not run again: they have to have passed.
+            # These are the names of the Lint, Test and Build jobs in ci.yml and of the end to end job.
+            runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '.check_runs[] | "\(.name)\t\(.conclusion)"')"
+            for required in Lint Test Build "Run on Ubuntu"; do
+              if ! grep -qxF "$required"$'\t'success <<<"$runs"; then
+                echo "::error::the '$required' check has not passed on $GITHUB_SHA: wait for CI on main to finish, then run this workflow again"
+                exit 1
+              fi
+            done
+          fi
+
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } >>"$GITHUB_OUTPUT"
+          echo "Building $version (pre-release: $prerelease, publish: $publish)"
+
+  build:
+    name: Build the release files
+    needs: verify
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -26,32 +118,101 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
-      - name: Build geass installer (amd64)
-        run: make build-geass GEASS_GOARCH=amd64 GEASS_VERSION="${GITHUB_REF_NAME}"
+      # The installer for amd64 and arm64 (each embeds the operator image built for it, which the Dockerfile
+      # cross-compiles, so nothing is emulated), the command line for Linux, macOS and Windows, the two install
+      # scripts, and SHA256SUMS over all of them.
+      - name: Build the installers, the command line and the checksums
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: make release-assets GEASS_VERSION="$VERSION"
 
-      - name: Rename amd64 binary
-        run: mv bin/geass bin/geass-linux-amd64
-
-      - name: Build geass installer (arm64)
-        run: make build-geass GEASS_GOARCH=arm64 GEASS_VERSION="${GITHUB_REF_NAME}"
-
-      - name: Rename arm64 binary
-        run: mv bin/geass bin/geass-linux-arm64
-
-      # The command line embeds nothing and needs no Docker, so it is built for every platform people use.
-      - name: Build geass command line
+      - name: Check the command line carries the version
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            make build-cli CLI_GOOS="${target%/*}" CLI_GOARCH="${target#*/}" CLI_VERSION="${GITHUB_REF_NAME}"
-          done
+          out="$(bin/geass-cli-linux-amd64 version)"
+          echo "$out"
+          test "$(echo "$out" | head -n1)" = "geass $VERSION"
+          test "$(bin/geass-linux-amd64 --version)" = "$VERSION"
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@a149427bb2130fa9360a5693a74a8750d6590fcf # v2.2.0
+      - name: Keep the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          files: |
-            bin/geass-linux-amd64
-            bin/geass-linux-arm64
+          name: geass-release
+          path: |
+            bin/geass-linux-*
             bin/geass-cli-*
-            scripts/install.sh
-            scripts/install-cli.sh
-          generate_release_notes: true
+            bin/install.sh
+            bin/install-cli.sh
+            bin/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish the release
+    needs: [verify, build]
+    permissions:
+      contents: write # create the release
+      id-token: write # sign the build provenance
+      attestations: write # store it
+      artifact-metadata: write # the attest action asks for it
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: geass-release
+          path: release
+
+      - name: Check the files against SHA256SUMS
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      # Anyone can check a download came from this workflow, at this commit: gh attestation verify <file> --repo <owner>/<repo>
+      - name: Attest the build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          DRY_RUN: ${{ needs.verify.outputs.publish != 'true' }}
+        run: |
+          set -euo pipefail
+          notes="$(mktemp)"
+          if [ "$DRY_RUN" = true ]; then
+            hack/release-notes.sh "$VERSION" >"$notes" 2>/dev/null || echo "Dry run of $VERSION." >"$notes"
+          else
+            hack/release-notes.sh "$VERSION" >"$notes"
+          fi
+          cat >>"$notes" <<EOF
+
+          ---
+
+          **Check what you download.** Every file is listed in \`SHA256SUMS\` (the install scripts check it for you), and
+          carries signed build provenance: \`gh attestation verify <file> --repo ${GH_REPO}\`.
+          EOF
+          # The notes are the CHANGELOG section, then GitHub's list of merged pull requests and new contributors.
+          flags=(--generate-notes)
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          if [ "$DRY_RUN" = true ]; then
+            # A rehearsal: the same upload, notes and flags, as a draft for a tag that does not exist, deleted at once.
+            gh release create "$VERSION" release/* --draft --target "$GITHUB_SHA" \
+              --title "Dry run $VERSION" --notes-file "$notes" "${flags[@]}"
+            id="$(gh api "repos/$GH_REPO/releases" --jq ".[] | select(.draft and .tag_name == \"$VERSION\") | .id" | head -n1)"
+            gh api --method DELETE "repos/$GH_REPO/releases/$id"
+            echo "Dry run of $VERSION: the release was created and deleted again, nothing is published"
+          else
+            gh release create "$VERSION" release/* --verify-tag \
+              --title "Geass $VERSION" --notes-file "$notes" "${flags[@]}"
+          fi

@@ -16,3 +16,4 @@ Dockerfile
 .dockerignore
 .devcontainer/
 website/
+docs/

@@ -1,0 +1,5 @@
+# Who is asked to review a pull request. Add maintainers here as the project grows.
+#
+# When there is a second maintainer, route what protects stored data to whoever owns it, for example:
+#   /api/ /pkg/crdcompat/ /pkg/migrations/ /hack/crdcompat/ /hack/crd-compat-exceptions.yaml /hack/crd-baseline-ref
+* @degoke

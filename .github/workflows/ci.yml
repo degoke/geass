@@ -5,8 +5,14 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions: {}
+
+# A new push to a pull request makes the run for the one before it pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -24,6 +30,14 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+
+      - name: Check go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || {
+            echo "::error::go.mod or go.sum is not tidy: run go mod tidy and commit the result"
+            exit 1
+          }
 
       - name: Check linter configuration
         run: make lint-config
@@ -110,7 +124,6 @@ jobs:
         run: pnpm seo
 
   test:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Test
@@ -137,7 +150,6 @@ jobs:
           make test
 
   build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     name: Build
@@ -173,3 +185,44 @@ jobs:
 
       - name: Build geass installer
         run: make build-geass
+
+  # The command line (and the MCP server inside it) is released for five systems, so a change that only breaks one of
+  # them, a Windows-only file name, say, is caught here and not when a release is cut.
+  cli:
+    permissions:
+      contents: read
+    name: Command line for every system
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build for every system
+        run: make build-cli-all GEASS_VERSION=v0.0.0-ci
+
+      - name: Check the build reports its version
+        run: test "$(bin/geass-cli-linux-amd64 version | head -n1)" = "geass v0.0.0-ci"
+
+  scripts:
+    permissions:
+      contents: read
+    name: Install and release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Lint the shell scripts
+        run: shellcheck --severity=warning scripts/*.sh hack/*.sh test/scripts/*.sh
+
+      - name: Test the install scripts
+        run: sh test/scripts/install-scripts-test.sh

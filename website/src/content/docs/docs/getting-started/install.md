@@ -19,12 +19,13 @@ SSH into the server and run:
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh
 ```
 
-`install.sh` is a short script. It works out your architecture from `uname -m` (`x86_64` and `amd64` become `amd64`, `aarch64` and `arm64` become `arm64`), downloads `geass-linux-<arch>` from the GitHub release into a temporary file, makes it executable and runs it, then deletes it when the installer ends, whether it succeeded or not. If the download fails the script prints curl's error, the URL and the usual causes, and exits with status 1. The downloaded installer carries the operator image and manifests inside it, so nothing else is fetched from Geass.
+`install.sh` is a short script. It works out your architecture from `uname -m` (`x86_64` and `amd64` become `amd64`, `aarch64` and `arm64` become `arm64`), downloads `geass-linux-<arch>` and the release's `SHA256SUMS` file from the GitHub release into temporary files, checks the installer against `SHA256SUMS`, makes it executable and runs it, then deletes it when the installer ends, whether it succeeded or not. A download that does not match its checksum, or that `SHA256SUMS` does not list, is not run: the script says so and exits with status 1, and nothing on the machine has changed. If the download fails the script prints curl's error, the URL and the usual causes, and exits with status 1. The downloaded installer carries the operator image and manifests inside it, so nothing else is fetched from Geass.
 
 Every command printed by the installer is also written to a log file. The first lines of output name it:
 
 ```text
 Downloading Geass from https://github.com/degoke/geass/releases/latest/download/geass-linux-amd64
+Checked geass-linux-amd64 against SHA256SUMS
 Installation log: /home/ubuntu/geass-install-20261012-091500.log
 → system checks
 ✓ system checks
@@ -49,6 +50,18 @@ To build the cluster on a specific K3s release instead of the current stable one
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo env GEASS_K3S_VERSION=v1.36.5+k3s1 sh
 ```
+
+### Check what you download
+
+Every release has a `SHA256SUMS` file listing the installer, the command line and the two install scripts, which the scripts check for you. Each file also has signed build provenance, which shows which workflow run and commit built it. To check a file yourself, from the release page or with the GitHub CLI:
+
+```bash
+gh release download v0.1.0 --repo degoke/geass --pattern 'geass-linux-amd64' --pattern SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify geass-linux-amd64 --repo degoke/geass
+```
+
+See [Releases and versions](/docs/operations/releases/) for what a release contains and how versions are numbered.
 
 ## HTTPS certificates
 
@@ -155,6 +168,7 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 | --- | --- | --- | --- |
 | `GEASS_VERSION` | `install.sh` | Release tag whose installer binary is downloaded | `latest` |
 | `GEASS_REPO` | `install.sh` | GitHub `owner/name` to download releases from | `degoke/geass` |
+| `GEASS_DOWNLOAD_BASE` | `install.sh`, `install-cli.sh` | The address the release files are downloaded from, instead of the GitHub release: a mirror, or a directory as `file:///path`. It has to hold the installer (`geass-linux-<arch>`) or the command line (`geass-cli-<os>-<arch>`) and `SHA256SUMS`, and the download is still checked against it | the release on GitHub |
 | `GEASS_K3S_VERSION` | installer | K3s release to build a new cluster on, such as `v1.36.5+k3s1`. A channel name is not accepted. On a machine that already runs Geass it is ignored, with a warning, so that a value left over from the install does not upgrade K3s: to upgrade the control plane, pass the `--k3s-version` option (see [Upgrade Geass](/docs/operations/upgrading/)) | the current `stable` release |
 | `GEASS_JOIN_SERVER` | installer | The address of an existing cluster's server. Makes this machine an additional control plane server of it instead of building a cluster; it also needs the cluster's K3s release in `GEASS_K3S_VERSION`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) | none |
 | `GEASS_JOIN_TOKEN` | installer | The cluster's server token, which a join needs | none |
@@ -216,7 +230,7 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install-cli.s
 geass login --url https://geass.example.com
 ```
 
-`install-cli.sh` is a release file next to `install.sh`. It downloads the `geass-cli-<os>-<arch>` build for Linux or macOS on `amd64` or `arm64` and installs it as `geass` in `/usr/local/bin`, or in `~/.local/bin` when `/usr/local/bin` is not writable. It reads `GEASS_VERSION`, `GEASS_INSTALL_DIR` and `GEASS_REPO`. Do not confuse it with the installer binary `geass-linux-<arch>` that `install.sh` runs on the server: that one builds a cluster, and it is not the command line.
+`install-cli.sh` is a release file next to `install.sh`. It downloads the `geass-cli-<os>-<arch>` build for Linux or macOS on `amd64` or `arm64` and installs it as `geass` in `/usr/local/bin`, or in `~/.local/bin` when `/usr/local/bin` is not writable. It checks the download against the release's `SHA256SUMS`, as `install.sh` does, and installs nothing that does not match. It reads `GEASS_VERSION`, `GEASS_INSTALL_DIR`, `GEASS_REPO` and `GEASS_DOWNLOAD_BASE`. Do not confuse it with the installer binary `geass-linux-<arch>` that `install.sh` runs on the server: that one builds a cluster, and it is not the command line.
 
 `geass login` prints a code and opens the dashboard's `/device` page, where an admin approves it. See [Sign in to the dashboard](/docs/getting-started/sign-in/#sign-in-from-the-command-line). The command line and the MCP server for AI agents (`geass mcp`) are described in [Command line](/docs/guides/command-line/) and [MCP server for AI agents](/docs/guides/mcp-server/).
 

@@ -1,0 +1,64 @@
+name: Bug report
+description: Something does not work the way the documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please check the [troubleshooting guide](https://rungeass.com/docs/operations/troubleshooting/) first.
+        **Remove secrets, tokens, passwords and private addresses** from anything you paste. For a security problem, do not
+        use this form: see [SECURITY.md](https://github.com/degoke/geass/security/policy).
+  - type: input
+    id: release
+    attributes:
+      label: Geass release
+      description: "`geass version`, or the RELEASE column of `sudo k3s kubectl -n geass-system get geasscluster`."
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where does it happen?
+      options:
+        - Installer or update
+        - Dashboard
+        - Operator or a resource (app, database, bucket, node)
+        - Command line
+        - MCP server
+        - JSON API
+        - Backups and restore
+        - Domains and HTTPS
+        - Documentation
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and architecture of the control plane, how many servers, the provider, and anything unusual about the network or the firewall.
+      placeholder: "Ubuntu 24.04 amd64, one 4 GB server at ..., joined worker over SSH"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The exact message, and what you did to get it. Steps to reproduce help most.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and status
+      description: |
+        The installer log (its first lines name the file), and for a running cluster the operator log:
+        `sudo k3s kubectl -n geass-system logs deploy/geass-controller-manager -c manager --tail=200`
+      render: shell

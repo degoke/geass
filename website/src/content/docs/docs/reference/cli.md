@@ -72,8 +72,9 @@ default port (`:443` for `https`, `:80` for `http`) make no difference. `http://
 | `GEASS_VERSION` | `install-cli.sh` only | Release tag to install. Default: `latest`. |
 | `GEASS_INSTALL_DIR` | `install-cli.sh` only | Directory to install `geass` into. |
 | `GEASS_REPO` | `install-cli.sh` only | GitHub `owner/name` to download releases from. Default: `degoke/geass`. |
+| `GEASS_DOWNLOAD_BASE` | `install-cli.sh` only | Where to download the release files from instead: a mirror, or a directory as `file:///path` holding `geass-cli-<os>-<arch>` and `SHA256SUMS`. |
 
-The first five are read by the command line itself. The last three are read by the install script, not by `geass`.
+The first five are read by the command line itself. The last four are read by the install script, not by `geass`.
 
 ### Precedence
 

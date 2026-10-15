@@ -148,6 +148,8 @@ crd-baseline: ## Make a release the compatibility baseline: make crd-baseline RE
 	@git rev-parse --verify --quiet "$(REF)^{commit}" >/dev/null || { echo "$(REF) is not a tag or commit in this clone"; exit 1; }
 	echo "$(REF)" > hack/crd-baseline-ref
 
+##@ Lint
+
 .PHONY: lint
 lint: golangci-lint stub-installer-assets ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
@@ -265,7 +267,9 @@ prepare-installer-assets: require-docker manifests generate kustomize ## Build o
 build-geass: prepare-installer-assets ## Build geass installer with embedded operator image and manifests.
 	GOOS=$(GEASS_GOOS) GOARCH=$(GEASS_GOARCH) go build -ldflags "$(GEASS_LDFLAGS)" -o bin/geass ./cmd/geass/
 
-CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# The command line, its MCP server (geass mcp) and the installer are one release: the command line warns when it
+# and the cluster it talks to are different releases, so they are never versioned apart.
+CLI_VERSION ?= $(GEASS_VERSION)
 CLI_GOOS ?= $(shell go env GOOS)
 CLI_GOARCH ?= $(shell go env GOARCH)
 
@@ -273,6 +277,40 @@ CLI_GOARCH ?= $(shell go env GOARCH)
 build-cli: ## Build the geass command line (cmd/geass-cli) for CLI_GOOS/CLI_GOARCH into bin/geass-cli-<os>-<arch>.
 	CGO_ENABLED=0 GOOS=$(CLI_GOOS) GOARCH=$(CLI_GOARCH) go build -trimpath -ldflags "-s -w -X main.version=$(CLI_VERSION)" \
 		-o bin/geass-cli-$(CLI_GOOS)-$(CLI_GOARCH)$(if $(filter windows,$(CLI_GOOS)),.exe,) ./cmd/geass-cli/
+
+# Every system the command line is released for. install-cli.sh covers linux and darwin; windows is downloaded by hand.
+CLI_TARGETS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+INSTALLER_ARCHES ?= amd64 arm64
+
+.PHONY: build-cli-all
+build-cli-all: ## Build the command line for every system a release ships (CLI_TARGETS).
+	@for target in $(CLI_TARGETS); do \
+		$(MAKE) --no-print-directory build-cli CLI_GOOS=$${target%/*} CLI_GOARCH=$${target#*/} || exit 1; \
+	done
+
+.PHONY: build-geass-all
+build-geass-all: ## Build the installer for every architecture a release ships (INSTALLER_ARCHES) into bin/geass-linux-<arch> (needs Docker).
+	@for arch in $(INSTALLER_ARCHES); do \
+		$(MAKE) --no-print-directory build-geass GEASS_GOARCH=$$arch || exit 1; \
+		mv bin/geass bin/geass-linux-$$arch || exit 1; \
+	done
+
+# The files a release publishes, named from what was asked to be built, so a leftover binary in bin/ is not checksummed
+# or listed. install.sh and install-cli.sh download these names; SHA256SUMS lists all of them, and the install scripts
+# check what they download against it.
+RELEASE_FILES = $(addprefix geass-linux-,$(INSTALLER_ARCHES)) \
+	$(foreach target,$(CLI_TARGETS),geass-cli-$(subst /,-,$(target))$(if $(findstring windows,$(target)),.exe)) \
+	install.sh install-cli.sh
+
+.PHONY: release-checksums
+release-checksums: ## Write bin/SHA256SUMS for the release files in bin/, with the install scripts beside them.
+	cp scripts/install.sh scripts/install-cli.sh bin/
+	cd bin && sha256sum $(RELEASE_FILES) > SHA256SUMS
+	@echo "Wrote bin/SHA256SUMS"
+
+.PHONY: release-assets
+release-assets: build-geass-all build-cli-all release-checksums ## Build everything a release publishes into bin/ (needs Docker). Set GEASS_VERSION=vX.Y.Z.
+	@ls -1 $(addprefix bin/,$(RELEASE_FILES) SHA256SUMS)
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -283,13 +321,11 @@ build-cli: ## Build the geass command line (cmd/geass-cli) for CLI_GOOS/CLI_GOAR
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
+	# The Dockerfile already builds on BUILDPLATFORM and cross-compiles, so it is used as it is.
 	- $(CONTAINER_TOOL) buildx create --name geass-builder
 	$(CONTAINER_TOOL) buildx use geass-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg VERSION=$(GEASS_VERSION) --tag ${IMG} .
 	- $(CONTAINER_TOOL) buildx rm geass-builder
-	rm Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
