@@ -1,7 +1,7 @@
 # The build stages run on the machine doing the build (BUILDPLATFORM) and cross-compile for the image's platform
 # (TARGETARCH), so an arm64 image is built on an amd64 machine without emulation. The dashboard bundle is plain
 # JavaScript and the same for every platform.
-FROM --platform=$BUILDPLATFORM node:24 AS dashboard
+FROM --platform=$BUILDPLATFORM node:25 AS dashboard
 
 WORKDIR /workspace/dashboard-ui
 COPY dashboard-ui/package.json dashboard-ui/pnpm-lock.yaml ./
