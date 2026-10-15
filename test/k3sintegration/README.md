@@ -8,6 +8,7 @@ eval "$(make -s k3s-up)"      # starts rancher/k3s in Docker, installs the CRDs,
 make test-k3s-serverless      # scale to zero and function schedules, end to end (about 15 minutes the first time)
 make test-k3s-objectstorage   # the cluster's object storage, SeaweedFS and Garage (about 10 minutes the first time)
 make test-k3s-limits          # a project's node block and its quotas, per environment and for the whole project (about 4 minutes)
+make test-k3s-alerting        # alerts from a failing build or crashing pod to Alertmanager and out to Slack and mail stand-ins (about 20 minutes, a little more the first time)
 make k3s-down                 # removes it
 ```
 
@@ -44,6 +45,18 @@ docker run -d --name geass-k3s-agent --privileged --tmpfs /run --tmpfs /var/run 
   -e K3S_URL=https://$SERVER:6443 -e K3S_TOKEN=$TOKEN rancher/k3s:v1.31.5-k3s1 agent
 docker rm -f geass-k3s-agent   # when you are done
 ```
+
+`TestAlertingOnK3s` turns on the monitoring add-on and follows an alert from end to end. The test process stands in for
+Slack and for a mail server on the host, which the pods in Docker reach, and exposes the operator's problem metrics to
+the cluster's Prometheus the way the operator's own ServiceMonitor does. It sets up five channels (one hearing everything,
+one only production deploys by email, one for another project, one paused, one with a dead address) and checks that the
+alert rules load healthy, that Alertmanager loads each channel as a receiver, that a test alert reaches only the channel it
+was sent for, that a changed Slack address takes effect (it takes a minute or two, while Alertmanager reloads the Secret),
+that a dead channel is reported as failing, that a failing deploy fires and reaches the channels it should and not the
+ones it should not, that a crash-looping pod is joined to its project, and that the resolved message arrives. Alertmanager's
+delays are real, so it takes about twenty minutes; `GeassOperatorDown` fires during it, because no operator runs in the
+cluster, and that is expected. It can be run again on the same cluster: what it makes is named for the run, because
+Alertmanager remembers for twelve hours what it told a channel about an alert.
 
 `TestNetworkPolicyCheck` runs the check that the cluster enforces network policies (the operator's `NetworkPolicyChecker`)
 against whichever cluster the kubeconfig names, and says whether it found what that cluster should do: `Enforced` on k3s,

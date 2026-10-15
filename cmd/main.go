@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -47,6 +48,7 @@ import (
 	"github.com/degoke/geass/pkg/ssh"
 	"github.com/degoke/geass/pkg/webhooks"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -73,6 +75,7 @@ func init() {
 	utilruntime.Must(geassv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(helmv1.AddToScheme(scheme))
 	utilruntime.Must(monitoringv1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(cnpgv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -355,6 +358,17 @@ func main() {
 	}
 	if err := mgr.Add(&controller.NetworkPolicyChecker{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
 		setupLog.Error(err, "Failed to add the network policy check")
+		os.Exit(1)
+	}
+	// What is wrong, as Prometheus reads it: one series for each problem. The alert rules and Alertmanager do the rest.
+	problemCollector := controller.NewProblemCollector()
+	ctrlmetrics.Registry.MustRegister(problemCollector)
+	if err := mgr.Add(&controller.ProblemExporter{Client: mgr.GetClient(), Collector: problemCollector}); err != nil {
+		setupLog.Error(err, "Failed to add the problem exporter")
+		os.Exit(1)
+	}
+	if err := (&controller.AlertRoutingReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "alertrouting")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

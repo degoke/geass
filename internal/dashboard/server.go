@@ -32,6 +32,7 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/alerts"
 	"github.com/degoke/geass/pkg/githubapp"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/webhooks"
@@ -50,6 +51,14 @@ type Server struct {
 
 	// Webhooks delivers project events; nil disables automatic notifications.
 	Webhooks *webhooks.Dispatcher
+
+	// Alertmanager is the client for the cluster's Alertmanager, which sends the alerts; nil uses the one the
+	// monitoring add-on installs. SMTPChecker connects to a mail server to see that its settings work; nil connects
+	// the way webhooks do.
+	Alertmanager *alerts.Alertmanager
+	SMTPChecker  *alerts.SMTPChecker
+	// alertmanagerLog reads Alertmanager's log from a time on; nil reads the pod's through Kube. Tests set it.
+	alertmanagerLog func(ctx context.Context, since time.Time) (string, error)
 
 	// GitHubReports holds back reports to GitHub that it refused; nil uses the guard the whole operator shares.
 	GitHubReports *githubapp.Guard

@@ -34,6 +34,7 @@ export const routeTree = rootRoute.addChildren([
   route("/settings/connectors", "settings:connectors"),
   route("/settings/tokens", "settings:tokens"),
   route("/settings/auth", "settings:auth"),
+  route("/settings/alerts", "settings:alerts"),
   route("/settings/github", "settings:connectors"),
   route("/ha-readiness", "settings:cluster"),
   route("/cluster", "settings:cluster"),

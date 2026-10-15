@@ -47,10 +47,10 @@ const (
 var Events = []string{EventDeploymentStarted, EventDeploymentSucceeded, EventDeploymentFailed}
 
 // AllowPrivateNetworksEnv names the environment variable an operator sets to "true" to let webhooks
-// reach private network addresses (RFC 1918, shared address space, unique local IPv6), such as
-// receivers running inside the cluster. It is off by default: a webhook is a request sent from inside
-// the cluster network, and "Send test" shows the result, so allowing private ranges would let anyone
-// who can edit a project probe internal services.
+// (and the Slack and mail servers of alert channels) reach private network addresses (RFC 1918, shared
+// address space, unique local IPv6), such as receivers running inside the cluster. It is off by default:
+// a webhook is a request sent from inside the cluster network, and "Send test" shows the result, so
+// allowing private ranges would let anyone who can edit a project probe internal services.
 const AllowPrivateNetworksEnv = "GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS"
 
 // MaxDeliveries is how many delivery records the project keeps.
@@ -185,6 +185,52 @@ func allowPrivateNetworks() bool {
 	return allowed
 }
 
+// PrivateNetworksAllowed reports whether the operator lets webhooks and alert channels reach private addresses.
+func PrivateNetworksAllowed() bool { return allowPrivateNetworks() }
+
+// LookupIP resolves a host name. It is a variable so that tests need no DNS.
+var LookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		ips = append(ips, addr.IP)
+	}
+	return ips, nil
+}
+
+// CheckHost refuses a host that is, or resolves to, an address that webhooks may not reach. A connection that
+// another program makes (Alertmanager sending an alert channel's messages) cannot be held to the dialer's check
+// at the moment it connects, so this is what stands in for it: it runs when the address is saved. It cannot see a
+// name that resolves differently later, which is the price of not making the connection.
+func CheckHost(ctx context.Context, host string) error {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	refuse := func(what string, ip net.IP) error {
+		if alwaysUnsafeIP(ip) {
+			return fmt.Errorf("%s is a loopback or link-local address, which cannot be used", what)
+		}
+		return fmt.Errorf("%s is a private network address, which cannot be used unless the operator sets %s=true", what, AllowPrivateNetworksEnv)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if unsafeIP(ip) {
+			return refuse(host, ip)
+		}
+		return nil
+	}
+	ips, err := LookupIP(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return fmt.Errorf("%s could not be found", host)
+	}
+	for _, ip := range ips {
+		if unsafeIP(ip) {
+			return refuse(fmt.Sprintf("%s (%s)", host, ip), ip)
+		}
+	}
+	return nil
+}
+
 func privateIP(ip net.IP) bool {
 	return ip.IsPrivate() || sharedAddressSpace.Contains(ip)
 }
@@ -208,10 +254,17 @@ func blockUnsafeAddress(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// SafeDialer returns a dialer that refuses, at connect time and on the address a name resolved to, loopback,
+// link-local and unspecified addresses, and private ones unless the operator allows them. Anything that
+// sends from the cluster to an address a person typed in (a webhook, a mail server) connects through it.
+func SafeDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 5 * time.Second, Control: blockUnsafeAddress}
+}
+
 // NewHTTPClient returns the client used for deliveries: no proxies, no redirects, bounded time,
 // and no connections to loopback or link-local addresses.
 func NewHTTPClient() *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: blockUnsafeAddress}
+	dialer := SafeDialer()
 	return &http.Client{
 		Timeout: deliveryTimeout,
 		Transport: &http.Transport{

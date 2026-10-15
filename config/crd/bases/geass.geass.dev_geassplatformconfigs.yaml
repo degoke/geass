@@ -37,6 +37,151 @@ spec:
             type: object
           spec:
             properties:
+              alerting:
+                description: |-
+                  Alerting says where Geass tells people that something went wrong: a build or deploy that failed, a service
+                  that is down, backups that are failing, a node that is not ready.
+                properties:
+                  channels:
+                    description: |-
+                      Channels are the places alerts are sent to. The URL of a Slack channel is a secret: it is kept in the
+                      Secret geass-alert-channels under the channel's id, never in this spec.
+                    items:
+                      description: GeassAlertChannel is one place alerts are sent
+                        to, and which alerts it hears about.
+                      properties:
+                        disabled:
+                          description: Disabled pauses the channel without deleting
+                            it.
+                          type: boolean
+                        environments:
+                          description: Environments limits the channel to these environments,
+                            such as production. Empty means every environment.
+                          items:
+                            type: string
+                          maxItems: 100
+                          type: array
+                        events:
+                          description: Events limits which kinds of alert the channel
+                            hears about. Empty means every kind, including ones added
+                            later.
+                          items:
+                            enum:
+                            - build.failed
+                            - deploy.failed
+                            - service.down
+                            - backup.failed
+                            - node.unhealthy
+                            - cluster.issue
+                            - workload.crashlooping
+                            - storage.filling
+                            type: string
+                          type: array
+                        id:
+                          description: ID identifies the channel in the dashboard
+                            and names its secret.
+                          pattern: ^[a-z0-9]{8}$
+                          type: string
+                        name:
+                          description: Name is what the dashboard calls the channel.
+                          maxLength: 60
+                          minLength: 1
+                          type: string
+                        notifyResolved:
+                          default: true
+                          description: NotifyResolved sends a message when a problem
+                            clears, not only when it starts. Unset means it does.
+                          type: boolean
+                        projects:
+                          description: |-
+                            Projects limits the channel to these projects. Empty means every project, and it is also what lets a
+                            channel hear about the cluster itself (nodes, certificates, upgrades), which belongs to no project.
+                          items:
+                            type: string
+                          maxItems: 100
+                          type: array
+                        recipients:
+                          description: Recipients are the addresses an email channel
+                            writes to.
+                          items:
+                            maxLength: 320
+                            type: string
+                          maxItems: 20
+                          type: array
+                        type:
+                          description: Type is slack, for a Slack incoming webhook
+                            (or any receiver that takes the same JSON), or email.
+                          enum:
+                          - slack
+                          - email
+                          type: string
+                      required:
+                      - id
+                      - name
+                      - type
+                      type: object
+                    maxItems: 20
+                    type: array
+                  smtp:
+                    description: SMTP is the mail server that email channels send
+                      through. Without it email channels cannot send.
+                    properties:
+                      credentialRef:
+                        description: CredentialRef names the Secret in the system
+                          namespace whose "password" key is the password.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      from:
+                        description: 'From is the address the mail comes from: alerts@example.com,
+                          or "Geass <alerts@example.com>".'
+                        maxLength: 320
+                        minLength: 3
+                        type: string
+                      host:
+                        description: Host is the name of the mail server, such as
+                          smtp.example.com.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      port:
+                        default: 587
+                        description: Port is the port the mail server listens on.
+                          Unset means 587, which is where STARTTLS is offered.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      security:
+                        default: starttls
+                        description: |-
+                          Security is how the connection is protected: starttls upgrades a plain connection (usually port 587), tls
+                          is encrypted from the first byte (usually port 465), and none sends in the clear, which is for a mail
+                          server inside the cluster. Unset means starttls.
+                        enum:
+                        - starttls
+                        - tls
+                        - none
+                        type: string
+                      username:
+                        description: Username signs in to the mail server. Leave it
+                          empty for one that does not ask.
+                        maxLength: 256
+                        type: string
+                    required:
+                    - from
+                    - host
+                    type: object
+                type: object
               auth:
                 description: |-
                   Auth says how people sign in to the dashboard: with the users in the Secret geass-dashboard-auth (the

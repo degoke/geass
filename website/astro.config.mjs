@@ -99,6 +99,7 @@ export default defineConfig({
             "docs/guides/network-isolation",
             "docs/guides/project-limits",
             "docs/guides/observability",
+            "docs/guides/alerts",
             "docs/guides/usage-and-capacity",
           ],
         },

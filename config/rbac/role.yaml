@@ -246,6 +246,7 @@ rules:
 - apiGroups:
   - monitoring.coreos.com
   resources:
+  - alertmanagerconfigs
   - podmonitors
   - prometheusrules
   - servicemonitors

@@ -13,6 +13,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/alerts"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -55,6 +56,11 @@ func operatorMetricsMonitor() *monitoringv1.ServiceMonitor {
 				BearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token", //nolint:staticcheck
 				TLSConfig:       &monitoringv1.TLSConfig{SafeTLSConfig: monitoringv1.SafeTLSConfig{InsecureSkipVerify: ptrBool(true)}},
 				Interval:        "30s",
+				// geass_project_namespace_info names the namespace of a project's environment in a label called
+				// namespace, and the alerts on pods and volumes join on it. Without this Prometheus would put the
+				// operator's own namespace in that label and keep the exporter's as exported_namespace, no join would
+				// match, and every crashing pod of a project would be reported as one that belongs to nobody.
+				HonorLabels: true,
 			}},
 		},
 	}
@@ -68,11 +74,15 @@ func operatorRules() *monitoringv1.PrometheusRule {
 	rule := func(alert, expr, duration, severity, summary string) monitoringv1.Rule {
 		forDuration := monitoringv1.Duration(duration)
 		return monitoringv1.Rule{
-			Alert:       alert,
-			Expr:        intstr.FromString(expr),
-			For:         &forDuration,
-			Labels:      map[string]string{"severity": severity},
-			Annotations: map[string]string{"summary": summary},
+			Alert: alert,
+			Expr:  intstr.FromString(expr),
+			For:   &forDuration,
+			// They are cluster problems to the channels an admin sets up, so they reach those that hear about the cluster.
+			Labels: map[string]string{
+				"severity": severity, alerts.LabelKind: geassv1alpha1.AlertClusterIssue,
+				alerts.LabelResource: "operator", alerts.LabelResourceKind: "operator", alerts.LabelPath: "/cluster",
+			},
+			Annotations: map[string]string{"title": "Cluster problem", "summary": summary, "description": "Open the cluster page in the dashboard for the details."},
 		}
 	}
 	return &monitoringv1.PrometheusRule{
@@ -110,7 +120,8 @@ func operatorRules() *monitoringv1.PrometheusRule {
 	}
 }
 
-// reconcileOperatorMonitoring keeps the operator's monitor and alert rules in place while monitoring is on.
+// reconcileOperatorMonitoring keeps the operator's monitor and alert rules, and the alert rules for services and the
+// cluster, in place while monitoring is on.
 // It is background work like the other add-on extras: a problem is logged and retried, never held against
 // the cluster. It returns how soon to look again, or zero when there is nothing left to do.
 func (r *GeassClusterReconciler) reconcileOperatorMonitoring(ctx context.Context, cluster *geassv1alpha1.GeassCluster) time.Duration {
@@ -135,10 +146,18 @@ func (r *GeassClusterReconciler) reconcileOperatorMonitoring(ctx context.Context
 		return nil
 	})
 
-	if monitorErr == nil && rulesErr == nil {
+	desiredAlerts := alertRules()
+	alertRulesObject := &monitoringv1.PrometheusRule{ObjectMeta: metav1.ObjectMeta{Name: desiredAlerts.Name, Namespace: desiredAlerts.Namespace}}
+	_, alertsErr := controllerutil.CreateOrUpdate(ctx, r.Client, alertRulesObject, func() error {
+		alertRulesObject.Labels = desiredAlerts.Labels
+		alertRulesObject.Spec = desiredAlerts.Spec
+		return nil
+	})
+
+	if monitorErr == nil && rulesErr == nil && alertsErr == nil {
 		return 0
 	}
-	for _, err := range []error{monitorErr, rulesErr} {
+	for _, err := range []error{monitorErr, rulesErr, alertsErr} {
 		// The kinds, and the namespace, do not exist until the monitoring chart has been installed.
 		if err != nil && !meta.IsNoMatchError(err) && client.IgnoreNotFound(err) != nil {
 			log.Error(err, "Failed to apply the operator's monitor or alert rules")

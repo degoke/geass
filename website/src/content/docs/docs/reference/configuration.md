@@ -162,9 +162,10 @@ kubectl -n geass-system set env deployment/geass-controller-manager GEASS_PROMET
 | `GEASS_DASHBOARD_PASSWORD` | none | A single admin password. Used only if no users are set. The user is named by `GEASS_DASHBOARD_USERNAME` |
 | `GEASS_DASHBOARD_USERNAME` | `admin` | The name of the user created from `GEASS_DASHBOARD_PASSWORD` |
 | `GEASS_DASHBOARD_SESSION_KEY` | generated | The key that signs session cookies, at least 16 bytes (or `hex:` followed by hex). Overrides the key in the Secret |
+| `GEASS_ALERTMANAGER_URL` | `http://geass-kube-prometheus-stac-alertmanager.monitoring.svc:9093` | Where the dashboard asks Alertmanager what is firing and sends a test through it, on the **Alerts** page. Set it to use an Alertmanager other than the monitoring add-on's |
 | `GEASS_PROMETHEUS_URL` | `http://geass-kube-prometheus-stac-prometheus.monitoring.svc:9090` | Where the dashboard queries metrics, unless the platform configuration sets `prometheusURL` |
 | `GEASS_LOGS_URL` | `http://geass-victorialogs.geass-logging.svc:9428` | Where the dashboard reads stored log history (the logging add-on's VictoriaLogs server) |
-| `GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS` | `false` | `true` lets project webhooks reach private network addresses (RFC 1918 and shared address space). Loopback and link-local stay blocked |
+| `GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS` | `false` | `true` lets project webhooks reach private network addresses (RFC 1918 and shared address space), and lets an alert channel be saved with a Slack or mail host on one. Loopback and link-local stay blocked |
 | `GEASS_GITHUB_APP_ID`, `GEASS_GITHUB_APP_CLIENT_ID`, `GEASS_GITHUB_APP_CLIENT_SECRET`, `GEASS_GITHUB_APP_SLUG`, `GEASS_GITHUB_APP_PRIVATE_KEY`, `GEASS_GITHUB_WEBHOOK_SECRET` | none | GitHub App credentials, used only when the platform configuration has no `githubAppRef` (that is, nothing was saved in **Settings** → **Connectors**) |
 | `GEASS_PUBLIC_URL` | none | The dashboard's public address for the GitHub App, overridden by the dashboard URL once you set a domain |
 | `GOMEMLIMIT` | `800MiB` in the installed Deployment | The Go runtime's soft memory limit. It sits below the container's 1Gi limit, so the runtime collects harder near the limit instead of being killed for it. See [Cluster size](/docs/operations/sizing/) |
@@ -288,7 +289,7 @@ The installer creates one, named `default`. See [GeassCluster](/docs/reference/r
 | --- | --- | --- |
 | `spec.addons.certManager.enabled` | `true` | Install cert-manager. When `false`, Geass removes the cert-manager it installed and manages no issuer |
 | `spec.addons.certManager.acmeEmail` | empty (the installer sets it from `GEASS_ACME_EMAIL`) | The Let's Encrypt contact address, at most 254 characters, in the form `name@host.tld`. When set, Geass creates and keeps the `letsencrypt-prod` ClusterIssuer that every HTTPS Ingress asks for. Empty means no issuer is created |
-| `spec.addons.monitoring.enabled` | `true` | Install the monitoring stack (Prometheus). While it is on, Geass also scrapes the operator's own metrics and adds alert rules for the operator's health |
+| `spec.addons.monitoring.enabled` | `true` | Install the monitoring stack (Prometheus and Alertmanager). While it is on, Geass also scrapes the operator's own metrics and adds alert rules for the operator's health and for what runs in the cluster. Alerts need it: see [Alerts](/docs/guides/alerts/) |
 | `spec.addons.monitoring.profile` | `lite` | `lite` or `full` footprint |
 | `spec.addons.longhorn.enabled` | `false` (the installer sets `true`) | Install Longhorn for database volumes. It needs iSCSI on every node |
 | `spec.addons.logging.enabled` | `false` (the installer sets `true`) | Install log collection and the VictoriaLogs store |
@@ -401,6 +402,8 @@ Postgres runs the `ghcr.io/cloudnative-pg/postgresql` image at the major version
 | `geass-api-tokens` | API token records (hashes) |
 | `geass-token` | The K3s join token, read when a worker joins |
 | `platform-github-app` | The GitHub App credentials |
+| `geass-alert-channels` | The Slack webhook URL of each alert channel, under the channel's id |
+| `geass-alert-smtp` | The password of the alert mail server |
 | `platform-cloudflare`, `geass-cloudflared-token` | The Cloudflare API token, and the tunnel connector token |
 | `<name>-credentials` | An AWS or PlanetScale connection |
 | `geass-backup-storage-<bucket>` | The key for a backup bucket |
@@ -408,7 +411,7 @@ Postgres runs the `ghcr.io/cloudnative-pg/postgresql` image at the major version
 | `<app>-secrets` | A service's own secrets |
 | `<project>-github`, `<project>-github-token` | A project's GitHub link (`<project>-github` is a connection resource; the token is its Secret) |
 
-Saved templates are ConfigMaps named `template-<id>` with the label `geass.dev/template=true`. A function's schedule token is the Secret
+The `AlertmanagerConfig` `geass-alerts` in `geass-system` is made from the alert channels in the platform configuration: see [Alerts](/docs/guides/alerts/#how-it-works). Saved templates are ConfigMaps named `template-<id>` with the label `geass.dev/template=true`. A function's schedule token is the Secret
 `<app>-trigger`, which lives in the service's environment namespace, not in `geass-system`.
 
 ## Ports

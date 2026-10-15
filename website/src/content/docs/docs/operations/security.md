@@ -416,7 +416,7 @@ a Dockerfile can run any command. Only build repositories you trust. Pods that G
 Project webhooks sign each delivery with a per-webhook secret (`whsec_...`), sent as `X-Geass-Signature: t=<time>,v1=<HMAC>`
 over `<time>.<body>`. The signing secrets are kept in the Secret `<project id>-webhooks`, not in the project. Deliveries refuse
 loopback and link-local addresses always, and private ranges (RFC 1918 and shared address space) unless you set
-`GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS=true` on the operator. The address is checked when the connection is made, which stops DNS tricks. Deliveries use no proxy and follow no redirects.
+`GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS=true` on the operator. The address is checked when the connection is made, which stops DNS tricks. Deliveries use no proxy and follow no redirects. [Alert](/docs/guides/alerts/) channels are different: Alertmanager, in `monitoring`, connects to Slack and to the mail server, so that guard does not apply to it. Geass refuses a host that is, or resolves to, a loopback, link-local or (unless allowed) private address when the channel is saved, and cannot see a name that resolves differently later. Their secrets (the Slack URLs, the mail password) are in the Secrets `geass-alert-channels` and `geass-alert-smtp`, and only a signed-in admin, never a token, can see or change the settings.
 
 ## Credentials your connections hold
 
@@ -516,8 +516,9 @@ Geass does not do these for you:
 - **Your apps.** The images you run, their dependencies and their own authentication.
 - **Detection and response.** Monitoring, alerting and incident handling. With the monitoring add-on on, Geass defines Prometheus alert
   rules for the operator's own health (rule `geass-operator` in `monitoring`: the operator down, failing or slow reconciles, a backed-up
-  work queue, a slow or failing Kubernetes API server). It sets up no notification channel, and the default `lite` monitoring profile
-  turns Alertmanager off. It has no alerting for your services.
+  work queue, a slow or failing Kubernetes API server). An admin can set up [alerts](/docs/guides/alerts/) to Slack or email, which Alertmanager
+  sends: for failed builds and deploys, services that are down, failing backups, crashing pods, filling storage, nodes that are not ready and
+  the operator's own alerts. Geass does not watch the traffic to your services, or what they log or return.
 
 ## Related
 

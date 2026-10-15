@@ -14,6 +14,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Admin.** A dashboard user, or a workspace token, that can change everything; the other roles are viewer and, for tokens only, observer. See [Users and API tokens](/docs/guides/users-and-tokens/#roles).
 
+**Alert channel.** A Slack channel or a list of email addresses that gets a message, sent by Alertmanager, when a build or deploy fails, a service is down, backups fail, a pod crashes, storage fills or a node stops responding, with filters for which alerts, projects and environments it hears. See [Alerts](/docs/guides/alerts/).
+
 **API token.** A credential for scripts, CI, the command line and agents that is sent as a Bearer token, either a workspace token (`gsw_`) or a project token (`gsp_`). See [Users and API tokens](/docs/guides/users-and-tokens/#api-tokens).
 
 **API v1.** The versioned HTTP API under `/api/v1`, described by an OpenAPI document, that the command line, the MCP server and scripts use. See [REST API](/docs/reference/rest-api/).

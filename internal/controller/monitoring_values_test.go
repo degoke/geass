@@ -46,7 +46,65 @@ func TestLiteMonitoringStaysLite(t *testing.T) {
 	var parsed map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(monitoringLiteValues), &parsed))
 	require.Equal(t, false, parsed["grafana"].(map[string]any)["enabled"])
-	require.Equal(t, false, parsed["alertmanager"].(map[string]any)["enabled"])
+	require.Equal(t, false, parsed["defaultRules"].(map[string]any)["create"])
+}
+
+// The chart silences a warning when a critical alert has the same name and namespace. Geass's alerts have no namespace
+// label, so that was true of a critical failure in production and the warning about the same failure in staging, and in
+// every other project: the second was never sent. The rules are kept for everything else, and Geass's alerts are no
+// longer what they silence.
+func TestNoInhibitRuleCanSilenceAGeassAlert(t *testing.T) {
+	for name, values := range map[string]string{"lite": monitoringLiteValues, "full": monitoringPrometheusValues} {
+		t.Run(name, func(t *testing.T) {
+			var parsed struct {
+				Alertmanager struct {
+					Config struct {
+						InhibitRules []struct {
+							SourceMatchers []string `json:"source_matchers"`
+							TargetMatchers []string `json:"target_matchers"`
+							Equal          []string `json:"equal"`
+						} `json:"inhibit_rules"`
+					} `json:"config"`
+				} `json:"alertmanager"`
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(values), &parsed))
+			rules := parsed.Alertmanager.Config.InhibitRules
+			require.Len(t, rules, 4, "the chart's four, which other alerts still rely on")
+			for _, rule := range rules {
+				if len(rule.SourceMatchers) == 0 && len(rule.TargetMatchers) == 1 && rule.TargetMatchers[0] == `alertname = InfoInhibitor` {
+					continue // it hides the helper alert itself, which is not Geass's
+				}
+				require.Contains(t, rule.TargetMatchers, `geass_kind = ""`, "%v would silence Geass's alerts", rule)
+			}
+		})
+	}
+}
+
+// Prometheus loads only the rules its selector picks, and the chart's default picks only rules with the release
+// label. Geass's rules have none, so without this the operator's alerts and the alerts on services are written
+// and never evaluated.
+func TestEveryMonitoringProfileLoadsRulesWithoutTheReleaseLabel(t *testing.T) {
+	for name, values := range map[string]string{"lite": monitoringLiteValues, "full": monitoringPrometheusValues} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, false, prometheusSpecOf(t, values)["ruleSelectorNilUsesHelmValues"])
+		})
+	}
+}
+
+func TestEveryMonitoringProfileRunsAlertmanagerForTheChannelsAdminsSetUp(t *testing.T) {
+	for name, values := range map[string]string{"lite": monitoringLiteValues, "full": monitoringPrometheusValues} {
+		t.Run(name, func(t *testing.T) {
+			var parsed map[string]any
+			require.NoError(t, yaml.Unmarshal([]byte(values), &parsed), "a key defined twice would be an error here, and in Helm")
+			alertmanager, ok := parsed["alertmanager"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, true, alertmanager["enabled"])
+			spec := alertmanager["alertmanagerSpec"].(map[string]any)
+			require.Equal(t, map[string]any{"type": "None"}, spec["alertmanagerConfigMatcherStrategy"],
+				"the alerts are not made in the namespace of the config that routes them")
+			require.NotNil(t, spec["storage"], "silences and what was notified would be lost when the pod moves")
+		})
+	}
 }
 
 // The dashboard queries Prometheus at a fixed Service name. Left to the chart, that name is the release

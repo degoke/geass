@@ -41,11 +41,48 @@ const certManagerValues = `installCRDs: true
 //     never scraped.
 //   - Metrics sit on a volume so history survives the pod being rescheduled (the chart default is an
 //     emptyDir), and are capped by age and size so they cannot fill it.
+//   - The rule selector is opened up for the same reason as the monitor selectors: Geass's PrometheusRules carry
+//     no release label either, and the chart's default selects only rules that do, so the operator's own alerts
+//     and the alerts on services were never loaded.
+//   - Alertmanager is on in both profiles: it is what delivers the alerts that an admin sets up channels for. Its
+//     routes come from the AlertmanagerConfig Geass keeps, and the alerts they route are not made in that
+//     object's namespace, so the chart's habit of adding a namespace matcher to every route would drop all of them.
+//     Silences and the record of what was already notified sit on a small volume, so that a restart neither loses
+//     one nor notifies again.
+//   - The chart's own inhibit rules are kept, except that Geass's alerts are never what they silence. Their rule is
+//     "a critical alert silences the warnings that have the same namespace and the same name", and an alert with no
+//     namespace label (every Geass alert but the ones about a pod or a volume) has the same one as every other: so a
+//     critical failure in production silenced the warning about the same failure in staging, and in every other project.
 const monitoringPrometheusValues = `fullnameOverride: ` + platform.MonitoringFullName + `
+alertmanager:
+  enabled: true
+  config:
+    inhibit_rules:
+      - source_matchers: ['severity = critical']
+        target_matchers: ['severity =~ warning|info', 'geass_kind = ""']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['severity = warning']
+        target_matchers: ['severity = info', 'geass_kind = ""']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['alertname = InfoInhibitor']
+        target_matchers: ['severity = info', 'geass_kind = ""']
+        equal: ['namespace']
+      - target_matchers: ['alertname = InfoInhibitor']
+  alertmanagerSpec:
+    alertmanagerConfigMatcherStrategy:
+      type: None
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
 prometheus:
   prometheusSpec:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
     retention: 15d
     retentionSize: 4GB
     storageSpec:
@@ -60,8 +97,6 @@ prometheus:
 const monitoringLiteValues = `grafana:
   enabled: false
   defaultDashboardsEnabled: false
-alertmanager:
-  enabled: false
 defaultRules:
   create: false
 defaultDashboards:

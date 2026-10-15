@@ -22,6 +22,8 @@ const (
 	MonitoringFullName = "geass-kube-prometheus-stac"
 	// MonitoringPrometheusService is the Service that fronts Prometheus in MonitoringTargetNS.
 	MonitoringPrometheusService = MonitoringFullName + "-prometheus"
+	// MonitoringAlertmanagerService is the Service that fronts Alertmanager in MonitoringTargetNS, on port 9093.
+	MonitoringAlertmanagerService = MonitoringFullName + "-alertmanager"
 
 	// 1.12.x is the newest line that still supports Kubernetes 1.25+; 1.13 needs 1.34.
 	LonghornChartName    = "geass-longhorn"
