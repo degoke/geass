@@ -39,6 +39,21 @@ function DefaultRegionSection({ data, reload, mutable }) {
   );
 }
 
+/** Whether the cluster's network plugin acts on network policies, which project isolation depends on. Absent until the check has run. */
+function NetworkPolicySection({ data }) {
+  const cluster = (data?.clusters?.items || [])[0];
+  const condition = (cluster?.status?.conditions || []).find((item) => item.type === "NetworkPolicyEnforced");
+  if (!condition) return null;
+  const tone = condition.status === "True" ? "success" : condition.status === "False" ? "danger" : "warning";
+  const label = condition.status === "True" ? "Enforced" : condition.status === "False" ? "Not enforced" : "Unknown";
+  return (
+    <PageSection title="Network isolation" description="Whether the cluster acts on network policies. Isolation between projects, and the other protections Geass writes as policies, only hold when it does.">
+      <Badge tone={tone}>{label}</Badge>
+      <Muted size="sm">{condition.message}</Muted>
+    </PageSection>
+  );
+}
+
 export function ClusterCapacityPage({ data, reload, embedded = false }) {
   const capacity = data?.platform?.capacity || {};
   const mutable = canMutate(data);
@@ -102,6 +117,7 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
           />
         </PageSection>
       )}
+      <NetworkPolicySection data={data} />
       <ClusterVersion data={data} />
       <PageSection title="Nodes" description="Per-node allocatable resources and pressure.">
         <DataTable

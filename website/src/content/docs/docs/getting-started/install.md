@@ -156,6 +156,8 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 | `GEASS_VERSION` | `install.sh` | Release tag whose installer binary is downloaded | `latest` |
 | `GEASS_REPO` | `install.sh` | GitHub `owner/name` to download releases from | `degoke/geass` |
 | `GEASS_K3S_VERSION` | installer | K3s release to build a new cluster on, such as `v1.36.5+k3s1`. A channel name is not accepted. On a machine that already runs Geass it is ignored, with a warning, so that a value left over from the install does not upgrade K3s: to upgrade the control plane, pass the `--k3s-version` option (see [Upgrade Geass](/docs/operations/upgrading/)) | the current `stable` release |
+| `GEASS_JOIN_SERVER` | installer | The address of an existing cluster's server. Makes this machine an additional control plane server of it instead of building a cluster; it also needs the cluster's K3s release in `GEASS_K3S_VERSION`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) | none |
+| `GEASS_JOIN_TOKEN` | installer | The cluster's server token, which a join needs | none |
 | `GEASS_REINSTALL` | installer | `1`, `true`, `yes` or `on`. The same as `--reinstall`: delete the cluster on this machine and build a new one. See [Run the installer again](#run-the-installer-again) | off |
 | `GEASS_YES` | installer | `1`, `true`, `yes` or `on`. The same as `--yes`: do not ask for confirmation of a reinstall | off |
 | `GEASS_INSTALL_LOG` | installer | Path of the log file. Missing directories are created | `geass-install-<UTC time>.log` in the current directory |
@@ -166,7 +168,7 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 
 The installer passes its whole environment on to the K3s install script, so K3s's own `INSTALL_K3S_*` variables take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself and overrides yours, and sets `INSTALL_K3S_VERSION` when you pass `GEASS_K3S_VERSION`. K3s selects its release channel when you set nothing: the `stable` channel at the moment you install.
 
-The installer also takes options, which go after `-s --` when you pipe it: `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--version` and `--help`. The update options are described in [Upgrade Geass](/docs/operations/upgrading/#options).
+The installer also takes options, which go after `-s --` when you pipe it: `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--join-server`, `--version` and `--help`. The update options are described in [Upgrade Geass](/docs/operations/upgrading/#options).
 
 :::note
 By default `sudo` drops variables you set before it. Write `sudo env NAME=value sh`, not `NAME=value sudo sh`.
@@ -305,7 +307,7 @@ K3s runs as the `k3s` systemd service and starts at boot. In the cluster, the in
 | --- | --- | --- |
 | Namespace `geass-system` | | Geass's own objects and secrets live here |
 | 16 `geass.geass.dev` definitions and `helmcharts.helm.cattle.io` | | `kubectl get crd` |
-| Deployment `geass-controller-manager` | `geass-system` | One replica, container `manager`, required to run on the control plane, and replaced by stopping the old pod before starting the new one. Image `geass-operator:<release tag>` in release builds. Memory limit 512Mi, with `GOMEMLIMIT=400MiB`. Its pod template carries the annotations `geass.dev/release` and `geass.dev/operator-image-sha256` |
+| Deployment `geass-controller-manager` | `geass-system` | One replica, container `manager`, required to run on the control plane, and replaced by stopping the old pod before starting the new one. Image `geass-operator:<release tag>` in release builds. Memory limit 1Gi, with `GOMEMLIMIT=800MiB`. Its pod template carries the annotations `geass.dev/release` and `geass.dev/operator-image-sha256` |
 | Service `geass-geass-dashboard` | `geass-system` | `ClusterIP`, port 8085. The name has `geass-` twice because the manifest build prefixes every name |
 | Service `geass-controller-manager-metrics-service` | `geass-system` | Operator metrics, port 8443 |
 | Secret `geass-token` | `geass-system` | K3s join token |

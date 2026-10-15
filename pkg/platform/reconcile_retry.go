@@ -92,6 +92,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "configure the bucket name") {
 		return false
 	}
+	// A quota that is used up frees itself when something is stopped or the project raises it. Neither
+	// changes the service's own spec, so counting this would pause the service until someone edited it.
+	if strings.Contains(msg, strings.ToLower(MessageQuotaUsedUp)) || strings.Contains(msg, "exceeded quota") {
+		return false
+	}
 	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
 		return false
 	}
@@ -118,6 +123,15 @@ func ReconcileFailureShouldCount(message string) bool {
 		return false
 	}
 	if strings.Contains(msg, "database server") && strings.Contains(msg, "unavailable") {
+		return false
+	}
+	// A project, or the cluster it is on, that is not ready yet, or is not there yet, is a wait: a project made a moment
+	// ago is not ready for a second or two, and a service applied with it (one kubectl apply of both, in either order)
+	// meets that. The retries come within milliseconds, so counting it used up the five tries before the project could be
+	// ready and ended the service until someone edited it. ValidateProjectPlacement says: project "x" is not ready,
+	// project "x" cluster "y" is not ready, project "x" does not exist. A name that is wrong for good is still said, on the
+	// service, for as long as it is wrong.
+	if strings.HasPrefix(msg, "project ") && (strings.HasSuffix(msg, " is not ready") || strings.HasSuffix(msg, " does not exist")) {
 		return false
 	}
 	if strings.Contains(msg, "referenced geasscluster is not ready") {

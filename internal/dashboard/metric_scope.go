@@ -103,5 +103,8 @@ func operatorQueries() []metricSeriesQuery {
 		{"queueDepth", `sum(workqueue_depth{name=~"geass.*"})`},
 		{"statusWrites", `sum(rate(geass_status_writes_total{result="written"}[5m]))`},
 		{"statusSkipped", `sum(rate(geass_status_writes_total{result="skipped"}[5m]))`},
+		// process_resident_memory_bytes comes from every Go process Prometheus scrapes. Taking it only where the operator's
+		// own series are, from the same target, leaves the operator's.
+		{"memory", `max(process_resident_memory_bytes and on(job, instance) controller_runtime_active_workers)`},
 	}
 }

@@ -1253,3 +1253,168 @@ func TestGeassIsNotThoughtAbsentJustBecauseKubectlCouldNotBeRun(t *testing.T) {
 	require.Error(t, err, "that is not the API server saying there is no Geass")
 	require.False(t, installed)
 }
+
+// ---- control plane servers that do not have the new operator image -----------------------------------------------------
+
+func TestTheOperatorImageIsReadFromTheManifestsTheInstallerCarries(t *testing.T) {
+	useManifests(t, testManifests, "image")
+	require.Equal(t, "geass-operator:v0.3.0", embeddedOperatorImage())
+
+	useManifests(t, "kind: Namespace\n", "image")
+	require.Empty(t, embeddedOperatorImage(), "an installer without an operator names no image")
+}
+
+func TestAControlPlaneThatLacksTheNewImageIsNamedBeforeAnythingChanges(t *testing.T) {
+	const image = "geass-operator:v0.3.0"
+	nodes := []nodeInfo{
+		{Name: "cp1", ControlPlane: true, Images: []string{"docker.io/library/geass-operator:v0.2.0"}},
+		{Name: "cp2", ControlPlane: true, Images: []string{"docker.io/library/geass-operator:v0.2.0"}},
+		{Name: "cp3", ControlPlane: true, Images: []string{"docker.io/library/" + image}},
+		{Name: "cp4", ControlPlane: true, Images: []string{image}},
+		{Name: "w1", Images: nil},
+	}
+	require.Equal(t, []string{"cp2"}, controlPlanesWithoutImage(nodes, "cp1", image),
+		"the machine the installer runs on gets the image as part of the update, workers never run the operator, and both spellings of the name count")
+	require.Equal(t, []string{"cp1", "cp2"}, controlPlanesWithoutImage(nodes, "elsewhere", image))
+	require.Empty(t, controlPlanesWithoutImage(nodes, "cp1", ""), "no image to look for, nothing to say")
+	require.Empty(t, controlPlanesWithoutImage([]nodeInfo{{Name: "cp1", ControlPlane: true}}, "another-name", image),
+		"a cluster of one has nobody else to give it to, whatever its node is called")
+}
+
+func TestAnUpgradeWarnsWhenAnotherControlPlaneHasNotBeenGivenTheImage(t *testing.T) {
+	state := ClusterState{
+		Phase: "Ready", ControlPlanes: 3, NewOperatorImage: "geass-operator:v0.3.0",
+		ControlPlanesWithoutNewImage: []string{"cp2", "cp3"},
+	}
+	blockers, warnings := upgradeFindings(state, UpgradeOptions{})
+	require.Empty(t, blockers, "a node that does not report an image may still have it, so this only warns")
+	require.Len(t, warnings, 2)
+	require.Contains(t, warnings[1], "cp2, cp3")
+	require.Contains(t, warnings[1], "geass-operator:v0.3.0")
+	require.Contains(t, warnings[1], "no options")
+
+	state.ControlPlanesWithoutNewImage = nil
+	_, warnings = upgradeFindings(state, UpgradeOptions{})
+	require.Len(t, warnings, 1, "and once they all have it there is only the note about K3s")
+}
+
+// ---- what the summary says about the other control plane servers ------------------------------------------------------------
+
+// summaryOf runs the summary step and returns what it printed.
+func summaryOf(t *testing.T, plan *UpgradePlan) string {
+	t.Helper()
+	old := os.Stdout
+	read, write, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = write
+	t.Cleanup(func() { os.Stdout = old })
+	runErr := (&UpgradeSummary{Plan: plan}).Run()
+	require.NoError(t, write.Close())
+	os.Stdout = old
+	out, err := io.ReadAll(read)
+	require.NoError(t, err)
+	require.NoError(t, runErr)
+	return string(out)
+}
+
+func TestTheSummaryDoesNotPromiseTheWorkersMoveWhileOtherControlPlanesAreBehind(t *testing.T) {
+	plan := &UpgradePlan{
+		Target: "v0.3.0", K3sTo: "v1.36.5+k3s1",
+		State: ClusterState{ClusterName: "default", K3sVersion: "v1.35.9+k3s1", ControlPlanes: 3, Workers: 1,
+			ControlPlaneVersions: map[string]string{"this": "v1.35.9+k3s1", "cp2": "v1.35.9+k3s1", "cp3": "v1.35.9+k3s1"}},
+	}
+	useThisNode(t, "this")
+
+	out := summaryOf(t, plan)
+
+	require.Contains(t, out, "The other 2 control plane server(s) still run an older K3s: cp2 (v1.35.9+k3s1), cp3 (v1.35.9+k3s1)")
+	require.Contains(t, out, "INSTALL_K3S_VERSION=v1.36.5+k3s1 INSTALL_K3S_EXEC=server")
+	require.Contains(t, out, "once every control plane server runs it")
+	require.NotContains(t, out, "The operator now upgrades", "the worker waits for the others")
+}
+
+func TestTheSummaryOfASingleControlPlaneIsAsItWas(t *testing.T) {
+	plan := &UpgradePlan{
+		Target: "v0.3.0", K3sTo: "v1.36.5+k3s1",
+		State: ClusterState{ClusterName: "default", K3sVersion: "v1.35.9+k3s1", ControlPlanes: 1, Workers: 2,
+			ControlPlaneVersions: map[string]string{"this": "v1.35.9+k3s1"}},
+	}
+	useThisNode(t, "this")
+
+	out := summaryOf(t, plan)
+
+	require.Contains(t, out, "The operator now upgrades the 2 worker node(s) to K3s v1.36.5+k3s1")
+	require.NotContains(t, out, "control plane server(s) still run")
+}
+
+// The operator's image is found by reading the manifests as YAML, so the way the renderer lays them out does not matter.
+func TestTheOperatorsImageIsReadFromItsDeploymentWhateverTheLayout(t *testing.T) {
+	useManifests(t, testManifests, "image")
+	require.Equal(t, "geass-operator:v0.3.0", embeddedOperatorImage())
+
+	// A list item that starts with image (the renderer sorts the keys, and another version of it may not put command
+	// first), and another container whose image also names the operator.
+	useManifests(t, `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geass-controller-manager
+spec:
+  template:
+    spec:
+      containers:
+      - image: "registry.example.com/geass-operator:v9"
+        name: manager
+      - image: registry.example.com/geass-operator-sidecar:v9
+        name: sidecar
+`, "image")
+	require.Equal(t, "registry.example.com/geass-operator:v9", embeddedOperatorImage())
+
+	useManifests(t, "kind: Namespace\nmetadata:\n  name: geass-system\n", "image")
+	require.Empty(t, embeddedOperatorImage(), "no Deployment, no image")
+}
+
+// useThisNode makes this machine's node be called name, for a test.
+func useThisNode(t *testing.T, name string) {
+	t.Helper()
+	old := thisNode
+	thisNode = func() string { return name }
+	t.Cleanup(func() { thisNode = old })
+}
+
+// The other servers may already have been upgraded by hand, or this one may be the one that is already current. The
+// summary says what is true of each, and not that the oldest release is what everyone runs.
+func TestTheSummaryNamesOnlyTheControlPlanesThatAreStillBehind(t *testing.T) {
+	useThisNode(t, "this")
+	plan := &UpgradePlan{
+		Target: "v0.3.0", K3sTo: "v1.36.5+k3s1",
+		State: ClusterState{ClusterName: "default", K3sVersion: "v1.35.9+k3s1", ControlPlanes: 3, Workers: 1,
+			ControlPlaneVersions: map[string]string{"this": "v1.35.9+k3s1", "cp2": "v1.36.5+k3s1", "cp3": "v1.35.9+k3s1"}},
+	}
+
+	out := summaryOf(t, plan)
+
+	require.Contains(t, out, "K3s (control plane) v1.35.9+k3s1 -> v1.36.5+k3s1")
+	require.Contains(t, out, "The other 1 control plane server(s) still run an older K3s: cp3 (v1.35.9+k3s1)")
+	require.NotContains(t, out, "cp2", "a server that is already current is not told to upgrade")
+
+	// Every other server is current: this one was the last, and the operator moves the workers now.
+	plan.State.ControlPlaneVersions["cp3"] = "v1.36.5+k3s1"
+	out = summaryOf(t, plan)
+	require.NotContains(t, out, "still run an older K3s")
+	require.Contains(t, out, "The operator now upgrades the 1 worker node(s)")
+}
+
+func TestTheSummaryDoesNotSayThisRunMovedAServerThatWasAlreadyCurrent(t *testing.T) {
+	useThisNode(t, "this")
+	plan := &UpgradePlan{
+		Target: "v0.3.0", K3sTo: "v1.36.5+k3s1",
+		State: ClusterState{ClusterName: "default", K3sVersion: "v1.35.9+k3s1", ControlPlanes: 2, Workers: 1,
+			ControlPlaneVersions: map[string]string{"this": "v1.36.5+k3s1", "cp2": "v1.35.9+k3s1"}},
+	}
+
+	out := summaryOf(t, plan)
+
+	require.NotContains(t, out, "K3s (control plane)", "this server was already on the release, so this run moved no K3s")
+	require.Contains(t, out, "The other 1 control plane server(s) still run an older K3s: cp2 (v1.35.9+k3s1)")
+	require.Contains(t, out, "once every control plane server runs it")
+}

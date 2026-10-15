@@ -104,6 +104,16 @@ func controlPlaneAddress() (string, error) {
 
 // ServerConfig is the k3s server's configuration file.
 func (n Network) ServerConfig() string {
+	raw, err := yaml.Marshal(n.ServerSettings())
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// ServerSettings are the settings in the k3s server's configuration file. A server that joins a cluster has to have
+// the same ones as the first, because K3s refuses one whose critical settings differ, and adds to them where it is.
+func (n Network) ServerSettings() map[string]any {
 	config := map[string]any{
 		"kubelet-arg": platform.KubeletLogArgs,
 	}
@@ -116,9 +126,5 @@ func (n Network) ServerConfig() string {
 		// Workers join on the public address, so the API server's certificate has to be valid for it.
 		config["tls-san"] = []string{n.ExternalIP}
 	}
-	raw, err := yaml.Marshal(config)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
+	return config
 }

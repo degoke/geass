@@ -61,6 +61,7 @@ Running the installer again for the release the cluster already runs is safe and
 | `--no-rollback` | If the new operator does not take over, leave it where it is instead of rolling the operator back, to look at what went wrong in the cluster it went wrong in. Also `GEASS_NO_ROLLBACK=1` |
 | `--upgrade` | Say that you mean to update. `geass upgrade` reads the same. The default when the machine has a cluster |
 | `--reinstall`, `--yes` | Delete the cluster and build a new one. See [Reinstall](#reinstall) |
+| `--join-server <url>` | Not an update: make a machine that has no K3s an additional control plane server of this cluster, at the K3s release you give with `--k3s-version`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `--version`, `--help` | Print the installer's release, or the options |
 
 ### What stops an update
@@ -108,6 +109,13 @@ The API server and the operator are away while the service restarts, normally fo
 K3s and the add-ons move together, because some chart versions need a minimum Kubernetes version (Longhorn 1.13, for example, needs 1.34, and this release pins Longhorn 1.12 for that reason). The range that this release's add-ons are known to run on is built into the installer; outside it, the installer refuses unless you add `--allow-untested-k3s`.
 
 If you ask for a K3s version when you update Geass, the order is: snapshot, K3s on the control plane, then the operator. The operator must come up on the K3s it will run on.
+
+### Additional control plane servers
+
+A cluster that has [three control plane servers](/docs/operations/high-availability/#run-three-control-plane-servers) is updated on the **first** one, with the installer, as everything above says. The others are not touched by it, and two things follow:
+
+- **The operator's image, first.** The update leaves the operator's Deployment naming a new image, and the installer puts that image on the machine it runs on and on no other: it is in no registry. The operator can start on any control plane server, so **before you update the first server**, run the new release's installer on each of the other servers with no options. On a server that joined a cluster, that is all it does: it puts the new image on the server, next to the old one, and changes nothing else. It refuses `--upgrade` and `--reinstall` on such a server. If you update the first server before the others have the image, the new operator can land on one of them, cannot pull it, and the installer sees the pod cannot pull its image and puts the previous operator back. It names the servers that do not report the image before it changes anything. A server that you have only just refreshed can still be named for some seconds, until its node reports the image; if you have refreshed it, go on.
+- **K3s.** With `--k3s-version` the installer upgrades the first server. Then upgrade each of the others **one at a time**, waiting for its node to be ready before the next, with K3s's own install script and the release you gave the first (`curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION=<release> INSTALL_K3S_EXEC=server sh -`). The server keeps its settings, which are in its configuration file. Geass does not move the workers until the oldest control plane server runs the new release, because a worker must not run newer than the servers it talks to. Until then the cluster's status says so and names the servers that are behind (`kubectl -n geass-system get geasscluster default -o jsonpath='{.status.k3s}'` shows `WaitingForControlPlane`). When the last one runs the new release, the operator moves each worker, one at a time. On a test cluster of three servers and one worker, each server was ready again within about 40 seconds of its upgrade, and the worker was moved within about 25 seconds of the last server.
 
 ### Workers
 

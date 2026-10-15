@@ -35,6 +35,8 @@ reads these environment variables (see [Install](/docs/getting-started/install/)
 | `GEASS_MULTI_SITE` | off | `1`, `true`, `yes` or `on` builds a cluster whose nodes are at different providers: an encrypted WireGuard overlay instead of VXLAN. Chosen at install time because changing it later means restarting every node. [Multi-provider clusters](/docs/operations/multi-provider/) |
 | `GEASS_NODE_EXTERNAL_IP` | none | This node's public IP address. Required when `GEASS_MULTI_SITE` is on; must be a valid IP. Workers join on it |
 | `GEASS_K3S_VERSION` | the current `stable` K3s | The K3s release, in full (`v1.36.5+k3s1`), to build a new cluster on. The same as `--k3s-version` for a new cluster; when a cluster that exists is updated it is ignored (with a warning), so a value left over from the install does not upgrade K3s: pass `--k3s-version` for that |
+| `GEASS_JOIN_SERVER` | none | The address of a cluster's server, such as `https://10.0.0.5:6443`. With it the installer does not build a cluster: it makes this machine an additional control plane server of that one. The same as `--join-server`, and it also needs the K3s release the cluster runs, in `GEASS_K3S_VERSION` or `--k3s-version`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
+| `GEASS_JOIN_TOKEN` | none | The cluster's server token, from `/var/lib/rancher/k3s/server/token` on its first server. Needed with `GEASS_JOIN_SERVER`. Pass it here and not as `--join-token`, which other users of the machine can read in the process list |
 | `GEASS_REINSTALL` | off | `1`, `true`, `yes` or `on`: same as `--reinstall` |
 | `GEASS_YES` | off | `1`, `true`, `yes` or `on`: same as `--yes` |
 | `GEASS_INSTALL_LOG` | `geass-install-<UTC timestamp>.log` in the current directory | Where the installer writes its log. If that path is not writable it falls back to the system temp directory |
@@ -48,6 +50,7 @@ reads these environment variables (see [Install](/docs/getting-started/install/)
 | `--allow-untested-k3s` | Allow a K3s outside the range this release's add-ons are known to run on |
 | `--skip-snapshot` | Update without an etcd snapshot first |
 | `--force` | Update although the cluster is not ready or a Longhorn volume is degraded |
+| `--join-server <url>` | Do not build a cluster: make this machine an additional control plane server of the one at this address. Needs the server token in `GEASS_JOIN_TOKEN` (or `--join-token`) and the K3s release the cluster runs in `--k3s-version` (or `GEASS_K3S_VERSION`). See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `--reinstall` | Delete the cluster on this machine and build a new one. Asks for confirmation on the terminal |
 | `--yes` | Do not ask for confirmation of `--reinstall` |
 | `--version`, `--help` | Print the installer's release, or the options |
@@ -127,7 +130,7 @@ Applying the operator manifest again (for example by reinstalling) overwrites ch
 in your own notes or automation.
 :::
 
-The pod itself runs on a control plane node, with a request of 10m CPU and 128Mi memory and a limit of 500m and 512Mi, as a
+The pod itself runs on a control plane node, with a request of 10m CPU and 128Mi memory and a limit of 500m and 1Gi, as a
 non-root user with a read-only root filesystem.
 
 ### Operator metrics
@@ -164,7 +167,7 @@ kubectl -n geass-system set env deployment/geass-controller-manager GEASS_PROMET
 | `GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS` | `false` | `true` lets project webhooks reach private network addresses (RFC 1918 and shared address space). Loopback and link-local stay blocked |
 | `GEASS_GITHUB_APP_ID`, `GEASS_GITHUB_APP_CLIENT_ID`, `GEASS_GITHUB_APP_CLIENT_SECRET`, `GEASS_GITHUB_APP_SLUG`, `GEASS_GITHUB_APP_PRIVATE_KEY`, `GEASS_GITHUB_WEBHOOK_SECRET` | none | GitHub App credentials, used only when the platform configuration has no `githubAppRef` (that is, nothing was saved in **Settings** → **Connectors**) |
 | `GEASS_PUBLIC_URL` | none | The dashboard's public address for the GitHub App, overridden by the dashboard URL once you set a domain |
-| `GOMEMLIMIT` | `400MiB` in the installed Deployment | The Go runtime's soft memory limit. It sits below the container's 512Mi limit, so the runtime collects harder near the limit instead of being killed for it |
+| `GOMEMLIMIT` | `800MiB` in the installed Deployment | The Go runtime's soft memory limit. It sits below the container's 1Gi limit, so the runtime collects harder near the limit instead of being killed for it. See [Cluster size](/docs/operations/sizing/) |
 
 The default Prometheus address depends on the monitoring add-on. A `prometheusURL` set on the platform configuration wins over
 `GEASS_PROMETHEUS_URL`, which wins over the default. Standard Kubernetes variables such as `KUBECONFIG` also apply, because the

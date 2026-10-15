@@ -210,7 +210,8 @@ Open a project's **Settings** tab. The page is called **Project Settings** and h
 | **Shared Variables** | Variables that every service in an environment can receive. See [Environment variables and secrets](/docs/guides/environment-variables/). |
 | **Webhooks** | URLs Geass calls when a service deploys. See [GitHub and builds](/docs/guides/github-and-builds/#outgoing-webhooks). |
 | **Backups** | Where the project's databases keep backups. See [Backups and restore](/docs/guides/backups-and-restore/). |
-| **Network** | Which other projects may reach this one. See [Network isolation](/docs/guides/network-isolation/). |
+| **Network** | Which other projects may reach this one, and whether its services are kept away from the cluster's machines. See [Network isolation](/docs/guides/network-isolation/). |
+| **Limits** | What the project, and each of its environments, can ask for in CPU, memory, disk and pods. See [Project limits](/docs/guides/project-limits/). |
 | **Compliance** | The node tags this project requires, such as `hipaa`. Everything the project runs stays on nodes that carry them. See [Compliance tags](/docs/guides/compliance-tags/). |
 | **Tokens** | API tokens limited to this project. See [Users and API tokens](/docs/guides/users-and-tokens/). |
 | **Integrations** | **Connect to GitHub** or **Disconnect**, and a link to the cluster's connectors. See [GitHub and builds](/docs/guides/github-and-builds/). |

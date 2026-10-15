@@ -224,7 +224,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
 | `GET /projects` | Any | none | `{"items": [summary, ...]}`; see [Resource summaries](#resource-summaries) |
-| `POST /projects` | Admin | `region` | `201` `{"project": "proj-1a2b3c4d"}` |
+| `POST /projects` | Admin | `region` | `201` `{"project": "proj-1a2b3c4d"}`. The project is isolated from other projects and kept away from the cluster's machines, as [Network isolation](/docs/guides/network-isolation/) describes |
 | `GET /projects/{name}` | Any | none | `{"resource", "spec", "status"}` |
 | `PATCH /projects/{name}` | Admin | `displayName`, `environments` (list), `region` | `{"ok": true}` |
 | `DELETE /projects/{name}` | Admin | `confirmName`* (the display name) | `{"ok": true}` |
@@ -232,7 +232,10 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `POST /projects/{name}/environments` | Admin | `environment`* | `{"ok": true}`; an environment that exists is a `400` |
 | `POST /projects/{name}/compliance` | Admin | `requiredTags` (list, up to 8; an empty list clears them) | `{"ok": true, "requiredTags": ["hipaa"]}` |
 | `GET /projects/{name}/compliance` | Any | none | `{"requiredTags", "region", "databases": [{"name", "compliant", "missing"}], "openNodes"}`: where the project falls short of its tags |
-| `POST /projects/{name}/network` | Admin | `isolation`* (`Project` or `None`), `allowFromProjects` (list, up to 20) | `{"ok": true}` |
+| `GET /projects/{name}/network` | Any workspace token | none | `{"isolation", "allowFromProjects", "blockNodeAddresses"}`: who can reach the project's services now |
+| `POST /projects/{name}/network` | Admin | `isolation`* (`Project` or `None`), `allowFromProjects` (list, up to 20), `blockNodeAddresses` (`true` or `false`, as JSON booleans or the words; left as it is when not sent) | `{"ok": true}` |
+| `GET /projects/{name}/quota` | Any workspace token | none | `{"environment", "project", "used"}`, each an object of `cpu`, `memory`, `storage` and `pods`; one that is not set is left out |
+| `POST /projects/{name}/quota` | Admin | Per environment: `cpu`, `memory`, `storage` (amounts above zero, such as `4`, `8Gi`, `50Gi`), `pods` (1 to 100000). For the whole project: `projectCpu`, `projectMemory`, `projectStorage`, `projectPods`. A limit that is not sent keeps its value; one sent empty is removed | `{"ok": true}` |
 | `POST /projects/{name}/variables/save` | Admin | `name`*, `environment`*, `value`*, `secret` (`true` stores it as a secret) | `{"ok": true}` |
 | `GET /projects/{name}/metrics` | Any | `?window=`, `?environment=` | Series; see [Metrics and logs](#metrics-and-logs) |
 | `GET /projects/{name}/logs` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `tail`, `previous` | Merged live logs |
@@ -609,7 +612,7 @@ All of these are admin writes.
 
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
-| `POST /api/projects/create` | `region` (optional) | Creates a project with a generated ID and name and one environment, `production`. `201` `{"project":"proj-1a2b3c4d"}` |
+| `POST /api/projects/create` | `region` (optional) | Creates a project with a generated ID and name and one environment, `production`. It starts isolated from other projects and kept away from the cluster's machines. `201` `{"project":"proj-1a2b3c4d"}` |
 | `POST /api/projects/{project}/settings/save` | `displayName` (required), `environments` (repeat; at least one), `region` | Renames the project, sets its environments, and optionally its region. The region cannot change while the project has in-cluster databases |
 | `POST /api/projects/{project}/settings/delete` | `confirmName` (the display name) | Deletes the project, its services, databases, logical databases, buckets, cloud connections and GitHub connection, and revokes its tokens. Delete AWS buckets first and wait for them to go; see [Connect AWS](/docs/guides/connectors/aws/#remove-an-aws-connection) |
 | `POST /api/projects/{project}/environments/create` | `environment` | Adds an environment (a lowercase DNS label; the project ID plus the name must fit in 63 characters) |
@@ -624,7 +627,8 @@ All of these are admin writes.
 | `POST /api/projects/{project}/webhooks/rotate` | `id` | New signing secret, `{"ok":true,"id","secret"}` |
 | `POST /api/projects/{project}/webhooks/test` | `id` | Sends a test event, `{"ok":true,"delivery":{...}}`; `ok` is `false` when the delivery failed |
 | `POST /api/projects/{project}/backup-storage` | `connection` (an AWS connection), `bucket`, `region`; or `remove=on` | Chooses or clears where the project's database backups go |
-| `POST /api/projects/{project}/network` | `isolation` (`Project` or `None`), `allowFromProjects` (repeat, up to 20) | Sets [network isolation](/docs/guides/network-isolation/) |
+| `POST /api/projects/{project}/network` | `isolation` (`Project` or `None`), `allowFromProjects` (repeat, up to 20), `blockNodeAddresses` (`true` or `false`) | Sets [network isolation](/docs/guides/network-isolation/) and whether services are kept away from the cluster's machines. A request that leaves `blockNodeAddresses` out keeps it as it was |
+| `POST /api/projects/{project}/quota` | `cpu`, `memory`, `storage`, `pods`, `projectCpu`, `projectMemory`, `projectStorage`, `projectPods` | Sets the [project limits](/docs/guides/project-limits/): what each environment, and the whole project, can ask for. A limit that is not sent keeps its value; one sent empty is removed |
 | `POST /api/projects/{project}/compliance` | `requiredTags` (repeat, or comma-separated; at most 8) | Sets the node tags every workload of the project must run on. Each tag must exist on a node in the project's region and be reserved on every node that carries it, and a project that already has databases cannot take a tag its databases are not on. `{"ok":true,"requiredTags":[...]}`. See [Compliance tags](/docs/guides/compliance-tags/) |
 | `GET /api/projects/{project}/compliance` | none | Viewer. `{"requiredTags","region","databases":[{"name","compliant","missing"}],"openNodes"}`: what the project requires and which databases fall short |
 | `POST /api/projects/{project}/github/install` | `environment` | `{"ok":true,"url":"https://github.com/apps/..."}`: open it to install the GitHub App |

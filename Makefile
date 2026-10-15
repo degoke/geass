@@ -84,6 +84,18 @@ test-k3s-serverless: ## Run the scale-to-zero and function schedule test against
 test-k3s-objectstorage: ## Run the cluster object storage test (SeaweedFS and Garage, network policy, isolation) against the k3s that k3s-up started (takes about 10 minutes the first time).
 	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestObjectStorageOnK3s -v -timeout 60m
 
+.PHONY: test-k3s-limits
+test-k3s-limits: ## Run the project limits test (a project keeping its services away from the nodes, and per-environment quotas) against the k3s that k3s-up started. Add a second node to it first (see test/k3sintegration/README.md) so a remote node is probed too.
+	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestProjectLimitsOnK3s -v -timeout 25m
+
+.PHONY: test-k3s-ha
+test-k3s-ha: ## Run a three-server K3s in Docker, run the operator on it, and take down the server it runs on (about 10 minutes).
+	hack/k3s-ha-test.sh
+
+.PHONY: loadtest
+loadtest: ## Measure what the operator costs as a cluster grows. Use: make loadtest LOADTEST_ARGS="-apps 250,500,1000" (see hack/loadtest/main.go).
+	go run ./hack/loadtest $(LOADTEST_ARGS)
+
 .PHONY: test-k3s-integration
 test-k3s-integration: ## Run K3s HelmChart integration tests (requires K3S_INTEGRATION=true and kubeconfig).
 	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/...

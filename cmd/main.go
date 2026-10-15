@@ -37,6 +37,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
+	"github.com/degoke/geass/internal/netcheck"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
@@ -78,6 +79,11 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	// The operator's image is also what takes part in the check that the cluster enforces network policies, where it
+	// is a small program that listens or connects. That is not the operator and must not start it.
+	if len(os.Args) > 1 && os.Args[1] == "netcheck" {
+		os.Exit(netcheck.Run(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// One client configuration for everything that talks to the API server, so they share a connection
 	// pool and rate limits are not multiplied by the number of clients.
 	restConfig := ctrl.GetConfigOrDie()
@@ -247,10 +253,18 @@ func main() {
 		os.Exit(1)
 	}
 	webhookDispatcher := webhooks.NewDispatcher(mgr.GetClient())
+	// What the cluster's pods ask of its nodes, kept up to date from their events. The check that a new workload fits
+	// reads it instead of every pod, which cost more the more pods there were.
+	podUsage := platform.NewPodUsageIndex()
+	if err := mgr.Add(&controller.PodUsageTracker{Cache: mgr.GetCache(), Index: podUsage}); err != nil {
+		setupLog.Error(err, "Failed to add the pod usage tracker")
+		os.Exit(1)
+	}
 	if err := (&controller.GeassAppReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Webhooks: webhookDispatcher,
+		PodUsage: podUsage,
 		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
 		AsyncReports: true,
 	}).SetupWithManager(mgr); err != nil {
@@ -289,8 +303,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.GeassDatabaseReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		PodUsage: podUsage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassdatabase")
 		os.Exit(1)
@@ -324,8 +339,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.GeassObjectStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		PodUsage: podUsage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassobjectstore")
 		os.Exit(1)
@@ -335,6 +351,10 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassbackuparchive")
+		os.Exit(1)
+	}
+	if err := mgr.Add(&controller.NetworkPolicyChecker{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
+		setupLog.Error(err, "Failed to add the network policy check")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

@@ -46,6 +46,8 @@ type GeassObjectStoreReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	HTTP   *http.Client
+	// PodUsage is what the cluster's pods ask of its nodes, for the check that the server fits. Nil reads the pods.
+	PodUsage *platform.PodUsageIndex
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores,verbs=get;list;watch;create;update;patch;delete

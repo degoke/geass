@@ -166,6 +166,12 @@ func v1BodyToForm(contentType string, body []byte) (url.Values, error) {
 	}
 	form := url.Values{}
 	for key, value := range object {
+		// Most booleans are checkboxes: sent when on, left out when off. A setting that has a third state, "leave
+		// it as it is", cannot be switched off that way, so false has to be said.
+		if on, isBool := value.(bool); isBool && v1ExplicitBooleans[key] {
+			form[key] = []string{strconv.FormatBool(on)}
+			continue
+		}
 		values, err := v1FieldValues(value)
 		if err != nil {
 			return nil, fmt.Errorf("field %q: %w", key, err)
@@ -176,6 +182,9 @@ func v1BodyToForm(contentType string, body []byte) (url.Values, error) {
 	}
 	return form, nil
 }
+
+// v1ExplicitBooleans are the fields whose false means something that leaving them out does not.
+var v1ExplicitBooleans = map[string]bool{formBlockNodeAddresses: true}
 
 func v1FieldValues(value any) ([]string, error) {
 	switch typed := value.(type) {

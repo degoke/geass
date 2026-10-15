@@ -97,6 +97,7 @@ export default defineConfig({
             "docs/guides/scale-to-zero",
             "docs/guides/compliance-tags",
             "docs/guides/network-isolation",
+            "docs/guides/project-limits",
             "docs/guides/observability",
             "docs/guides/usage-and-capacity",
           ],
@@ -115,6 +116,7 @@ export default defineConfig({
           items: [
             "docs/operations/upgrading",
             "docs/operations/high-availability",
+            "docs/operations/sizing",
             "docs/operations/multi-provider",
             "docs/operations/security",
             "docs/operations/troubleshooting",

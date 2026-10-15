@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/source"
+	ctrlsource "sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
@@ -62,6 +62,8 @@ type GeassAppReconciler struct {
 	Scheme *runtime.Scheme
 	// Webhooks receives deployment outcomes; nil disables webhook notifications.
 	Webhooks webhooks.Emitter
+	// PodUsage is what the cluster's pods ask of its nodes, for the check that a new service fits. Nil reads the pods.
+	PodUsage *platform.PodUsageIndex
 	// HTTPClient makes the requests that report deploys to GitHub; nil uses one with a timeout.
 	HTTPClient *http.Client
 	// GitHubGuard holds back reports to GitHub that it refused; nil uses the guard the whole operator shares.
@@ -194,7 +196,7 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 	if err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
 	pullSecret, err := r.reconcileRegistryPullSecret(ctx, &app, wsNS)
@@ -259,6 +261,9 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 			}
 		}
 		r.reportToGitHub(ctx, &app, githubapp.DeploymentInProgress, "", wasReady)
+		if problem := quotaProblem(deploy); problem != "" {
+			return r.setNotReady(ctx, &app, problem)
+		}
 		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}
 	if app.Status.HealthCheckFailures != 0 {
@@ -1269,7 +1274,7 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	controllerBuilder := ctrl.NewControllerManagedBy(mgr)
 	if r.AsyncReports {
 		// What a report that runs on its own wants tried again arrives here, as the pause it asked for ends.
-		controllerBuilder = controllerBuilder.WatchesRawSource(source.Channel(r.reports.channel(), &handler.EnqueueRequestForObject{}))
+		controllerBuilder = controllerBuilder.WatchesRawSource(ctrlsource.Channel(r.reports.channel(), &handler.EnqueueRequestForObject{}))
 	}
 	return controllerBuilder.
 		For(&geassv1alpha1.GeassApp{}).

@@ -32,6 +32,8 @@ type GeassProjectReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=resourcequotas;limitranges,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=nodes;services,verbs=get;list;watch
 
 func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var project geassv1alpha1.GeassProject
@@ -79,6 +81,15 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.setProjectNotReady(ctx, &project, "Changing a project's clusterRef is not supported")
 	}
 
+	nodes, err := r.nodeNetworkFor(ctx, &project)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	quotaUsage, err := r.environmentUsage(ctx, &project)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	desired := make(map[string]string, len(project.Spec.Environments))
 	for _, env := range project.Spec.Environments {
 		if _, exists := desired[env]; exists {
@@ -97,7 +108,10 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.reconcileProjectNetwork(ctx, &project, namespace); err != nil {
+		if err := r.reconcileProjectNetwork(ctx, &project, namespace, nodes); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileProjectQuota(ctx, &project, namespace, quotaUsage); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileProjectCompliance(ctx, &project, namespace); err != nil {
@@ -122,12 +136,13 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&project), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+	_, err = platform.PatchStatus(ctx, r.Client, latest, func() {
 		latest.Status.Environments = make([]geassv1alpha1.GeassProjectEnvironmentStatus, 0, len(project.Spec.Environments))
 		latest.Status.ClusterRef = cluster.Name
 		for _, env := range project.Spec.Environments {
 			latest.Status.Environments = append(latest.Status.Environments, geassv1alpha1.GeassProjectEnvironmentStatus{Name: env, Namespace: desired[env]})
 		}
+		latest.Status.QuotaUsage = platform.QuotaUsageOf(project.Spec.ProjectQuota, quotaUsage)
 		retryState := reconcileRetryFromAPI(&latest.Status.ReconcileRetry)
 		platform.ClearReconcileRetry(&retryState)
 		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
@@ -221,5 +236,10 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}), builder.WithPredicates(readyOrSpecChanged())).
 		// A network policy that is edited or deleted by hand is put back.
 		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
+		// A project that blocks the cluster's machines names each one in its policy, so it follows the nodes.
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNodeChange), builder.WithPredicates(nodeNetworkChanged())).
+		// A quota that is edited or deleted by hand is put back.
+		Watches(&corev1.ResourceQuota{}, handler.EnqueueRequestsFromMapFunc(r.projectsForQuotaObject), builder.WithPredicates(r.quotaObjectEdited())).
+		Watches(&corev1.LimitRange{}, handler.EnqueueRequestsFromMapFunc(r.projectsForQuotaObject), builder.WithPredicates(r.quotaObjectEdited())).
 		Complete(r)
 }

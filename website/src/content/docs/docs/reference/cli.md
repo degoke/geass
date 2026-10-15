@@ -22,7 +22,7 @@ to see the command list, and `geass help <command>` (or `geass <command> --help`
 | Account | `login`, `logout`, `whoami`, `version`, `config` |
 | Services | `apps`, `deploy`, `build`, `status`, `logs`, `env`, `scale`, `rollback`, `metrics` |
 | Functions | `functions` |
-| Data and cluster | `projects`, `databases`, `stores`, `nodes`, `compliance` |
+| Data and cluster | `projects` (with `quota` and `network`), `databases`, `stores`, `nodes`, `compliance` |
 | Raw API and agents | `api`, `openapi`, `mcp` |
 | Built in | `help`, `completion`, `--help` (`-h`), `--version` (`-v`) |
 
@@ -142,7 +142,7 @@ creates its folder with mode `0700`, and replaces it atomically. A file that is 
   always print JSON.
 - `geass deploy` and `geass build` print `{"deployed": [...]}` or `{"building": [...]}` with `--json` when they do not wait, and `{"items": [...]}` (the services' statuses) when they do.
 - These commands print plain text lines whatever `--json` says: `scale`, `rollback`, `env set`, `env unset`,
-  `apps create`, `apps delete`, `nodes tag`, `compliance set`, `compliance clear`, `functions triggers add`,
+  `apps create`, `apps delete`, `nodes tag`, `compliance set`, `compliance clear`, `projects network set`, `functions triggers add`,
   `functions triggers remove`, `logout`, `config use-context` and `config set-context`.
 - With `--json`, `geass logs` prints one indented JSON object per log line. The objects are not on one line each, so
   read them as a stream (`jq -c .` reads them).
@@ -846,6 +846,63 @@ geass projects get NAME
 with `geass projects get NAME`. `get` prints `resource`, `spec` and `status` as JSON.
 
 **API calls:** `GET /projects`, `GET /projects/{name}`. **Needs:** any workspace token.
+
+#### `geass projects quota`
+
+Caps what a project's environments, and the project as a whole, can ask for. A project with no limits can ask for
+everything the cluster has. See [Project limits](/docs/guides/project-limits/).
+
+```text
+geass projects quota show PROJECT
+geass projects quota set PROJECT [--cpu Q] [--memory Q] [--storage Q] [--pods N]
+                                 [--project-cpu Q] [--project-memory Q] [--project-storage Q] [--project-pods N]
+geass projects quota clear PROJECT
+```
+
+`show` prints a table of the limits for each environment and for the whole project, with what the project uses of its
+whole-project limits, or the same as JSON with `--json`. `set` changes only the limits you name: one you leave out keeps
+its value, and one you give empty (`--memory ''`) is removed. `clear` removes every limit. `set` and `clear` print the
+limits as they are afterwards.
+
+| Flag | Type | Meaning |
+| --- | --- | --- |
+| `--cpu`, `--memory`, `--storage`, `--pods` | string | The most one environment's pods may ask for in CPU (such as `4` or `500m`), memory (`8Gi`), disk (`50Gi`) and pods |
+| `--project-cpu`, `--project-memory`, `--project-storage`, `--project-pods` | string | The most the whole project may ask for, added up over its environments |
+
+```bash
+geass projects quota set shop --project-cpu 8 --project-memory 16Gi --cpu 4
+geass projects quota set shop --memory ''
+```
+
+**API calls:** `GET /projects/{name}/quota`, and `POST /projects/{name}/quota` for `set` and `clear`. **Needs:** any
+workspace token to show, **Full access** to change.
+
+#### `geass projects network`
+
+Chooses who can reach a project's services, and whether they are kept away from the machines the cluster runs on. See
+[Network isolation](/docs/guides/network-isolation/).
+
+```text
+geass projects network show PROJECT
+geass projects network set PROJECT [--isolation project|none] [--allow-from PROJECT,...] [--block-nodes[=false]]
+```
+
+`set` changes only what you name and leaves the rest as it was. It reads the current settings first, because the API
+takes all of who may reach a project each time.
+
+| Flag | Type | Meaning |
+| --- | --- | --- |
+| `--isolation` | string | `project` (also `private`) lets in only the project itself, the platform and public domains. `none` (also `open`) lets in every service in the cluster |
+| `--allow-from` | list of strings | Other projects that may reach this one. An empty value lets in none |
+| `--block-nodes` | boolean | Keep the project's services away from the addresses of the cluster's machines. `--block-nodes=false` allows it |
+
+```bash
+geass projects network set shop --block-nodes
+geass projects network set shop --allow-from billing,search
+```
+
+**API calls:** `GET /projects/{name}/network`, and `POST /projects/{name}/network` for `set`. **Needs:** any workspace
+token to show, **Full access** to change.
 
 ### `geass databases`
 

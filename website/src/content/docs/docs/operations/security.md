@@ -20,6 +20,8 @@ had no independent audit, and nothing here should be read as one.
 | Project to project traffic | A network policy per project environment (on by default) |
 | Where a project's data runs | Compliance tags: node selectors on everything the project runs, and an admission policy as a backstop |
 | Cloud metadata service | A network policy that blocks `169.254.0.0/16` from every project namespace |
+| The cluster's machines | A network policy that blocks every node address, with the Kubernetes API left open on the control plane. On for projects created in the dashboard or the API; a choice for older projects |
+| One project using all the room | Optional per project: a quota on the CPU, memory, disk and pods of the project, of each environment, or both |
 | Metrics and log stores | Network policies that admit only platform namespaces |
 | Object storage server | A network policy, `geass-s3`, that opens the S3 port to every namespace, opens Garage's admin port to the platform only, and closes every other port |
 | HTTPS certificates | cert-manager and a Let's Encrypt `ClusterIssuer` that Geass creates once you give it a contact email |
@@ -253,6 +255,7 @@ the public internet once you publish the dashboard.
 | Port | Used for | Who should reach it |
 | --- | --- | --- |
 | 6443/tcp | Kubernetes API | Your other nodes, and your own address if you run `kubectl` remotely |
+| 2379/tcp, 2380/tcp | etcd, the cluster's database, between control plane servers. Only needed with [more than one control plane server](/docs/operations/high-availability/#run-three-control-plane-servers) | The control plane servers, and nothing else |
 | 10250/tcp | kubelet | Your other nodes |
 | 8472/udp | Overlay network (VXLAN) | Your other nodes |
 | 51820/udp | Overlay network (WireGuard, multi-provider clusters only) | Your other nodes |
@@ -360,6 +363,13 @@ Without network policies every pod in a Kubernetes cluster can reach every other
 - **Cloud metadata.** Every project namespace gets `geass-block-cloud-metadata`, which lets pods reach everything except
   `169.254.0.0/16`, so a pod cannot read the instance credentials of the machine it runs on. It applies whether or not the
   project is isolated.
+- **The cluster's machines.** A project can switch on `blockNodeAddresses`, which adds every node's addresses to that same
+  policy's exceptions, so a pod cannot open a connection to a node's kubelet or the metrics of the host. The Kubernetes API
+  stays open on the control plane, because Postgres databases use it. It is on for new projects, off for projects that existed
+  before it, and Geass keeps it in step with the nodes. See [Network isolation](/docs/guides/network-isolation/#keep-services-away-from-the-clusters-machines).
+- **Project limits.** A project can cap what it asks for as a whole and what each of its environments asks for. It is off by default. See
+  [Project limits](/docs/guides/project-limits/).
+- **A check that policies are enforced.** All of this depends on the network plugin acting on policies. Geass tries it, and the **Usage** page says **Not enforced** when it does not. See [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies).
 - **Telemetry.** The Prometheus and log stores have no login and hold every project's data, so Geass limits them to the
   platform namespaces with `geass-restrict-metrics-store` and `geass-restrict-log-store`.
 - **Object storage.** The cluster's object storage server gets the policy `geass-s3` in `geass-system`. Its S3 port (8333 for

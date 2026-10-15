@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,8 +188,15 @@ func upgradeFindings(state ClusterState, opts UpgradeOptions) (blockers, warning
 		}
 	}
 	if state.ControlPlanes > 1 {
-		warnings = append(warnings, fmt.Sprintf("this cluster has %d control plane nodes; the installer upgrades only the one it runs on, "+
+		warnings = append(warnings, fmt.Sprintf("this cluster has %d control plane nodes; the installer upgrades K3s only on the one it runs on, "+
 			"and the others have to be upgraded by hand, one at a time", state.ControlPlanes))
+	}
+	if len(state.ControlPlanesWithoutNewImage) > 0 {
+		warnings = append(warnings, fmt.Sprintf("the new operator can start on any control plane node, and these do not report its image (%s): %s. "+
+			"The image is in no registry, only inside this installer, so an operator that starts on one of them cannot pull it, and the update "+
+			"rolls back. Run this installer with no options on each of them first (that only puts the image "+
+			"there), then run the update here. If you have done that already, this may be the report not having caught up (a node can take "+
+			"some seconds to report an image it was just given) or leaving the image out (a node reports at most 50)", state.NewOperatorImage, strings.Join(state.ControlPlanesWithoutNewImage, ", ")))
 	}
 	if len(state.UnprotectedDatabases) > 0 {
 		warnings = append(warnings, "these databases are not backed up, so the etcd snapshot does not cover their data (it holds the cluster's "+
@@ -404,14 +412,44 @@ type UpgradeSummary struct {
 
 func (s *UpgradeSummary) Name() string { return "summary" }
 
+// controlPlaneMove says what K3s this server ran before the update, and which of the other control plane servers run
+// something other than the release it is being moved to, as "name (release)". The cluster is read before anything
+// changes, so each server's release is what it was then. Without a release for this server it is the oldest one.
+func (p *UpgradePlan) controlPlaneMove() (moved string, others []string) {
+	self := thisNode()
+	moved = p.State.K3sVersion
+	if version := p.State.ControlPlaneVersions[self]; version != "" {
+		moved = version
+	}
+	for name, version := range p.State.ControlPlaneVersions {
+		if name != self && version != p.K3sTo {
+			others = append(others, name+" ("+orUnknown(version)+")")
+		}
+	}
+	slices.Sort(others)
+	return moved, others
+}
+
 func (s *UpgradeSummary) Run() error {
 	p := s.Plan
 	from := release.Describe(p.State.RecordedRelease())
 	fmt.Printf("  %s -> %s\n", from, release.Describe(p.Target))
-	if p.K3sTo != "" && p.State.K3sVersion != p.K3sTo {
-		fmt.Printf("  K3s (control plane) %s -> %s\n", orUnknown(p.State.K3sVersion), p.K3sTo)
-		if p.State.Workers > 0 {
-			fmt.Printf("  The operator now upgrades the %d worker node(s) to K3s %s, one at a time. Watch it with:\n", p.State.Workers, p.K3sTo)
+	if p.K3sTo != "" {
+		moved, others := p.controlPlaneMove()
+		if moved != p.K3sTo {
+			fmt.Printf("  K3s (control plane) %s -> %s\n", orUnknown(moved), p.K3sTo)
+		}
+		if len(others) > 0 {
+			fmt.Printf("  The other %d control plane server(s) still run an older K3s: %s. Upgrade each of them by hand, one at a time, and wait for its node to be ready:\n",
+				len(others), strings.Join(others, ", "))
+			fmt.Printf("    curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION=%s INSTALL_K3S_EXEC=server sh -\n", p.K3sTo)
+		}
+		if p.State.Workers > 0 && (len(others) > 0 || moved != p.K3sTo) {
+			if len(others) > 0 {
+				fmt.Printf("  The operator upgrades the %d worker node(s) to K3s %s, one at a time, once every control plane server runs it. Watch it with:\n", p.State.Workers, p.K3sTo)
+			} else {
+				fmt.Printf("  The operator now upgrades the %d worker node(s) to K3s %s, one at a time. Watch it with:\n", p.State.Workers, p.K3sTo)
+			}
 			fmt.Printf("    kubectl -n geass-system get geasscluster %s -o jsonpath='{.status.k3s}'\n", p.State.ClusterName)
 		}
 	}

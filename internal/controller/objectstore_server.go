@@ -70,7 +70,7 @@ func (r *GeassObjectStoreReconciler) reconcileClusterServer(ctx context.Context,
 		return ctrl.Result{Requeue: true}, nil
 	}
 	est := platform.EstimateFromResources("Object storage server", objectStoreServerResources(store), 1)
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: platform.ObjectStoreServerName, Namespace: platform.SystemNamespace}}, est, placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: platform.ObjectStoreServerName, Namespace: platform.SystemNamespace}}, est, placement); !ok {
 		return r.setNotReady(ctx, store, msg)
 	}
 	storageClass, wait, err := r.serverStorageClass(ctx, store, placement)

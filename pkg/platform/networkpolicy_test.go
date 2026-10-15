@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -69,7 +70,7 @@ func TestIsolationNeverNamesAnotherProjectUnlessOptedIn(t *testing.T) {
 }
 
 func TestCloudMetadataIsBlockedButNothingElseIsCutOff(t *testing.T) {
-	policy := CloudMetadataPolicy("shop", "shop-production")
+	policy := CloudMetadataPolicy("shop", "shop-production", nil)
 
 	require.Equal(t, []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}, policy.Spec.PolicyTypes)
 	require.Len(t, policy.Spec.Egress, 1)
@@ -80,6 +81,42 @@ func TestCloudMetadataIsBlockedButNothingElseIsCutOff(t *testing.T) {
 	require.Equal(t, "0.0.0.0/0", to[1].IPBlock.CIDR, "the internet and private networks stay reachable: services use outside databases")
 	require.Equal(t, []string{"169.254.0.0/16"}, to[1].IPBlock.Except, "the instance credentials service is the one thing that is not")
 	require.Equal(t, "shop", policy.Labels[LabelProject], "labelled so a change to it is traced back to its project")
+}
+
+func TestBlockingTheNodesNamesThemInTheSameExceptionListAndKeepsTheAPIOpen(t *testing.T) {
+	nodes := &NodeNetwork{
+		Blocked:      []string{"10.0.0.5/32", "10.0.0.6/32", "10.42.0.0/32", "10.42.0.1/32"},
+		APIAddresses: []string{"10.0.0.5/32"},
+		APIPort:      6443,
+	}
+	policy := CloudMetadataPolicy("shop", "shop-production", nodes)
+
+	require.Len(t, policy.Spec.Egress, 2, "everything but the machines, and the API on the control plane")
+	pods, outside := policy.Spec.Egress[0].To[0], policy.Spec.Egress[0].To[1]
+	require.NotNil(t, pods.NamespaceSelector, "pods stay reachable by selector, so blocking the machines never cuts off DNS or another service")
+	require.Equal(t, "0.0.0.0/0", outside.IPBlock.CIDR)
+	require.Equal(t, []string{"169.254.0.0/16", "10.0.0.5/32", "10.0.0.6/32", "10.42.0.0/32", "10.42.0.1/32"}, outside.IPBlock.Except,
+		"the metadata range and the machines are one exception list: policies add up, so a second policy excepting the machines would be cancelled by this one allowing them")
+
+	api := policy.Spec.Egress[1]
+	require.Len(t, api.To, 1)
+	require.Equal(t, "10.0.0.5/32", api.To[0].IPBlock.CIDR)
+	require.Empty(t, api.To[0].IPBlock.Except)
+	require.Len(t, api.Ports, 1)
+	require.Equal(t, int32(6443), api.Ports[0].Port.IntVal, "a Postgres instance reaches the API through the control plane's address, and only on its API port")
+	require.Equal(t, corev1.ProtocolTCP, *api.Ports[0].Protocol)
+}
+
+func TestBlockingTheNodesBeforeAnyIsKnownChangesNothingElse(t *testing.T) {
+	policy := CloudMetadataPolicy("shop", "shop-production", &NodeNetwork{APIPort: 6443})
+
+	require.Len(t, policy.Spec.Egress, 1, "no control plane address, so no rule for the API")
+	require.Equal(t, []string{"169.254.0.0/16"}, policy.Spec.Egress[0].To[1].IPBlock.Except)
+}
+
+func TestNotBlockingTheNodesIsExactlyWhatItWasBefore(t *testing.T) {
+	require.Equal(t, CloudMetadataPolicy("shop", "shop-production", nil), CloudMetadataPolicy("shop", "shop-production", &NodeNetwork{}),
+		"a project that does not opt in must see no change when it is updated")
 }
 
 func TestTheMetricsAndLogStoresAcceptOnlyThePlatform(t *testing.T) {
@@ -108,7 +145,7 @@ func TestTheMetricsAndLogStoresAcceptOnlyThePlatform(t *testing.T) {
 func TestEveryPolicyIsOneTheOperatorWatches(t *testing.T) {
 	for _, policy := range []*networkingv1.NetworkPolicy{
 		ProjectIsolationPolicy(networkProject("shop", nil), "shop-production"),
-		CloudMetadataPolicy("shop", "shop-production"),
+		CloudMetadataPolicy("shop", "shop-production", nil),
 		LogStorePolicy(),
 		MetricsStorePolicy(),
 	} {

@@ -52,6 +52,8 @@ type GeassDatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	HTTP   *http.Client
+	// PodUsage is what the cluster's pods ask of its nodes, for the check that a new database fits. Nil reads the pods.
+	PodUsage *platform.PodUsageIndex
 
 	// newBackupStorage builds the AWS client used for backup storage; tests replace it.
 	newBackupStorage backupStorageFactory
@@ -225,7 +227,7 @@ func databaseName(db *geassv1alpha1.GeassDatabase) string {
 }
 
 func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, log interface{ Info(string, ...any) }) (ctrl.Result, error) {
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.ensureCNPGOperator(ctx); err != nil {
@@ -301,7 +303,7 @@ func (r *GeassDatabaseReconciler) recoveryForNewCluster(ctx context.Context, db 
 }
 
 func (r *GeassDatabaseReconciler) reconcileHelmDatabase(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, chartName, chart, repo, version, values, host, port, scheme string, placement platform.Placement) (ctrl.Result, error) {
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: chartName, Namespace: platform.HelmChartNamespace}}, databaseCapacityEstimate(db), placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &helmv1.HelmChart{ObjectMeta: metav1.ObjectMeta{Name: chartName, Namespace: platform.HelmChartNamespace}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
@@ -373,7 +375,7 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	if db.Spec.HighAvailability {
 		return r.setNotReady(ctx, db, "SQLite does not support high availability")
 	}
-	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
+	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}, databaseCapacityEstimate(db), placement); !ok {
 		return r.setNotReady(ctx, db, msg)
 	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {

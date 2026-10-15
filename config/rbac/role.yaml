@@ -8,8 +8,10 @@ rules:
   - ""
   resources:
   - configmaps
+  - limitranges
   - namespaces
   - persistentvolumeclaims
+  - resourcequotas
   - secrets
   - services
   verbs:
@@ -34,8 +36,17 @@ rules:
   - ""
   resources:
   - persistentvolumes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
+  - create
+  - delete
   - get
   - list
   - watch

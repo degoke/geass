@@ -80,6 +80,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Environment.** An isolated copy of a project's resources, such as `production` or `staging`, with its own namespace. See [Projects and environments](/docs/guides/projects-and-environments/).
 
+**Environment quota.** An optional cap on the CPU, memory, disk and pods that each environment of a project can ask for. A **project quota** caps the project as a whole, added up over its environments. Either keeps one project from using all the room in the cluster. See [Project limits](/docs/guides/project-limits/).
+
 **Environment variable.** A named value given to a service, as plain config, a secret, or a shared variable. See [Environment variables](/docs/guides/environment-variables/).
 
 **Event function.** A function in event mode: you export a handler that is given an event for each request or schedule, and Geass serves HTTP for it. See [Functions](/docs/guides/functions/).

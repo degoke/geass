@@ -10,12 +10,15 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
   const network = project.spec?.network || {};
   const savedPrivate = (network.isolation || "Project") === "Project";
   const savedAllowed = network.allowFromProjects || [];
+  const savedBlockNodes = Boolean(network.blockNodeAddresses);
   const [isPrivate, setIsPrivate] = useState(savedPrivate);
+  const [blockNodes, setBlockNodes] = useState(savedBlockNodes);
   const [allowed, setAllowed] = useState(savedAllowed);
   const [busy, setBusy] = useState(false);
   const others = list(data, "projects").filter((item) => resourceName(item) !== name);
 
   const changed = isPrivate !== savedPrivate
+    || blockNodes !== savedBlockNodes
     || [...allowed].sort().join(",") !== [...savedAllowed].sort().join(",");
 
   const toggle = (project, on) => setAllowed((current) => (on ? [...current, project] : current.filter((entry) => entry !== project)));
@@ -23,7 +26,7 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
   const save = (event) => {
     event.preventDefault();
     setBusy(true);
-    action(`/projects/${name}/network`, { isolation: isPrivate ? "Project" : "None", allowFromProjects: isPrivate ? allowed : [] })
+    action(`/projects/${name}/network`, { isolation: isPrivate ? "Project" : "None", allowFromProjects: isPrivate ? allowed : [], blockNodeAddresses: blockNodes })
       .then(() => { reload(); alertUser("Network settings saved"); })
       .catch((error) => alertUser(error.message))
       .finally(() => setBusy(false));
@@ -70,6 +73,16 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
       ) : (
         <p className="rw-rail-hint">Every project in the cluster can reach this project&apos;s services.</p>
       )}
+
+      <SettingsPanel className="rw-resource-settings-toggle-row">
+        <Switch
+          label="Keep this project's services away from the cluster's machines"
+          description="Services cannot open connections to the addresses of the servers Geass runs on, where each server's own tools and metrics answer. The Kubernetes API stays reachable for databases that need it. Geass follows the servers as they join and leave. A service that calls another through a server's address, such as its own public address, stops working."
+          checked={blockNodes}
+          disabled={!mutable}
+          onChange={(event) => setBlockNodes(event.currentTarget.checked)}
+        />
+      </SettingsPanel>
 
       <p className="rw-rail-hint">
         Whatever you choose here, services are never allowed to read the cloud provider&apos;s credentials for the

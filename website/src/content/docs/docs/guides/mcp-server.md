@@ -55,7 +55,7 @@ with Geass before it starts and tells you what it offers on standard error, beca
 protocol:
 
 ```text
-geass MCP server ready with 27 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app
+geass MCP server ready with 30 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, project_network, project_quota, set_project_quota, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app
 ```
 
 The tools are decided once, when the server starts. To give the agent a different role, start a new server with
@@ -199,6 +199,7 @@ send your Geass API token as a Bearer token
 | See what runs | `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics` |
 | Read logs and variable names | `get_logs`, `deployment_logs`, `list_variables` |
 | Databases, buckets, nodes, compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
+| Project limits and network | `project_quota`, `project_network`, and `set_project_quota` (an admin token, not read-only) |
 | Deploy and recover | `deploy_app`, `rebuild_app`, `rollback_app` |
 | Scale and configure | `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable` |
 | Functions | `set_function_trigger`, `remove_function_trigger`, `invoke_function` |
@@ -211,13 +212,13 @@ failed, with the reason, so the agent does not have to poll. See [MCP tools](/do
 
 The server has only the tools above. There is no tool, so an agent cannot:
 
-- Create projects, environments, databases or buckets, delete projects or environments, change a project's settings, or
-  restore a backup. (With `--allow-delete`, `delete_resource` can delete a service, database, bucket or logical
+- Create projects, environments, databases or buckets, delete projects or environments, change a project's settings
+  other than its resource limits, or restore a backup. (With `--allow-delete`, `delete_resource` can delete a service, database, bucket or logical
   database.)
 - Change a service's image, source, size, domain or any setting other than its replicas, its sleeping when idle, its
   variables and a function's schedules. It cannot edit a function's code or create a function.
 - Open a terminal in a pod, or read a pod's files.
-- Tag nodes or change a project's compliance tags. It can only read them.
+- Tag nodes, or change a project's compliance tags or who can reach its services. It can only read them. It can change a project's resource limits with `set_project_quota`, if the token is an admin's.
 - Create, list or revoke API tokens, or change users, connections or cluster settings.
 - Read a secret's value, a database password or a connection string. See below.
 

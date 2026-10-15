@@ -45,6 +45,10 @@ func controlPlanePorts(network Network) []firewallPort {
 
 type FirewallSetup struct {
 	Network Network
+	// ServerPeer opens what servers use to reach each other's database too, on a machine that is joining a cluster
+	// as a server. They are not opened on a first server: nothing needs them until a second one joins, and etcd
+	// is better not listening to the world for nothing.
+	ServerPeer bool
 }
 
 func (s *FirewallSetup) Name() string { return "configure firewall" }
@@ -59,7 +63,11 @@ func (s *FirewallSetup) Run() error {
 	Logf(s.Name(), "Detected active firewall backend: %s", fw)
 
 	added := false
-	for _, p := range controlPlanePorts(s.Network) {
+	ports := controlPlanePorts(s.Network)
+	if s.ServerPeer {
+		ports = append(ports, firewallPort{etcdClientPort, "tcp", "etcd client, between servers"}, firewallPort{etcdPeerPort, "tcp", "etcd peer, between servers"})
+	}
+	for _, p := range ports {
 		switch fw {
 		case "ufw":
 			if err := runCommand(s.Name(), "ufw", "allow", fmt.Sprintf("%s/%s", p.port, p.protocol)); err != nil {

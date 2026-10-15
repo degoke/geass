@@ -92,6 +92,9 @@ type GeassClusterReconciler struct {
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// The check that the cluster enforces network policies (netpolicy_check.go) makes and removes its own pods, in its own
+// namespace, from the pods it needs the operator's image on the control plane for.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=create;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
 
