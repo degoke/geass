@@ -94,7 +94,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Garage.** One of the two servers Geass can run as the cluster's object storage. A small server that suits low-memory nodes and plain uploads. See [Choosing SeaweedFS or Garage](/docs/guides/object-storage/#choosing-seaweedfs-or-garage).
 
-**GitHub App.** The one app, registered in GitHub, that lets Geass read repositories, receive pushes and build. See [Connect GitHub](/docs/guides/connectors/github/).
+**GitHub App.** The one app, registered in GitHub, that lets Geass read repositories, receive pushes, build, and report builds, deploys and pull request environments back to GitHub. See [Connect GitHub](/docs/guides/connectors/github/).
 
 ## H
 

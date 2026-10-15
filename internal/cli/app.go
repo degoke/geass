@@ -179,7 +179,7 @@ func (a *App) Root() *cobra.Command {
 	root.AddCommand(
 		a.loginCmd(), a.logoutCmd(), a.whoamiCmd(), a.versionCmd(), a.configCmd(),
 		a.projectsCmd(), a.appsCmd(), a.databasesCmd(), a.storesCmd(), a.nodesCmd(), a.complianceCmd(),
-		a.deployCmd(), a.statusCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(), a.metricsCmd(),
+		a.deployCmd(), a.buildCmd(), a.statusCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(), a.metricsCmd(),
 		a.functionsCmd(), a.apiCmd(), a.openapiCmd(), a.mcpCmd(),
 	)
 	return root

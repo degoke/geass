@@ -23,6 +23,9 @@ const ROLE_OPTIONS = [
 const ROLE_LABELS = { admin: "Full access", observer: "Read only, with logs", viewer: "Read only" };
 
 function describeToken(token, projects) {
+  if (token.scope === "service") {
+    return `Deploy hook · ${token.app} · ${token.environment}`;
+  }
   if (token.scope === "project") {
     const project = projects.find((item) => resourceName(item) === token.project);
     return `Project ${project ? project.spec?.displayName || resourceDisplayName(project) : token.project} · ${token.environment}`;
@@ -57,7 +60,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
   const [revoking, setRevoking] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const items = (tokens.data?.items || []).filter((item) => scope === "workspace" || item.scope === "project");
+  const items = (tokens.data?.items || []).filter((item) => scope === "workspace" || item.scope === "project" || item.scope === "service");
 
   const create = async (event) => {
     event.preventDefault();

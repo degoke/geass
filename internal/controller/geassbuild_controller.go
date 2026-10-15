@@ -22,7 +22,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
@@ -35,6 +37,14 @@ type GeassBuildReconciler struct {
 	Scheme     *runtime.Scheme
 	Kube       kubernetes.Interface
 	HTTPClient *http.Client
+	// GitHubGuard holds back reports to GitHub that it refused; nil uses the guard the whole operator shares.
+	GitHubGuard *githubapp.Guard
+	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
+	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
+	AsyncReports bool
+
+	retries reportRetries
+	reports reportDispatcher
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassbuilds,verbs=get;list;watch;create;update;patch;delete
@@ -45,8 +55,17 @@ type GeassBuildReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores,verbs=get;list;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs,verbs=get
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassapps,verbs=get;list;watch
 
 func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	result, err := r.reconcileBuild(ctx, req)
+	// A report to GitHub that failed for a reason that may pass is tried again soon, even when the build itself has
+	// nothing more to do.
+	return r.retries.apply(req.NamespacedName, result), err
+}
+
+func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	build := &geassv1alpha1.GeassBuild{}
 	if err := r.Get(ctx, req.NamespacedName, build); err != nil {
@@ -56,6 +75,8 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// A build that was deleted since it was read (pruned, or its service removed) is not an error.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	// A build that Geass has been reporting to GitHub may owe it a state that did not get through.
+	r.reportTrackedBuild(ctx, build)
 	// A build that has finished and has nothing left to do is not looked at again. Every build ever made
 	// would otherwise be reconciled on each operator restart and each event of its job, and each pass
 	// asked GitHub about it and copied its log again.
@@ -152,7 +173,7 @@ func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	} else if job.Status.Failed > 0 {
 		phase = geassv1alpha1.GeassBuildFailed
 		completed = ptr(metav1.Now())
-		failure = fmt.Errorf("kaniko Job failed")
+		failure = errors.New(kanikoJobFailedReason)
 	}
 	if completed != nil && build.Spec.LogStoreRef != nil {
 		if ref := r.archiveBuildLog(ctx, build); ref != "" {
@@ -334,7 +355,8 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 	if phase == geassv1alpha1.GeassBuildSucceeded && imageDigest == "" && latest.Status.Phase == geassv1alpha1.GeassBuildSucceeded {
 		imageDigest = latest.Status.ImageDigest
 	}
-	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
+	before := latest.Status.Phase
+	wrote, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		latest.Status.Phase = phase
 		latest.Status.JobRef = build.Name + "-kaniko"
 		latest.Status.LogRef = build.Status.LogRef
@@ -370,7 +392,16 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 			}
 		}
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Told to GitHub after the status is written, so GitHub is only told what the build recorded. A build whose
+	// phase did not change has nothing new to say, which is also what keeps builds made before this existed quiet.
+	if wrote {
+		changed := latest.Status.Phase != before
+		r.dispatchReport(ctx, latest, func(ctx context.Context, build *geassv1alpha1.GeassBuild) { r.reportBuild(ctx, build, changed) })
+	}
+	return nil
 }
 
 func (r *GeassBuildReconciler) archiveBuildLog(ctx context.Context, build *geassv1alpha1.GeassBuild) string {
@@ -459,7 +490,7 @@ func (r *GeassBuildReconciler) refreshGitHubState(ctx context.Context, build *ge
 			if err != nil {
 				return false, err
 			}
-			sha, err := r.githubRequest(ctx, token, build, "/commits/"+url.PathEscape(build.Spec.Branch), nil)
+			sha, err := r.githubRequest(ctx, token, build, http.MethodGet, "/commits/"+url.PathEscape(build.Spec.Branch), nil)
 			if err != nil {
 				return false, err
 			}
@@ -490,7 +521,7 @@ func (r *GeassBuildReconciler) refreshGitHubState(ctx context.Context, build *ge
 	if err != nil {
 		return false, err
 	}
-	checks, err := r.githubRequest(ctx, token, build, "/commits/"+url.PathEscape(build.Status.SourceRevision)+"/check-runs", nil)
+	checks, err := r.githubRequest(ctx, token, build, http.MethodGet, "/commits/"+url.PathEscape(build.Status.SourceRevision)+"/check-runs", nil)
 	if err != nil {
 		var refused *githubAPIError
 		if errors.As(err, &refused) && refused.code == http.StatusForbidden {
@@ -544,18 +575,34 @@ func (r *GeassBuildReconciler) refreshGitCredentialToken(ctx context.Context, bu
 	return err
 }
 
-func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, build *geassv1alpha1.GeassBuild, path string, body io.Reader) ([]byte, error) {
-	repo := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(build.Spec.Repository, "https://github.com/"), "http://github.com/"), ".git")
+// githubRequest makes a request to the build's repository on GitHub's API and returns the answer. body, when it
+// is not nil, is sent as JSON, which is what the calls that change something take.
+func (r *GeassBuildReconciler) githubRequest(ctx context.Context, token string, build *geassv1alpha1.GeassBuild, method, path string, body any) ([]byte, error) {
+	repo := githubapp.NormalizeRepository(build.Spec.Repository)
+	if repo == "" {
+		return nil, fmt.Errorf("%q is not a GitHub repository", build.Spec.Repository)
+	}
 	httpClient := r.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+repo+path, body)
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "https://api.github.com/repos/"+repo+path, reader)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/vnd.github+json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	response, err := httpClient.Do(request)
 	if err != nil {
 		return nil, err
@@ -633,5 +680,10 @@ func (r *GeassBuildReconciler) ensureAppLabel(ctx context.Context, build *geassv
 }
 
 func (r *GeassBuildReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).For(&geassv1alpha1.GeassBuild{}).Owns(&batchv1.Job{}).Named("geassbuild").Complete(r)
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr)
+	if r.AsyncReports {
+		// What a report that runs on its own wants tried again arrives here, as the pause it asked for ends.
+		controllerBuilder = controllerBuilder.WatchesRawSource(source.Channel(r.reports.channel(), &handler.EnqueueRequestForObject{}))
+	}
+	return controllerBuilder.For(&geassv1alpha1.GeassBuild{}).Owns(&batchv1.Job{}).Named("geassbuild").Complete(r)
 }

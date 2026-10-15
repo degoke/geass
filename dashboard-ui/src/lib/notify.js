@@ -1,12 +1,12 @@
 import { notifications } from "@mantine/notifications";
 
-export function notify(message, tone = "neutral") {
+export function notify(message, tone = "neutral", options = {}) {
   const text = String(message);
   const color = tone === "error" ? "red" : tone === "success" ? "signal" : "gray";
   notifications.show({
     message: text,
     color,
-    autoClose: 4200,
+    autoClose: options.autoClose ?? 4200,
     withBorder: true,
     radius: "md",
   });

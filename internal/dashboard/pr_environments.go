@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultMaxPREnvironments = 5
-	labelPullRequest         = "geass.dev/pull-request"
+	labelPullRequest         = platform.LabelPullRequest
 )
 
 // githubPullRequestPayload is the part of a GitHub pull_request event Geass reads.
@@ -470,6 +470,8 @@ func (s *Server) closePullRequestEnvironment(ctx context.Context, projectName, r
 		return result, nil
 	}
 	result.Env = entry.Environment
+	// The GitHub Deployments of the environment are read first: they are named on the services that go with it.
+	deployments := s.pullRequestDeployments(ctx, projectName, entry.Environment, number)
 	deleted, err := s.removeEnvironment(ctx, projectName, entry.Environment)
 	switch {
 	case err == nil:
@@ -484,11 +486,19 @@ func (s *Server) closePullRequestEnvironment(ctx context.Context, projectName, r
 		return result, err
 	}
 	result.Removed = deleted
-	return result, s.updateProjectStatus(ctx, projectName, func(status *geassv1alpha1.GeassProjectStatus) {
+	if err := s.updateProjectStatus(ctx, projectName, func(status *geassv1alpha1.GeassProjectStatus) {
 		if index, found := findPullRequestIn(status, repo, number); found {
 			status.PullRequests = slices.Delete(status.PullRequests, index, index+1)
 		}
+	}); err != nil {
+		return result, err
+	}
+	// Told after the project stops listing the pull request, which is what stops the operator from writing the
+	// comment again. In the background: GitHub gives a webhook ten seconds, and this is several requests.
+	s.reportInBackground(ctx, func(ctx context.Context) {
+		s.reportPullRequestRemoved(ctx, projectName, repo, number, entry.Environment, deployments)
 	})
+	return result, nil
 }
 
 // ---- settings ----

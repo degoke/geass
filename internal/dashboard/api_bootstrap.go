@@ -118,6 +118,8 @@ func sanitizeDashboardForViewer(data *dashboardBootstrap) {
 		spec := &data.Projects.Items[i].Spec
 		spec.SharedVariables = nil
 		spec.GitHubConnectionRef = nil
+		// Whether Geass reports back to GitHub is part of the GitHub settings, which viewers do not see.
+		spec.GitHubReporting = nil
 		// Webhook URLs often carry secret tokens, and delivery records name them.
 		spec.Webhooks = nil
 		data.Projects.Items[i].Status.WebhookDeliveries = nil

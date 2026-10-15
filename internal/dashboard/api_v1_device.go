@@ -145,7 +145,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	defer s.devices.mu.Unlock()
 	s.devices.init()
 	s.devices.prune(now)
-	address := clientAddress(r)
+	address := clientIP(r)
 	if len(s.devices.starts[address]) >= deviceStartsPerMinute || len(s.devices.byDevice) >= deviceMaxPending {
 		writeV1Error(w, http.StatusTooManyRequests, "too many sign-in requests, try again in a minute")
 		return
@@ -294,7 +294,7 @@ func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	s.devices.mu.Unlock()
 
 	token, record, err := apitokens.New(apitokens.Request{
-		Name: "CLI: " + clientName, Scope: apitokens.ScopeWorkspace, Role: role, CreatedBy: session.Username, ExpiresInDays: days,
+		Name: "CLI: " + clientName, Scope: apitokens.ScopeWorkspace, Role: role, CreatedBy: session.Username, CreatedByID: session.Identity, ExpiresInDays: days,
 	}, time.Now())
 	if err != nil {
 		writeV1Error(w, http.StatusBadRequest, err.Error())

@@ -116,7 +116,7 @@ See [Connect a domain](/docs/getting-started/connect-domain/) and [Domains and T
 | Account | Needed for | What Geass needs from it |
 | --- | --- | --- |
 | Cloudflare | Automatic DNS records for the dashboard and services, and Cloudflare Tunnel as a way to publish the dashboard without opening ports | An API token (not the Global API Key) with Account → Cloudflare Tunnel → Edit, Zone → DNS → Edit and Zone → Zone → Read, for your domain |
-| GitHub | Deploying a repository, push-to-deploy and pull request environments | A GitHub account or organization where Geass registers a GitHub App. The dashboard needs a public domain first, because GitHub calls back to it. Built images are pushed to a container registry that the cluster can reach |
+| GitHub | Deploying a repository, push-to-deploy, pull request environments, and builds and deploys reported back to GitHub | A GitHub account or organization where Geass registers a GitHub App. The dashboard needs a public domain first, because GitHub calls back to it. Built images are pushed to a container registry that the cluster can reach |
 | AWS | S3 buckets for your services, backups of Postgres, MySQL and SQLite databases, and attaching AWS RDS databases | An access key. Geass creates and deletes S3 buckets and objects, and creates and deletes a scoped IAM user with an inline policy and access keys for each bucket |
 | PlanetScale | PlanetScale databases | A service token and the organization name |
 | Let's Encrypt (no account) | HTTPS certificates for the dashboard and your services | A real contact email address, passed to the installer as `GEASS_ACME_EMAIL` or set later on the cluster. Let's Encrypt refuses placeholder domains such as `example.com` |

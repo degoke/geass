@@ -1,11 +1,11 @@
 ---
 title: "GeassPlatformConfig"
-description: "Reference for GeassPlatformConfig, the single resource that holds the dashboard domain, Cloudflare and GitHub App links, metrics address and build registry."
+description: "Reference for GeassPlatformConfig, the one resource that holds the dashboard domain, Cloudflare and GitHub App links, metrics address, registry and sign-in."
 sidebar:
   order: 9
 ---
 
-The `GeassPlatformConfig` holds the settings that belong to the whole platform rather than to one project: the dashboard's domain and how it is published, the link to the Cloudflare connection, the link to the GitHub App, where to find Prometheus, and the registry that repository builds push to. There is one, named `platform`, in `geass-system`. The dashboard creates it the first time you save a domain, a Cloudflare connection or a GitHub App, and edits it from **Settings**. You can also create and edit it with `kubectl`.
+The `GeassPlatformConfig` holds the settings that belong to the whole platform rather than to one project: the dashboard's domain and how it is published, the link to the Cloudflare connection, the link to the GitHub App, where to find Prometheus, the registry that repository builds push to, and how people sign in (passwords from a Secret, or an identity provider). There is one, named `platform`, in `geass-system`. The dashboard creates it the first time you save a domain, a Cloudflare connection or a GitHub App, and edits it from **Settings**. You can also create and edit it with `kubectl`.
 
 For the settings as a whole, with the operator flags and environment variables, see [Configuration](/docs/reference/configuration/). For the connections it points at, see [Cloud connectors](/docs/guides/connectors/).
 
@@ -46,6 +46,30 @@ spec:
 
 Every field is optional. An empty `spec` is valid.
 
+People who sign in through an identity provider instead of the users in the Secret (Better Auth here, where a member of the `acme` organization is a viewer and an owner or admin is an admin). The client secret is the `clientSecret` key of the Secret `platform-auth`.
+
+```yaml title="platform.yaml (spec.auth)"
+spec:
+  auth:
+    mode: external
+    oidc:
+      displayName: Acme
+      issuer: https://auth.example.com/api/auth
+      clientID: geass
+      credentialRef:
+        name: platform-auth
+      roleClaim: org_role
+      roleMap:
+        owner: admin
+        admin: admin
+        member: viewer
+      requireClaim:
+        organization_slug: acme
+      sessionMinutes: 60
+```
+
+Setting `mode: external` by hand skips the checks the dashboard makes before it switches (a test sign-in as an admin of the provider, and an admin with a password), so test the provider from **Settings** → **Sign-in** first.
+
 ## Spec fields
 
 | Field | Type | Default | Validation | Meaning |
@@ -63,6 +87,17 @@ Every field is optional. An empty `spec` is valid.
 | `spec.registry.credentialRef.name` | string | none | none | A Secret with the key `.dockerconfigjson` for that registry. Builds push with it, and Geass copies it into a service's namespace for the nodes to pull the built image with. |
 | `spec.defaultDomain` | string | none | none | In the schema. No code reads it. |
 | `spec.traefikAccessLogs.enabled`, `.format`, `.networkLogEndpoint` | boolean, string, string | none | none | In the schema. No code reads them. See [GeassNetworkLog](/docs/reference/resources/geass-network-log/). |
+| `spec.auth.mode` | string | `local` | `local` or `external` | How people sign in. `local` is the users in the Secret `geass-dashboard-auth`. `external` is the identity provider in `spec.auth.oidc`; a user of the Secret who is an admin and has a password can still sign in. See [Sign in with an identity provider](/docs/guides/external-sign-in/). |
+| `spec.auth.oidc.displayName` | string | none | At most 60 characters | What the sign-in button calls the provider. |
+| `spec.auth.oidc.issuer` | string | none | At most 2048 characters | The provider's issuer URL, exactly as its discovery document names it. `https`, and not this machine or a link-local address. |
+| `spec.auth.oidc.clientID` | string | none | At most 512 characters | The id Geass is registered with at the provider. |
+| `spec.auth.oidc.credentialRef.name` | string | none | none | A Secret in `geass-system` whose `clientSecret` key is the client secret. Leave it out for a public client that uses PKCE alone. |
+| `spec.auth.oidc.scopes` | list of strings | `email`, `profile` | At most 20 | Asked for besides `openid`. |
+| `spec.auth.oidc.roleClaim` | string | none | At most 253 characters | The claim of the ID token that holds a person's role at the provider: a name, or a dotted path into nested claims. A string, a list, or a comma-separated string. |
+| `spec.auth.oidc.roleMap` | map of strings | none | At most 50 entries; values `admin` or `viewer` | Which Geass role each role at the provider is. Someone whose roles map to none cannot sign in. The highest wins. |
+| `spec.auth.oidc.requireClaim` | map of strings | none | At most 10 entries | Claims the ID token must have, with these values (or a list that contains them), for a person to sign in. |
+| `spec.auth.oidc.sessionMinutes` | integer | `60` | 5 to 720 | How long a sign-in lasts before the person goes back to the provider. |
+| `spec.auth.oidc.revokeTokensOnLogout` | boolean | `true` | none | Whether a back-channel logout from the provider also revokes the API tokens and deploy hooks the person made. It always ends their sessions. Turn it off when CI depends on tokens made from the accounts of people who sign out. |
 
 :::caution
 `spec.registry.repository` is the full destination image of every build that does not set its own, and Geass adds neither a service name nor a tag. Every service that relies on it pushes to the same reference. Set `build.registry.repository` on each service instead. Without any registry setting, a repository service waits with `no container registry is set for builds`: Geass has no registry of its own. See [GeassBuild](/docs/reference/resources/geass-build/).
@@ -114,6 +149,8 @@ While `CloudflareReady` is true, services without a host get a default one under
 | **Settings** → **Domain** → **Save dashboard domain** | `rootDomain`, `dashboardURL` (from **Subdomain**, default `geass`), `dashboardExposure` (**Publish via**), `tunnelCNAMETarget`, `cloudflareZoneID`. The page's verify action sets the `DashboardDomainReady` condition. |
 | **Settings** → **Connectors** → **Cloudflare** → **Connect** | `cloudflareConnectionRef` (the Secret `platform-cloudflare`) and `cloudflareZoneID`. **Disconnect** clears both. |
 | **Settings** → **Connectors** → **GitHub** | `githubAppRef` (the Secret `platform-github-app`). **Remove GitHub App** clears it. |
+| **Settings** → **Sign-in** → **Also revoke the tokens and deploy hooks they made** | `auth.oidc.revokeTokensOnLogout`. Changes at once, in either mode. |
+| **Settings** → **Sign-in** → **Save**, **Use ... to sign in**, **Remove** | `auth.oidc` (and `auth.oidc.credentialRef`, the Secret `platform-auth`, key `clientSecret`), then `auth.mode`. **Switch back to passwords** sets `auth.mode` to `local`. **Remove** clears `auth` and deletes that Secret. |
 
 The dashboard has no screen for `prometheusURL`, `defaultClusterRef` or `registry`. Set the first two with `kubectl`. An admin can set `registry` with `POST /api/settings/registry/save` (see the [REST API](/docs/reference/rest-api/)), which stores the login as the Secret `platform-registry`, or with `kubectl`.
 

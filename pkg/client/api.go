@@ -207,6 +207,14 @@ func (c *Client) Deploy(ctx context.Context, name string) (DeployResult, error) 
 	return out, c.Do(ctx, http.MethodPost, "/apps/"+url.PathEscape(name)+"/deploy", nil, map[string]any{}, &out)
 }
 
+// RestartBuild runs a repository service's build again from the start: it builds the head of the branch (or the
+// commit the service pins) as it is now, and the service is deployed from the image it makes. It is what a push
+// does, for a pipeline that has pushed nothing, and it deploys nothing else: pending changes to the service wait
+// for Deploy. The API refuses a service that is not built from a repository, and one that has not been built yet.
+func (c *Client) RestartBuild(ctx context.Context, name string) error {
+	return c.Do(ctx, http.MethodPost, "/apps/"+url.PathEscape(name)+"/build", nil, map[string]any{}, nil)
+}
+
 // Scale sets how many copies of a service run.
 func (c *Client) Scale(ctx context.Context, name string, replicas int) error {
 	return c.Do(ctx, http.MethodPost, "/apps/"+url.PathEscape(name)+"/scale", nil, map[string]any{"replicas": replicas}, nil)

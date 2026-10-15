@@ -72,7 +72,7 @@ func TestViewerCloudflareSettingsRedacted(t *testing.T) {
 	require.Equal(t, http.StatusOK, loginRec.Code)
 	var cookie *http.Cookie
 	for _, item := range loginRec.Result().Cookies() {
-		if item.Name == platform.DashboardSessionCookie {
+		if item.Name == testSessionCookie {
 			cookie = item
 		}
 	}

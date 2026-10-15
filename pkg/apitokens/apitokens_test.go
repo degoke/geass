@@ -124,3 +124,43 @@ func TestAProjectTokenIsNeverAnObserver(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, RoleAdmin, record.Role, "a project token's limits are its route list, whatever role is asked for")
 }
+
+func TestADeployHookIsTiedToOneServiceAndIsNotALogin(t *testing.T) {
+	token, record, err := New(Request{Name: "registry", Scope: ScopeService, Project: "shop", Environment: "production", App: "web", CreatedBy: "admin"}, time.Now())
+
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(token, "gsh_"), "a hook is told apart by its prefix")
+	require.Equal(t, ScopeService, record.Scope)
+	require.Equal(t, "web", record.App)
+	require.Equal(t, "shop", record.Project)
+	require.Equal(t, "production", record.Environment)
+	require.Equal(t, RoleViewer, record.Role, "the weakest role, in case a hook were ever taken for a credential")
+
+	id, secret, scope, ok := Parse(token)
+	require.True(t, ok)
+	require.Equal(t, ScopeService, scope)
+	require.Equal(t, record.ID, id)
+	require.True(t, record.Matches(secret))
+}
+
+func TestADeployHookNeedsAProjectAnEnvironmentAndAService(t *testing.T) {
+	for name, request := range map[string]Request{
+		"no project":     {Name: "x", Scope: ScopeService, Environment: "production", App: "web"},
+		"no environment": {Name: "x", Scope: ScopeService, Project: "shop", App: "web"},
+		"no service":     {Name: "x", Scope: ScopeService, Project: "shop", Environment: "production"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := New(request, time.Now())
+
+			require.ErrorContains(t, err, "deploy hooks need")
+		})
+	}
+}
+
+func TestOnlyAHookIsTiedToAService(t *testing.T) {
+	_, _, err := New(Request{Name: "x", Scope: ScopeWorkspace, App: "web"}, time.Now())
+	require.ErrorContains(t, err, "not tied to a project, environment or service")
+
+	_, _, err = New(Request{Name: "x", Scope: ScopeProject, Project: "shop", Environment: "production", App: "web"}, time.Now())
+	require.ErrorContains(t, err, "not tied to one service")
+}

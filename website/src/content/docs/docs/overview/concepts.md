@@ -89,7 +89,7 @@ Geass can use accounts you already have. **Settings → Connectors** shows four 
 
 | Connector | Used for | Scope |
 | --- | --- | --- |
-| GitHub | Deploying repositories, push-to-deploy, pull request environments. A GitHub App that Geass registers | The whole platform, then linked to each project |
+| GitHub | Deploying repositories, push-to-deploy, pull request environments, and builds and deploys reported back to GitHub. A GitHub App that Geass registers | The whole platform, then linked to each project |
 | Cloudflare | DNS records and an optional tunnel for the dashboard and services | The whole platform |
 | AWS | S3 buckets, database backups | One project: each connection is saved for a single project |
 | PlanetScale | PlanetScale databases | One project |

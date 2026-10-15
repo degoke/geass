@@ -1,18 +1,21 @@
 ---
 title: "GitHub and builds"
-description: "Deploy a GitHub repository: link a project, choose a repository, set the registry Geass builds into, run and read builds, and use webhooks."
+description: "Deploy a GitHub repository: link a project, set the build registry, run and read builds, see commit statuses and deployments on GitHub, and use webhooks."
 ---
 
 Geass can build a service from a GitHub repository. You link a project to your GitHub account, choose a repository, and
 Geass builds the Dockerfile with Kaniko, pushes the image to a container registry you provide, and runs it. A build
-starts when you first deploy the service, when one of its build settings changes, and when you push to the branch. This
-page covers choosing a repository, how builds work, the registry you must set up, and the webhooks in both directions.
+starts when you first deploy the service, when one of its build settings changes, and when you push to the branch. Geass
+also tells GitHub how each build and deploy went. This page covers choosing a repository, how builds work, the registry
+you must set up, what Geass reports back to GitHub, and the webhooks in both directions.
 
 ## Before you start
 
 - **A GitHub App registered in Geass.** One admin does this once for the whole cluster. See
   [Connect GitHub](/docs/guides/connectors/github/). It needs a dashboard address that is public and verified; see
-  [Domains and TLS](/docs/guides/domains-and-tls/).
+  [Domains and TLS](/docs/guides/domains-and-tls/). An app registered by an earlier Geass builds and deploys as before,
+  but cannot report back to GitHub until its owner approves three more permissions; see
+  [Give an existing GitHub App the new permissions](#give-an-existing-github-app-the-new-permissions).
 - **A container registry you control.** Geass does not ship a registry. Without one, a repository service does not
   build. See [Set the registry](#set-the-registry).
 - **A Dockerfile** in the repository.
@@ -30,7 +33,8 @@ an image; that path does not involve the build system at all.
 4. Geass records the image's digest and runs the service from it, as `<repository>@sha256:…`. While a build runs, the
    service shows "Git source is waiting for a successful build" and the previous pods keep serving.
 
-A push to the branch repeats the cycle. See [Build a new commit](#build-a-new-commit).
+A push to the branch repeats the cycle. See [Build a new commit](#build-a-new-commit). On GitHub, the commit shows a
+`geass/build/<service name>` status and the deploy shows as a deployment. See [Reporting back to GitHub](#reporting-back-to-github).
 
 ## Link a project to GitHub
 
@@ -327,10 +331,145 @@ least one and all have completed with the conclusion `success`. The build state 
 checks again every 15 seconds. A failed check marks the build `Failed` with `GitHub check "<name>" concluded <result>`.
 
 A commit with no checks at all never passes, so turn the option off for a repository that has no GitHub Actions or other
-checks. Listing check runs needs the **Checks: Read** permission. The GitHub App that Geass registers now asks for read
-access to **Contents**, **Metadata**, **Pull requests** and **Checks**, but an app registered by an earlier version asked
-for no Checks. If **Wait for CI** fails with `GitHub API returned 403 Forbidden: reading check runs needs the Checks: Read
-permission…`, add **Checks: Read** to the app in GitHub and accept the new permission in your installation.
+checks. Listing check runs needs the **Checks: Read** permission. The GitHub App that Geass registers asks for it (see
+[the permissions](#permissions)), but an app registered by an earlier version asked for no Checks. If **Wait for CI**
+fails with `GitHub API returned 403 Forbidden: reading check runs needs the Checks: Read permission…`, add **Checks:
+Read** to the app in GitHub and accept the new permission in your installation, as in
+[Give an existing GitHub App the new permissions](#give-an-existing-github-app-the-new-permissions).
+
+## Reporting back to GitHub
+
+Geass tells GitHub what it did with your repository, so the answer is where you already look: on the commit, on the
+repository's **Deployments**, and on the pull request.
+
+| What | How it shows on GitHub | Permission it needs |
+| --- | --- | --- |
+| A build | A commit status named `geass/build/<service name>` on the commit that was built. | **Commit statuses**: Read and write |
+| A deploy | A GitHub Deployment of that commit, in an environment named like the Geass environment, with a status that follows it. | **Deployments**: Read and write |
+| A [pull request environment](/docs/guides/pull-request-environments/#what-geass-writes-on-the-pull-request) | One comment on the pull request, edited in place. | **Pull requests**: Read and write |
+
+Only services built from a repository are reported, because only they have a commit to name. A service that runs an
+image, and a function, report nothing. The reports are a side effect: whatever GitHub answers, a build or a deploy
+carries on and does not fail because of it.
+
+### The commit status of a build
+
+`geass/build/<service name>` follows the build:
+
+| State on GitHub | When | Description |
+| --- | --- | --- |
+| `pending` | The build is waiting for CI, or is running. | `Waiting for CI checks to pass before building`, then `Building the image` |
+| `success` | The image was built and pushed. | `Built the image` |
+| `failure` | The code did not build: the Kaniko Job failed, or a CI check failed with **Wait for CI** on. | `The build failed`, or the check's failure message |
+| `error` | The build stopped for a reason that is not the code: no registry is set, GitHub or the cluster did not answer, or the build was cancelled. | The build's failure reason, or `The build was cancelled` |
+
+The status's **Details** link opens the service's **Deployments** page in the dashboard, when the dashboard address is
+set. A commit is reported when the build for it starts, so a build that cannot say which commit it builds (it failed
+before Geass could ask GitHub) reports nothing.
+
+When one environment has several services that build the same repository, as a monorepo does, each reports as
+`geass/build/<service name>`, with the name shown in the dashboard. One status name for all of them would let whichever
+reported last hide the others: a failed service would show as passed.
+
+Every service has its own status name from the start, and it does not change when another service is added. That is the name
+to require under branch protection: `geass/build/web` for a service called `web`. Renaming the service in the dashboard
+renames its status.
+
+### The GitHub Deployment of a deploy
+
+A deploy is a commit being rolled out. A push that is built and rolled out is one, and so is **Deploy changes** or a
+`geass deploy` of the commit that is already running, because it restarts the pods and applies new variables. For each,
+Geass makes a GitHub Deployment of the commit, in the environment named like the Geass environment (`production`), and
+adds statuses to it:
+
+| Status | When |
+| --- | --- |
+| `in_progress` | The new image is rolling out and its pods are not ready yet. |
+| `success` | The pods are ready. The service's public address is the **environment URL**. |
+| `failure` | Geass gave up on the deploy: the service is marked `ProvisionFailed`. |
+
+The status's **log URL** opens the service's **Deployments** page. A service that restarts, scales or loses a node
+afterwards is not deploying again and reports nothing, and a service that was already running when you upgraded Geass is
+not announced as freshly deployed. Several services in one environment each make their own deployment there.
+Deployments are made without waiting for the commit's checks, so a commit that has not passed CI yet is still reported.
+
+A [pull request environment](/docs/guides/pull-request-environments/) uses an environment named `pr-<number>`, marked
+transient, and its deployments are made inactive when it is removed.
+
+### Permissions
+
+The GitHub App that Geass registers asks for:
+
+| Permission | Level | What Geass does with it |
+| --- | --- | --- |
+| Metadata | Read | GitHub requires it of every app. |
+| Contents | Read | Clones repositories to build them. |
+| Checks | Read | **Wait for CI** reads the check runs of a commit. |
+| Pull requests | Read and write | Pull request environments read pull requests, and Geass comments on them. GitHub offers no permission narrower than this for commenting on a pull request. |
+| Commit statuses | Read and write | The `geass/build/<service name>` status. |
+| Deployments | Read and write | The GitHub Deployments. |
+
+It subscribes to the `push` and `pull_request` events. Contents stays read-only, and pushing code or merging a pull
+request needs Contents write, so none of this lets Geass change your code.
+
+### What a missing permission does
+
+An app registered before Geass reported to GitHub does not have the three write permissions, and GitHub does not give an
+installation a permission its owner has not accepted. When GitHub refuses a report with `401`, `403`, or `404` for the
+repository:
+
+- The build or deploy goes on, exactly as if there were nobody to tell.
+- Geass logs the refusal once, not on every reconcile. A line reads `GitHub refused a report, so reports of this kind
+  wait until the app is given the permission`.
+- The project's GitHub connection gets a condition `GitHubReporting` with status `False` and reason `PermissionMissing`.
+  Its message names the permission and says how to approve it. See [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/#conditions).
+- Reports of that kind to that connection stop for ten minutes. The next one after that finds out whether the permission
+  was approved, and the condition goes back to `True` when one goes through.
+- The state that was refused is not lost. It is not recorded as reported, and the build or service is looked at again after
+  the ten minutes, so once the permission is approved the state it is in then is sent.
+
+A failure that may pass, such as GitHub not answering, a `5xx` or a rate limit, is tried up to three times in all, at
+least ten seconds apart. If all three fail, the report is left owed and tried again after ten minutes, so a GitHub
+outage does not leave a deployment showing `in progress` for ever. A request GitHub rejects as it stands (a commit it
+does not know, say) is not retried. A `404` for one GitHub Deployment, which is that deployment having been deleted, is
+rejected the same way and does not hold back other reports.
+
+Reports are sent in the background, not as part of the build or the deploy, so a slow GitHub never holds up the work of
+other services.
+
+### Give an existing GitHub App the new permissions
+
+Changing an app's permissions in GitHub does not change what its installations may do until the owner accepts the
+change. To give an app registered by an earlier Geass the permissions it needs:
+
+1. In Geass, open **Settings** → **Connectors** → **GitHub** and choose **Test GitHub App**. When the webhook is right but
+   permissions are missing, the message lists them and links to the app's permissions page.
+2. In GitHub, open the app's **Permissions & events** page, at `https://github.com/settings/apps/<app slug>/permissions`
+   (for an app owned by an organization, the same page under that organization's settings). Set **Commit statuses**,
+   **Deployments** and **Pull requests** to **Read and write**, and save.
+3. Accept the new permissions on the installation. GitHub emails the owner of the installation. Or open **Settings** →
+   **Applications** → **Installed GitHub Apps**, choose **Configure** for the app, and accept the new permissions.
+4. Choose **Test GitHub App** again. The message reads that the app has the permissions Geass needs. The connection's
+   `GitHubReporting` condition returns to `True` the next time a report goes through, within about ten minutes.
+
+An app that Geass registers from now on asks for all of them when it is created, so there is nothing to do for it.
+
+### Turn it off
+
+Reporting is on for every project by default. To turn it off for one, open the project's **Settings** → **Integrations**
+and switch **Report to GitHub** off. That stops all three reports for the project: no commit statuses, no deployments
+and no pull request comment. Builds, deploys and pull request environments are not affected. A read-only user does not
+see the setting.
+
+It is `spec.githubReporting` on the [GeassProject](/docs/reference/resources/geass-project/#github-reporting), and
+unset means on. Through the API, with a workspace admin token, leave `enabled` out to turn it off:
+
+```bash title="Turn reporting to GitHub off"
+curl -X POST https://geass.example.com/api/projects/proj-1a2b3c4d/github-reporting/save \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Accept: application/json"
+```
+
+Add `-d enabled=on` to turn it back on.
 
 ## Webhooks
 
@@ -341,20 +480,37 @@ against the app's webhook secret. It handles three event types:
 
 | Event | What Geass does | Answer |
 | --- | --- | --- |
-| `ping` | Nothing. | `{"accepted":true,"event":"ping"}` |
-| `push` | Re-runs the current build of each service it matches, as above. | `{"accepted":true,"triggered":N}` |
-| `pull_request` | Creates or removes [pull request environments](/docs/guides/pull-request-environments/). | `{"accepted":true,"environments":[…]}` |
-| Anything else | Ignores it. | `{"accepted":true,"ignored":true}` |
+| `ping` | Nothing. | `{"accepted":true,"event":"ping","delivery":"…"}` |
+| `push` | Re-runs the current build of each service it matches, as above. | `{"accepted":true,"triggered":N,"delivery":"…"}` |
+| `pull_request` | Creates or removes [pull request environments](/docs/guides/pull-request-environments/). | `{"accepted":true,"environments":[…],"delivery":"…"}` |
+| Anything else | Ignores it. | `{"accepted":true,"ignored":true,"delivery":"…"}` |
 
 A bad signature gets `401`, and `503` means the webhook secret is not configured. In GitHub, **Advanced** → **Recent
 Deliveries** on the app shows each delivery and Geass's answer. The **Test GitHub App** button in **Settings** →
-**Connectors** checks that the app's webhook URL matches the dashboard address.
+**Connectors** checks that the app's webhook URL matches the dashboard address, and that the app has the
+[permissions](#permissions) Geass needs.
+
+**The delivery ID.** GitHub numbers every delivery and sends the number in the `X-GitHub-Delivery` header. Geass puts it
+in the answer as `delivery`, and in every log line the webhook handler writes, so a delivery listed under **Recent
+Deliveries** can be matched to what the dashboard logged for it:
+
+```bash title="Find what the dashboard did with a delivery"
+kubectl -n geass-system logs deployment/geass-controller-manager -c manager | grep 72d3162e-cc78-11e3-81ab-4c9367dc0958
+```
+
+The field is left out when GitHub sent no ID, or one with characters that an ID does not have. Geass does not use the
+ID to skip anything. A delivery that you **Redeliver** from the app's settings keeps its ID, and it is handled as the
+new event it is: a redelivered push runs the builds again.
 
 ### From your CI to Geass
 
-Geass has no per-service deploy hook URL. Use an API token. Create a **project token** under the project's **Settings** →
-**Tokens**, limited to one environment, store it as a secret in your CI, and call the API. See
-[Users and API tokens](/docs/guides/users-and-tokens/).
+If your CI can send a header, use an API token. Create a **project token** under the project's **Settings** → **Tokens**, limited to one
+environment, store it as a secret in your CI, and call the API. See [Users and API tokens](/docs/guides/users-and-tokens/).
+
+If the tool can only call a URL (a registry that notifies when an image is pushed, a scheduler, a CMS), use a **deploy hook**: a URL for one
+service that deploys it when called with `POST`. Make it in the service's **Settings** → **Deploy**. For a service built from a repository
+it builds the branch again, which is what a push does, and for any other service it deploys the pending changes. It answers once every 30
+seconds. See [Deploy hooks](/docs/guides/users-and-tokens/#deploy-hooks).
 
 For a service that runs an image, set the new image and deploy in one call. This is the usual CI step:
 
@@ -379,6 +535,56 @@ The `geass` command line does the same in a pipeline: `geass api PATCH /apps/amb
 image and `geass deploy amber-fern --wait` deploys it and fails the job with exit code `5` or `6` when the service does not
 come up. See [Command line](/docs/guides/command-line/#scripts-and-ci). For a repository service, `--wait` also follows the build: it fails with the build's reason
 when the build fails.
+
+### Build from GitHub Actions
+
+A push already rebuilds a repository service. Use `geass build` when your pipeline should start the build instead: on a
+schedule, from a manual run, for a repository whose webhook cannot reach the dashboard, or when a job has to wait until
+the new version is live before it goes on. It runs the build again from the head of the service's branch (or the commit
+it pins), exactly as a push does, and with `--wait` it follows the build through to the rollout.
+
+This workflow rebuilds `web` every night, so the image picks up updates to its base image, and fails the run when the
+build or the rollout fails:
+
+```yaml title=".github/workflows/geass-build.yml"
+name: rebuild web
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the geass command line
+        run: |
+          curl -sfL https://github.com/degoke/geass/releases/latest/download/install-cli.sh \
+            | GEASS_INSTALL_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build and roll out
+        env:
+          GEASS_URL: https://geass.example.com
+          GEASS_TOKEN: ${{ secrets.GEASS_TOKEN }}
+        run: geass build web --wait --timeout 20m
+```
+
+`GEASS_TOKEN` is a **project token** for the environment `web` is in, kept as a secret of the repository. A project
+token may restart the builds of the services in its environment and nothing else; see
+[Users and API tokens](/docs/guides/users-and-tokens/). The step prints `web: build started`, then each change of state
+(`build running`, `ready at https://…`), and exits `0` when the service is ready. It exits `5` and says why when the
+build fails (for example `kaniko Job failed`, or a CI check that failed with **Wait for CI** on) or the rollout fails, and
+`6` when `--timeout` runs out.
+
+Things to know:
+
+- It builds what the branch holds when the call arrives, which is not necessarily the commit that started your workflow.
+  To build a particular commit, pin it (see [Build a new commit](#build-a-new-commit)).
+- It does not apply changes saved to the service and not yet deployed. Use `geass deploy` for those.
+- If the push webhook works too, a workflow that builds on every push starts the build twice, and the second start runs it
+  over from the beginning. Build from a schedule or a manual run, or let the webhook do it.
+- `geass build` with no service names, and `--project` and `--environment`, builds every deployed repository service in
+  that environment.
+- The same call is `POST /api/v1/apps/{name}/build`, and the MCP server offers it as `rebuild_app`.
 
 ### Outgoing webhooks
 
@@ -475,11 +681,23 @@ with `id` and `secret`. See the [REST API](/docs/reference/rest-api/).
 | Secret `<service ID>-registry-pull` | The environment namespace | A copy of the registry login, for the nodes to pull the built image with. |
 | `GeassPlatformConfig` `platform` | `geass-system` | `spec.registry` (repository and login) and the GitHub App reference. |
 
+What Geass has told GitHub is remembered on the objects, so a state is sent once and not on every reconcile:
+
+- The build carries the annotation `geass.dev/github-status`, `<commit>:<build phase>`, for the commit status it last
+  sent. A build without it that is not changing state is left alone, so the builds that exist when you upgrade Geass are
+  not reported. The value `owed` marks a build whose first report did not get through.
+- The service carries `geass.dev/github-deployment`, `<commit>:<GitHub deployment ID>:<state>:<deploy revision>`. An ID of
+  `0` is a deploy that was noticed and not sent, which is how a service that was already running at the upgrade is
+  recorded.
+- The connection's `status.conditions` has `GitHubReporting`, which says whether GitHub takes the reports.
+
 ```bash title="Inspect repository services"
 kubectl -n geass-system get geassbuilds -o custom-columns=NAME:.metadata.name,APP:.spec.app,PHASE:.status.phase,IMAGE:.status.image,DIGEST:.status.imageDigest
 kubectl -n geass-system get geassbuild amber-fern-build-3f9a1c2b7d4e -o yaml
 kubectl -n geass-system get geassapp amber-fern -o jsonpath='{.status.resolvedImage}{"\n"}'
 kubectl -n proj-1a2b3c4d-production get deploy amber-fern -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+kubectl -n geass-system get geassapp amber-fern -o jsonpath='{.metadata.annotations.geass\.dev/github-deployment}{"\n"}'
+kubectl -n geass-system get geassgithubconnection proj-1a2b3c4d-github -o jsonpath='{.status.conditions[?(@.type=="GitHubReporting")]}{"\n"}'
 ```
 
 ## Troubleshooting
@@ -506,6 +724,29 @@ cannot read it. Check **Repository** and **Branch** in **Settings** → **Source
 
 **The build fails with `GitHub API returned 403 Forbidden` and Wait for CI is on.** The app lacks the **Checks** permission.
 See [Wait for CI](#wait-for-ci).
+
+**No `geass/build/<service>` status or GitHub Deployment appears.** Work down this list:
+
+- The service must be built from a repository. Image services and functions are not reported.
+- **Report to GitHub** must be on for the project, under **Settings** → **Integrations**, and the project must be linked to
+  GitHub.
+- Look at the connection: `kubectl -n geass-system get geassgithubconnection <project ID>-github -o yaml`. A
+  `GitHubReporting` condition that is `False` with the reason `PermissionMissing` means GitHub refused. Its message
+  names the permission. Follow [Give an existing GitHub App the new permissions](#give-an-existing-github-app-the-new-permissions).
+  **Test GitHub App** lists what the app lacks.
+- A build is reported when it moves to a new state. A build made before you upgraded Geass, and a service that was
+  already running then, report from their next build or deploy.
+- Read the operator's log for `GitHub refused a report` or `Could not report to GitHub`.
+
+**A required check named `geass/build` is never reported.** Every service reports as `geass/build/<service name>`, so
+require that name under branch protection. See [The commit status of a build](#the-commit-status-of-a-build).
+
+**The connection says `PermissionMissing` after I approved the permissions.** Geass tries again ten minutes after the last
+refusal, and the condition changes when a report goes through. If it stays, check that the installation accepted the
+change (**Settings** → **Applications** → **Installed GitHub Apps**) and use **Test GitHub App**.
+
+**GitHub shows a delivery that Geass answered `200` and nothing happened.** Match it to the log with its delivery ID, which is
+in the answer as `delivery`. See [Webhooks](#from-github-to-geass).
 
 **The build stays in `WaitingForCI`.** The commit has no checks yet, or they are still running. Turn **Wait for CI** off if the
 repository has none.

@@ -158,6 +158,7 @@ kubectl -n geass-system set env deployment/geass-controller-manager GEASS_PROMET
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GEASS_DASHBOARD_USERS` | none | Dashboard users, as a JSON array or as `username:password:role` entries separated by commas. Used only while the Secret has no users |
+| `GEASS_ALLOW_LOOPBACK` | `false` | `true` lets **Settings** → **Sign-in** use an identity provider on the machine the operator runs on, such as Better Auth on `localhost:3000`, over plain `http`. For development, with the operator running on your own host (`make dashboard-backend` sets it). Leave it off in a cluster, where that address is the operator's own pod. Link-local addresses stay refused. See [Sign in with an identity provider](/docs/guides/external-sign-in/#try-it-on-your-own-machine) |
 | `GEASS_DASHBOARD_PASSWORD` | none | A single admin password. Used only if no users are set. The user is named by `GEASS_DASHBOARD_USERNAME` |
 | `GEASS_DASHBOARD_USERNAME` | `admin` | The name of the user created from `GEASS_DASHBOARD_PASSWORD` |
 | `GEASS_DASHBOARD_SESSION_KEY` | generated | The key that signs session cookies, at least 16 bytes (or `hex:` followed by hex). Overrides the key in the Secret |
@@ -323,9 +324,11 @@ kubectl -n geass-system get geasscluster default \
 
 | What | Value |
 | --- | --- |
-| Dashboard session | 12 hours, not extended |
+| Dashboard session | 12 hours, not extended. Through an identity provider: 5 to 720 minutes, an hour by default |
+| Identity provider sign-in | A sign-in has 10 minutes to finish; a test is good for 30 minutes; every request to the provider times out after 10 seconds; a logout token must be less than 5 minutes old |
 | Sign-in lockout | 5 failures in a minute lock a username for a minute |
-| API tokens | At most 100; names up to 60 characters; lifetime 1 to 3650 days or none |
+| API tokens and deploy hooks | At most 200 together; names up to 60 characters; lifetime 1 to 3650 days or none |
+| Deploy hooks | A hook answers once every 30 seconds; at most one hook per service |
 | Command-line sign-in | A request lives 10 minutes; the CLI polls every 5 seconds; at most 100 pending, and 10 started a minute per address. The token it hands out lasts 30 days unless the admin chooses 7 or 90 |
 | `/api/v1` request body | At most 2 MiB |
 | Webhooks | At most 20 per project; 3 delivery attempts; 10 second timeout; the last 20 deliveries are kept |
@@ -393,7 +396,8 @@ Postgres runs the `ghcr.io/cloudnative-pg/postgresql` image at the major version
 
 | Secret | Holds |
 | --- | --- |
-| `geass-dashboard-auth` | Dashboard users and session state |
+| `geass-dashboard-auth` | Dashboard users and session state, including when each person who signs in through an identity provider last signed out (`sso-revoked`) |
+| `platform-auth` | The client secret of the identity provider, written by **Settings** → **Sign-in** |
 | `geass-api-tokens` | API token records (hashes) |
 | `geass-token` | The K3s join token, read when a worker joins |
 | `platform-github-app` | The GitHub App credentials |

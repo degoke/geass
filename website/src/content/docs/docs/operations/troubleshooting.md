@@ -127,13 +127,34 @@ Once a domain is set, check DNS and the ingress (`kubectl -n geass-system get in
 Geass could not load a login. The usual cause is that none exists: the installer does not create one. Create the Secret `geass-dashboard-auth` in `geass-system` with a `users` key (or set `GEASS_DASHBOARD_PASSWORD` on the operator). The sample is `config/samples/geass_dashboard_auth.yaml`. Geass refuses the placeholder password `CHANGE_ME`, so replace it, and hashes the real one at the first sign-in. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
 
 **Every sign-in says "invalid username or password".**
-Five wrong attempts for one user within a minute lock that user for a minute, and the message is the same while locked. Twenty failed sign-ins from one client address within a minute refuse that address for a minute, with the same message. That limit applies only to clients that connect directly from a public address, not behind a proxy or a tunnel. Wait a minute and try once. If it still fails, read the users in the Secret.
+Five wrong attempts for one user from one address within a minute lock that user for that address for a minute (25 from all addresses together lock it for everyone, and five when addresses cannot be told apart), and the message is the same while locked. Twenty failed sign-ins from one client address within a minute refuse that address for a minute, with the same message. Wait a minute and try once. If it still fails, read the users in the Secret.
 
 **Signing in works, then the dashboard asks for a sign-in again.**
 You opened it over plain HTTP at an address other than `localhost`. Geass marks its session cookie `Secure` everywhere except loopback, so the browser drops it. Use HTTPS, or the port forward above. A session lasts 12 hours.
 
 **"viewer role cannot access this".**
 Your user has the viewer role. Viewers read, but cannot change anything, read logs, or open a terminal. Ask for the admin role.
+
+**The provider does not work, or nobody can sign in through it.**
+Sign in with an admin's password (**Use an admin password instead** on the sign-in page), open **Settings** → **Sign-in** and choose **Switch back to passwords**. If you cannot reach the dashboard at all, `sudo k3s kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"auth":{"mode":"local"}}}'` does the same. Then see the messages below. A user in the Secret who is not an admin cannot sign in with a password while the provider decides; an admin can.
+
+**The sign-in page says "Geass could not complete the sign-in with the identity provider".**
+The operator log has the reason (`kubectl -n geass-system logs deployment/geass-controller-manager -c manager | grep -i "identity provider"`). The usual ones: the provider cannot be reached from the cluster, or is on this machine or a link-local address (`the address is this machine or a link-local address`); the issuer you saved is not exactly what its discovery document calls itself (`issuer did not match`, and for Better Auth the issuer includes `/api/auth`); the client secret is wrong (`invalid_client`); the redirect URI is not the one registered at the provider (`redirect_uri` mismatch: use the address on the **Sign-in** page, with the scheme and host the browser used); or the token was signed with an algorithm Geass does not accept (anything but a public-key one).
+
+**The sign-in page says "Your account has no role here" or "not one this installation lets in".**
+The provider signed the person in, and Geass has no role for them. **Test sign-in** on the **Sign-in** page shows what the token holds: the role claim's values, and which required claim is missing. Check the claim's name (a dotted path reaches into nested claims), that your **Roles** list has the provider's names exactly as the token spells them, and, for Better Auth, that the callback that adds `org_role` to the ID token runs for this person.
+
+**The sign-in page says "The identity provider did not say what your email address is".**
+The ID token has no `email` claim. Better Auth leaves it out of the ID token unless you add it in `customIdTokenClaims`. See [Sign in with an identity provider](/docs/guides/external-sign-in/#better-auth).
+
+**"Use ... to sign in" is disabled, or turning it on answers `400`.**
+It needs the settings complete, a test sign-in of exactly the saved settings in the last half hour by someone who maps to admin (a test as a viewer does not count), and an admin with a password in the Secret. Saving the settings again starts the test over. The message says which is missing.
+
+**"Switch to local sign-in before changing the identity provider".**
+Settings cannot be edited while people sign in through the provider. Choose **Switch back to passwords**, change them, test, and turn it on again.
+
+**Someone who was removed at the provider can still use the dashboard.**
+Their session lasts until it ends (an hour by default) unless the provider sends a back-channel logout to `/auth/oidc/backchannel-logout`. Most providers need that address to be public `https`. Until then, sign them out by revoking what they made under **Settings** → **Tokens**, and lower **Session length**. A logout that arrives ends their sessions but leaves their tokens when **Also revoke the tokens and deploy hooks they made** is off.
 
 ## Nodes
 
@@ -297,6 +318,7 @@ A finished build's job, and with it its pod and log, is removed an hour after it
 | `failureReason` "kaniko Job failed" | The build itself failed. Read the `kaniko` log: a Dockerfile error, a wrong **Dockerfile path** or root directory, or a failed push. |
 | `failureReason` "Kaniko completed without an immutable image digest" | The build finished but Geass found no digest: the `kaniko` container's termination message was empty and its log has no `Pushed <repository>@sha256:…` line. Read the `kaniko` log for a push error. A build that failed this way before Geass read the termination message did push its image: run it again with a push or `POST /api/apps/<service>/build`. |
 | `failureReason` "no container registry is set for builds" | Neither the service nor the platform names a registry. See below. |
+| No `geass/build/<service>` status, GitHub Deployment or pull request comment on GitHub | The build and the deploy are fine: Geass reports back to GitHub on the side and never holds them up for it. Look at the project's GitHub connection: `kubectl -n geass-system get geassgithubconnection <project>-github -o yaml`. A `GitHubReporting` condition that is `False` with the reason `PermissionMissing` means the GitHub App was registered before Geass reported to GitHub and lacks **Commit statuses**, **Deployments** or **Pull requests** at read and write. **Test GitHub App** in **Settings** → **Connectors** lists them. See [Give an existing GitHub App the new permissions](/docs/guides/github-and-builds/#give-an-existing-github-app-the-new-permissions). Also check that **Report to GitHub** is on in the project's **Integrations**. |
 
 :::note
 Geass builds push to a registry that you configure, and Geass has none of its own. Without one the service does not build and shows `no container registry is set for builds`. The destination comes from the service's `spec.build.registry.repository`, or, for every service, from `spec.registry.repository` on the `platform` object. An admin sets the platform registry with the REST API (the dashboard has no form for it yet), which also stores the login as a Docker registry Secret:

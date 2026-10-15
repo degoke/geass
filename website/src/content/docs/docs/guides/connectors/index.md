@@ -30,7 +30,7 @@ one project. This page documents what the code does today, including those rough
 | [AWS](/docs/guides/connectors/aws/) | S3 buckets, project database backups | One project | Access key ID, secret access key, region | Secret `<name>-credentials` in `geass-system` |
 | [PlanetScale](/docs/guides/connectors/planetscale/) | Creating a database and a login on it | One project | Service token, organization | Secret `<name>-credentials` in `geass-system` |
 | [Cloudflare](/docs/guides/connectors/cloudflare/) | Dashboard DNS, optional tunnel, default hostnames | The whole cluster | API token, account ID, zone | Secret `platform-cloudflare` in `geass-system` |
-| [GitHub](/docs/guides/connectors/github/) | Repository deploys, push webhooks, PR environments | The cluster, linked to each project | GitHub App credentials | Secret `platform-github-app` in `geass-system` |
+| [GitHub](/docs/guides/connectors/github/) | Repository deploys, push webhooks, PR environments, commit statuses, deployments and pull request comments back to GitHub | The cluster, linked to each project | GitHub App credentials | Secret `platform-github-app` in `geass-system` |
 
 Every connection is a Kubernetes Secret in the `geass-system` namespace. Geass does not encrypt these Secrets
 itself, and the installer does not turn on K3s secrets encryption, so they are stored like any other Secret in the

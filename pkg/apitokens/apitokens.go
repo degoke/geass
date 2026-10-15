@@ -1,8 +1,9 @@
 // Package apitokens defines Geass API tokens: long-lived credentials that let scripts, CI, and the CLI
 // call the dashboard API without a browser login.
 //
-// A token looks like gsp_1a2b3c4d_<40 hex characters>. The prefix says what the token is for, the
-// second part is a public identifier used to find the stored record, and the last part is the secret.
+// A token looks like gsp_1a2b3c4d_<40 hex characters>. The prefix says what the token is for (gsw workspace, gsp
+// project, gsh deploy hook), the second part is a public identifier used to find the stored record, and the last
+// part is the secret.
 // Only a SHA-256 hash of the secret is stored, so a leaked Secret does not reveal usable tokens.
 package apitokens
 
@@ -23,6 +24,9 @@ const (
 	ScopeWorkspace = "workspace"
 	// ScopeProject tokens can only deploy, read logs, and edit variables of one project environment.
 	ScopeProject = "project"
+	// ScopeService tokens are deploy hooks: the secret in the URL a tool with no way to send a header can call to
+	// deploy one service. They are never accepted as a Bearer token, only on the hook URL.
+	ScopeService = "service"
 )
 
 // Roles of a workspace token. Project tokens always act within their fixed allow list.
@@ -37,12 +41,13 @@ const (
 
 const (
 	// MaxTokens keeps the Secret that holds all records well below the Kubernetes size limit.
-	MaxTokens = 100
+	MaxTokens = 200
 	// MaxExpiryDays is the longest lifetime a token can be created with.
 	MaxExpiryDays = 3650
 
 	workspacePrefix = "gsw"
 	projectPrefix   = "gsp"
+	servicePrefix   = "gsh"
 	idBytes         = 4
 	secretBytes     = 20
 	maxNameLength   = 60
@@ -50,14 +55,20 @@ const (
 
 // Record is what is stored for a token. The secret itself is never stored.
 type Record struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Scope       string     `json:"scope"`
-	Project     string     `json:"project,omitempty"`
-	Environment string     `json:"environment,omitempty"`
-	Role        string     `json:"role"`
-	Hash        string     `json:"hash"`
-	CreatedBy   string     `json:"createdBy,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Scope       string `json:"scope"`
+	Project     string `json:"project,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	// App is the service a deploy hook deploys. Only service tokens have one.
+	App       string `json:"app,omitempty"`
+	Role      string `json:"role"`
+	Hash      string `json:"hash"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	// CreatedByID is the stable identity of the person at an external identity provider who made the token, when
+	// there was one. CreatedBy is only a label (their email, which can change); this is what revokes their tokens
+	// when the provider says they signed out or were removed.
+	CreatedByID string     `json:"createdById,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
@@ -69,8 +80,10 @@ type Request struct {
 	Scope         string
 	Project       string
 	Environment   string
+	App           string
 	Role          string
 	CreatedBy     string
+	CreatedByID   string
 	ExpiresInDays int
 }
 
@@ -89,7 +102,7 @@ func New(request Request, now time.Time) (string, Record, error) {
 		return "", Record{}, fmt.Errorf("expiry must be between 0 (never) and %d days", MaxExpiryDays)
 	}
 
-	record := Record{Name: name, Scope: request.Scope, CreatedBy: request.CreatedBy, CreatedAt: now.UTC()}
+	record := Record{Name: name, Scope: request.Scope, CreatedBy: request.CreatedBy, CreatedByID: request.CreatedByID, CreatedAt: now.UTC()}
 	prefix := ""
 	switch request.Scope {
 	case ScopeWorkspace:
@@ -101,20 +114,32 @@ func New(request Request, now time.Time) (string, Record, error) {
 		if record.Role != RoleAdmin && record.Role != RoleViewer && record.Role != RoleObserver {
 			return "", Record{}, fmt.Errorf("role must be %s, %s or %s", RoleAdmin, RoleObserver, RoleViewer)
 		}
-		if request.Project != "" || request.Environment != "" {
-			return "", Record{}, fmt.Errorf("workspace tokens are not tied to a project or environment")
+		if request.Project != "" || request.Environment != "" || request.App != "" {
+			return "", Record{}, fmt.Errorf("workspace tokens are not tied to a project, environment or service")
 		}
 	case ScopeProject:
 		prefix = projectPrefix
 		if request.Project == "" || request.Environment == "" {
 			return "", Record{}, fmt.Errorf("project tokens need a project and an environment")
 		}
+		if request.App != "" {
+			return "", Record{}, fmt.Errorf("project tokens are not tied to one service; use a deploy hook for that")
+		}
 		record.Project, record.Environment = request.Project, request.Environment
 		// Project tokens may change what they are allowed to deploy, so the role stays admin and the
 		// route allow list in the dashboard is what limits them.
 		record.Role = RoleAdmin
+	case ScopeService:
+		prefix = servicePrefix
+		if request.Project == "" || request.Environment == "" || request.App == "" {
+			return "", Record{}, fmt.Errorf("deploy hooks need a project, an environment and a service")
+		}
+		record.Project, record.Environment, record.App = request.Project, request.Environment, request.App
+		// A hook is not a login: the dashboard refuses it as a Bearer token whatever the role says, and the
+		// role is the weakest one so that holds even if that check were ever lost.
+		record.Role = RoleViewer
 	default:
-		return "", Record{}, fmt.Errorf("scope must be %s or %s", ScopeWorkspace, ScopeProject)
+		return "", Record{}, fmt.Errorf("scope must be %s, %s or %s", ScopeWorkspace, ScopeProject, ScopeService)
 	}
 	if request.ExpiresInDays > 0 {
 		expires := record.CreatedAt.AddDate(0, 0, request.ExpiresInDays)
@@ -145,6 +170,8 @@ func Parse(token string) (id, secret, scope string, ok bool) {
 		scope = ScopeWorkspace
 	case projectPrefix:
 		scope = ScopeProject
+	case servicePrefix:
+		scope = ScopeService
 	default:
 		return "", "", "", false
 	}

@@ -186,6 +186,14 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformRegistrySave(w, mutation)
 	case mutation.URL.Path == "/settings/registry/clear":
 		s.handlePlatformRegistryClear(w, mutation)
+	case mutation.URL.Path == "/settings/auth/save":
+		s.handlePlatformAuthSave(w, mutation)
+	case mutation.URL.Path == "/settings/auth/mode":
+		s.handlePlatformAuthMode(w, mutation)
+	case mutation.URL.Path == "/settings/auth/clear":
+		s.handlePlatformAuthClear(w, mutation)
+	case mutation.URL.Path == "/settings/auth/logout-policy":
+		s.handlePlatformAuthLogoutPolicy(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create":
