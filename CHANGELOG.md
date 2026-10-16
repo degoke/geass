@@ -35,6 +35,15 @@ The first public release.
   Let's Encrypt through cert-manager.
 - **Scaling and placement.** Replicas, CPU autoscaling, regions, sites and node tags, compliance tags that keep a
   project on chosen nodes, project limits, and services that sleep when idle (KEDA).
+- **Services that reserve less than they may use.** A service can reserve a small amount of CPU and memory and be
+  allowed to use more, up to a ceiling, while its server has room (**can use up to** in its settings; `cpuMax` and
+  `memoryMax` in the API). Software that needs a lot only for a while, such as on its first start, does not hold that
+  much for ever. The capacity check and project limits count only what is reserved, and the **Usage** page warns when
+  services may use more memory between them than the servers have. A copy that is stopped for memory says so in the
+  service's status (`Ran out of memory`) and in an `OutOfMemory` condition, and the Scale settings say when a service
+  typically uses more memory than it reserves, since such a service is the first to be stopped when its server runs
+  short (the metrics gain a per-replica `memoryPerReplica` series for this). Databases and object storage always use
+  what they reserve.
 - **Network isolation.** Projects are private by default, with an allow list per project.
 - **Observability.** Metrics, live logs with history, a terminal in a service and a query box for databases, and charts
   of the operator's own health.

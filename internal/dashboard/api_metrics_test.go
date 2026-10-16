@@ -78,6 +78,56 @@ func TestAppMetricsEndpointScopesQueriesToTheServiceNamespace(t *testing.T) {
 	}
 }
 
+func TestServiceMetricsAddTheMemoryOfTheBusiestCopyBesideTheTotal(t *testing.T) {
+	var queries []string
+	prom := fakePrometheus(t, &queries)
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: "production", Source: imageAppSource("nginx:alpine")},
+	}
+	platformConfig := testPlatformConfig("https://geass.test")
+	platformConfig.Spec.PrometheusURL = prom.URL
+	srv := &Server{Client: newFakeClient(app, platformConfig)}
+
+	rec := getMetrics(t, srv, "/api/apps/web/metrics?window=24h")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var payload struct {
+		Series map[string][]metricPoint `json:"series"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Series["memoryPerReplica"], 2)
+	require.Len(t, payload.Series["memory"], 2, "the total of every copy stays where it was")
+
+	namespace, err := platform.ProjectNamespace(testProjectName, "production")
+	require.NoError(t, err)
+	var perReplica, total string
+	for _, query := range queries {
+		switch {
+		case strings.HasPrefix(query, "max(container_memory_working_set_bytes"):
+			perReplica = query
+		case strings.HasPrefix(query, "sum(container_memory_working_set_bytes"):
+			total = query
+		}
+	}
+	require.Equal(t, `max(container_memory_working_set_bytes{namespace=~"`+namespace+`",pod=~"web-[a-z0-9]+-[a-z0-9]+",container!=""})`, perReplica,
+		"the largest container of the service's own pods, in its own namespace")
+	require.Equal(t, `sum(container_memory_working_set_bytes{namespace=~"`+namespace+`",pod=~"web-[a-z0-9]+-[a-z0-9]+",container!=""})`, total)
+}
+
+func TestOnlyServicesAskForTheMemoryOfOneCopy(t *testing.T) {
+	// A project, the cluster and a database have no single reservation to compare it with, so they do not pay for the query.
+	for name, scope := range map[string]metricScope{
+		"project":  {namespaces: []string{"shop-production"}},
+		"cluster":  {all: true},
+		"database": databaseMetricScope(metricsDatabase(geassv1alpha1.DatabaseEnginePostgres), "shop-production"),
+	} {
+		for _, query := range scope.queries() {
+			require.NotEqual(t, "memoryPerReplica", query.key, name)
+		}
+	}
+}
+
 func TestMetricsEndpointRejectsUnknownWindowAndMissingApp(t *testing.T) {
 	srv := &Server{Client: newFakeClient()}
 

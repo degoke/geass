@@ -1069,7 +1069,7 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	res, err := resourcesFromForm(r, platform.DefaultAppResources())
+	res, err := serviceResourcesFromForm(r, platform.DefaultAppResources())
 	if err != nil {
 		redirectFormUserError(w, r, fallback, err)
 		return
@@ -1847,6 +1847,69 @@ func resourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (c
 	return platform.ResourcesFromSize(cpu, memory)
 }
 
+// serviceResourcesFromForm is resourcesFromForm for a service, which may use more than it reserves. cpuMax and
+// memoryMax are the most it may use; sent empty, a ceiling is what the service reserves. A ceiling that is not sent
+// keeps what a service that already has one is set to, for as long as it is not below the new reservation, so that
+// changing only what is reserved does not take the ceiling away. Databases and object stores do not come through
+// here: they always use what they reserve, since a kill of one of them costs more than a kill of a service.
+func serviceResourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (corev1.ResourceRequirements, error) {
+	if formHasValue(r, "cpuLimit", "memoryLimit") {
+		return resourcesFromForm(r, fallback)
+	}
+	reserved := formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest")
+	ceilings := map[corev1.ResourceName]string{}
+	if formHasValue(r, "cpuMax") {
+		ceilings[corev1.ResourceCPU] = r.FormValue("cpuMax")
+	}
+	if formHasValue(r, "memoryMax") {
+		ceilings[corev1.ResourceMemory] = r.FormValue("memoryMax")
+	}
+	res, err := resourcesFromForm(r, fallback)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	if len(res.Requests) == 0 {
+		res = platform.DefaultAppResources()
+	}
+	res = *res.DeepCopy()
+	if res.Limits == nil {
+		res.Limits = corev1.ResourceList{}
+	}
+	if reserved {
+		keepCeilings(&res, fallback, ceilings)
+	}
+	for name, value := range ceilings {
+		var limit resource.Quantity
+		if name == corev1.ResourceCPU {
+			limit, err = platform.CPUCeiling(value, res.Requests[name])
+		} else {
+			limit, err = platform.MemoryCeiling(value, res.Requests[name])
+		}
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		res.Limits[name] = limit
+	}
+	return res, nil
+}
+
+// keepCeilings gives a resource whose ceiling was not sent the ceiling it had, when it had one above what it reserved
+// and that is still not below the new reservation. A reservation that is changed on its own thereby does not take the
+// ceiling away, and one that never had a ceiling does not gain one.
+func keepCeilings(res *corev1.ResourceRequirements, before corev1.ResourceRequirements, sent map[corev1.ResourceName]string) {
+	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+		if _, ok := sent[name]; ok {
+			continue
+		}
+		limit, hasLimit := before.Limits[name]
+		request, hasRequest := before.Requests[name]
+		if !hasLimit || !hasRequest || limit.Cmp(request) <= 0 || limit.Cmp(res.Requests[name]) < 0 {
+			continue
+		}
+		res.Limits[name] = limit
+	}
+}
+
 func replicasFromForm(r *http.Request, fallback int32) int32 {
 	value := strings.TrimSpace(r.FormValue("replicas"))
 	if value == "" {
@@ -2080,8 +2143,8 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 			app.Spec.Replicas = &parsed
 		}
 	}
-	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit") {
-		res, err := resourcesFromForm(r, app.Spec.Resources)
+	if formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit", "cpuMax", "memoryMax") {
+		res, err := serviceResourcesFromForm(r, app.Spec.Resources)
 		if err != nil {
 			redirectFormUserError(w, r, fallback, err)
 			return

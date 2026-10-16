@@ -52,6 +52,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **ClusterIssuer.** The cert-manager issuer named `letsencrypt-prod` that Geass creates from the ACME email and that every HTTPS Ingress asks for its certificate. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
 
+**Can use up to.** The most CPU or memory a service may use while its server has room, set beside what it reserves. By default it is the same as what is reserved. See [Apps](/docs/guides/apps/#scale).
+
 **Compliance tag.** A node tag, such as `hipaa`, that is always reserved and that a project can require, so everything the project runs stays on those nodes. See [Compliance tags](/docs/guides/compliance-tags/).
 
 **Connector.** A card in **Settings** → **Connectors** (GitHub, Cloudflare, AWS or PlanetScale); the dashboard's word for a connection. See [Cloud connectors](/docs/guides/connectors/).
@@ -159,6 +161,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **Replica.** One running copy of a service. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 
 **Required tag.** A node tag a project requires (`spec.requiredTags`), so its workloads run only on nodes that carry it. See [Compliance tags](/docs/guides/compliance-tags/).
+
+**Reserved.** The CPU and memory a service sets aside for itself, which the capacity check and the scheduler count. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 
 **Reserved tag.** A node tag that keeps every workload that does not ask for it off that node; a compliance tag is always reserved. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 

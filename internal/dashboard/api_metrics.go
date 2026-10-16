@@ -148,9 +148,10 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 		quotedNS := promRegexLiteral(namespace)
 		quotedName := promRegexLiteral(name)
 		metrics = metricScope{
-			namespaces:     []string{namespace},
-			podPattern:     quotedName + `-[a-z0-9]+-[a-z0-9]+`,
-			ingressService: `.*` + quotedNS + `-` + quotedName + `-.*`,
+			namespaces:       []string{namespace},
+			podPattern:       quotedName + `-[a-z0-9]+-[a-z0-9]+`,
+			ingressService:   `.*` + quotedNS + `-` + quotedName + `-.*`,
+			perReplicaMemory: true,
 		}
 	case "projects":
 		var project geassv1alpha1.GeassProject

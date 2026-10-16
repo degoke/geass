@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -104,4 +105,72 @@ func TestClusterCapacityIgnoresSucceededPods(t *testing.T) {
 	require.Equal(t, int64(0), snapshot.CPURequestedMillis)
 	ok, _ := snapshot.Fits(platform.EstimateWorkload(platform.WorkloadService, false, 1))
 	require.True(t, ok)
+}
+
+func burstTestNode() *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("4Gi"),
+			},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+}
+
+func burstTestPod(name, request, limit string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: corev1.PodSpec{NodeName: "worker-1", Containers: []corev1.Container{{
+			Name: "app",
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(request)},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(limit)},
+			},
+		}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
+
+func TestClusterCapacityWarnsWhenServicesMayUseMoreMemoryThanTheServersHave(t *testing.T) {
+	// Three services reserve 1.5 GB of a 4 GB server and may use 6 GB between them.
+	srv := &Server{Client: newFakeClient(burstTestNode(),
+		burstTestPod("a", "512Mi", "2Gi"), burstTestPod("b", "512Mi", "2Gi"), burstTestPod("c", "512Mi", "2Gi"))}
+	snapshot := srv.clusterCapacity(t.Context())
+
+	require.True(t, snapshot.Known)
+	require.Equal(t, int64(1536*1024*1024), snapshot.MemoryRequestedBytes)
+	require.Equal(t, int64(6*1024*1024*1024), snapshot.MemoryCeilingBytes)
+	require.Equal(t, "6Gi", snapshot.MemoryCeiling)
+	var warning *capacityIssue
+	for i := range snapshot.Issues {
+		if snapshot.Issues[i].Severity == "warning" && strings.Contains(snapshot.Issues[i].Message, "use up to 6Gi") {
+			warning = &snapshot.Issues[i]
+		}
+	}
+	require.NotNil(t, warning, "%+v", snapshot.Issues)
+	require.Contains(t, warning.Message, "the servers have 4Gi")
+
+	// It is only a warning: another service that reserves what is left still fits.
+	ok, _ := snapshot.Fits(platform.EstimateWorkload(platform.WorkloadService, false, 1))
+	require.True(t, ok)
+}
+
+func TestClusterCapacityDoesNotWarnForServicesThatReserveAllTheyMayUse(t *testing.T) {
+	srv := &Server{Client: newFakeClient(burstTestNode(), burstTestPod("a", "1Gi", "1Gi"), burstTestPod("b", "1Gi", "1Gi"))}
+	snapshot := srv.clusterCapacity(t.Context())
+	require.Equal(t, snapshot.MemoryRequestedBytes, snapshot.MemoryCeilingBytes)
+	for _, issue := range snapshot.Issues {
+		require.NotContains(t, issue.Message, "use up to")
+	}
+
+	// Many services may use more than any one server has, and none of that is a problem until they all do.
+	srv = &Server{Client: newFakeClient(burstTestNode(), burstTestPod("a", "512Mi", "2Gi"))}
+	snapshot = srv.clusterCapacity(t.Context())
+	require.Equal(t, int64(2*1024*1024*1024), snapshot.MemoryCeilingBytes)
+	for _, issue := range snapshot.Issues {
+		require.NotContains(t, issue.Message, "use up to")
+	}
 }

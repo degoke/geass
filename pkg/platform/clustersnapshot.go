@@ -203,3 +203,24 @@ func containerRequestedMemory(containers []corev1.Container) int64 {
 	}
 	return total
 }
+
+// MemoryCeilingOfPods is the most memory the pods that hold resources on a node could use between them: for each
+// container, its limit, or, where it has none, what it reserves, which is all that is known of what it needs. It is
+// more than what the pods ask the scheduler for exactly when some of them may use more than they reserve.
+func MemoryCeilingOfPods(pods []corev1.Pod) int64 {
+	var total int64
+	for i := range pods {
+		pod := &pods[i]
+		if !podCounts(pod) || pod.Spec.NodeName == "" {
+			continue
+		}
+		for _, container := range pod.Spec.Containers {
+			limit := QuantityBytes(container.Resources.Limits[corev1.ResourceMemory])
+			if limit == 0 {
+				limit = QuantityBytes(container.Resources.Requests[corev1.ResourceMemory])
+			}
+			total += limit
+		}
+	}
+	return total
+}

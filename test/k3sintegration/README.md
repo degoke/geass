@@ -8,6 +8,7 @@ eval "$(make -s k3s-up)"      # starts rancher/k3s in Docker, installs the CRDs,
 make test-k3s-serverless      # scale to zero and function schedules, end to end (about 15 minutes the first time)
 make test-k3s-objectstorage   # the cluster's object storage, SeaweedFS and Garage (about 10 minutes the first time)
 make test-k3s-limits          # a project's node block and its quotas, per environment and for the whole project (about 4 minutes)
+make test-k3s-burst           # a service that reserves less than it may use, and a copy stopped for memory saying so (about 2 minutes, a little more the first time)
 make test-k3s-alerting        # alerts from a failing build or crashing pod to Alertmanager and out to Slack and mail stand-ins (about 20 minutes, a little more the first time)
 make k3s-down                 # removes it
 ```
@@ -45,6 +46,13 @@ docker run -d --name geass-k3s-agent --privileged --tmpfs /run --tmpfs /var/run 
   -e K3S_URL=https://$SERVER:6443 -e K3S_TOKEN=$TOKEN rancher/k3s:v1.31.5-k3s1 agent
 docker rm -f geass-k3s-agent   # when you are done
 ```
+
+`TestBurstableServicesOnK3s` starts the cluster, project and app controllers in the test process and runs three services from a
+small Python image that hold memory. One reserves 128 MB, may use 1 GB and holds 300 MB, and has to stay up and
+`Burstable`. One reserves what it uses and is `Guaranteed`. One reserves 128 MB, may use 256 MB, and holds 600 MB after
+a few seconds, and the test waits for its status to say it ran out of memory (the Ready message, and the `OutOfMemory`
+condition while a copy is ready between two stops), then raises what it may use and waits for it to be ready with the
+condition gone.
 
 `TestAlertingOnK3s` turns on the monitoring add-on and follows an alert from end to end. The test process stands in for
 Slack and for a mail server on the host, which the pods in Docker reach, and exposes the operator's problem metrics to

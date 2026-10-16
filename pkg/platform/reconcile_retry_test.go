@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -127,6 +128,28 @@ func TestAQuotaThatIsUsedUpIsWaitedOutNotCountedAsAFailure(t *testing.T) {
 		outcome := ApplyNotReady(nil, state, 1, message)
 		if outcome.Terminal || outcome.RequeueAfter == 0 {
 			t.Fatalf("a quota that is used up must be retried, not given up on: %+v", outcome)
+		}
+	}
+}
+
+// A copy stopped for memory and started again is a crash loop. A service in one says why, and goes on being looked at:
+// ending in ProvisionFailed would pause it until someone edited it, when what stopped the copy may have passed.
+func TestACrashLoopFromMemoryIsExplainedNotGivenUpOn(t *testing.T) {
+	reserved, limit := resource.MustParse("128Mi"), resource.MustParse("256Mi")
+	for name, kill := range map[string]OOMKill{
+		"bursting":    {Reserved: reserved, Limit: limit},
+		"reserved":    {Reserved: limit, Limit: limit},
+		"no limit":    {},
+		"no reserved": {Limit: limit},
+	} {
+		message := kill.Message()
+		if ReconcileFailureShouldCount(message) {
+			t.Fatalf("%s: counted as a failure: %s", name, message)
+		}
+		started := metav1.NewTime(time.Now().Add(-ReconcileFailureMaxDuration - time.Minute))
+		state := ReconcileRetryState{Failures: ReconcileFailureThreshold, FailureStarted: &started}
+		if outcome := ApplyNotReady(nil, state, 1, message); outcome.Terminal || outcome.RequeueAfter == 0 {
+			t.Fatalf("%s: a service that runs out of memory must be retried, not given up on: %+v", name, outcome)
 		}
 	}
 }

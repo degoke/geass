@@ -306,7 +306,7 @@ Two limits apply to the code. The raw code must be under 256 KB. The JSON-escape
 | --- | --- | --- | --- | --- |
 | `spec.replicas` | integer | `1` | 0 or more | The Deployment's replica count. The dashboard's API accepts 0 to 1000, and the **Replicas** field in its form starts at 1. With 0 the service runs no pods and still reports ready. It does not apply while the service sleeps when idle. |
 | `spec.port` | integer | `8080` | 1 or more | The container port, the Service port and the Ingress backend port. The container port is named `http`. |
-| `spec.resources` | `corev1.ResourceRequirements` | 100m CPU and 128Mi memory, as requests and limits | none | CPU and memory of the container. The operator uses the default whenever `requests` is empty, and ignores `limits` in that case. The dashboard offers fixed sizes (0.1 to 2 CPU, 128 MB to 4 GB) and sets requests equal to limits. |
+| `spec.resources` | `corev1.ResourceRequirements` | 100m CPU and 128Mi memory, as requests and limits | none | CPU and memory of the container. The operator uses the default whenever `requests` is empty, and ignores `limits` in that case. `requests` is what the capacity check, the scheduler and the project quotas count. `limits` is the most the container may use: a limit above the request lets it burst while its server has room, and makes the pod `Burstable`, so it is among the first stopped when the server runs out of memory. The dashboard offers fixed sizes (0.1 to 2 CPU, 128 MB to 4 GB) for each, and by default sets the limit equal to the request. |
 | `spec.autoscaling.maxReplicas` | integer | none | Required inside `autoscaling`. 1 or more | The upper bound. |
 | `spec.autoscaling.minReplicas` | integer | `1` | 1 or more | The lower bound. It must not exceed `maxReplicas`. |
 | `spec.autoscaling.targetCPUUtilization` | integer | none | 1 to 100 | The target average CPU utilization, measured against the container's CPU request. |
@@ -472,7 +472,7 @@ The dashboard only edits the HTTP readiness probe, through **Healthcheck path**.
 | `status.reconcileRetry` | object | `reconcileFailures`, `reconcileFailureStarted` and `reconcileFailureGeneration`, the retry bookkeeping. |
 | `status.provision.activeProvisionAttempt` | string | The ID of the attempt in progress. |
 | `status.provision.provisionAttempts` | list, at most 8 | The recent deploys, newest first. Each has `id`, `startedAt`, `completedAt`, `phase` (`Running`, `Succeeded` or `Failed`), `summary`, `errors` (at most 12 while running, 5 kept afterwards, each at most 500 characters), `buildRef` and `deploymentRef`. |
-| `status.conditions` | list | `Ready`. `ScaleToZero`, only on a service that asks to sleep when idle. `RollbackReady`, for `rollbackOnFailure`. |
+| `status.conditions` | list | `Ready`. `ScaleToZero`, only on a service that asks to sleep when idle. `OutOfMemory`, only while a copy was stopped for memory in the last hour. `RollbackReady`, for `rollbackOnFailure`. |
 
 The dashboard starts an attempt each time you deploy. The operator adds the errors it meets and closes the attempt as `Succeeded` with the summary `Provisioned successfully`, or as `Failed`. An attempt that succeeded can still list errors. Those are temporary errors, such as a write conflict, that the operator retried.
 
@@ -486,6 +486,7 @@ The dashboard starts an attempt each time you deploy. The operator adds the erro
 | `Ready` | `False` | `ReconcileError` | `Git source is waiting for a successful build` | The build has not succeeded yet. |
 | `Ready` | `False` | `ReconcileError` | `Service is starting` | The Deployment exists but is not yet available. |
 | `Ready` | `False` | `ReconcileError` | `The service cannot start: app is CrashLoopBackOff` | A container is in a state that does not clear without a change: `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError` or `CreateContainerError`. When the Deployment ran out of time to progress, the text ends `it did not become ready in time` instead. Read the pod's events. |
+| `Ready` | `False` | `ReconcileError` | `Ran out of memory: a copy was stopped for …` | A copy of the service was stopped by the kernel for using more memory than it could have, and the service is not ready. It replaces `Service is starting` and `The service cannot start: app is CrashLoopBackOff` when that is the cause. The text says what the container reserves and may use. It does not count against the retry limit: the service is looked at again until it is fixed or recovers. |
 | `Ready` | `False` | `ReconcileError` | `The new version of the service cannot start: …` | A service that sleeps when idle was deployed with a change to its pods, and the copy of the new version cannot start. The deploy fails, and not the first visitor. |
 | `Ready` | `False` | `ReconcileError` | `The service was woken but its copy cannot start: …` or `The service was woken but has not started within 10m0s` | A request woke a sleeping service and its copy does not start. |
 | `Ready` | `False` | `Waking` | `Starting after a request` | A sleeping service is starting after a request. It does not count against the retry limit. |
@@ -497,6 +498,7 @@ The dashboard starts an attempt each time you deploy. The operator adds the erro
 | `Ready` | `False` | `ProvisionFailed` | `Provisioning failed after repeated errors. Update settings or platform configuration, then save or redeploy to try again.` | The operator gave up. See below. |
 | `Ready` | `False` | `ReconcileError` | `Retrying provisioning` | You clicked **Retry**. The operator is trying again. |
 | `RollbackReady` | `True` | `RollbackRequested` | `Rollback was requested after rollout failure` | `rollbackOnFailure` is on and the threshold was reached. Informational only. |
+| `OutOfMemory` | `True` | `OOMKilled` | The same `Ran out of memory: …` text | A copy of the service was stopped for memory in the last hour, whether or not the service is ready now. The condition is removed when none was, and a service that never ran out of memory does not have it. |
 | `ScaleToZero` | `True` | `Active` | `Sleeps after idle, wakes on the next request` | The service sleeps when idle. The condition exists only when `spec.scaleToZero.enabled` is true. |
 | `ScaleToZero` | `False` | `AddonNotInstalled` | `Scale to zero needs the serverless add-on: set spec.addons.serverless.enabled on the GeassCluster` | The service asked to sleep and runs always on. Turn the add-on on. |
 | `ScaleToZero` | `False` | `NoPublicHost` | `Scale to zero needs a public host: it is the requests to it that wake the service` | Give the service a host. |
@@ -658,7 +660,7 @@ kubectl get geassdeployments -n geass-system -l geass.dev/app=storefront-web
 
 - `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName`: the image name is wrong, or the registry needs a pull Secret. `spec.source.image.pullSecret` must name a Secret in the environment namespace, not in `geass-system`. For a Git service, `status.resolvedImage` is `<repository>@sha256:…`: check that the Secret `<app>-registry-pull` exists in the environment namespace (it is made when the build uses a credential) and that the credential can pull from that repository.
 - `CreateContainerConfigError` or `CreateContainerError`: a ConfigMap or Secret named in `env` or `envFrom`, or a key in it, does not exist in the environment namespace.
-- `CrashLoopBackOff`: the process exits. Read `kubectl logs --previous` and the **Deploy Logs**.
+- `CrashLoopBackOff`: the process exits. Read `kubectl logs --previous` and the **Deploy Logs**. When the container was stopped for memory (`kubectl describe pod` says `OOMKilled`, exit code 137), the service says `Ran out of memory` instead: raise the memory it may use, or the memory it reserves.
 
 **`Provisioning failed after repeated errors`.** The operator gave up after 5 counted errors or 3 minutes. The recent errors are in `status.provision.provisionAttempts[].errors`. Fix the cause, then click **Retry**, or change the spec.
 

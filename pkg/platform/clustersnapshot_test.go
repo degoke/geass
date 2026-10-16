@@ -216,3 +216,27 @@ func TestReservedAgainstOnlyCountsNodesInThePlacement(t *testing.T) {
 	other := sizedNode("eu", "4", "8Gi", map[string]string{LabelRegion: "eu"}, reservedTaint("storage"))
 	require.False(t, NewPlacement("us", nil).ReservedAgainst(&other), "a reserved node in another region is simply not in this region")
 }
+
+func TestMemoryCeilingOfPodsCountsWhatEachContainerMayUse(t *testing.T) {
+	container := func(request, limit string) corev1.Container {
+		res := corev1.ResourceRequirements{}
+		if request != "" {
+			res.Requests = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(request)}
+		}
+		if limit != "" {
+			res.Limits = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(limit)}
+		}
+		return corev1.Container{Resources: res}
+	}
+	pod := func(phase corev1.PodPhase, node string, containers ...corev1.Container) corev1.Pod {
+		return corev1.Pod{Spec: corev1.PodSpec{NodeName: node, Containers: containers}, Status: corev1.PodStatus{Phase: phase}}
+	}
+	pods := []corev1.Pod{
+		pod(corev1.PodRunning, "a", container("128Mi", "1Gi")),
+		pod(corev1.PodRunning, "a", container("256Mi", ""), container("", "512Mi")), // no limit: what it reserves; no request: its limit
+		pod(corev1.PodSucceeded, "a", container("1Gi", "4Gi")),                      // finished
+		pod(corev1.PodPending, "", container("1Gi", "4Gi")),                         // not on a node yet
+	}
+	require.Equal(t, int64((1024+256+512)*1024*1024), MemoryCeilingOfPods(pods))
+	require.Zero(t, MemoryCeilingOfPods(nil))
+}

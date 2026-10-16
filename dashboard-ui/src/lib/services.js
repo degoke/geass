@@ -600,10 +600,25 @@ function looksLikeOperatorMessage(raw) {
   );
 }
 
+/**
+ * What the operator says when a copy of a service was stopped for using too much memory, in words meant to be read. It is on
+ * a service that is ready between two such stops, and is left out when none was stopped lately.
+ */
+export function outOfMemoryNotice(item) {
+  const entry = item?.status?.conditions?.find((row) => row.type === "OutOfMemory" && row.status === "True");
+  return entry?.message?.trim() || "";
+}
+
+/** A service whose copies keep being stopped for memory says so as its Ready message; it is written to be read as it is. */
+function ranOutOfMemory(message) {
+  return /^ran out of memory/i.test(message);
+}
+
 /** Classifies non-ready resources for status badges vs overview copy. */
 export function resourceNotReadyKind(item) {
   const message = readyConditionMessage(item);
   const reason = readyConditionReason(item);
+  if (ranOutOfMemory(message)) return "failed";
   if (
     /failed to start|service failed|storage is unavailable/i.test(message) ||
     reason === "RolloutFailed" ||
@@ -672,6 +687,7 @@ export function userFacingReadyMessage(item) {
     return "Provisioning failed. Update settings or platform configuration, then use Retry or deploy again.";
   }
   if (!raw) return "";
+  if (ranOutOfMemory(raw)) return raw;
   if (/waiting for deployment/i.test(raw)) {
     return "Finish configuration, then deploy to provision this resource.";
   }

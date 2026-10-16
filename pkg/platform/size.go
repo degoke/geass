@@ -85,9 +85,17 @@ func DefaultDatabaseResources() corev1.ResourceRequirements {
 // requests and limits. Limits match the assigned amount so burst cannot exceed
 // the capacity reserved for the workload.
 func ResourcesFromSize(cpu, memory string) (corev1.ResourceRequirements, error) {
-	cpu = strings.TrimSpace(cpu)
-	memory = strings.TrimSpace(memory)
-	if cpu == "" && memory == "" {
+	return ResourcesFromSizes(cpu, memory, "", "")
+}
+
+// ResourcesFromSizes is ResourcesFromSize for a workload that may use more than it reserves. cpu and memory are
+// what the workload reserves (its requests: what the scheduler and the capacity check count). cpuMax and memoryMax
+// are what it may use when the server has room (its limits). Left empty, a ceiling is the reserved amount, which
+// is what ResourcesFromSize does. A ceiling is one of the same sizes as a reservation and is never below it.
+func ResourcesFromSizes(cpu, memory, cpuMax, memoryMax string) (corev1.ResourceRequirements, error) {
+	cpu, memory = strings.TrimSpace(cpu), strings.TrimSpace(memory)
+	cpuMax, memoryMax = strings.TrimSpace(cpuMax), strings.TrimSpace(memoryMax)
+	if cpu == "" && memory == "" && cpuMax == "" && memoryMax == "" {
 		return DefaultAppResources(), nil
 	}
 	if cpu == "" {
@@ -96,24 +104,61 @@ func ResourcesFromSize(cpu, memory string) (corev1.ResourceRequirements, error) 
 	if memory == "" {
 		memory = "128Mi"
 	}
-	if !allowedSize(cpu, CPUSizes()) {
-		return corev1.ResourceRequirements{}, fmt.Errorf("CPU must be one of the available sizes")
-	}
-	if !allowedSize(memory, MemorySizes()) {
-		return corev1.ResourceRequirements{}, fmt.Errorf("memory must be one of the available sizes")
-	}
-	cpuQty, err := resource.ParseQuantity(cpu)
+	cpuQty, err := sizeQuantity("CPU", cpu, CPUSizes())
 	if err != nil {
 		return corev1.ResourceRequirements{}, err
 	}
-	memQty, err := resource.ParseQuantity(memory)
+	memQty, err := sizeQuantity("memory", memory, MemorySizes())
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	cpuCeiling, err := CPUCeiling(cpuMax, cpuQty)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	memCeiling, err := MemoryCeiling(memoryMax, memQty)
 	if err != nil {
 		return corev1.ResourceRequirements{}, err
 	}
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpuQty, corev1.ResourceMemory: memQty},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpuQty, corev1.ResourceMemory: memQty},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpuCeiling, corev1.ResourceMemory: memCeiling},
 	}, nil
+}
+
+// CPUCeiling is the most CPU a workload may use, given what it reserves. Empty is the reservation itself.
+func CPUCeiling(value string, reserved resource.Quantity) (resource.Quantity, error) {
+	return ceiling("CPU", value, reserved, CPUSizes())
+}
+
+// MemoryCeiling is the most memory a workload may use, given what it reserves. Empty is the reservation itself.
+func MemoryCeiling(value string, reserved resource.Quantity) (resource.Quantity, error) {
+	return ceiling("memory", value, reserved, MemorySizes())
+}
+
+func ceiling(name, value string, reserved resource.Quantity, options []SizeOption) (resource.Quantity, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return reserved.DeepCopy(), nil
+	}
+	most := "the most " + name + " a service can use"
+	quantity, err := sizeQuantity(most, value, options)
+	if err != nil {
+		return resource.Quantity{}, err
+	}
+	if quantity.Cmp(reserved) < 0 {
+		return resource.Quantity{}, fmt.Errorf("%s cannot be below the %s it reserves", most, name)
+	}
+	return quantity, nil
+}
+
+// sizeQuantity parses an amount that has to be one of the sizes on offer. name says what the amount is, for the
+// message about one that is not.
+func sizeQuantity(name, value string, options []SizeOption) (resource.Quantity, error) {
+	if !allowedSize(value, options) {
+		return resource.Quantity{}, fmt.Errorf("%s must be one of the available sizes", name)
+	}
+	return resource.ParseQuantity(value)
 }
 
 // EstimateFromResources builds a capacity estimate from assigned CPU, memory, and copies.

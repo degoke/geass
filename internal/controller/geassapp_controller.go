@@ -264,6 +264,10 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		if problem := quotaProblem(deploy); problem != "" {
 			return r.setNotReady(ctx, &app, problem)
 		}
+		// A copy that keeps being stopped for memory never gets ready, and "starting" would be all anyone saw.
+		if kill, found := r.recentOOMKill(ctx, &app, wsNS); found {
+			return r.setNotReady(ctx, &app, kill.Message())
+		}
 		return r.setNotReady(ctx, &app, messageServiceStarting)
 	}
 	if app.Status.HealthCheckFailures != 0 {
@@ -301,6 +305,7 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 			dnsVerified = lookupErr == nil
 		}
 	}
+	oomKill, oomFound := r.recentOOMKill(ctx, &app, wsNS)
 	if _, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		if app.Status.ResolvedImage != "" {
 			latest.Status.ResolvedImage = app.Status.ResolvedImage
@@ -327,6 +332,7 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		completeProvisionSuccess(&latest.Status.Provision)
 		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
 		latest.Status.Conditions = scaleToZeroCondition(plan, latest.Status.Conditions)
+		latest.Status.Conditions = outOfMemoryCondition(latest.Status.Conditions, oomKill, oomFound)
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -335,6 +341,10 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 	r.reportToGitHub(ctx, &app, githubapp.DeploymentSuccess, "", wasReady)
 
 	log.Info("Reconciled GeassApp", "environment", app.Spec.Environment, "namespace", wsNS)
+	if oomFound {
+		// The condition goes when the kill is no longer recent, and nothing else will wake the service then.
+		return ctrl.Result{RequeueAfter: oomKillExpiry(oomKill, time.Now())}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -1283,6 +1293,9 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A service's Deployment is in the project's namespace, so it cannot be owned by the service. Its copies
 		// are started and stopped by the scale-to-zero add-on, and the service's state follows them.
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(deploymentScaleChanged())).
+		// A copy that is stopped for memory and started again leaves the Deployment as it was, so the service has
+		// to hear of it from the pod. The pod carries the same labels as the Deployment.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(podOOMKilled())).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
 			var apps geassv1alpha1.GeassAppList
 			if err := r.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)); err != nil {
