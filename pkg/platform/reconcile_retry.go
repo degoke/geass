@@ -89,6 +89,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "installing") && strings.Contains(msg, "chart") {
 		return false
 	}
+	// A database moved off the chart that ran its server waits for the chart to be removed.
+	if strings.Contains(msg, "replacing the") && strings.Contains(msg, "chart") {
+		return false
+	}
 	if strings.Contains(msg, "configure the bucket name") {
 		return false
 	}

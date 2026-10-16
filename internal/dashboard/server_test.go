@@ -1260,10 +1260,10 @@ func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 	srv := &Server{Client: newFakeClient(roomyTestNode(), psConn)}
 
 	form := url.Values{
-		"name":             {"orders-mysql"},
+		"name":             {"orders-pg"},
 		"project":          {testProjectName},
 		"environment":      {"dev"},
-		"engine":           {"MySQL"},
+		"engine":           {"Postgres"},
 		"placement":        {"InCluster"},
 		"highAvailability": {"on"},
 	}
@@ -1274,8 +1274,8 @@ func TestAPIDatabaseCreateSupportsEnginesAndExternalPlacement(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var db geassv1alpha1.GeassDatabase
-	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "orders-mysql", Namespace: platform.SystemNamespace}, &db))
-	require.Equal(t, geassv1alpha1.DatabaseEngineMySQL, db.Spec.Engine)
+	require.NoError(t, srv.Client.Get(ctx, client.ObjectKey{Name: "orders-pg", Namespace: platform.SystemNamespace}, &db))
+	require.Equal(t, geassv1alpha1.DatabaseEnginePostgres, db.Spec.Engine)
 	require.True(t, db.Spec.HighAvailability)
 	require.NotNil(t, db.Spec.Instances)
 	require.Equal(t, int32(3), *db.Spec.Instances)
@@ -2048,7 +2048,7 @@ func TestAPIObjectStoreCreateRejectsInvalidBucket(t *testing.T) {
 func TestDatabaseQueryCommandSplitsRedisArguments(t *testing.T) {
 	cmd, err := databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET session")
 	require.NoError(t, err)
-	require.Equal(t, []string{"redis-cli", "--", "GET", "session"}, cmd)
+	require.Equal(t, []string{"redis-cli", "GET", "session"}, cmd)
 	cmd, err = databaseQueryCommand(geassv1alpha1.DatabaseEnginePostgres, "SELECT 1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"psql", "-c", "SELECT 1"}, cmd)

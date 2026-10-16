@@ -10,7 +10,7 @@ Geass has two high availability features today. A database can run as three inst
 | Part | Highly available? | Notes |
 | --- | --- | --- |
 | Postgres with **High availability** | Yes, with three instances | Replicas and failover come from the Postgres operator (CloudNativePG). Needs at least three healthy nodes. |
-| MySQL and Redis with **High availability** | Replicated, with no automatic failover | Geass asks for a primary with replicas and configures no failover. See [MySQL and Redis](#mysql-and-redis). |
+| MySQL and Redis | No | One instance each. They refuse **High availability**. See [MySQL and Redis](#mysql-and-redis). |
 | Services | Only as far as replicas go | Replicas are not spread by any Geass rule. See [Services](#services). |
 | Control plane: the Kubernetes API and etcd | Yes, with three servers | Join two more servers to the first. The cluster works with one lost and stops with two. See [Run three control plane servers](#run-three-control-plane-servers). |
 | The operator and the dashboard | Restarts on another server | One pod, which starts on another server when its own is lost, in one to two minutes. Nothing is reconciled and the dashboard is down in between. |
@@ -185,7 +185,7 @@ kubectl -n geass-system get geassdatabase orders \
   -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}{"\n"}'
 ```
 
-The gate covers Postgres, MySQL and Redis alike. The capacity check also counts three instances (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
+The gate covers Postgres. MySQL and Redis are refused before it, because they run as one instance. The capacity check also counts three instances (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
 
 ## Where the instances run
 
@@ -202,7 +202,7 @@ kubectl get pods -n morning-beach-production -l cnpg.io/cluster=orders -o wide
 
 ### MySQL and Redis
 
-For MySQL and Redis, Geass asks the chart for a `replication` layout: one primary and replicas. It configures no failover. If the primary's node is lost, nothing in Geass promotes a replica. Redis runs without persistence, so a Redis instance loses its data when its pod restarts, highly available or not.
+MySQL and Redis run as one instance each. A MySQL or Redis database that asks for high availability, or for more than one instance, is refused with "High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL". Geass has no replication or failover for them. Redis runs without persistence, so it loses its data when its pod restarts. For a highly available database, choose PostgreSQL.
 
 ### Services
 
@@ -215,7 +215,7 @@ A service with several replicas keeps serving while some of them are up. Geass a
 | A Postgres instance (highly available) | The Postgres operator promotes a replica if the lost instance was the primary. The `<name>-rw` service follows the primary, so clients that use the database's address reconnect. The lost instance's volume has its only copy on the lost node, so that instance is back when the node returns. The other two keep serving. |
 | A single-instance database | It is unavailable until it runs again. Whether it can restart on another node depends on its storage. See [Storage](/docs/guides/storage/). |
 | A service replica | Kubernetes starts a replacement on another node that matches the project's region and tags and has room. By default it waits five minutes before it does; Geass does not change that. A service with one replica is down in the meantime. |
-| A MySQL or Redis primary | Nothing promotes a replica. See [MySQL and Redis](#mysql-and-redis). |
+| A MySQL or Redis server | It is unavailable until it runs again. A MySQL volume on replicated storage can be attached on another node; Redis starts empty. See [MySQL and Redis](#mysql-and-redis). |
 | A control plane server (of three) | The API and the cluster's data stay available from the other two. The operator starts on another server in one to two minutes if it was on the lost one. |
 | The only control plane server | See below. |
 

@@ -30,6 +30,11 @@ The first public release.
 - **Databases.** PostgreSQL, MySQL, Redis and SQLite in the cluster, shared database servers, external databases
   (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
   (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.
+  MySQL and Redis run as one pod each from the official `mysql` and `redis` images, which Geass runs itself (not
+  through a Helm chart, whose Bitnami images no longer exist on Docker Hub); high availability is for PostgreSQL only,
+  and a MySQL or Redis database that asks for it, or for more than one instance, is refused with the reason. A MySQL
+  volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it
+  is, and moves a Redis database to the new server (Redis keeps no data on disk, so that costs a restart).
 - **Object storage.** Buckets on an in-cluster SeaweedFS or Garage server, or in AWS S3, isolated per project.
 - **Domains and HTTPS.** Domains through Cloudflare (including Tunnels and DNS records) and certificates from
   Let's Encrypt through cert-manager.
