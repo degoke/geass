@@ -208,7 +208,7 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/operator/metrics", "How the operator is doing", accessViewer, tagNodes, nil, false},
 
 	// ---- templates ----
-	{http.MethodGet, "/templates", "Saved and built-in templates", accessObserver, tagTemplates, nil, false},
+	{http.MethodGet, "/templates", "Catalog and saved templates", accessObserver, tagTemplates, nil, false},
 	{http.MethodPost, "/templates/{id}/deploy", "Deploy a template into an environment", accessAdmin, tagTemplates, []v1Field{fieldProject, fieldEnv}, false},
 
 	// ---- for project tokens ----

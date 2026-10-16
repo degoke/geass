@@ -56,7 +56,7 @@ export function TemplatesPage({ data }) {
   const [busy, setBusy] = useState(false);
 
   const items = templates.data?.items || [];
-  const builtin = items.filter((template) => template.builtin);
+  const catalog = items.filter((template) => template.builtin);
   const saved = items.filter((template) => !template.builtin);
 
   const remove = () => {
@@ -71,7 +71,7 @@ export function TemplatesPage({ data }) {
   return (
     <div className="rw-templates-page">
       <h1>Templates</h1>
-      <p className="rw-templates-lead">Start from a ready-made set of services and databases. Templates are added as drafts, so you review everything before it runs.</p>
+      <p className="rw-templates-lead">Deploy self-hosted software in one step, or save your own stack. Everything is added as drafts, so you review it before it runs.</p>
       {!mutable ? (
         <Muted size="sm">Your viewer role cannot browse templates.</Muted>
       ) : templates.isPending ? (
@@ -81,9 +81,9 @@ export function TemplatesPage({ data }) {
       ) : (
         <>
           <section>
-            <h2>Starters</h2>
+            <h2>Catalog</h2>
             <div className="rw-template-grid">
-              {builtin.map((template) => (
+              {catalog.map((template) => (
                 <TemplateCard key={template.id} template={template} mutable={mutable} onDeploy={setDeploying} />
               ))}
             </div>

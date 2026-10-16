@@ -27,6 +27,12 @@ The first public release.
   with Kaniko, or as a function (Bun, Node.js or Python, as a server or as an event handler that Geass serves HTTP for,
   with cron triggers). Review pending changes and deploy them together. Templates, pull request environments, signed
   deployment webhooks and deploy hooks.
+- **Catalog.** Self-hosted software you can deploy in one click from the Templates page: Gatus, Infisical, ReFHIR and
+  browserbay, each with its databases, generated secrets and a size measured with the real image. You can save your own
+  stack as a template too. A template can carry config files, notes about what to do after deploying, and a size that
+  reserves one amount and lets the service use up to a higher one (`cpuMax` and `memoryMax`), so software that needs
+  more memory only for its first start does not hold it for ever. The old starter examples are in the documentation
+  to copy instead of shipping as defaults.
 - **Databases.** PostgreSQL, MySQL, Redis and SQLite in the cluster, shared database servers, external databases
   (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
   (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.

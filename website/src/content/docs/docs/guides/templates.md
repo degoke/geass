@@ -1,14 +1,14 @@
 ---
 title: "Templates"
-description: "Start a project from a ready-made set of services and databases, or save your own: what built-in templates create and how to write one."
+description: "Deploy self-hosted software from the catalog in one step, or save your own set of services and databases: what the catalog creates and how to write a template."
 ---
 
-A **template** is a named set of services, functions and databases that Geass creates in a project in one step. Use one
-to start a known stack, such as a database with a web UI, or to copy a stack you built so you can create it again in
-another project. Templates do not run anything by themselves: they add **drafts** to your canvas, and you review them
-and deploy.
+A **template** is a named set of services, functions and databases that Geass creates in a project in one step. Geass
+ships a **catalog** of self-hosted software, such as Infisical, ReFHIR and browserbay, that you can deploy with one click. You can also
+save a stack you built as your own template, so you can create it again in another project. Templates do not run
+anything by themselves: they add **drafts** to your canvas, and you review them and deploy.
 
-![The Templates page with the starter templates.](../../../../assets/docs/templates.webp)
+![The Templates page.](../../../../assets/docs/templates.webp)
 *Screenshot with example data.*
 
 A template is not a Helm chart. Geass has no Helm-based templates. A template is a list of Geass resources.
@@ -21,23 +21,49 @@ You need to be an admin. A read-only user sees "Your viewer role cannot browse t
 
 Choose **Templates** in the left rail. The page has two groups:
 
-- **Starters**: the templates that ship with Geass.
-- **Your templates**: templates you saved from a project. It reads "No saved templates yet" until you save one.
+- **Catalog**: the software that ships with Geass.
+- **Your templates**: templates you saved from a project or wrote yourself. It reads "No saved templates yet" until you
+  save one.
 
 Each card shows the template's name and description and a list of its resources, with the image, the database engine, or
 `Function · bun`. A saved template also has a trash button. You can also reach the same list from a project: **From
 template** above the canvas opens this page, and **+ Add resource** → **Template** lists the templates in the add box.
 Choosing one there adds it to the current environment at once, without the **Project** and **Environment** choices.
 
-## Built-in templates
+## The catalog
 
-| Template | What it creates |
-| --- | --- |
-| **Hello function** | One Bun function, `hello`, that answers every request. The smallest thing you can deploy. |
-| **HTTP echo** | One service, `echo`, running `mendhak/http-https-echo:41` on port 8080. It echoes each request with its headers and environment variables. It sets `ECHO_INCLUDE_ENV_VARS=1`, `APP_NAME=geass-demo`, `APP_ENV=staging` and `FEATURE_FLAG=true`. |
-| **Postgres with Adminer** | A Postgres database, `postgres`, and a service, `adminer`, running `adminer:4` on port 8080 with `ADMINER_DEFAULT_SERVER` set to the database's host. |
-| **Function with Postgres** | A Postgres database and a Bun function, `api`, that queries it. `DATABASE_URL` is a reference to the database's connection string. |
-| **Hasura GraphQL** | A Postgres database and a service, `hasura`, running `hasura/graphql-engine:v2.40.0` on port 8080. It gets `HASURA_GRAPHQL_DATABASE_URL` from the database, the console enabled, and a generated `HASURA_GRAPHQL_ADMIN_SECRET`. |
+The catalog is software you would otherwise install and wire up yourself. Each entry pins the image version it was
+tested with. Deploying one creates drafts, so you can change anything before it runs.
+
+| Entry | What it creates | After you deploy |
+| --- | --- | --- |
+| **Gatus** | One service, `gatus`, running `twinproduction/gatus:v5.37.0` on port 8080. It has a `config.yaml` file that checks Gatus itself, and sets `GATUS_CONFIG_PATH` to that file. | Add your own checks to the `config.yaml` variable on the service's **Variables** tab, then deploy the change. Results are kept in memory, so they reset when the service restarts. |
+| **Infisical** | A Postgres database, a Redis database and a service, `infisical`, running `infisical/infisical:v0.166.8` on port 8080. It reserves 0.5 CPU and 1 GB of memory and may use up to 2 GB. It gets `DB_CONNECTION_URI` and `REDIS_URL` from the databases and a generated `ENCRYPTION_KEY` and `AUTH_SECRET`. `SITE_URL` starts as `http://localhost:8080`. | Add a domain to the service and set `SITE_URL` to its address. Keep a copy of `ENCRYPTION_KEY`, because without it the stored secrets cannot be read. The first start runs database migrations and takes a few minutes. |
+| **ReFHIR** | A Postgres database and a service, `refhir`, running `ghcr.io/hai-hq/refhir:0.0.1` on port 8080, a FHIR R4 server. It reserves 0.5 CPU and 2 GB and may use up to 2 CPU and 4 GB. It gets `REFHIR_POSTGRES_URL` from the database and a generated `REFHIR_AUDIT_KEY`. | The first start downloads the FHIR packages from `packages.fhir.org`, so the service needs outbound internet access, and takes about two minutes. `GET /readyz` answers once it is ready. Keep a copy of `REFHIR_AUDIT_KEY`, which keys the audit trail that `GET /_audit/verify` checks. Until you turn on SMART sign-in the API needs no credentials, so secure it before you add a domain. |
+| **browserbay** | One service, `browserbay`, running `ghcr.io/degoke/browserbay:0.2.2` on port 8788: a relay and a Chromium node in one process. It reserves 0.5 CPU and 1 GB and may use up to 2 CPU and 4 GB. It gets a generated `BROWSERBAY_API_KEY`. | Add a domain and serve it over HTTPS before anything outside the cluster uses it. Your services present the API key to take a browser. It runs up to 5 browsers at once. A browser can open any address the service can reach, so give browser tokens only to services you trust. |
+
+Geass shows these notes again in the dialog before you deploy and in the message after it.
+
+### How the catalog is sized
+
+A catalog entry reserves what the software needs to run, and may use up to what it needs for a short while, such as its
+first start. The reserved amount is what the capacity check and your project limits count, so the entry does not hold
+memory it only needs once. A service that goes over what it reserved is the first to be stopped when its server runs out
+of memory, and one that goes over what it may use is stopped at once (see [Apps](/docs/guides/apps/#scale)). Databases
+always use what they reserve.
+
+Each size comes from running the pinned image in Docker under that limit, with swap off. The memory figures are the
+container's working set, in MiB (1 GB in the dashboard is 1024 MiB). A "peak" also counts the file cache, which the
+server gives back when it needs the memory.
+
+| Entry | Reserved | May use up to | What was measured |
+| --- | --- | --- | --- |
+| **Infisical** | 0.5 CPU, 1 GB | 0.5 CPU, 2 GB | 835 to 961 MiB once it has started, 1147 MiB at its first-start peak, ready after 84 seconds at 0.5 CPU. |
+| **ReFHIR** | 0.5 CPU, 2 GB | 2 CPU, 4 GB | First start: peak 3190 MiB at 2 CPU (ready after 105 seconds) and 2802 MiB at 0.5 CPU (ready after 150 seconds). It then holds about 2132 MiB until it restarts. After a restart it is ready in 5 seconds, peaks at 2027 MiB and settles near 1.3 GB. A 2 GB limit killed the first start. |
+| **browserbay** | 0.5 CPU, 1 GB | 2 CPU, 4 GB | 220 to 520 MiB idle and 730 MiB with one page open. Five busy pages (Wikipedia, GitHub, BBC News and Hacker News) peaked at 1569 MiB at 2 CPU and 1202 MiB at 0.5 CPU, where the last page loaded after 37 seconds instead of 16. A 1 GB limit made one of the five pages time out. |
+
+Starter examples, such as a database with a web UI or a function with a database, are not in the catalog. They are in
+[Examples to copy](#examples-to-copy) below, and you can add any of them to **Your templates**.
 
 ## Deploy a template
 
@@ -55,8 +81,9 @@ What Geass creates for each resource:
 | Resource | Created as |
 | --- | --- |
 | A database | An in-cluster database of that engine, with the default size and volume (10 GiB for Postgres and MySQL, 1 GiB for SQLite) and backups turned on where the engine supports them. |
-| A service | A draft with one replica, the default size (0.1 CPU, 128 MB) and the port from the template (8080 if it names none). No domain. |
+| A service | A draft with one replica, the size from the template (0.1 CPU and 128 MB if it names none, and no more than it reserves unless the template names a ceiling) and the port from the template (8080 if it names none). No domain. |
 | A function | The same as a service, with the template's runtime, code, mode and schedules. The schedules start when you deploy the function, like any other change. |
+| A file | A config file in the service's `/config` directory, such as `/config/config.yaml`. It also appears as a variable on the **Variables** tab, where you can edit it. |
 | A literal variable | A service variable with that value. |
 | A generated secret | A service secret with a new random value, 32 hexadecimal characters. Each deploy of the template makes a new one. |
 | A database reference | An environment variable that reads the new database's connection string or one part of it. |
@@ -74,9 +101,9 @@ A few things to know after you deploy a template:
 - The dashboard never shows secret values, so it cannot show a generated secret. Read it with `kubectl`, or replace it
   with a value you choose by adding a secret of the same name on the service's **Variables** tab:
 
-```bash title="Read the generated Hasura admin secret"
-kubectl -n geass-system get secret <hasura service ID>-secrets \
-  -o jsonpath='{.data.HASURA_GRAPHQL_ADMIN_SECRET}' | base64 -d
+```bash title="Read the generated Infisical encryption key"
+kubectl -n geass-system get secret <infisical service ID>-secrets \
+  -o jsonpath='{.data.ENCRYPTION_KEY}' | base64 -d
 ```
 
 ## Save your own template
@@ -92,7 +119,7 @@ Geass saves the **services, functions and in-cluster databases** of that environ
 
 - for a service, its image, or its repository and branch, its port (when it is not 8080), and its variables: the plain
   variables (empty ones are dropped), references to databases in the same environment, and each secret as "generate a
-  new secret";
+  new secret". A config entry that is not a valid variable name, such as `config.yaml`, is kept as a file;
 - for a function, its runtime, code, mode (`http` or `event`), [schedules](/docs/guides/functions/#schedules) and variables;
 - for a database, its engine and version.
 
@@ -102,7 +129,7 @@ settings or volume sizes, and it never copies a secret's value. Resources it can
 nothing to save is refused: "this environment has no services or in-cluster databases to save".
 
 Delete a saved template with the trash button on its card and confirm in **Delete template?**. Projects that already used
-it are not affected. Built-in templates cannot be deleted.
+it are not affected. Catalog entries cannot be deleted.
 
 :::caution
 A repository service in a template takes its GitHub link from the project you deploy the template into, at the moment you
@@ -112,7 +139,7 @@ before the link has none and cannot be built. A repository service also needs th
 
 ### Write a template by hand
 
-A saved template is a ConfigMap in `geass-system`. You can write one yourself, for example to keep templates in version
+A saved template is a ConfigMap in `geass-system`. The [examples below](#examples-to-copy) are ready to apply. You can write one yourself, for example to keep templates in version
 control. The ConfigMap must be named `template-<id>`, carry the label `geass.dev/template: "true"`, and hold the
 template in the key `template.json`:
 
@@ -154,13 +181,15 @@ The template appears under **Your templates**. The rules Geass checks:
 
 | Field | Rule |
 | --- | --- |
-| `id` | Lowercase letters, digits and dashes. The ConfigMap name must be `template-` plus the `id`. It cannot reuse a built-in ID. |
-| `name`, `description` | `name` is required, up to 80 characters. `description` is up to 400. A resource's `name` is up to 63. |
+| `id` | Lowercase letters, digits and dashes. The ConfigMap name must be `template-` plus the `id`. It cannot reuse a catalog ID such as `gatus` or `infisical`. |
+| `name`, `description`, `notes` | `name` is required, up to 80 characters. `description` is up to 400 and `notes` up to 800. `notes` is shown before and after a deploy. A resource's `name` is up to 63. |
 | `resources` | 1 to 25. Each has a unique `key` of lowercase letters, digits and dashes, starting with a letter, up to 31 characters. |
 | `kind` | `service`, `function` or `database`. |
 | Service | Exactly one of `image` or `repository` (`owner/name`, with optional `branch`, default `main`). `port` 0 to 65535. |
 | Function | `runtime` (`bun`, `node` or `python`) and `code`, within the [function limits](/docs/guides/functions/#limits). Optionally `mode` (`http`, the default, or `event`) and up to 8 `triggers`, each with a `name`, a `schedule` and optionally a `path` and a `payload`, under the rules in [Functions](/docs/guides/functions/#schedules). A service cannot have `runtime`, `code`, `mode` or `triggers`. |
-| Database | `engine` of `Postgres`, `MySQL`, `Redis` or `SQLite`, and an optional `version`. A database has no `variables`. |
+| Database | `engine` of `Postgres`, `MySQL`, `Redis` or `SQLite`, and an optional `version`. A database has no `variables`, `size` or `files`. |
+| `size` | On a service or function: `cpu` and `memory` are what it reserves, which the capacity check counts, and `cpuMax` and `memoryMax` are the most it may use while its server has room. Use at least one of the four. Each is one of the sizes the dashboard offers: `cpu` and `cpuMax` are `100m`, `250m`, `500m`, `1` or `2`, and `memory` and `memoryMax` are `128Mi`, `256Mi`, `512Mi`, `1Gi`, `2Gi` or `4Gi`. A `cpu` or `memory` you leave out is the default, 0.1 CPU or 128 MB. A ceiling you leave out is the reservation, so the service can never use more than it reserves, and a ceiling below the reservation is refused. See [Apps](/docs/guides/apps/#scale) for what a ceiling costs. |
+| `files` | On a service only: up to 20 files, as `{ "name": "content" }`. A name uses letters, numbers, dots, dashes and underscores, starts with a letter or number, and is up to 128 characters. A file is up to 256 KB and cannot share a name with a variable. Files are written to `/config`. |
 | `variables` | Up to 100 per resource, with names of letters, digits and underscores. Each has one of `value`, `generate` (only `"secret"`) or `from` (`resource` is a database `key` in the same template, `key` is one of `uri`, `host`, `port`, `username`, `password`, `database`). |
 | Size | Geass refuses to save a template over 900 KB. A ConfigMap is itself limited to 1 MiB. |
 
@@ -175,6 +204,213 @@ A function resource looks like this. It goes in the `resources` list next to the
 }
 ```
 
+## Examples to copy
+
+These five are not in the catalog, but each is a complete template. Save the block to a file, apply it with
+`kubectl apply -f`, and the template appears under **Your templates**. Change the image, the name or the variables first
+if you like.
+
+```yaml title="template-hello-function.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-hello-function
+  namespace: geass-system
+  labels:
+    geass.dev/template: "true"
+data:
+  template.json: |
+    {
+      "id": "hello-function",
+      "name": "Hello function",
+      "description": "A Bun function that answers every request. The smallest thing you can deploy.",
+      "resources": [
+        {
+          "key": "hello",
+          "kind": "function",
+          "name": "hello",
+          "runtime": "bun",
+          "code": "const port = Number(process.env.PORT) || 8080;\n\nBun.serve({\n  port,\n  fetch(request) {\n    return Response.json({ message: \"Hello from Geass\", url: request.url });\n  },\n});\n\nconsole.log(\"Listening on \" + port);\n"
+        }
+      ]
+    }
+```
+
+```yaml title="template-echo-demo.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-echo-demo
+  namespace: geass-system
+  labels:
+    geass.dev/template: "true"
+data:
+  template.json: |
+    {
+      "id": "echo-demo",
+      "name": "HTTP echo",
+      "description": "Echoes each request back with its headers and environment variables. Good for checking routing and variables.",
+      "resources": [
+        {
+          "key": "echo",
+          "kind": "service",
+          "name": "echo",
+          "image": "mendhak/http-https-echo:41",
+          "port": 8080,
+          "variables": [
+            {
+              "name": "ECHO_INCLUDE_ENV_VARS",
+              "value": "1"
+            },
+            {
+              "name": "APP_NAME",
+              "value": "geass-demo"
+            },
+            {
+              "name": "APP_ENV",
+              "value": "staging"
+            },
+            {
+              "name": "FEATURE_FLAG",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    }
+```
+
+```yaml title="template-postgres-adminer.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-postgres-adminer
+  namespace: geass-system
+  labels:
+    geass.dev/template: "true"
+data:
+  template.json: |
+    {
+      "id": "postgres-adminer",
+      "name": "Postgres with Adminer",
+      "description": "A PostgreSQL database and the Adminer web UI, pre-pointed at it.",
+      "resources": [
+        {
+          "key": "database",
+          "kind": "database",
+          "name": "postgres",
+          "engine": "Postgres"
+        },
+        {
+          "key": "adminer",
+          "kind": "service",
+          "name": "adminer",
+          "image": "adminer:4",
+          "port": 8080,
+          "variables": [
+            {
+              "name": "ADMINER_DEFAULT_SERVER",
+              "from": {
+                "resource": "database",
+                "key": "host"
+              }
+            }
+          ]
+        }
+      ]
+    }
+```
+
+```yaml title="template-function-postgres.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-function-postgres
+  namespace: geass-system
+  labels:
+    geass.dev/template: "true"
+data:
+  template.json: |
+    {
+      "id": "function-postgres",
+      "name": "Function with Postgres",
+      "description": "A Bun function that queries a PostgreSQL database through DATABASE_URL.",
+      "resources": [
+        {
+          "key": "database",
+          "kind": "database",
+          "name": "postgres",
+          "engine": "Postgres"
+        },
+        {
+          "key": "api",
+          "kind": "function",
+          "name": "api",
+          "runtime": "bun",
+          "code": "import { sql } from \"bun\";\n\nconst port = Number(process.env.PORT) || 8080;\n\nBun.serve({\n  port,\n  async fetch() {\n    try {\n      const [row] = await sql`select now() as now`;\n      return Response.json({ database: \"connected\", now: row.now });\n    } catch (error) {\n      return Response.json({ database: \"unavailable\", error: String(error) }, { status: 503 });\n    }\n  },\n});\n\nconsole.log(\"Listening on \" + port);\n",
+          "variables": [
+            {
+              "name": "DATABASE_URL",
+              "from": {
+                "resource": "database",
+                "key": "uri"
+              }
+            }
+          ]
+        }
+      ]
+    }
+```
+
+```yaml title="template-hasura-postgres.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-hasura-postgres
+  namespace: geass-system
+  labels:
+    geass.dev/template: "true"
+data:
+  template.json: |
+    {
+      "id": "hasura-postgres",
+      "name": "Hasura GraphQL",
+      "description": "Hasura GraphQL Engine on a PostgreSQL database, with the console enabled and a generated admin secret.",
+      "resources": [
+        {
+          "key": "database",
+          "kind": "database",
+          "name": "postgres",
+          "engine": "Postgres"
+        },
+        {
+          "key": "hasura",
+          "kind": "service",
+          "name": "hasura",
+          "image": "hasura/graphql-engine:v2.40.0",
+          "port": 8080,
+          "variables": [
+            {
+              "name": "HASURA_GRAPHQL_DATABASE_URL",
+              "from": {
+                "resource": "database",
+                "key": "uri"
+              }
+            },
+            {
+              "name": "HASURA_GRAPHQL_ENABLE_CONSOLE",
+              "value": "true"
+            },
+            {
+              "name": "HASURA_GRAPHQL_ADMIN_SECRET",
+              "generate": "secret"
+            }
+          ]
+        }
+      ]
+    }
+```
+
 A template that breaks a rule is not listed. Geass skips it and logs "Skipped invalid template".
 
 ## Through the API
@@ -184,7 +420,7 @@ All of these need a workspace admin token. See the [REST API](/docs/reference/re
 ```bash title="List, deploy and delete"
 curl -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/templates
 
-curl -X POST https://geass.example.com/api/templates/postgres-adminer/deploy \
+curl -X POST https://geass.example.com/api/templates/infisical/deploy \
   -H "Authorization: Bearer $GEASS_TOKEN" -H "Accept: application/json" \
   -d project=proj-1a2b3c4d -d environment=staging
 
@@ -197,7 +433,7 @@ template and a `skipped` list.
 
 ## What happens under the hood
 
-- Built-in templates are part of the operator binary. Saved templates are ConfigMaps named `template-<id>` in
+- The catalog is part of the operator binary. Saved templates are ConfigMaps named `template-<id>` in
   `geass-system`, labelled `geass.dev/template=true`, with the template in `template.json`. The ID of a saved template is
   the slug of its name plus four random characters.
 - Deploying creates `GeassDatabase` objects first, then `GeassApp` objects, in `geass-system`, marked as drafts with the

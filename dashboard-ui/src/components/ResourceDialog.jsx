@@ -6,7 +6,7 @@ import { ArrowLeft, Container, Database, GitBranch, HardDrive, Info, Layers, Sea
 import { action, api, condition, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { validateContainerImageReference } from "@/lib/container-image";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
-import { alertUser } from "@/lib/notify";
+import { alertUser, notifyTemplateAdded } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { projectRegion, sharedServerRegion } from "@/lib/placement";
 import { Button, Muted } from "@/components/geass-ui";
@@ -142,7 +142,7 @@ export function ResourceDialog({ project, environment, data }) {
       .then(() => {
         queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
         setOpen(false);
-        alertUser(`${template.name} added as drafts. Review them, then deploy.`);
+        notifyTemplateAdded(template);
       })
       .catch((error) => alertUser(error.message))
       .finally(() => setCreating(false));

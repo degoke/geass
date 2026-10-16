@@ -32,6 +32,17 @@ func templateServer(t *testing.T, objects ...client.Object) (*Server, client.Cli
 	return &Server{Client: c}, c
 }
 
+// savedTemplate is how a template written by hand, or saved from a project, is stored in the cluster.
+func savedTemplate(t *testing.T, name string, template templates.Template) *corev1.ConfigMap {
+	t.Helper()
+	data, err := json.Marshal(template)
+	require.NoError(t, err)
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Labels: map[string]string{templateLabel: "true"}},
+		Data:       map[string]string{templateDataKey: string(data)},
+	}
+}
+
 func postTemplate(t *testing.T, srv *Server, path string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -56,43 +67,120 @@ func listDatabases(t *testing.T, c client.Client) []geassv1alpha1.GeassDatabase 
 func TestDeployingATemplateCreatesWiredDrafts(t *testing.T) {
 	srv, c := templateServer(t)
 
-	rec := postTemplate(t, srv, "/templates/postgres-adminer/deploy", url.Values{"project": {testProjectName}, "environment": {"staging"}})
+	rec := postTemplate(t, srv, "/templates/infisical/deploy", url.Values{"project": {testProjectName}, "environment": {"staging"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	dbs, apps := listDatabases(t, c), listApps(t, c)
-	require.Len(t, dbs, 1)
+	require.Len(t, dbs, 2)
 	require.Len(t, apps, 1)
-	db, app := dbs[0], apps[0]
+	app := apps[0]
+	byEngine := map[geassv1alpha1.GeassDatabaseEngine]geassv1alpha1.GeassDatabase{}
+	for _, db := range dbs {
+		byEngine[db.Spec.Engine] = db
+	}
+	postgres, redis := byEngine[geassv1alpha1.DatabaseEnginePostgres], byEngine[geassv1alpha1.DatabaseEngineRedis]
+	require.NotEmpty(t, postgres.Name)
+	require.NotEmpty(t, redis.Name)
 
-	require.Equal(t, "staging", string(db.Spec.Environment), "resources land in the chosen environment")
-	require.Equal(t, geassv1alpha1.DatabaseEnginePostgres, db.Spec.Engine)
-	require.False(t, db.Spec.Deploy.Enabled, "templates create drafts; nothing runs until changes are applied")
+	require.Equal(t, "staging", string(postgres.Spec.Environment), "resources land in the chosen environment")
+	require.False(t, postgres.Spec.Deploy.Enabled, "templates create drafts; nothing runs until changes are applied")
 	require.False(t, app.Spec.Deploy.Enabled)
-	require.NotNil(t, db.Spec.Backup, "a Postgres database from a template is backed up like any other")
-	require.True(t, db.Spec.Backup.Enabled)
+	require.NotNil(t, postgres.Spec.Backup, "a Postgres database from a template is backed up like any other")
+	require.True(t, postgres.Spec.Backup.Enabled)
 	require.NotEmpty(t, app.Annotations[platform.AppPendingChangesAnnotation], "drafts appear in the Apply changes list")
-	require.Equal(t, "postgres", db.Annotations[platform.DisplayNameAnnotation])
-	require.Equal(t, "adminer", app.Annotations[platform.DisplayNameAnnotation])
-	require.Equal(t, "adminer:4", app.Spec.Source.Image.Image)
+	require.Equal(t, "postgres", postgres.Annotations[platform.DisplayNameAnnotation])
+	require.Equal(t, "infisical", app.Annotations[platform.DisplayNameAnnotation])
+	require.Equal(t, "infisical/infisical:v0.166.8", app.Spec.Source.Image.Image)
 	require.Equal(t, int32(8080), app.Spec.Port)
 
-	require.Len(t, app.Spec.Env, 1)
-	env := app.Spec.Env[0]
-	require.Equal(t, "ADMINER_DEFAULT_SERVER", env.Name)
-	require.Equal(t, db.Name+"-connection", env.ValueFrom.SecretKeyRef.Name, "the service points at the new database's connection secret")
-	require.Equal(t, "host", env.ValueFrom.SecretKeyRef.Key)
+	// Reserved 1 GB, may use 2 GB: the size is what the dashboard's size picker would show as "up to".
+	resources := app.Spec.Resources
+	require.Equal(t, "1Gi", resources.Requests.Memory().String(), "the template's size replaces the 128 MB default")
+	require.Equal(t, "2Gi", resources.Limits.Memory().String())
+	require.Equal(t, "500m", resources.Requests.Cpu().String())
+	require.Equal(t, "500m", resources.Limits.Cpu().String(), "Infisical names no cpu ceiling")
+
+	refs := map[string]*corev1.SecretKeySelector{}
+	for _, env := range app.Spec.Env {
+		refs[env.Name] = env.ValueFrom.SecretKeyRef
+	}
+	require.Len(t, refs, 2)
+	require.Equal(t, postgres.Name+"-connection", refs["DB_CONNECTION_URI"].Name, "each variable points at the connection secret of its own database")
+	require.Equal(t, redis.Name+"-connection", refs["REDIS_URL"].Name)
+	require.Equal(t, "uri", refs["REDIS_URL"].Key)
 
 	var body struct {
 		Created []createdResource `json:"created"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body.Created, 2)
+	require.Len(t, body.Created, 3)
+}
+
+// The catalog sizes a service by what it runs on and what it starts on, and never lets a database burst.
+func TestDeployingReFHIRReservesLessThanItMayUseAndKeepsItsDatabaseFixed(t *testing.T) {
+	srv, c := templateServer(t)
+
+	rec := postTemplate(t, srv, "/templates/refhir/deploy", url.Values{"project": {testProjectName}, "environment": {"staging"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	dbs, apps := listDatabases(t, c), listApps(t, c)
+	require.Len(t, dbs, 1)
+	require.Len(t, apps, 1)
+	app, db := apps[0], dbs[0]
+
+	resources := app.Spec.Resources
+	require.Equal(t, "2Gi", resources.Requests.Memory().String(), "what the capacity check counts")
+	require.Equal(t, "4Gi", resources.Limits.Memory().String(), "what the first start needs")
+	require.Equal(t, "500m", resources.Requests.Cpu().String())
+	require.Equal(t, "2", resources.Limits.Cpu().String())
+
+	require.Equal(t, db.Spec.Resources.Requests, db.Spec.Resources.Limits, "a database always uses what it reserves")
+
+	require.Len(t, app.Spec.Env, 1)
+	require.Equal(t, "REFHIR_POSTGRES_URL", app.Spec.Env[0].Name)
+	require.Equal(t, db.Name+"-connection", app.Spec.Env[0].ValueFrom.SecretKeyRef.Name)
+	require.Equal(t, "uri", app.Spec.Env[0].ValueFrom.SecretKeyRef.Key)
+	require.NotNil(t, app.Spec.SecretRef, "REFHIR_AUDIT_KEY is a generated secret")
+	var secret corev1.Secret
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: app.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, &secret))
+	require.Regexp(t, "^[0-9a-f]{32}$", string(secret.Data["REFHIR_AUDIT_KEY"]))
+}
+
+func TestDeployingBrowserbayCreatesOneServiceOnItsOwnPort(t *testing.T) {
+	srv, c := templateServer(t)
+
+	rec := postTemplate(t, srv, "/templates/browserbay/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	require.Empty(t, listDatabases(t, c))
+	apps := listApps(t, c)
+	require.Len(t, apps, 1)
+	require.Equal(t, int32(8788), apps[0].Spec.Port)
+	require.Equal(t, "ghcr.io/degoke/browserbay:0.2.2", apps[0].Spec.Source.Image.Image)
+	require.Equal(t, "1Gi", apps[0].Spec.Resources.Requests.Memory().String())
+	require.Equal(t, "4Gi", apps[0].Spec.Resources.Limits.Memory().String())
+	require.NotNil(t, apps[0].Spec.SecretRef, "BROWSERBAY_API_KEY is generated")
+}
+
+func TestDeployingACatalogEntryWithAFileWritesItToTheConfigDirectory(t *testing.T) {
+	srv, c := templateServer(t)
+
+	rec := postTemplate(t, srv, "/templates/gatus/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	apps := listApps(t, c)
+	require.Len(t, apps, 1)
+	require.Empty(t, listDatabases(t, c), "Gatus keeps its results in memory and needs no database")
+	// ConfigData is mounted at /config, so this key is the file /config/config.yaml.
+	require.Contains(t, apps[0].Spec.ConfigData["config.yaml"], "endpoints:")
+	require.Equal(t, "/config/config.yaml", apps[0].Spec.ConfigData["GATUS_CONFIG_PATH"])
+	require.Equal(t, platform.DefaultAppResources(), apps[0].Spec.Resources, "an entry without a size gets the default")
 }
 
 func TestGeneratedSecretsAreRandomPerDeploymentAndStoredAsSecrets(t *testing.T) {
 	srv, c := templateServer(t)
 	secretOf := func() (geassv1alpha1.GeassApp, string) {
-		rec := postTemplate(t, srv, "/templates/hasura-postgres/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
+		rec := postTemplate(t, srv, "/templates/infisical/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var body struct {
 			Created []createdResource `json:"created"`
@@ -107,21 +195,24 @@ func TestGeneratedSecretsAreRandomPerDeploymentAndStoredAsSecrets(t *testing.T) 
 		require.NotNil(t, found.Spec.SecretRef)
 		var secret corev1.Secret
 		require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: found.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}, &secret))
-		return found, string(secret.Data["HASURA_GRAPHQL_ADMIN_SECRET"])
+		return found, string(secret.Data["ENCRYPTION_KEY"])
 	}
 
 	app, first := secretOf()
-	require.Regexp(t, "^[0-9a-f]{32}$", first)
-	require.Equal(t, "true", app.Spec.ConfigData["HASURA_GRAPHQL_ENABLE_CONSOLE"], "plain variables are stored as service variables")
-	require.NotContains(t, app.Spec.ConfigData, "HASURA_GRAPHQL_ADMIN_SECRET", "a generated secret must not be stored as a plain variable")
+	require.Regexp(t, "^[0-9a-f]{32}$", first, "Infisical wants a 32 character hex ENCRYPTION_KEY")
+	require.Equal(t, "production", app.Spec.ConfigData["NODE_ENV"], "plain variables are stored as service variables")
+	require.NotContains(t, app.Spec.ConfigData, "ENCRYPTION_KEY", "a generated secret must not be stored as a plain variable")
 
 	_, second := secretOf()
 	require.NotEqual(t, first, second, "every deployment gets its own secret")
 }
 
 func TestDeployingAFunctionTemplateCreatesAFunction(t *testing.T) {
-	srv, c := templateServer(t)
-	rec := postTemplate(t, srv, "/templates/hello-function/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
+	hello := templates.Template{ID: "hello", Name: "Hello", Resources: []templates.Resource{
+		{Key: "hello", Kind: templates.KindFunction, Name: "hello", Runtime: "bun", Code: platform.FunctionStarterCode("bun")},
+	}}
+	srv, c := templateServer(t, savedTemplate(t, "template-hello", hello))
+	rec := postTemplate(t, srv, "/templates/hello/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	apps := listApps(t, c)
 	require.Len(t, apps, 1)
@@ -138,7 +229,7 @@ func TestDeployingToAMissingProjectOrEnvironmentCreatesNothing(t *testing.T) {
 		"missing environment": {"project": {testProjectName}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rec := postTemplate(t, srv, "/templates/postgres-adminer/deploy", form)
+			rec := postTemplate(t, srv, "/templates/infisical/deploy", form)
 			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 			require.Empty(t, listApps(t, c))
 			require.Empty(t, listDatabases(t, c))
@@ -165,10 +256,10 @@ func TestAFailedTemplateDeployRemovesWhatItAlreadyCreated(t *testing.T) {
 	}).Build()
 	srv := &Server{Client: c}
 
-	rec := postTemplate(t, srv, "/templates/postgres-adminer/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
+	rec := postTemplate(t, srv, "/templates/infisical/deploy", url.Values{"project": {testProjectName}, "environment": {"production"}})
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Empty(t, listDatabases(t, c), "the database created before the failure must be cleaned up")
+	require.Empty(t, listDatabases(t, c), "the databases created before the failure must be cleaned up")
 }
 
 func TestSavingAProjectAsATemplateNeverCopiesSecretValues(t *testing.T) {
@@ -262,11 +353,50 @@ func TestSavingAProjectAsATemplateNeverCopiesSecretValues(t *testing.T) {
 	require.Equal(t, http.StatusOK, deploy.Code, deploy.Body.String())
 	require.Len(t, listDatabases(t, c), 3, "the saved database template created a new database in staging")
 
-	require.Equal(t, http.StatusBadRequest, postTemplate(t, srv, "/templates/echo-demo/delete", url.Values{}).Code)
+	require.Equal(t, http.StatusBadRequest, postTemplate(t, srv, "/templates/gatus/delete", url.Values{}).Code)
 	require.Equal(t, http.StatusOK, postTemplate(t, srv, "/templates/"+body.Template.ID+"/delete", url.Values{}).Code)
 	list, err = srv.listTemplates(context.Background())
 	require.NoError(t, err)
 	require.Len(t, list, len(templates.Builtin()))
+}
+
+// A config file (config.yaml) sits beside the variables in a service's config. It is saved as a file, so
+// the template deploys to the same place, instead of making the whole template invalid.
+func TestSavingAProjectKeepsConfigFilesAndReportsNamesItCannotKeep(t *testing.T) {
+	app := &geassv1alpha1.GeassApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "little-frost", Namespace: platform.SystemNamespace, Annotations: map[string]string{platform.DisplayNameAnnotation: "monitor"}},
+		Spec: geassv1alpha1.GeassAppSpec{
+			Project: testProjectName, Environment: "production", Source: imageAppSource("twinproduction/gatus:v5.37.0"),
+			ConfigData: map[string]string{"config.yaml": "endpoints: []\n", "LOG_LEVEL": "debug", ".hidden": "x", "empty.conf": ""},
+		},
+	}
+	srv, c := templateServer(t, app)
+
+	rec := postTemplate(t, srv, "/templates/create", url.Values{"project": {testProjectName}, "environment": {"production"}, "name": {"Monitor"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Template templates.Template `json:"template"`
+		Skipped  []string           `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Template.Resources, 1)
+	saved := body.Template.Resources[0]
+	require.Equal(t, map[string]string{"config.yaml": "endpoints: []\n"}, saved.Files, "empty files are dropped like empty variables")
+	require.Len(t, saved.Variables, 1)
+	require.Equal(t, "LOG_LEVEL", saved.Variables[0].Name)
+	require.Len(t, body.Skipped, 1)
+	require.Contains(t, body.Skipped[0], ".hidden")
+
+	deploy := postTemplate(t, srv, "/templates/"+body.Template.ID+"/deploy", url.Values{"project": {testProjectName}, "environment": {"staging"}})
+	require.Equal(t, http.StatusOK, deploy.Code, deploy.Body.String())
+	var staged geassv1alpha1.GeassApp
+	for _, candidate := range listApps(t, c) {
+		if candidate.Spec.Environment == "staging" {
+			staged = candidate
+		}
+	}
+	require.Equal(t, "endpoints: []\n", staged.Spec.ConfigData["config.yaml"], "the file comes back where it was")
+	require.Equal(t, "debug", staged.Spec.ConfigData["LOG_LEVEL"])
 }
 
 func TestSavingAnEmptyEnvironmentIsRefused(t *testing.T) {
@@ -283,7 +413,7 @@ func TestSavingAnEmptyEnvironmentIsRefused(t *testing.T) {
 func TestSavedTemplatesCannotShadowBuiltinsOrBeTampered(t *testing.T) {
 	good := templates.Template{ID: "mine", Name: "Mine", Resources: []templates.Resource{{Key: "web", Kind: templates.KindService, Image: "nginx"}}}
 	shadow := good
-	shadow.ID = "echo-demo"
+	shadow.ID = "gatus"
 	broken := good
 	broken.ID = "broken"
 	broken.Resources = []templates.Resource{{Key: "web", Kind: templates.KindService}}
@@ -291,15 +421,10 @@ func TestSavedTemplatesCannotShadowBuiltinsOrBeTampered(t *testing.T) {
 	mismatch.ID = "other"
 
 	store := func(name string, template templates.Template) *corev1.ConfigMap {
-		data, err := json.Marshal(template)
-		require.NoError(t, err)
-		return &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace, Labels: map[string]string{templateLabel: "true"}},
-			Data:       map[string]string{templateDataKey: string(data)},
-		}
+		return savedTemplate(t, name, template)
 	}
 	srv, _ := templateServer(t,
-		store("template-mine", good), store("template-echo-demo", shadow),
+		store("template-mine", good), store("template-gatus", shadow),
 		store("template-broken", broken), store("template-mismatch", mismatch),
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "template-junk", Namespace: platform.SystemNamespace, Labels: map[string]string{templateLabel: "true"}}, Data: map[string]string{templateDataKey: "{not json"}},
 	)
@@ -311,14 +436,15 @@ func TestSavedTemplatesCannotShadowBuiltinsOrBeTampered(t *testing.T) {
 		ids = append(ids, template.ID)
 	}
 	require.Contains(t, ids, "mine")
-	require.Equal(t, 1, strings.Count(strings.Join(ids, ","), "echo-demo"), "a saved template must not replace a built-in")
+	require.Equal(t, 1, strings.Count(strings.Join(ids, ","), "gatus"), "a saved template must not replace a catalog entry")
 	for _, hidden := range []string{"broken", "other"} {
 		require.NotContains(t, ids, hidden)
 	}
-	echo, found, err := srv.findTemplate(context.Background(), "echo-demo")
+	gatus, found, err := srv.findTemplate(context.Background(), "gatus")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.True(t, echo.Builtin)
+	require.True(t, gatus.Builtin)
+	require.Equal(t, "Gatus", gatus.Name)
 }
 
 func TestViewersCannotBrowseTemplates(t *testing.T) {

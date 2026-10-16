@@ -763,10 +763,10 @@ connection (PlanetScale creates the database and a login itself, as a MySQL or P
 
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
-| `GET /api/templates` | none | `{"items":[template, ...]}`: built-in templates, then saved ones (observer) |
+| `GET /api/templates` | none | `{"items":[template, ...]}`: the catalog, then saved templates. Catalog entries have `"builtin":true` (observer) |
 | `POST /api/templates/{id}/deploy` | `project`, `environment` | Creates the template's resources as drafts. `{"ok":true,"created":[...]}` |
-| `POST /api/templates/create` | `project`, `environment`, `name`, `description` | Saves an environment as a template. `{"ok":true,"template":{...},"skipped":["..."]}`: `skipped` names what it left out (external databases, logical databases, buckets). A function's mode and schedules are saved with it |
-| `POST /api/templates/{id}/delete` | none | Deletes a saved template (built-in ones cannot be deleted) |
+| `POST /api/templates/create` | `project`, `environment`, `name`, `description` | Saves an environment as a template. `{"ok":true,"template":{...},"skipped":["..."]}`: `skipped` names what it left out (external databases, logical databases, buckets). A function's mode and schedules, and a service's config files, are saved with it |
+| `POST /api/templates/{id}/delete` | none | Deletes a saved template (catalog entries cannot be deleted) |
 
 See [Templates](/docs/guides/templates/).
 

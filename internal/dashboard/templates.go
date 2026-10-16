@@ -300,7 +300,11 @@ func (s *Server) exportTemplate(ctx context.Context, projectName, environment, n
 		if app.Spec.Port != 0 && app.Spec.Port != 8080 {
 			resource.Port = app.Spec.Port
 		}
-		resource.Variables = exportVariables(&app, s.appSecretKeys(ctx, &app), databaseKeys)
+		var unsaved []string
+		resource.Variables, resource.Files, unsaved = exportVariables(&app, s.appSecretKeys(ctx, &app), databaseKeys)
+		for _, name := range unsaved {
+			skipped = append(skipped, fmt.Sprintf("%s: %s (not a variable or file name a template can keep)", display, name))
+		}
 		template.Resources = append(template.Resources, resource)
 	}
 	for _, db := range logical.Items {
@@ -349,8 +353,10 @@ func (s *Server) exportTemplate(ctx context.Context, projectName, environment, n
 	return template, skipped, nil
 }
 
-func exportVariables(app *geassv1alpha1.GeassApp, secretKeys map[string]string, databaseKeys map[string]string) []templates.Variable {
-	var variables []templates.Variable
+// exportVariables splits what a service holds into the parts a template keeps. A config entry whose name
+// is a valid variable name is a variable. Any other, such as config.yaml, is a file; one that is neither
+// is returned in unsaved.
+func exportVariables(app *geassv1alpha1.GeassApp, secretKeys map[string]string, databaseKeys map[string]string) (variables []templates.Variable, files map[string]string, unsaved []string) {
 	seen := map[string]bool{}
 	add := func(variable templates.Variable) {
 		if !seen[variable.Name] {
@@ -370,14 +376,24 @@ func exportVariables(app *geassv1alpha1.GeassApp, secretKeys map[string]string, 
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(app.Spec.ConfigData)) {
-		if value := app.Spec.ConfigData[key]; value != "" {
+		value := app.Spec.ConfigData[key]
+		switch {
+		case value == "":
+		case templates.IsVariableName(key):
 			add(templates.Variable{Name: key, Value: value})
+		case templates.IsFileName(key):
+			if files == nil {
+				files = map[string]string{}
+			}
+			files[key] = value
+		default:
+			unsaved = append(unsaved, key)
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(secretKeys)) {
 		add(templates.Variable{Name: key, Generate: templates.GenerateSecretKind})
 	}
-	return variables
+	return variables, files, unsaved
 }
 
 // ---- deploy ----
@@ -466,7 +482,7 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 			ObjectMeta: metav1.ObjectMeta{Namespace: systemNamespace},
 			Spec: geassv1alpha1.GeassAppSpec{
 				Project: projectName, Environment: geassv1alpha1.GeassEnvironment(environment),
-				Port: port, Replicas: &replicas, Resources: platform.DefaultAppResources(),
+				Port: port, Replicas: &replicas, Resources: resource.AppResources(),
 			},
 		}
 		switch resource.Kind {
@@ -508,6 +524,12 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 				}
 				app.Spec.ConfigData[variable.Name] = variable.Value
 			}
+		}
+		for name, content := range resource.Files {
+			if app.Spec.ConfigData == nil {
+				app.Spec.ConfigData = map[string]string{}
+			}
+			app.Spec.ConfigData[name] = content
 		}
 		app.Spec.Deploy.Enabled = false
 		initializeAppPendingChanges(app)
