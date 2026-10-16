@@ -26,6 +26,14 @@ export function alertUser(message) {
   notify(text, isSuccessMessage(text) ? "success" : "error");
 }
 
+/** Confirms a template was added as drafts, and repeats its notes: they say what to do next. */
+export function notifyTemplateAdded(template) {
+  const notes = template.notes ? ` ${template.notes}` : "";
+  notify(`${template.name} added as drafts. Review them, then deploy.${notes}`, "success", {
+    autoClose: template.notes ? 15000 : undefined,
+  });
+}
+
 export function alertError(message) {
   notify(String(message), "error");
 }

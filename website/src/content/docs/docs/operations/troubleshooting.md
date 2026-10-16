@@ -203,7 +203,7 @@ On the machine, check `systemctl status k3s` (the control plane) or `k3s-agent` 
 
 ### A service stays "Setting up"
 
-The condition is "Service is starting" and does not change. Geass waits until every replica is available, so a service that is only slow stays here. A copy that cannot start does not wait for ever. When a pod is in `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError` or `CreateContainerError`, or the Deployment did not become ready within its progress deadline, Geass reports "The service cannot start: `<container>` is `<reason>`" and counts it as a failure. The label changes to **Unavailable**. After five failures in a row, about two minutes, the service is **Failed**, and the message stays in the deploy's record under **Deployments**.
+The condition is "Service is starting" and does not change. Geass waits until every replica is available, so a service that is only slow stays here. A copy that cannot start does not wait for ever. When a pod is in `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError` or `CreateContainerError`, or the Deployment did not become ready within its progress deadline, Geass reports "The service cannot start: `<container>` is `<reason>`" and counts it as a failure, except for a copy that is waiting for the connection Secret of a database or bucket that is still starting: that says "Waiting for database `<name>`" (or "bucket") and is not counted. The label changes to **Unavailable**. After five failures in a row, about two minutes, the service is **Failed**, and the message stays in the deploy's record under **Deployments**.
 
 ```bash
 kubectl -n morning-beach-production get pods -o wide

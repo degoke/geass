@@ -34,7 +34,7 @@ You can also paste the image into the first box. Geass offers **Deploy image men
 Geass saves the service as a draft and opens its panel, docked on the right, on **Settings**, with the message `Service saved as a draft. Adjust settings or variables, then deploy.` Nothing runs yet. The service shows **Draft**, the canvas card shows `1 change`, and the top bar shows **1 pending**.
 
 :::tip
-The same service is available as a template. Open **Templates**, choose **Deploy** on the **HTTP echo** card, pick the project and choose **Add to project**. It adds this image with these variables and port as a draft, and you deploy it as below.
+You can also keep this service as a template. The [HTTP echo example](/docs/guides/templates/#examples-to-copy) is a ready-made one: apply it once, then use **Deploy** on its card under **Templates** to add the image, variables and port as a draft in any project.
 :::
 
 ## 3. Check the port

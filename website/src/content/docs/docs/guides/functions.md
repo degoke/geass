@@ -464,8 +464,8 @@ code").
 - [Apps](/docs/guides/apps/)
 - [Sleep when idle](/docs/guides/scale-to-zero/)
 - [Environment variables and secrets](/docs/guides/environment-variables/)
-- [Templates](/docs/guides/templates/): **Hello function** and **Function with Postgres**, and templates that carry a
-  function's mode and schedules.
+- [Templates](/docs/guides/templates/): ready-made **Hello function** and **Function with Postgres** examples, and
+  templates that carry a function's mode and schedules.
 - [Domains and TLS](/docs/guides/domains-and-tls/)
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [GeassApp](/docs/reference/resources/geass-app/)

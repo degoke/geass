@@ -38,6 +38,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Capacity gate.** The check that refuses a deploy when the cluster does not have the CPU and memory the change asks for. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 
+**Catalog.** The self-hosted software that ships with Geass, such as Gatus and Infisical, as templates you can deploy in one step. See [Templates](/docs/guides/templates/#the-catalog).
+
 **CLI.** The `geass` command line, which deploys and runs services from a terminal by calling the `/api/v1` API. See [Command line](/docs/guides/command-line/) and the [CLI reference](/docs/reference/cli/).
 
 **Cloud connection.** A project's credentials for AWS or PlanetScale, kept as a `GeassCloudConnection`. See [Cloud connectors](/docs/guides/connectors/).
@@ -198,7 +200,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Tag.** A free-form label on a node, such as `storage` or `gpu`, that workloads can ask for and a project can require. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 
-**Template.** A saved set of resources you can deploy into an environment in one step. See [Templates](/docs/guides/templates/).
+**Template.** A named set of resources you can deploy into an environment in one step. The catalog is made of templates, and you can save your own. See [Templates](/docs/guides/templates/).
 
 **Trigger.** A cron schedule, in UTC, that calls a function (`spec.source.function.triggers`). See [Functions](/docs/guides/functions/).
 

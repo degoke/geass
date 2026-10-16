@@ -119,6 +119,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageObjectStorageCredentials)) {
 		return false
 	}
+	// A service that reads from a database or bucket that is not ready yet says it is waiting for it.
+	if strings.HasPrefix(msg, "waiting for database ") || strings.HasPrefix(msg, "waiting for bucket ") {
+		return false
+	}
 	// A server and the databases that start slowly say "... is starting".
 	if strings.Contains(msg, "is starting") {
 		return false

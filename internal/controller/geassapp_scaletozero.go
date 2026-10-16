@@ -336,6 +336,57 @@ func (r *GeassAppReconciler) startFailureMessage(ctx context.Context, app *geass
 	return "The service cannot start: " + problem
 }
 
+// connectionWait says what a service whose copy cannot start is waiting for, or "" when it is waiting for nothing that
+// is on its way. A copy that reads the connection Secret of a database or bucket stays in CreateContainerConfigError
+// until that Secret exists, which on a cluster that has never had a database comes after the Postgres operator has been
+// installed, and the kubelet then takes a while to try again. That is a wait, and not a start that will not come. What
+// the copy itself says is what is relied on, and not whether the database is ready: the Secret can be there while the
+// copy has not yet noticed. A reference that is wrong for good, to a Secret nothing makes or to a key it does not have,
+// says something else, and is a failure.
+func (r *GeassAppReconciler) connectionWait(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string, deploy *appsv1.Deployment, problem string) string {
+	if !strings.HasSuffix(problem, "is CreateContainerConfigError") || deploy.Spec.Selector == nil {
+		return ""
+	}
+	var pods corev1.PodList
+	if r.List(ctx, &pods, client.InNamespace(wsNS), client.MatchingLabels(deploy.Spec.Selector.MatchLabels)) != nil {
+		return ""
+	}
+	for _, env := range app.Spec.Env {
+		if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+			continue
+		}
+		name := env.ValueFrom.SecretKeyRef.Name
+		owner, isConnection := strings.CutSuffix(name, "-connection")
+		if !isConnection || !podsWaitForSecret(pods.Items, name) {
+			continue
+		}
+		key := client.ObjectKey{Name: owner, Namespace: platform.SystemNamespace}
+		var database geassv1alpha1.GeassDatabase
+		if r.Get(ctx, key, &database) == nil {
+			return "Waiting for database " + platform.ResourceDisplayName(database.ObjectMeta)
+		}
+		var store geassv1alpha1.GeassObjectStore
+		if r.Get(ctx, key, &store) == nil {
+			return "Waiting for bucket " + platform.ResourceDisplayName(store.ObjectMeta)
+		}
+	}
+	return ""
+}
+
+// podsWaitForSecret reports whether a copy cannot be created because the Secret is not there, which is what Kubernetes
+// says of it: secret "name" not found.
+func podsWaitForSecret(pods []corev1.Pod, secret string) bool {
+	missing := fmt.Sprintf("secret %q not found", secret)
+	for i := range pods {
+		for _, status := range slices.Concat(pods[i].Status.InitContainerStatuses, pods[i].Status.ContainerStatuses) {
+			if waiting := status.State.Waiting; waiting != nil && waiting.Reason == "CreateContainerConfigError" && strings.Contains(waiting.Message, missing) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // wakeProblem says why a service that was woken cannot start, or "" when it is only taking its time. A service
 // that sleeps is otherwise ready whenever it has no copies, so nothing else would say so.
 func (r *GeassAppReconciler) wakeProblem(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string, deploy *appsv1.Deployment) string {
@@ -361,7 +412,11 @@ func (r *GeassAppReconciler) startGate(ctx context.Context, app *geassv1alpha1.G
 		// An ordinary service whose copy cannot start is a failed deploy too, and not "starting" for ever.
 		if !deploymentReady(deploy, replicas) {
 			if problem := r.startProblem(ctx, wsNS, deploy); problem != "" {
-				result, err := r.setNotReady(ctx, app, r.startFailureMessage(ctx, app, wsNS, problem))
+				message := r.startFailureMessage(ctx, app, wsNS, problem)
+				if wait := r.connectionWait(ctx, app, wsNS, deploy, problem); wait != "" {
+					message = wait
+				}
+				result, err := r.setNotReady(ctx, app, message)
 				return true, result, err
 			}
 		}
@@ -373,7 +428,11 @@ func (r *GeassAppReconciler) startGate(ctx context.Context, app *geassv1alpha1.G
 		// Not up yet. A version that cannot start is a failed deploy, said so now and not when the first visitor
 		// finds out; one that is only slow is left to start.
 		if problem := r.startProblem(ctx, wsNS, deploy); problem != "" {
-			result, err := r.setNotReady(ctx, app, "The new version of the service cannot start: "+problem)
+			message := "The new version of the service cannot start: " + problem
+			if wait := r.connectionWait(ctx, app, wsNS, deploy, problem); wait != "" {
+				message = wait
+			}
+			result, err := r.setNotReady(ctx, app, message)
 			return true, result, err
 		}
 		return false, ctrl.Result{}, nil

@@ -3,7 +3,7 @@ import { Group, Modal, Stack, Text } from "@mantine/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { action, list, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, notifyTemplateAdded } from "@/lib/notify";
 import { Button, Field, Select } from "@/components/geass-ui";
 
 const NEW_PROJECT = "__new__";
@@ -44,7 +44,7 @@ export function TemplateDeployDialog({ template, data, onClose }) {
       await queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
       onClose();
       navigate({ to: `/projects/${target}`, search: { environment: targetEnvironment } });
-      alertUser(`${template.name} added as drafts. Review them, then deploy.`);
+      notifyTemplateAdded(template);
     } catch (error) {
       alertUser(error.message);
     } finally {
@@ -59,6 +59,7 @@ export function TemplateDeployDialog({ template, data, onClose }) {
           This adds {template?.resources?.length === 1 ? "one resource" : `${template?.resources?.length || 0} resources`} to your canvas as drafts.
           Nothing runs until you apply the changes.
         </Text>
+        {template?.notes ? <Text size="sm">{template.notes}</Text> : null}
         <Field label="Project">
           <Select value={project} onChange={(event) => setProject(event.currentTarget.value)} aria-label="Project">
             {projects.map((item) => (
