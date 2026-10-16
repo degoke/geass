@@ -12,19 +12,23 @@ import (
 )
 
 type clusterCapacity struct {
-	Known                  bool            `json:"known"`
-	CPUAllocatable         string          `json:"cpuAllocatable"`
-	CPURequested           string          `json:"cpuRequested"`
-	CPUAvailable           string          `json:"cpuAvailable"`
-	MemoryAllocatable      string          `json:"memoryAllocatable"`
-	MemoryRequested        string          `json:"memoryRequested"`
-	MemoryAvailable        string          `json:"memoryAvailable"`
-	CPUAllocatableMillis   int64           `json:"cpuAllocatableMillis"`
-	CPURequestedMillis     int64           `json:"cpuRequestedMillis"`
-	CPUAvailableMillis     int64           `json:"cpuAvailableMillis"`
-	MemoryAllocatableBytes int64           `json:"memoryAllocatableBytes"`
-	MemoryRequestedBytes   int64           `json:"memoryRequestedBytes"`
-	MemoryAvailableBytes   int64           `json:"memoryAvailableBytes"`
+	Known                  bool   `json:"known"`
+	CPUAllocatable         string `json:"cpuAllocatable"`
+	CPURequested           string `json:"cpuRequested"`
+	CPUAvailable           string `json:"cpuAvailable"`
+	MemoryAllocatable      string `json:"memoryAllocatable"`
+	MemoryRequested        string `json:"memoryRequested"`
+	MemoryAvailable        string `json:"memoryAvailable"`
+	CPUAllocatableMillis   int64  `json:"cpuAllocatableMillis"`
+	CPURequestedMillis     int64  `json:"cpuRequestedMillis"`
+	CPUAvailableMillis     int64  `json:"cpuAvailableMillis"`
+	MemoryAllocatableBytes int64  `json:"memoryAllocatableBytes"`
+	MemoryRequestedBytes   int64  `json:"memoryRequestedBytes"`
+	MemoryAvailableBytes   int64  `json:"memoryAvailableBytes"`
+	// MemoryCeiling is the most memory the running services could use between them, which is more than they
+	// reserve when some of them may use more than that. It is not worked out for a part of the cluster.
+	MemoryCeiling          string          `json:"memoryCeiling,omitempty"`
+	MemoryCeilingBytes     int64           `json:"memoryCeilingBytes,omitempty"`
 	LargestNodeCPUMillis   int64           `json:"largestNodeCpuMillis"`
 	LargestNodeMemoryBytes int64           `json:"largestNodeMemoryBytes"`
 	HealthyNodes           int             `json:"healthyNodes"`
@@ -123,6 +127,18 @@ func (s *Server) clusterCapacityFor(ctx context.Context, placement platform.Plac
 	}
 	if snapshot.MemoryAvailableBytes < 128*1024*1024 {
 		snapshot.Issues = append(snapshot.Issues, capacityIssue{Severity: "danger", Message: "Available memory is too low for a new service. Scale up the cluster before creating in-cluster resources"})
+	}
+	if placement.IsZero() {
+		snapshot.MemoryCeilingBytes = platform.MemoryCeilingOfPods(pods.Items)
+		snapshot.MemoryCeiling = platform.FormatMemoryBytes(snapshot.MemoryCeilingBytes)
+		if snapshot.MemoryCeilingBytes > snapshot.MemoryAllocatableBytes {
+			// Nothing is refused for it: a service reserves what it needs, and may use more only while there is room.
+			// It is said so that the servers running short, and the services that use more than they reserve being the
+			// first to restart, is not a surprise.
+			snapshot.Issues = append(snapshot.Issues, capacityIssue{Severity: "warning", Message: fmt.Sprintf(
+				"Services may use up to %s of memory between them and the servers have %s. If they all do at once, those using more than they reserved restart first",
+				snapshot.MemoryCeiling, snapshot.MemoryAllocatable)})
+		}
 	}
 	return snapshot
 }

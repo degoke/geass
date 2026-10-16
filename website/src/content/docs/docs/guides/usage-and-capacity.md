@@ -39,7 +39,7 @@ Three different numbers describe a workload. The page uses the first for capacit
 | Number | Meaning | Where Geass uses it |
 | --- | --- | --- |
 | **Request** (shown as "reserved" or "requested") | The CPU and memory a container asks the scheduler for. The scheduler places a pod only on a node that has this much unreserved. | Every capacity figure and the capacity check on deploy. |
-| **Limit** | The most a container may use. Above its CPU limit it is slowed down; above its memory limit it is killed and restarted. | When you pick a size in the dashboard, Geass sets the limit equal to the request, so a service cannot use more than it reserved. |
+| **Limit** | The most a container may use. Above its CPU limit it is slowed down; above its memory limit it is killed and restarted. | When you pick a size in the dashboard, Geass sets the limit equal to the request, so a service cannot use more than it reserved, unless you set **can use up to** higher on a service. The capacity check does not count the difference. |
 | **Actual usage** | What the container consumes now, measured by Prometheus. | The "using" figures in **Usage by project** and the cluster charts. Absent when monitoring is not installed. |
 
 The capacity check looks at the whole cluster. To stop one project from using all of it, set [project limits](/docs/guides/project-limits/), which cap what each environment of a project can ask for.
@@ -143,6 +143,7 @@ This section lists problems that need action before you scale up.
 - One line for each node pressure condition: "Node node-3 reports DiskPressure". A cordoned node adds "Node node-3 reports Unschedulable".
 - "Available CPU is too low for a new service. Scale up the cluster before creating in-cluster resources" when less than 0.1 CPU is free.
 - "Available memory is too low for a new service. Scale up the cluster before creating in-cluster resources" when less than 128 MB is free.
+- "Services may use up to … of memory between them and the servers have …. If they all do at once, those using more than they reserved restart first" when the running services are allowed more memory, added up, than the servers have. It is a warning and nothing is refused: services reserve what they need and may use more only while there is room. See [Scale](/docs/guides/apps/#scale). It is not shown for a region or tag view of the cluster.
 
 Free more room or add a node (see [Add servers](/docs/getting-started/add-servers/)). Geass refuses to start a new workload that does not fit; see the capacity check in [Scaling and placement](/docs/guides/scaling-and-placement/).
 

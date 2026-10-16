@@ -97,6 +97,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageQuotaUsedUp)) || strings.Contains(msg, "exceeded quota") {
 		return false
 	}
+	// A copy that is stopped for memory and started again is a crash loop, and a service in one waits to be fixed
+	// without being given up on.
+	if strings.Contains(msg, strings.ToLower(MessageOutOfMemory)) {
+		return false
+	}
 	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
 		return false
 	}

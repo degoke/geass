@@ -8,8 +8,8 @@ import { action, api, list, resourceDisplayName, resourceName } from "@/lib/api"
 import { EditableResourceTitle } from "@/components/EditableResourceTitle";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
-import { pendingChangeCopy, provisionFailed, resourceStatus, retryProvisionPathForKind, usesDeployWorkflow, userFacingReadyMessage } from "@/lib/services";
-import { sizeLabel } from "@/lib/capacity";
+import { outOfMemoryNotice, pendingChangeCopy, provisionFailed, resourceStatus, retryProvisionPathForKind, usesDeployWorkflow, userFacingReadyMessage } from "@/lib/services";
+import { sizeSummary } from "@/lib/capacity";
 import { backupSpec, isSnapshotDatabase, supportsBackups } from "@/lib/backups";
 import { functionSourceLabel } from "@/lib/functions";
 import { CodePanel } from "@/components/CodePanel";
@@ -83,6 +83,7 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
     : item.spec?.source?.git?.repository || sourceImage || item.spec?.engine || "Managed resource";
   const status = resourceStatus(item);
   const statusDetail = userFacingReadyMessage(item);
+  const ranOutOfMemory = outOfMemoryNotice(item);
   const pending = pendingChangeCopy(item);
   const databaseSummary = isDatabase
     ? [[item.spec?.engine, item.spec?.version].filter(Boolean).join(" "), item.spec?.storageSize].filter(Boolean).join(" · ")
@@ -105,7 +106,7 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
     ...((isApp || (kind === "databases" && item.spec?.placement !== "External"))
       ? [{
         label: "Size",
-        value: `${sizeLabel(data?.platform?.capacity?.cpuSizes || [], item.spec?.resources?.requests?.cpu, item.spec?.resources?.requests?.cpu || "0.1 CPU")} · ${sizeLabel(data?.platform?.capacity?.memorySizes || [], item.spec?.resources?.requests?.memory, item.spec?.resources?.requests?.memory || "128 MB")}`,
+        value: sizeSummary(data, item.spec?.resources),
       }]
       : []),
     ...(kind === "databases" && item.spec?.storageSize ? [{ label: "Storage", value: String(item.spec.storageSize) }] : []),
@@ -179,6 +180,9 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
         <MetricPanel label="Overview">
           {statusDetail && status !== "True" && status !== "Ready" && !(embedded && (status === "Draft" || pending)) ? (
             <Muted size="sm" className="rw-resource-status-hint">{statusDetail}</Muted>
+          ) : null}
+          {ranOutOfMemory && (status === "True" || status === "Ready") ? (
+            <Muted size="sm" className="rw-resource-status-hint">{ranOutOfMemory}</Muted>
           ) : null}
           <KeyValueTable items={overviewRows} />
         </MetricPanel>

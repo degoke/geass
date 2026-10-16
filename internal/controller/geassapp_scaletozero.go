@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -323,6 +324,18 @@ func (r *GeassAppReconciler) startProblem(ctx context.Context, wsNS string, depl
 	return ""
 }
 
+// startFailureMessage is what a service says when a copy of it cannot start. A copy that is in a crash loop because the
+// kernel keeps stopping it for memory says that, which is what can be done something about, and not only that it is
+// crash looping, which is what every cause looks like from outside.
+func (r *GeassAppReconciler) startFailureMessage(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS, problem string) string {
+	if strings.HasSuffix(problem, "is CrashLoopBackOff") {
+		if kill, found := r.recentOOMKill(ctx, app, wsNS); found {
+			return kill.Message()
+		}
+	}
+	return "The service cannot start: " + problem
+}
+
 // wakeProblem says why a service that was woken cannot start, or "" when it is only taking its time. A service
 // that sleeps is otherwise ready whenever it has no copies, so nothing else would say so.
 func (r *GeassAppReconciler) wakeProblem(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string, deploy *appsv1.Deployment) string {
@@ -348,7 +361,7 @@ func (r *GeassAppReconciler) startGate(ctx context.Context, app *geassv1alpha1.G
 		// An ordinary service whose copy cannot start is a failed deploy too, and not "starting" for ever.
 		if !deploymentReady(deploy, replicas) {
 			if problem := r.startProblem(ctx, wsNS, deploy); problem != "" {
-				result, err := r.setNotReady(ctx, app, "The service cannot start: "+problem)
+				result, err := r.setNotReady(ctx, app, r.startFailureMessage(ctx, app, wsNS, problem))
 				return true, result, err
 			}
 		}

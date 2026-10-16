@@ -3,11 +3,11 @@ import { AlertTriangle, ExternalLink, Gauge, GitBranch, Globe, Hammer, Rocket, S
 import { action, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
-import { settingsSavedMessage } from "@/lib/services";
+import { outOfMemoryNotice, settingsSavedMessage } from "@/lib/services";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
 import { DeployHook } from "@/components/DeployHook";
 import { RunOnField } from "@/components/RunOnField";
-import { defaultSizeForKind } from "@/lib/capacity";
+import { ceilingOf, defaultSizeForKind } from "@/lib/capacity";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
 import { SizeFields } from "@/components/SizeFields";
 import { RailCopyField } from "@/components/rail-controls";
@@ -19,7 +19,7 @@ import {
   ResourceSettingsSection,
   resourceSectionVisible,
 } from "@/layout/ResourceSettingsLayout";
-import { SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
+import { SettingsAlert, SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
 
 function probePath(probe) {
   return probe?.httpGet?.path || "";
@@ -59,6 +59,8 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
   const [port, setPort] = useState(spec.port ? String(spec.port) : "");
   const [cpu, setCpu] = useState(spec.resources?.requests?.cpu || defaults.cpu);
   const [memory, setMemory] = useState(spec.resources?.requests?.memory || defaults.memory);
+  const [cpuMax, setCpuMax] = useState(ceilingOf(spec.resources, "cpu"));
+  const [memoryMax, setMemoryMax] = useState(ceilingOf(spec.resources, "memory"));
   const [replicas, setReplicas] = useState(spec.replicas || 1);
   const [autoscaling, setAutoscaling] = useState(Boolean(spec.autoscaling?.maxReplicas > 1));
   const [maxReplicas, setMaxReplicas] = useState(spec.autoscaling?.maxReplicas || 3);
@@ -246,6 +248,9 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                   onSubmit={save("scale", {
                     cpu,
                     memory,
+                    // Sent empty when the service reserves all it may use, which is how the server is told to drop a ceiling.
+                    cpuMax,
+                    memoryMax,
                     replicas: String(replicas),
                     autoscaling: autoscaling ? "on" : "",
                     // The server turns autoscaling on for any maximum above one that comes with a target, so an
@@ -264,12 +269,21 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Resources" description="CPU and memory allocated to each replica.">
+                  <ResourceSettingsBlock title="Resources" description="CPU and memory for each replica. What it reserves is set aside for it; it may use more, up to the ceiling, while the server has room.">
+                    {outOfMemoryNotice(item) ? <SettingsAlert tone="warning">{outOfMemoryNotice(item)}</SettingsAlert> : null}
                     <SettingsPanel>
                       <SizeFields
+                        bursts
                         cpu={cpu}
                         memory={memory}
-                        onChange={(key, value) => (key === "cpu" ? setCpu(value) : setMemory(value))}
+                        cpuMax={cpuMax}
+                        memoryMax={memoryMax}
+                        onChange={(key, value) => {
+                          if (key === "cpu") setCpu(value);
+                          else if (key === "memory") setMemory(value);
+                          else if (key === "cpuMax") setCpuMax(value);
+                          else setMemoryMax(value);
+                        }}
                         data={data}
                       />
                     </SettingsPanel>

@@ -137,7 +137,8 @@ but Geass does not publish raw TCP to the internet. Make the process listen on a
 | Setting | Meaning | Default | Applies |
 | --- | --- | --- | --- |
 | **Replicas** | How many copies run. The form takes 1 or more; the API accepts 0 to 1000. | 1 | Instantly |
-| **CPU** and **Memory** | The size of each replica. | 0.1 CPU, 128 MB | On deploy |
+| **CPU reserved** and **Memory reserved** | What each replica sets aside for itself. The capacity check and the scheduler count it, and it is always the replica's. | 0.1 CPU, 128 MB | On deploy |
+| **CPU can use up to** and **Memory can use up to** | The most a replica may use while its server has room. | Same as reserved | On deploy |
 | **Run on** | Only use nodes with the tags you tick. It appears only when nodes carry tags. See [Scaling and placement](/docs/guides/scaling-and-placement/). | None chosen | On deploy |
 | **Enable autoscaling** | Add replicas when average CPU use goes above the target. | Off | Instantly |
 | **Scale up to** | The most replicas autoscaling may run. | 3 | Instantly |
@@ -145,9 +146,27 @@ but Geass does not publish raw TCP to the internet. Make the process listen on a
 | **Sleep when idle** | Stop the service when nobody is using it, and start it on the next request. It needs a public domain and the serverless add-on. Switching it on switches **Enable autoscaling** off, and the other way round. | Off | Instantly |
 | **Sleep after (minutes)** | How long without a request before the service stops, 1 to 1440. | 5 | Instantly |
 
-CPU sizes are 0.1, 0.25, 0.5, 1 and 2. Memory sizes are 128 MB, 256 MB, 512 MB, 1 GB, 2 GB and 4 GB. Geass sets both
-the request and the limit to the size you choose, so a replica cannot burst above it and the capacity is reserved. A
-replica that uses more memory than its limit is killed and restarted.
+CPU sizes are 0.1, 0.25, 0.5, 1 and 2. Memory sizes are 128 MB, 256 MB, 512 MB, 1 GB, 2 GB and 4 GB. What **can use up
+to** offers is the sizes from what is reserved upward.
+
+By default **can use up to** is the same as what is reserved, so a replica cannot use more than it set aside and
+nothing about it can be taken by surprise. Choose a higher one for software that needs a lot only for a while, such as on
+its first start or while it runs migrations: reserve what it needs when it is quiet, and let it use more for the moment.
+The capacity check and the project limits count only what is reserved, so the room it may borrow is not taken from
+anything else, and is not guaranteed either:
+
+- A replica that goes over the most it may use is stopped and started again.
+- When a server runs out of memory, the replicas that are using more than they reserved are the first to be stopped, so
+  a service that reserves much less than it uses is the first to go. Reserve at least what it uses when it is quiet.
+- CPU that is over what is reserved is shared out among the replicas on the server, and a replica that reaches the most
+  it may use is slowed down, not stopped.
+- Autoscaling measures CPU against what is reserved, so a replica that reserves less scales out sooner.
+
+A service says so when a copy of it was stopped for memory: its status reads `Ran out of memory`, with what it reserves and
+what it may use, for an hour after the last time (a service that is ready between two stops shows the same words on its
+page). The fix is **Memory can use up to**, or **Memory reserved** when it says the server ran short. Databases and
+object storage do not take part: they always use what they reserve, because stopping one costs more than stopping a
+service. For a service made with a manifest, `spec.resources` takes any requests and limits: see [GeassApp](/docs/reference/resources/geass-app/#replicas-resources-and-placement).
 
 With autoscaling on, **Replicas** is the minimum. While a service sleeps when idle, **Replicas** does not apply: the scale-to-zero add-on decides how many copies run, from none up to 3 by default. If the service cannot sleep (no add-on, no public domain), the block says why and the service keeps running. See [Sleep when idle](/docs/guides/scale-to-zero/).
 
@@ -423,6 +442,12 @@ traffic. Check `kubectl -n <namespace> get endpoints amber-fern`: an empty list 
 **The domain returns `404 page not found`.** Traefik has no route for the hostname. The service may not be deployed
 yet (the Ingress is created on deploy), the **Custom domain** may contain more than the hostname, or the request
 reached a different server than the one running Geass. See [Domains and TLS](/docs/guides/domains-and-tls/).
+
+**The status says "Ran out of memory".** A copy of the service was stopped because it used more memory than it could
+have: it went over **Memory can use up to**, or the server ran short while the copy used more than it reserved (the
+status says which sizes apply). Choose a higher **Memory can use up to**, or reserve more, then deploy. If it keeps
+happening at a size that should be enough, look for a leak with the **Metrics** tab. A service that reserves much less
+than it uses can be stopped by a busy server even when it is under its limit.
 
 **Deploy changes fails with "This service needs about … CPU and … memory".** The cluster does not have that much free.
 Choose a smaller size, lower the replica count or autoscaling ceiling, or add a node.

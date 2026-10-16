@@ -12,7 +12,7 @@ import { action, resourceDisplayName, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
-import { databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
+import { ceilingOf, databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
 import { supportsBackups } from "@/lib/backups";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
 import { RunOnField } from "@/components/RunOnField";
@@ -54,6 +54,9 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const defaults = defaultSizeForKind(kind === "apps" ? "service" : "database", (item.spec?.engine || "postgres").toLowerCase());
   const [cpu, setCpu] = useState(item.spec?.resources?.requests?.cpu || defaults.cpu);
   const [memory, setMemory] = useState(item.spec?.resources?.requests?.memory || defaults.memory);
+  // Only a service may use more than it reserves. A database always uses what it reserves.
+  const [cpuMax, setCpuMax] = useState(kind === "apps" ? ceilingOf(item.spec?.resources, "cpu") : "");
+  const [memoryMax, setMemoryMax] = useState(kind === "apps" ? ceilingOf(item.spec?.resources, "memory") : "");
   const [replicas, setReplicas] = useState(item.spec?.replicas || 1);
   const [autoscaling, setAutoscaling] = useState(Boolean(item.spec?.autoscaling?.maxReplicas > 1));
   const [maxReplicas, setMaxReplicas] = useState(item.spec?.autoscaling?.maxReplicas || 3);
@@ -180,6 +183,8 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
       Object.assign(values, {
         cpu,
         memory,
+        cpuMax,
+        memoryMax,
         replicas: String(replicas),
         autoscaling: autoscaling ? "on" : "",
         maxReplicas: String(maxReplicas),
@@ -454,11 +459,16 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                   >
                     <SettingsPanel>
                       <SizeFields
+                        bursts={kind === "apps"}
                         cpu={cpu}
                         memory={memory}
+                        cpuMax={cpuMax}
+                        memoryMax={memoryMax}
                         onChange={(key, value) => {
                           if (key === "cpu") setCpu(value);
-                          else setMemory(value);
+                          else if (key === "memory") setMemory(value);
+                          else if (key === "cpuMax") setCpuMax(value);
+                          else if (key === "memoryMax") setMemoryMax(value);
                         }}
                         data={data}
                       />

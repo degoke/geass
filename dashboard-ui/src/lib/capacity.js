@@ -29,6 +29,18 @@ export function memoryBytes(value) {
   return parseInt(text, 10) || 0;
 }
 
+/**
+ * The most a service may use of "cpu" or "memory" when that is more than it reserves, or "" when it reserves all it may
+ * use. Mirrors what the form sends: an empty ceiling means the same as the reservation.
+ */
+export function ceilingOf(resources, name) {
+  const limit = resources?.limits?.[name];
+  const request = resources?.requests?.[name];
+  if (!limit || !request) return "";
+  const amount = name === "cpu" ? cpuMillis : memoryBytes;
+  return amount(limit) > amount(request) ? limit : "";
+}
+
 /** Redis runs without persistence, so it has no volume to size. Mirrors platform.DatabaseHasVolume. */
 export function databaseHasVolume(engine) {
   return String(engine || "").toLowerCase() !== "redis";
@@ -60,6 +72,20 @@ export function storageSizeOptions(current, floor) {
 
 export function sizeLabel(options, value, fallback) {
   return options.find((option) => option.value === value)?.label || fallback || value;
+}
+
+/** "0.25 CPU · 1 GB", with "(up to 1 GB)" after an amount that the workload may use more of than it reserves. */
+export function sizeSummary(data, resources) {
+  const cpuSizes = data?.platform?.capacity?.cpuSizes || [];
+  const memorySizes = data?.platform?.capacity?.memorySizes || [];
+  const cpu = resources?.requests?.cpu;
+  const memory = resources?.requests?.memory;
+  const part = (sizes, reserved, fallback, name) => {
+    const text = sizeLabel(sizes, reserved, reserved || fallback);
+    const ceiling = ceilingOf(resources, name);
+    return ceiling ? `${text} (up to ${sizeLabel(sizes, ceiling, ceiling)})` : text;
+  };
+  return `${part(cpuSizes, cpu, "0.1 CPU", "cpu")} · ${part(memorySizes, memory, "128 MB", "memory")}`;
 }
 
 export function resourceEstimate(data, type, kind, ha) {

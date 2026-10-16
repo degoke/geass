@@ -36,7 +36,8 @@ Names of regions, sites and tags use lowercase letters, numbers and hyphens, sta
 | Setting | What it does | Default | Takes effect |
 | --- | --- | --- | --- |
 | **Replicas** | How many copies run. The form takes 1 or more; the API accepts 0 to 1000. | 1 | At once |
-| **CPU** and **Memory** (under **Resources**) | What each replica reserves. CPU: 0.1, 0.25, 0.5, 1 or 2. Memory: 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB. | 0.1 CPU, 128 MB | On deploy |
+| **CPU reserved** and **Memory reserved** (under **Resources**) | What each replica reserves. CPU: 0.1, 0.25, 0.5, 1 or 2. Memory: 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB. | 0.1 CPU, 128 MB | On deploy |
+| **CPU can use up to** and **Memory can use up to** | The most a replica may use while its server has room: one of the same sizes, and never below what is reserved. | Same as reserved | On deploy |
 | **Run on** | Node tags the service must run on. Only shown when nodes in the project's region carry tags. | None | On deploy |
 | **Enable autoscaling** | Adds copies when average CPU crosses a target. | Off | At once |
 | **Scale up to** | The most copies autoscaling may run. | 3 | At once |
@@ -46,7 +47,7 @@ Names of regions, sites and tags use lowercase letters, numbers and hyphens, sta
 
 Settings marked "On deploy" show up as a pending change. Choose **Deploy changes** in the top bar to apply them. Settings marked "At once" show an **Applies instantly** badge and need no deploy.
 
-The size you pick is both the request and the limit. A replica cannot use more than it reserved, and the scheduler counts all of it.
+What a replica reserves is what the scheduler and the capacity check count. By default it is also the most the replica may use, so it cannot use more than it reserved. Set **CPU can use up to** and **Memory can use up to** higher to let it use more while its server has room, and see [Apps](/docs/guides/apps/#scale) for what that costs: a replica that goes over what it may use is stopped, and one that uses more than it reserved is the first to be stopped when its server runs out of memory.
 
 With autoscaling, the minimum number of copies is your **Replicas** value, and the maximum is **Scale up to**. The autoscaler measures CPU, so the cluster needs its metrics server, which K3s ships.
 
