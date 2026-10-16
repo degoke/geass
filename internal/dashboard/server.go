@@ -1764,21 +1764,6 @@ func appDeployEstimate(app *geassv1alpha1.GeassApp) platform.WorkloadEstimate {
 	return platform.EstimateFromResources("service", res, copies)
 }
 
-func parseResourceList(cpuValue, memoryValue string) (corev1.ResourceList, error) {
-	values := corev1.ResourceList{}
-	for value, name := range map[string]corev1.ResourceName{cpuValue: corev1.ResourceCPU, memoryValue: corev1.ResourceMemory} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		parsed, err := resource.ParseQuantity(strings.TrimSpace(value))
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s quantity %q: %w", name, value, err)
-		}
-		values[name] = parsed
-	}
-	return values, nil
-}
-
 func formHasValue(r *http.Request, keys ...string) bool {
 	for _, key := range keys {
 		if _, ok := r.Form[key]; ok {
@@ -1828,21 +1813,14 @@ func firstFormValue(r *http.Request, keys ...string) string {
 	return ""
 }
 
+// resourcesFromForm reads the size of a workload that uses all it reserves: cpu and memory, one of the sizes the
+// dashboard offers (cpuRequest and memoryRequest are other names for them). Limits are not read. Databases and object
+// stores come through here, and they never use more than they reserve, since a kill of one of them costs more than a kill
+// of a service. A service goes through serviceResourcesFromForm, which can also read how much more it may use.
 func resourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (corev1.ResourceRequirements, error) {
 	cpu, memory := formCPU(r), formMemory(r)
 	if cpu == "" && memory == "" && !formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest") {
 		return fallback, nil
-	}
-	if formHasValue(r, "cpuLimit", "memoryLimit") && cpu == "" && memory == "" {
-		requests, err := parseResourceList(r.FormValue("cpuRequest"), r.FormValue("memoryRequest"))
-		if err != nil {
-			return corev1.ResourceRequirements{}, err
-		}
-		limits, err := parseResourceList(r.FormValue("cpuLimit"), r.FormValue("memoryLimit"))
-		if err != nil {
-			return corev1.ResourceRequirements{}, err
-		}
-		return corev1.ResourceRequirements{Requests: requests, Limits: limits}, nil
 	}
 	return platform.ResourcesFromSize(cpu, memory)
 }
@@ -1854,7 +1832,10 @@ func resourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (c
 // here: they always use what they reserve, since a kill of one of them costs more than a kill of a service.
 func serviceResourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (corev1.ResourceRequirements, error) {
 	if formHasValue(r, "cpuLimit", "memoryLimit") {
-		return resourcesFromForm(r, fallback)
+		if formHasValue(r, "cpu", "memory", "cpuMax", "memoryMax") {
+			return corev1.ResourceRequirements{}, errors.New("send cpu, memory, cpuMax and memoryMax, or cpuRequest, cpuLimit, memoryRequest and memoryLimit, not both")
+		}
+		return exactResourcesFromForm(r, fallback)
 	}
 	reserved := formHasValue(r, "cpu", "memory", "cpuRequest", "memoryRequest")
 	ceilings := map[corev1.ResourceName]string{}
@@ -1891,6 +1872,66 @@ func serviceResourcesFromForm(r *http.Request, fallback corev1.ResourceRequireme
 		res.Limits[name] = limit
 	}
 	return res, nil
+}
+
+// exactResourcesFromForm reads the requests and limits of a service as they are given, of any size and not only the
+// sizes the dashboard offers: cpuRequest and cpuLimit, memoryRequest and memoryLimit. A resource that neither is sent for
+// keeps what the service has. A request that is not sent is the limit and a limit that is not sent is the request, which
+// is how Kubernetes fills in the one that is missing, so a resource is never left with only one of them. A limit may not be
+// below its request.
+func exactResourcesFromForm(r *http.Request, fallback corev1.ResourceRequirements) (corev1.ResourceRequirements, error) {
+	res := *fallback.DeepCopy()
+	if len(res.Requests) == 0 {
+		res = platform.DefaultAppResources()
+	}
+	if res.Limits == nil {
+		res.Limits = corev1.ResourceList{}
+	}
+	for _, field := range []struct {
+		name                 corev1.ResourceName
+		requestKey, limitKey string
+	}{
+		{corev1.ResourceCPU, "cpuRequest", "cpuLimit"},
+		{corev1.ResourceMemory, "memoryRequest", "memoryLimit"},
+	} {
+		request, requestSent, err := formQuantity(r, field.requestKey)
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		limit, limitSent, err := formQuantity(r, field.limitKey)
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		switch {
+		case !requestSent && !limitSent:
+			continue
+		case !requestSent:
+			request = limit
+		case !limitSent:
+			limit = request
+		}
+		if limit.Cmp(request) < 0 {
+			return corev1.ResourceRequirements{}, fmt.Errorf("%s cannot be below %s", field.limitKey, field.requestKey)
+		}
+		res.Requests[field.name], res.Limits[field.name] = request, limit
+	}
+	return res, nil
+}
+
+// formQuantity reads an amount of CPU or memory, and whether one was sent: a field that is empty was not.
+func formQuantity(r *http.Request, key string) (resource.Quantity, bool, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return resource.Quantity{}, false, nil
+	}
+	quantity, err := resource.ParseQuantity(value)
+	if err != nil {
+		return resource.Quantity{}, false, fmt.Errorf("%s must be an amount such as 250m or 512Mi, not %q", key, value)
+	}
+	if quantity.Sign() <= 0 {
+		return resource.Quantity{}, false, fmt.Errorf("%s must be above zero", key)
+	}
+	return quantity, true, nil
 }
 
 // keepCeilings gives a resource whose ceiling was not sent the ceiling it had, when it had one above what it reserved
