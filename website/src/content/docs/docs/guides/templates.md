@@ -58,9 +58,9 @@ server gives back when it needs the memory.
 
 | Entry | Reserved | May use up to | What was measured |
 | --- | --- | --- | --- |
-| **Infisical** | 0.5 CPU, 1 GB | 0.5 CPU, 2 GB | 835 to 961 MiB once it has started, 1147 MiB at its first-start peak, ready after 84 seconds at 0.5 CPU. |
-| **ReFHIR** | 0.5 CPU, 2 GB | 2 CPU, 4 GB | First start: peak 3190 MiB at 2 CPU (ready after 105 seconds) and 2802 MiB at 0.5 CPU (ready after 150 seconds). It then holds about 2132 MiB until it restarts. After a restart it is ready in 5 seconds, peaks at 2027 MiB and settles near 1.3 GB. A 2 GB limit killed the first start. |
-| **browserbay** | 0.5 CPU, 1 GB | 2 CPU, 4 GB | 220 to 520 MiB idle and 730 MiB with one page open. Five busy pages (Wikipedia, GitHub, BBC News and Hacker News) peaked at 1569 MiB at 2 CPU and 1202 MiB at 0.5 CPU, where the last page loaded after 37 seconds instead of 16. A 1 GB limit made one of the five pages time out. |
+| **Infisical** | 0.5 CPU, 1 GB | 0.5 CPU, 2 GB | In Docker, 835 to 961 MiB once it has started and 1147 MiB at its first-start peak, ready after 84 seconds at 0.5 CPU. On K3s through Geass, 937 MiB at the peak and 804 MiB settled, with Geass showing it ready 102 seconds after the deploy, databases included. |
+| **ReFHIR** | 0.5 CPU, 2 GB | 2 CPU, 4 GB | First start: peak 3190 MiB at 2 CPU (ready after 105 seconds) and 2802 MiB at 0.5 CPU (ready after 150 seconds). It then holds 2132 MiB (2217 MiB on K3s) until it restarts. After a restart it is ready in 5 seconds, peaks at 2027 MiB and settles near 1.3 GB. A 2 GB limit killed the first start. On K3s through Geass, the first start peaked at 2991 MiB with no restart, and a restart was ready in 6 seconds, peaked at 2029 MiB and settled at 1334 MiB. |
+| **browserbay** | 0.5 CPU, 1 GB | 2 CPU, 4 GB | 220 to 520 MiB idle and 730 MiB with one page open. Five busy pages (Wikipedia, GitHub, BBC News and Hacker News) peaked at 1569 MiB at 2 CPU and 1202 MiB at 0.5 CPU, where the last page loaded after 37 seconds instead of 16. A 1 GB limit made one of the five pages time out. On K3s through Geass, 217 MiB idle, a peak of 1415 MiB with the five pages and 302 MiB after they closed. |
 
 Starter examples, such as a database with a web UI or a function with a database, are not in the catalog. They are in
 [Examples to copy](#examples-to-copy) below, and you can add any of them to **Your templates**.
@@ -94,7 +94,12 @@ resource fails, Geass removes the ones it already created, so a failed deploy le
 A few things to know after you deploy a template:
 
 - A service that references a database starts once the database is ready. Until then its pods wait with
-  `CreateContainerConfigError`, which is expected.
+  `CreateContainerConfigError`, which is expected, and the service says "Waiting for database *name*" without counting it as a
+  failure. On a cluster that has never had a database, the first one takes a few minutes, because the Postgres operator is
+  installed first.
+- A template sets no health check, so Geass shows a service as ready once its pod runs. Infisical and ReFHIR can be shown
+  ready before they answer, because their first start takes minutes. Add a health check in the service's settings if
+  something depends on it (see [Deploy settings](/docs/guides/apps/#deploy)).
 - Backups are on by default for new Postgres, MySQL and SQLite databases, but they protect nothing until the project has
   backup storage. See [Backups and restore](/docs/guides/backups-and-restore/). Turn them off in the database's
   settings if you do not want them.
@@ -453,7 +458,9 @@ does not exist. In the dialog, pick from the lists. Through the API, send the pr
 set, and look for a "Skipped" line in `kubectl -n geass-system logs deploy/geass-controller-manager | grep -i template`.
 
 **A service is stuck on `CreateContainerConfigError`.** It references the database's connection Secret, which exists
-only once the database is deployed and ready. Deploy the database and wait.
+only once the database is deployed and ready. While it is on its way the service says "Waiting for database *name*". Deploy the
+database and wait. If the service says `The service cannot start: app is CreateContainerConfigError` instead, the reference
+is to a Secret or key that does not exist, and waiting will not help.
 
 **A repository service from a template will not build.** The project was not linked to GitHub when you deployed the
 template, so the service has no GitHub connection. Delete it, link the project, and deploy the template again.
