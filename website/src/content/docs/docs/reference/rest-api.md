@@ -789,8 +789,8 @@ These need Prometheus (and, for history, the logging add-on) to be installed. Se
 | `GET /api/{apps,databases,object-stores,logical-databases}/{name}/deployments/{id}/logs` | Observer (apps: also project token) | none | `{"id","sections":[{"id","title","lines"}]}` for one deploy |
 
 `window` is `15m` (default), `1h`, `6h` or `24h`. A response is `{"window","step","available","series":{...}}`, where each series is a
-list of `{"t": unixSeconds, "v": number}` points. Series are `cpu` (cores), `memory` (bytes), `network` and `networkIn` (bytes per
-second), `requests` (per second, services), `storage` (bytes, databases), and `nodeCpu` and `nodeMemory` (cluster). The operator's series
+list of `{"t": unixSeconds, "v": number}` points. Series are `cpu` (cores), `memory` (bytes, the total of every replica), `network` and `networkIn` (bytes per
+second), `memoryPerReplica` (bytes, services: the busiest replica), `requests` (per second, services), `storage` (bytes, databases), and `nodeCpu` and `nodeMemory` (cluster). The operator's series
 are `reconcileErrors` and `statusWrites` and `statusSkipped` (per second), `reconcileTime` and `apiLatency` (the 99th percentile, in seconds), `apiRequests`
 (per second) and `queueDepth`. When Prometheus cannot be reached, `available` is `false` with a `message`.
 

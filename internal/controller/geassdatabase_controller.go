@@ -82,7 +82,7 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -157,6 +157,11 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.reconcileExternal(ctx, &db, wsNS)
 	}
 
+	// MySQL and Redis run as one instance, so there is nothing for the high availability check to wait for.
+	if platform.EngineIsSingleInstance(db.Spec.Engine) && (databaseWantsHA(&db) || databaseInstances(&db) > 1) {
+		return r.setNotReady(ctx, &db, platform.SingleInstanceMessage(db.Spec.Engine))
+	}
+
 	if databaseWantsHA(&db) {
 		ready, err := r.haReady(ctx)
 		if err != nil {
@@ -185,9 +190,9 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	case geassv1alpha1.DatabaseEnginePostgres, "":
 		return r.reconcilePostgres(ctx, &db, wsNS, storageClass, placement, log.WithValues("engine", "Postgres"))
 	case geassv1alpha1.DatabaseEngineMySQL:
-		return r.reconcileHelmDatabase(ctx, &db, wsNS, mysqlChartName(db.Name), platform.MySQLReleaseChart, platform.MySQLChartRepo, platform.MySQLChartVersion, mysqlValues(&db, storageClass, placement), mysqlHost(&db, wsNS), platform.MySQLDefaultPort, "mysql", placement)
+		return r.reconcileMySQL(ctx, &db, wsNS, storageClass, placement)
 	case geassv1alpha1.DatabaseEngineRedis:
-		return r.reconcileHelmDatabase(ctx, &db, wsNS, redisDatabaseChartName(db.Name), platform.RedisReleaseChart, platform.RedisChartRepo, platform.RedisChartVersion, redisDatabaseValues(&db, placement), redisDatabaseHost(&db, wsNS), platform.RedisDefaultPort, "redis", placement)
+		return r.reconcileRedis(ctx, &db, wsNS, placement)
 	case geassv1alpha1.DatabaseEngineSQLite:
 		return r.reconcileSQLite(ctx, &db, wsNS, storageClass, placement)
 	default:
@@ -629,6 +634,7 @@ func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db 
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-sqlite", Namespace: wsNS}}))
 	_ = helmchart.Delete(ctx, r.Client, mysqlChartName(db.Name))
 	_ = helmchart.Delete(ctx, r.Client, redisDatabaseChartName(db.Name))
+	r.deleteServerResources(ctx, db, wsNS)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + backupCredentialsSuffix, Namespace: wsNS}}))
@@ -830,6 +836,9 @@ func redisDatabaseChartName(name string) string {
 	return platform.RedisChartReleaseName(name)
 }
 
+// mysqlHost is where a MySQL server is reached. A server that Geass runs has one Service; the "-primary" one belongs
+// to a replicated Bitnami chart, which is only still around for a database that asked for high availability
+// before it was refused.
 func mysqlHost(db *geassv1alpha1.GeassDatabase, wsNS string) string {
 	service := mysqlChartName(db.Name)
 	if databaseWantsHA(db) {
@@ -883,40 +892,6 @@ func mysqlPersistence(db *geassv1alpha1.GeassDatabase, storageClass string) stri
 		block += fmt.Sprintf("    storageClass: %q\n", storageClass)
 	}
 	return block
-}
-
-func redisDatabaseValues(db *geassv1alpha1.GeassDatabase, placement platform.Placement) string {
-	architecture := "standalone"
-	if databaseWantsHA(db) {
-		architecture = "replication"
-	}
-	res := databaseInstanceResources(db)
-	return fmt.Sprintf(`architecture: %s
-auth:
-  enabled: true
-  password: "%s"
-master:
-  persistence:
-    enabled: false
-  resources:
-    requests:
-      cpu: %s
-      memory: %s
-    limits:
-      cpu: %s
-      memory: %s
-%s%s`, architecture, db.Name+"-password",
-		resourceQuantity(res.Requests, corev1.ResourceCPU), resourceQuantity(res.Requests, corev1.ResourceMemory),
-		resourceQuantity(res.Limits, corev1.ResourceCPU), resourceQuantity(res.Limits, corev1.ResourceMemory),
-		placement.HelmValues(2), redisReplicaPlacement(db, placement))
-}
-
-// redisReplicaPlacement keeps a replicated Redis's replicas in the same place as its master.
-func redisReplicaPlacement(db *geassv1alpha1.GeassDatabase, placement platform.Placement) string {
-	if !databaseWantsHA(db) || placement.IsZero() {
-		return ""
-	}
-	return "replica:\n" + placement.HelmValues(2)
 }
 
 func databaseInstanceResources(db *geassv1alpha1.GeassDatabase) corev1.ResourceRequirements {

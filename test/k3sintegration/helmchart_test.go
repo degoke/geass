@@ -18,6 +18,14 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
+// These tests check that a HelmChart is installed, updated and removed by the cluster, not what the chart runs, so any
+// small chart will do. The Bitnami Redis chart is no longer what Geass runs Redis from (it runs the server itself).
+const (
+	testChart        = "redis"
+	testChartRepo    = "https://charts.bitnami.com/bitnami"
+	testChartVersion = "20.7.1"
+)
+
 func waitHelmChartReady(t *testing.T, ctx context.Context, c client.Client, chart *helmv1.HelmChart) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Minute)
@@ -91,9 +99,9 @@ func TestHelmChartUpdateOnK3s(t *testing.T) {
 	chart := &helmv1.HelmChart{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.HelmChartNamespace},
 		Spec: helmv1.HelmChartSpec{
-			Chart:           platform.RedisReleaseChart,
-			Repo:            platform.RedisChartRepo,
-			Version:         platform.RedisChartVersion,
+			Chart:           testChart,
+			Repo:            testChartRepo,
+			Version:         testChartVersion,
 			TargetNamespace: "payments-dev",
 			CreateNamespace: true,
 			ValuesContent:   "architecture: standalone\n",
@@ -130,9 +138,9 @@ func TestHelmChartDeleteOnK3s(t *testing.T) {
 	chart := &helmv1.HelmChart{
 		ObjectMeta: metav1.ObjectMeta{Name: "geass-it-delete", Namespace: platform.HelmChartNamespace},
 		Spec: helmv1.HelmChartSpec{
-			Chart:           platform.RedisReleaseChart,
-			Repo:            platform.RedisChartRepo,
-			Version:         platform.RedisChartVersion,
+			Chart:           testChart,
+			Repo:            testChartRepo,
+			Version:         testChartVersion,
 			TargetNamespace: "payments-dev",
 			CreateNamespace: true,
 			ValuesContent:   "architecture: standalone\n",

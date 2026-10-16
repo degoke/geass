@@ -1,5 +1,11 @@
 package platform
 
+import (
+	"fmt"
+
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+)
+
 const (
 	HelmChartNamespace = "kube-system"
 
@@ -54,10 +60,9 @@ const (
 	CNPGTargetNS     = "cnpg-system"
 	CNPGReleaseChart = "cloudnative-pg"
 
-	RedisChartRepo    = "https://charts.bitnami.com/bitnami"
-	RedisChartVersion = "20.7.1"
-	RedisReleaseChart = "redis"
-
+	// MySQL databases made before Geass ran its own servers are still a Bitnami chart. The chart's image
+	// is gone from Docker Hub, so nothing new is made from it; it stays only so that a database that is
+	// already running on it is left alone until it is moved (see reconcileMySQL).
 	MySQLChartRepo    = "https://charts.bitnami.com/bitnami"
 	MySQLChartVersion = "12.3.3"
 	MySQLReleaseChart = "mysql"
@@ -80,14 +85,42 @@ const (
 
 	SQLiteImage = "rqlite/rqlite:8.36.16"
 
+	// RedisImage and MySQLImage are the official images Geass runs its Redis and MySQL servers from. They
+	// are pinned to a release, so a server changes only when Geass does. The tag is the one thing to change
+	// to take a patch (or, for Redis, to move to another build such as Valkey).
+	RedisImage = "redis:7.4.11-alpine"
+	MySQLImage = "mysql:8.4.11"
+
 	// BackupTransferImage moves MySQL and SQLite snapshots to and from the project's bucket. curl signs
 	// S3 requests itself (--aws-sigv4), so the image needs nothing else.
 	BackupTransferImage = "curlimages/curl:8.10.1"
 )
 
-// MySQLChartReleaseName and RedisChartReleaseName are the names the Helm releases of a database's MySQL
-// and Redis servers have. Pods of those releases carry the name as their instance label, which is how
-// they are traced back to the database.
+// MySQLChartReleaseName and RedisChartReleaseName are the names of a database's MySQL and Redis servers: the
+// prefix of their StatefulSet and Services, and the value of the pods' app.kubernetes.io/instance label, which is how
+// pods are traced back to the database. They are the names the Bitnami charts gave, kept so that the hosts
+// apps already connect to, and everything that finds a server's pods, volumes and logs, did not change when
+// Geass began to run the servers itself.
 func MySQLChartReleaseName(database string) string { return "geass-mysql-" + database }
 
 func RedisChartReleaseName(database string) string { return "geass-redis-db-" + database }
+
+// MySQLServerName and RedisServerName are the StatefulSets of the servers, and the pods are the name with -0. They are
+// what the Bitnami charts named them in the layout Geass used (a single server), which is a MySQL set named for the
+// release and a Redis one with the suffix -master.
+func MySQLServerName(database string) string { return MySQLChartReleaseName(database) }
+
+func RedisServerName(database string) string { return RedisChartReleaseName(database) + "-master" }
+
+// EngineIsSingleInstance reports whether Geass runs an engine as one instance only. Replication and failover
+// come from PostgreSQL's operator; the other engines have no such thing here.
+func EngineIsSingleInstance(engine geassv1alpha1.GeassDatabaseEngine) bool {
+	return engine == geassv1alpha1.DatabaseEngineMySQL || engine == geassv1alpha1.DatabaseEngineRedis
+}
+
+// SingleInstanceMessage is what a MySQL or Redis database that asks for high availability, or for more than one
+// instance, is told. It begins with "High availability requires" so that it is read as a wait for the user
+// and does not count toward the retries that end provisioning.
+func SingleInstanceMessage(engine geassv1alpha1.GeassDatabaseEngine) string {
+	return fmt.Sprintf("High availability requires PostgreSQL: %s runs as a single instance. Turn it off, or choose PostgreSQL", engine)
+}

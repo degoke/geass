@@ -17,6 +17,10 @@ type metricScope struct {
 	// volumePattern, when set, adds the used space of the persistent volumes whose claim matches this (already
 	// escaped) pattern, for databases.
 	volumePattern string
+	// perReplicaMemory adds the memory of the busiest copy beside the total of all of them. A service reserves memory per
+	// copy, so the total says nothing about it once there is more than one. Only services use it: it is a query nothing
+	// else reads.
+	perReplicaMemory bool
 	// all makes the scope the whole cluster instead of a set of namespaces. Only the cluster page uses it.
 	all bool
 	// operator makes the scope Geass itself: the operator's own metrics, not any workload's. It holds
@@ -74,6 +78,11 @@ func (m metricScope) queries() []metricSeriesQuery {
 		{"memory", `sum(container_memory_working_set_bytes{` + selector + `,container!=""})`},
 		{"network", `sum(rate(container_network_transmit_bytes_total{` + selector + `}[2m]))`},
 		{"networkIn", `sum(rate(container_network_receive_bytes_total{` + selector + `}[2m]))`},
+	}
+	if m.perReplicaMemory {
+		// A service's pods hold one container each, so the largest container is the largest copy. It is the busiest copy and
+		// not the median that counts: any copy above what it reserved is among the first stopped when its server runs short.
+		queries = append(queries, metricSeriesQuery{"memoryPerReplica", `max(container_memory_working_set_bytes{` + selector + `,container!=""})`})
 	}
 	if m.ingressService != "" {
 		queries = append(queries, metricSeriesQuery{"requests", `sum(rate(traefik_service_requests_total{service=~"` + m.ingressService + `"}[2m]))`})

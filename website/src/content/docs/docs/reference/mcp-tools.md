@@ -258,7 +258,8 @@ Shows CPU, memory, network and request use over time for a service, a database o
 - **Needs:** any token for `apps` (a project token for its own services). Any workspace token for `databases` and
   `projects`. **Calls:** `GET /{kind}/{name}/metrics` with `window`.
 - **Returns:** `window`, `step` (seconds between points), `available`, an optional `message`, and `series`. Each series
-  is a list of `{"t": <unix seconds>, "v": <value>}`. The series are `cpu` (cores), `memory` (bytes), `network` (bytes
+  is a list of `{"t": <unix seconds>, "v": <value>}`. The series are `cpu` (cores), `memory` (bytes, the total of every replica), `memoryPerReplica` (bytes, services
+  only: the busiest replica), `network` (bytes
   sent per second), `networkIn` (bytes received per second), `requests` (requests per second, services only) and
   `storage` (bytes, databases only). `available` is `false`, with a `message`, when Prometheus is not installed or not
   reachable (see [Observability](/docs/guides/observability/)).

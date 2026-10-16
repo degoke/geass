@@ -382,8 +382,8 @@ You cannot choose other versions from the dashboard.
 | CloudNativePG operator (chart) | 0.23.2 | `cnpg-system` |
 | Victoria Logs (chart) | 0.13.10 | `geass-logging` |
 | Fluent Bit (chart) | 0.58.3 | `geass-logging` |
-| MySQL (Bitnami chart) | 12.3.3 | the project environment |
-| Redis (Bitnami chart) | 20.7.1 | the project environment |
+| MySQL (image, no chart) | 8.4.11 | the project environment |
+| Redis (image, no chart) | 7.4.11-alpine | the project environment |
 | SeaweedFS (image, no chart), for in-cluster object storage | 4.48 | `geass-system` (cluster server) |
 | Garage (image, no chart), for in-cluster object storage | v2.4.1 | `geass-system` (cluster server) |
 | alpine/socat (image), the port forwarder next to SeaweedFS | 1.8.1.1 | `geass-system` (cluster server) |

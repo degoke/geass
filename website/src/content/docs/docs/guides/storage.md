@@ -166,7 +166,7 @@ The field is locked, and the dashboard shows "This database's storage can't be r
 
 The size floor is the size from the last deploy, not the size currently in the form, because a larger value you saved but have not deployed is not applied yet.
 
-Postgres volumes are resized by the Postgres operator and SQLite's by its volume claim. MySQL's volume belongs to the Helm chart that runs it, and Geass passes the new size to the chart. Geass does not expand MySQL's claims itself, so after you deploy a MySQL resize, confirm it with `kubectl get pvc -n <namespace>`.
+Postgres volumes are resized by the Postgres operator, and SQLite's and MySQL's by their volume claims: when you deploy a larger size, Geass raises the claim's request itself. A claim whose storage class cannot expand is refused by Kubernetes, and Geass then logs it and leaves the database running at the size it has. After you deploy a MySQL resize, confirm it with `kubectl get pvc -n <namespace>`. The claim of a MySQL database made on an earlier development build, which the Bitnami chart owns, is not resized by Geass.
 
 ## What replication gives you
 

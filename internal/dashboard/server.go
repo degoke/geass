@@ -2481,6 +2481,11 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	provider := strings.TrimSpace(r.FormValue("provider"))
 	ha := r.FormValue("highAvailability") == "on" || r.FormValue("highAvailability") == "true"
 	engine := parseDatabaseEngine(r.FormValue("engine"))
+	// An external database is not run by Geass, so what it is called does not decide how many instances there are.
+	if ha && placement != geassv1alpha1.DatabasePlacementExternal && platform.EngineIsSingleInstance(engine) {
+		redirectFormUserError(w, r, fallback, platform.UserError(platform.SingleInstanceMessage(engine)))
+		return
+	}
 	res, err := resourcesFromForm(r, defaultResourcesForEngine(engine))
 	if err != nil {
 		redirectFormUserError(w, r, fallback, err)

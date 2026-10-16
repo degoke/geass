@@ -36,6 +36,11 @@ The first public release.
 - **Databases.** PostgreSQL, MySQL, Redis and SQLite in the cluster, shared database servers, external databases
   (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
   (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.
+  MySQL and Redis run as one pod each from the official `mysql` and `redis` images, which Geass runs itself (not
+  through a Helm chart, whose Bitnami images no longer exist on Docker Hub); high availability is for PostgreSQL only,
+  and a MySQL or Redis database that asks for it, or for more than one instance, is refused with the reason. A MySQL
+  volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it
+  is, and moves a Redis database to the new server (Redis keeps no data on disk, so that costs a restart).
 - **Object storage.** Buckets on an in-cluster SeaweedFS or Garage server, or in AWS S3, isolated per project.
 - **Domains and HTTPS.** Domains through Cloudflare (including Tunnels and DNS records) and certificates from
   Let's Encrypt through cert-manager.
@@ -46,7 +51,9 @@ The first public release.
   `memoryMax` in the API). Software that needs a lot only for a while, such as on its first start, does not hold that
   much for ever. The capacity check and project limits count only what is reserved, and the **Usage** page warns when
   services may use more memory between them than the servers have. A copy that is stopped for memory says so in the
-  service's status (`Ran out of memory`) and in an `OutOfMemory` condition. Databases and object storage always use
+  service's status (`Ran out of memory`) and in an `OutOfMemory` condition, and the Scale settings say when a service
+  typically uses more memory than it reserves, since such a service is the first to be stopped when its server runs
+  short (the metrics gain a per-replica `memoryPerReplica` series for this). Databases and object storage always use
   what they reserve.
 - **Network isolation.** Projects are private by default, with an allow list per project.
 - **Observability.** Metrics, live logs with history, a terminal in a service and a query box for databases, and charts

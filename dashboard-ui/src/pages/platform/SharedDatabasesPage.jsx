@@ -21,6 +21,11 @@ export function sharedDatabaseServers(data) {
   return list(data, "databases").filter((item) => !item.spec?.project);
 }
 
+function haDescription(engineHasHa, haAvailable) {
+  if (!engineHasHa) return "Only PostgreSQL servers can be highly available.";
+  return haAvailable ? "Three instances, so the server survives losing a node." : "Needs at least three healthy nodes.";
+}
+
 function SetupForm({ data, reload, onDone }) {
   const regions = platformRegions(data);
   const [engine, setEngine] = useState("Postgres");
@@ -32,7 +37,9 @@ function SetupForm({ data, reload, onDone }) {
   const [memory, setMemory] = useState(defaults.memory);
   const [storage, setStorage] = useState(defaultStorageForEngine(engine, data?.platform?.defaultStorage));
   const [busy, setBusy] = useState(false);
-  const haAvailable = Boolean(data?.platform?.haReady);
+  // Only PostgreSQL has replication and failover; MySQL runs as one instance.
+  const engineHasHa = engine === "Postgres";
+  const haAvailable = engineHasHa && Boolean(data?.platform?.haReady);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -45,7 +52,7 @@ function SetupForm({ data, reload, onDone }) {
         cpu,
         memory,
         storageSize: storage,
-        highAvailability: ha ? "on" : "",
+        highAvailability: ha && engineHasHa ? "on" : "",
       });
       await reload?.();
       alertUser("Shared database server is starting");
@@ -84,8 +91,8 @@ function SetupForm({ data, reload, onDone }) {
         </Field>
         <Switch
           label="High availability"
-          description={haAvailable ? "Three instances, so the server survives losing a node." : "Needs at least three healthy nodes."}
-          checked={ha}
+          description={haDescription(engineHasHa, haAvailable)}
+          checked={ha && engineHasHa}
           disabled={!haAvailable}
           onChange={(event) => setHa(event.currentTarget.checked)}
         />

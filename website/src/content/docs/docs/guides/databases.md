@@ -23,14 +23,14 @@ This page covers one database per resource. To share a single server between man
 | Engine | What runs | Default size per instance | Disk | Backups |
 | --- | --- | --- | --- | --- |
 | PostgreSQL | A CloudNativePG cluster using the image `ghcr.io/cloudnative-pg/postgresql:<version>`. Version 16 by default | 0.25 CPU, 512 MB | 10 GiB | Continuous, restore to any moment |
-| MySQL | The Bitnami MySQL Helm chart, version 12.3.3 | 0.25 CPU, 512 MB | 10 GiB | Daily copy |
-| Redis | The Bitnami Redis Helm chart, version 20.7.1, with persistence off | 0.25 CPU, 512 MB | None | None |
+| MySQL | The official `mysql:8.4.11` image, one pod on a volume | 0.25 CPU, 512 MB | 10 GiB | Daily copy |
+| Redis | The official `redis:7.4.11-alpine` image, one pod, with persistence off | 0.25 CPU, 512 MB | None | None |
 | SQLite | rqlite 8.36.16, which serves SQLite over HTTP on port 4001 | 0.1 CPU, 128 MB | 1 GiB | Daily copy |
 
 Things to know about each engine:
 
 - **PostgreSQL** is the only engine that uses the **Version** field, although the dashboard shows the field for every database. It is the tag of the Postgres image, with no checking, so use a tag that exists. Geass does not migrate data between major versions. Choose the version before the first deploy.
-- **MySQL and Redis** versions come from the pinned Helm charts. The **Version** field has no effect on them.
+- **MySQL and Redis** versions come from the images Geass pins (MySQL 8.4, Redis 7.4). The **Version** field has no effect on them. Both run as one instance and cannot be made highly available: see [Instances and high availability](#instances-and-high-availability).
 - **Redis** keeps its data in memory. It has no disk, no size setting and no backups. A restart empties it, so use it as a cache.
 - **SQLite** runs as rqlite, one instance on one volume. Apps talk to it over HTTP at port 4001, not by opening a file. It has no login: the connection string is a plain `http://` address.
 - **CPU and memory** are one setting. The limit equals the request, so a database never bursts beyond what it reserved. Choose CPU from 0.1, 0.25, 0.5, 1 or 2, and memory from 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB.
@@ -150,7 +150,7 @@ The addresses and strings look like this:
 | Engine | Host | Connection string |
 | --- | --- | --- |
 | PostgreSQL | `<ID>-rw.<namespace>.svc` | `postgresql://app:<password>@<host>:5432/<database>` |
-| MySQL | `geass-mysql-<ID>.<namespace>.svc` (`-primary` is added for high availability) | `mysql://app:<password>@<host>:3306/<database>` |
+| MySQL | `geass-mysql-<ID>.<namespace>.svc` | `mysql://app:<password>@<host>:3306/<database>` |
 | Redis | `geass-redis-db-<ID>-master.<namespace>.svc` | `redis://:<password>@<host>:6379` |
 | SQLite | `<ID>.<namespace>.svc` | `http://<host>:4001` |
 
@@ -275,7 +275,7 @@ An HA database does not start until the cluster passes the HA readiness check. U
 - the Geass cluster is Ready, and
 - the cluster add-ons are Ready.
 
-The check applies to every database that asks for HA, whatever its engine. It does not concern control-plane HA, which is a separate topic in [High availability](/docs/operations/high-availability/).
+The check applies to every PostgreSQL database that asks for HA. MySQL and Redis are refused before it (see below). It does not concern control-plane HA, which is a separate topic in [High availability](/docs/operations/high-availability/).
 
 To run it, open **Settings**, then **Usage**, find **HA readiness** and select **Run readiness check**. The section shows **Healthy nodes** and **Ready for HA**.
 
@@ -283,7 +283,7 @@ To run it, open **Settings**, then **Usage**, find **HA readiness** and select *
 Geass creates the readiness report only when you first select **Run readiness check**. Until then every HA database waits and the shared-server **High availability** switch stays off. The button creates the report if it does not exist and does nothing if it does. Once the report exists, the operator keeps it current: it works the report out again when a node, a storage class or the Geass cluster changes, so adding a third node is enough. An HA database that is waiting checks again every 30 seconds.
 :::
 
-HA is built for PostgreSQL, and its three instances and failover come from CloudNativePG. For MySQL and Redis, Geass switches the Helm chart to its replication mode and waits for three ready pods. It does not set the chart's replica counts, so the chart's defaults decide how many pods start, and the database stays unready if fewer than three do. That path is experimental: it has not been verified on a three-node cluster, so use HA PostgreSQL. SQLite refuses HA with "SQLite does not support high availability".
+HA is built for PostgreSQL, and its three instances and failover come from CloudNativePG. MySQL and Redis run as one instance, so a MySQL or Redis database that asks for HA, or for more than one instance, is refused: its Ready condition reads "High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL" (with Redis for Redis), and the dashboard's create calls refuse it up front with the same words. The shared-server form disables the HA switch for MySQL. SQLite refuses HA with "SQLite does not support high availability".
 
 Each HA instance reserves the CPU and memory you chose, so an HA database needs three times the capacity.
 
@@ -524,8 +524,8 @@ Each row gives the `spec` field and the form field the API accepts.
 | `placement` | `placement` | `InCluster` or `External` | `InCluster` |
 | `provider`, `mode` | `provider`, `mode` | External only: `AWS` or `PlanetScale`, and `Create` or `Connect`. `Create` does something only for PlanetScale | None |
 | `clusterSize` | `clusterSize` | PlanetScale only: the size Geass creates the database with, for example `PS_10`. It does not resize a database later | PlanetScale's default |
-| `highAvailability` | `highAvailability` | Three instances. Needs the readiness check | Off |
-| `instances` | none | Number of instances. HA forces at least 3 | 1 |
+| `highAvailability` | `highAvailability` | Three instances. Needs the readiness check. PostgreSQL only: MySQL and Redis refuse it | Off |
+| `instances` | none | Number of instances. HA forces at least 3. MySQL and Redis run one | 1 |
 | `version` | `version` | Postgres image tag | `16` |
 | `storageSize` | `storageSize` | Disk per instance, at least `1Gi` | `10Gi` (`1Gi` for SQLite) |
 | `resources` | `cpu`, `memory` | CPU and memory per instance | 250m and 512Mi (SQLite 100m and 128Mi) |
@@ -544,8 +544,8 @@ The full schema is in the [resource reference](/docs/reference/resources/overvie
 Each database is a `GeassDatabase` in `geass-system`. Its workloads live in the project environment's namespace, `<project ID>-<environment>`. Before the first deploy the object is parked with the message "Resource is configured and waiting for deployment". Deploying records a snapshot of the settings, and pending edits stay frozen until you deploy them. Backup settings are the exception, and they follow the current settings at once. When it first provisions an in-cluster database, Geass writes the annotation `geass.dev/node-placement` on the object (where it runs, see [Where a database runs](#where-a-database-runs)) and, for engines with a volume, `geass.dev/storage-class` (see [Storage and volumes](/docs/guides/storage/#the-class-is-pinned-per-database)).
 
 - **PostgreSQL.** Geass installs the chart `geass-cloudnative-pg` (version 0.23.2) into `cnpg-system` on first use. Each database is a CloudNativePG `Cluster` named after the resource ID. Its pods are `<ID>-1`, and `<ID>-2` and `<ID>-3` for HA, and the read-write Service is `<ID>-rw`. The `<ID>-bootstrap` Secret holds the `app` login.
-- **MySQL.** A `HelmChart` named `geass-mysql-<ID>` in `kube-system` installs the Bitnami chart into the environment's namespace, with the replication architecture for HA.
-- **Redis.** A `HelmChart` named `geass-redis-db-<ID>` installs the Bitnami chart with authentication on and persistence off.
+- **MySQL.** A StatefulSet `geass-mysql-<ID>` of one pod from the official image, on the volume claim `data-geass-mysql-<ID>-0`, behind the Service `geass-mysql-<ID>`. The root and `app` logins and the database are created the first time it starts, from the `<ID>-bootstrap` Secret. A database made on an earlier development build is still the Bitnami chart (a `HelmChart` `geass-mysql-<ID>` in `kube-system`) and Geass leaves it as it is.
+- **Redis.** A StatefulSet `geass-redis-db-<ID>-master` of one pod from the official image, with a password and no volume, behind the Service `geass-redis-db-<ID>-master`. A Redis database made on the Bitnami chart is moved to it when it is next reconciled.
 - **SQLite.** A Deployment and a Service named `<ID>`, and a volume claim `<ID>-sqlite`, run rqlite.
 - **External.** No workloads. Geass writes the connection Secret from the host, login and password you gave or, for a PlanetScale database it creates, from the login it issued.
 
@@ -583,10 +583,13 @@ Longhorn is installing or not working. Geass waits up to 15 minutes. "Storage is
 Open the **Deployments** tab to read the failing attempt, fix the cause, then select **Retry** (`POST /api/databases/<ID>/retry-provision` with the API).
 
 **A MySQL or Redis database shows "Object storage is starting. Try again in a few minutes." for a long time.**
-The dashboard words the raw message "Service is starting" this way for every engine. The Helm chart's pods are not ready. Run `kubectl get pods -n <namespace>` and `kubectl describe pod` on the database's pod. An image the node cannot pull is a common cause, because the chart's images come from a registry.
+The dashboard words the raw message "Service is starting" this way for every engine. The server's pod is not ready. Run `kubectl get pods -n <namespace>` and `kubectl describe pod` on the database's pod (`geass-mysql-<ID>-0` or `geass-redis-db-<ID>-master-0`). An image the node cannot pull is a common cause, because the images come from Docker Hub. A first MySQL start sets its volume up and can take a few minutes.
 
-**"SQLite does not support high availability".**
-SQLite runs one instance. Turn off HA or choose PostgreSQL.
+**"SQLite does not support high availability", or "High availability requires PostgreSQL: MySQL runs as a single instance".**
+SQLite, MySQL and Redis run one instance. Turn off HA (and set `instances` back to 1) or choose PostgreSQL.
+
+**"Replacing the Redis chart with Geass's own server".**
+A Redis database made on the Bitnami chart is being moved to Geass's own server. It waits for Helm to remove the chart, which takes a minute or so, and is not counted as a failure. If it stays for long, look at the `HelmChart` `geass-redis-db-<ID>` in `kube-system` and the job that removes its release (`kubectl -n kube-system get helmcharts,jobs`).
 
 **"external database host, username, and password are required".**
 An external database has none of them. Create it through the API with the fields in [Connect to a database you host](#connect-to-a-database-you-host).

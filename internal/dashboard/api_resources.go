@@ -579,7 +579,11 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) ([]string, error) {
 	switch engine {
 	case geassv1alpha1.DatabaseEngineMySQL:
-		return []string{"mysql", "-e", query}, nil
+		// A server Geass runs holds the application's login in its environment, and the mysql client reads its
+		// password from MYSQL_PWD. A server that is still the Bitnami chart keeps the plain command it always had.
+		// The query is an argument, never part of the script, so it cannot change what the script does.
+		const script = `if [ -n "$MYSQL_PASSWORD" ]; then MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" --database="$MYSQL_DATABASE" -e "$1"; fi; exec mysql -e "$1"`
+		return []string{"sh", "-c", script, "sh", query}, nil
 	case geassv1alpha1.DatabaseEngineRedis:
 		args := strings.Fields(query)
 		for _, arg := range args {
@@ -587,7 +591,9 @@ func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string
 				return nil, fmt.Errorf("redis command flags are not allowed")
 			}
 		}
-		return append([]string{"redis-cli", "--"}, args...), nil
+		// No argument is a flag (they are refused above), so nothing can change how redis-cli connects. A "--" before
+		// them is not accepted by redis-cli, which answered every command with "Unrecognized option".
+		return append([]string{"redis-cli"}, args...), nil
 	case geassv1alpha1.DatabaseEngineSQLite:
 		return []string{"rqlite", "-e", query}, nil
 	default:

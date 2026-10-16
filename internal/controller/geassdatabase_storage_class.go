@@ -173,9 +173,17 @@ func (r *GeassDatabaseReconciler) existingVolumeClass(ctx context.Context, db *g
 		}
 		return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
 	case geassv1alpha1.DatabaseEngineMySQL:
-		// The chart owns its claims and we cannot read their class back from it, so
-		// an existing chart is treated as being on the default class.
-		_, err := helmchart.Get(ctx, r.Client, mysqlChartName(db.Name))
+		// The server's own claim says its class. A database still on the Bitnami chart has the same claim, made by
+		// the chart, so it is read the same way; a chart whose claim is not there yet is on the default class.
+		pvc := &corev1.PersistentVolumeClaim{}
+		err := r.Get(ctx, client.ObjectKey{Name: serverVolumeName + "-" + platform.MySQLServerName(db.Name) + "-0", Namespace: wsNS}, pvc)
+		if err == nil {
+			return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", false, err
+		}
+		_, err = helmchart.Get(ctx, r.Client, mysqlChartName(db.Name))
 		if apierrors.IsNotFound(err) {
 			return "", false, nil
 		}

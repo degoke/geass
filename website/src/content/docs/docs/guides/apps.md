@@ -158,6 +158,9 @@ anything else, and is not guaranteed either:
 - A replica that goes over the most it may use is stopped and started again.
 - When a server runs out of memory, the replicas that are using more than they reserved are the first to be stopped, so
   a service that reserves much less than it uses is the first to go. Reserve at least what it uses when it is quiet.
+  Under **Memory reserved**, the settings say when a replica has typically used more than that, going by the middle
+  value of the last 24 hours of metrics, not the peak. The note needs Prometheus and an hour of data, and shows
+  nothing without them.
 - CPU that is over what is reserved is shared out among the replicas on the server, and a replica that reaches the most
   it may use is slowed down, not stopped.
 - Autoscaling measures CPU against what is reserved, so a replica that reserves less scales out sooner.

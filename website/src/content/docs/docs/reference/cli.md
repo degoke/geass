@@ -729,17 +729,19 @@ Prints one row per series with the latest value and, in brackets, the lowest and
 significant figures:
 
 ```text
-SERIES     LATEST (MIN - MAX)
-cpu        0.0123 (0.0101 - 0.0456)
-memory     1.34e+08 (1.3e+08 - 1.36e+08)
-network    2.1e+03 (1.2e+03 - 9.8e+03)
-networkIn  1.7e+03 (900 - 8.4e+03)
-requests   4.2 (1.1 - 9.7)
+SERIES            LATEST (MIN - MAX)
+cpu               0.0123 (0.0101 - 0.0456)
+memory            1.34e+08 (1.3e+08 - 1.36e+08)
+memoryPerReplica  6.7e+07 (6.5e+07 - 6.9e+07)
+network           2.1e+03 (1.2e+03 - 9.8e+03)
+networkIn         1.7e+03 (900 - 8.4e+03)
+requests          4.2 (1.1 - 9.7)
 ```
 
-`cpu` is in cores, `memory` in bytes, `network` (sent) and `networkIn` (received) in bytes per second, and `requests`
-(services only) in requests per second. Databases add `storage`, the used space of their volumes, in bytes. With
-`--json` it prints the answer unchanged: `window`, `step`, `available`, an optional `message` and `series`, where each
+`cpu` is in cores, `memory` in bytes (the total of every replica), `network` (sent) and `networkIn` (received) in bytes
+per second, and `requests` (services only) in requests per second. A service also has `memoryPerReplica`, in bytes: the
+memory of its busiest replica, which is what **Memory reserved** is set against. Databases add `storage`, the used space
+of their volumes, in bytes. With `--json` it prints the answer unchanged: `window`, `step`, `available`, an optional `message` and `series`, where each
 series is a list of `{"t": <unix seconds>, "v": <value>}`.
 
 Metrics need Prometheus. When it is not installed or not reachable, the command exits `1` with `no metrics yet: ...`
