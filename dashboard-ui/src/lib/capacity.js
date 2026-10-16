@@ -74,6 +74,17 @@ export function sizeLabel(options, value, fallback) {
   return options.find((option) => option.value === value)?.label || fallback || value;
 }
 
+/**
+ * The middle value of a series of `{ t, v }` samples: what a metric usually is, with the bursts of a few samples left out.
+ * Null when there are fewer than `minSamples`, so a typical value is not claimed from the first minutes after a start.
+ */
+export function typicalValue(points, minSamples = 1) {
+  const values = (points || []).map((point) => Number(point?.v)).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!values.length || values.length < minSamples) return null;
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+}
+
 /** "0.25 CPU · 1 GB", with "(up to 1 GB)" after an amount that the workload may use more of than it reserves. */
 export function sizeSummary(data, resources) {
   const cpuSizes = data?.platform?.capacity?.cpuSizes || [];

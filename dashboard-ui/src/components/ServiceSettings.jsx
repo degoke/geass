@@ -6,6 +6,7 @@ import { alertUser } from "@/lib/notify";
 import { outOfMemoryNotice, settingsSavedMessage } from "@/lib/services";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
 import { DeployHook } from "@/components/DeployHook";
+import { MemoryReserveHint } from "@/components/MemoryReserveHint";
 import { RunOnField } from "@/components/RunOnField";
 import { ceilingOf, defaultSizeForKind } from "@/lib/capacity";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
@@ -286,6 +287,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                         }}
                         data={data}
                       />
+                      <MemoryReserveHint app={name} memory={memory} data={data} />
                     </SettingsPanel>
                   </ResourceSettingsBlock>
                   <RunOnField data={data} region={region} value={runOn} onChange={setRunOn} note="Applies on deploy." />
