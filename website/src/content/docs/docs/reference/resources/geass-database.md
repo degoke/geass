@@ -297,7 +297,7 @@ The gate only applies when the annotation `geass.dev/deploy-workflow` is `"true"
 | `ReconcileError` | `False` | Not ready yet. The message says what Geass is waiting for or what failed. Geass checks again after 30 seconds. |
 | `ProvisionFailed` | `False` | Geass gave up. The message is always `Provisioning failed after repeated errors. Update settings or platform configuration, then save or redeploy to try again.` |
 
-Messages that describe waiting do not count as failures. Everything else does. Geass moves to `ProvisionFailed` when it sees 5 counted failures in a row, when counted failures last 3 minutes, or at once for a permanent error (an unsupported engine, an access-denied error, or an invalid credential or configuration).
+Messages that describe waiting do not count as failures. Everything else does. Geass moves to `ProvisionFailed` when it sees 5 counted failures in a row, when counted failures last 3 minutes, or at once for a permanent error (an unsupported engine, an access-denied error, or an invalid credential or configuration). The exception is `Could not pull the database image …`: the kubelet waits minutes between pulls, so it moves to `ProvisionFailed` only when the image has failed to pull for 10 minutes, however many passes that takes.
 
 Once the reason is `ProvisionFailed`, the controller stops reconciling that database until you change its spec (any edit that raises `metadata.generation`) or press **Retry**. **Retry** resets the counters, sets `Ready` back to `ReconcileError` with the message `Retrying provisioning`, and starts a new entry in `status.provision`.
 
@@ -319,6 +319,7 @@ The `Ready` messages you can see, in the order Geass checks them:
 | `Installing Postgres operator chart`, `Installing MySQL database chart`, `Installing Redis database chart` | Helm is installing a chart. |
 | `PlanetScale database is starting` | PlanetScale is still creating the database. Waiting for it does not count as a failure, for up to 30 minutes. |
 | `Postgres database is starting`, `Service is starting`, `Starting service` | Pods are starting. |
+| `Could not pull the database image <image> (<reason>)` | The pod of a MySQL or Redis server cannot get its image. `<reason>` is `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName`. A pull that is only slow is `Service is starting`. It counts as a failure, but only after 10 minutes. |
 | `Service failed to start` | Every pod of the chart failed. |
 | `Restoring database from backup` | A restore is running. |
 

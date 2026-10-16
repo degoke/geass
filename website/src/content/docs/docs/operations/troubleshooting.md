@@ -47,7 +47,7 @@ kubectl -n geass-system get geassapp web \
 
 ### How Geass gives up, and how to start again
 
-While a resource is not ready, Geass tries again every 30 seconds and records the reason in the `Ready` condition. Most reasons count as failures. A resource becomes **Failed** after five failed passes in a row, or after three minutes of failures, or at once for an error that cannot heal itself (an `access denied`, an unsupported engine). Waiting states never count: a draft, pending changes, a build in progress, an install in progress, "is starting", a restore, "High availability requires …", and a service that sleeps when idle and is starting after a request.
+While a resource is not ready, Geass tries again every 30 seconds and records the reason in the `Ready` condition. Most reasons count as failures. A resource becomes **Failed** after five failed passes in a row, or after three minutes of failures, or at once for an error that cannot heal itself (an `access denied`, an unsupported engine). A database whose server cannot pull its image is given ten minutes instead, because the kubelet waits minutes between pulls. Waiting states never count: a draft, pending changes, a build in progress, an install in progress, "is starting", a restore, "High availability requires …", and a service that sleeps when idle and is starting after a request.
 
 A failed resource stays paused until its settings change or you choose **Retry** on its page (Geass shows "Retrying provisioning"). **Retry** appears only on a resource whose reason is `ProvisionFailed`. Fix the cause first, or it fails again in about two minutes.
 
@@ -252,6 +252,14 @@ kubectl -n longhorn-system get pods -o wide
 ### A resource says there is not enough capacity
 
 The message begins "This service needs about …" or "There is no ready node in …". Open **Usage** to see how full the nodes are, then add a node, lower the size, or free something. The messages and fixes are in [Scaling and placement](/docs/guides/scaling-and-placement/). If the resource is already **Failed**, choose **Retry** after the capacity exists.
+
+### A MySQL or Redis database says "Could not pull the database image …"
+
+The pod of the database's server cannot get its image from Docker Hub. The message names the image and the state: `ErrImagePull` (a pull just failed), `ImagePullBackOff` (waiting to try again) or `InvalidImageName`. A pull that is only slow is "Service is starting" and is not this. The database is **Unavailable** while the kubelet keeps trying, and **Failed** when the image has not been pulled for 10 minutes. Read the registry's own error in the pod's events, fix the node's route to Docker Hub (or load the image onto the nodes, or use a mirror), and then choose **Retry**. See [Databases](/docs/guides/databases/#troubleshooting).
+
+```bash
+kubectl -n payments-dev describe pod geass-redis-db-orders-master-0
+```
 
 ### A database says "High availability requires a cluster with at least three healthy nodes"
 
