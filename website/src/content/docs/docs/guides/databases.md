@@ -583,7 +583,16 @@ Longhorn is installing or not working. Geass waits up to 15 minutes. "Storage is
 Open the **Deployments** tab to read the failing attempt, fix the cause, then select **Retry** (`POST /api/databases/<ID>/retry-provision` with the API).
 
 **A MySQL or Redis database shows "Object storage is starting. Try again in a few minutes." for a long time.**
-The dashboard words the raw message "Service is starting" this way for every engine. The server's pod is not ready. Run `kubectl get pods -n <namespace>` and `kubectl describe pod` on the database's pod (`geass-mysql-<ID>-0` or `geass-redis-db-<ID>-master-0`). An image the node cannot pull is a common cause, because the images come from Docker Hub. A first MySQL start sets its volume up and can take a few minutes.
+The dashboard words the raw message "Service is starting" this way for every engine. The server's pod is not ready, and its image is not what is wrong: a pod that cannot get its image says so, as the next entry describes. Run `kubectl get pods -n <namespace>` and `kubectl describe pod` on the database's pod (`geass-mysql-<ID>-0` or `geass-redis-db-<ID>-master-0`). A first MySQL start sets its volume up and can take a few minutes, and a large image that is still being pulled shows as `ContainerCreating` and is also "Service is starting".
+
+**"Could not pull the database image redis:7.4.11-alpine (ImagePullBackOff)" (or `mysql:8.4.11`, or `ErrImagePull`, or `InvalidImageName`).**
+The node cannot get the image its MySQL or Redis server runs from. Geass pulls `mysql` and `redis` from Docker Hub. `ErrImagePull` is a pull that just failed, and `ImagePullBackOff` is the wait before the next try; the two alternate. Read the registry's own words in the events of the database's pod:
+
+```bash
+kubectl -n <namespace> describe pod geass-redis-db-<ID>-master-0
+```
+
+The usual causes are a node that cannot reach Docker Hub (a proxy, a firewall or DNS), Docker Hub's limit on anonymous pulls (`toomanyrequests`), and a cluster with no route to the internet, where the images have to be loaded onto the nodes or served by a registry mirror. The kubelet keeps trying, so once a node can pull the image the database becomes ready by itself. A database that cannot pull its image for 10 minutes is **Failed**, longer than other failures get because the kubelet waits minutes between tries. The message stays in the database's attempt history under **Deployments**. Fix the cause and then select **Retry**.
 
 **"SQLite does not support high availability", or "High availability requires PostgreSQL: MySQL runs as a single instance".**
 SQLite, MySQL and Redis run one instance. Turn off HA (and set `instances` back to 1) or choose PostgreSQL.

@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -291,7 +292,7 @@ func (r *GeassDatabaseReconciler) reconcileServer(ctx context.Context, db *geass
 	}
 	r.growServerVolume(ctx, db, wsNS, srv)
 	if !statefulSetReady(sts, 1) {
-		return r.setNotReady(ctx, db, messageServiceStarting)
+		return r.setNotReady(ctx, db, r.serverNotReadyMessage(ctx, wsNS, srv))
 	}
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, port, scheme); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -306,6 +307,44 @@ func (r *GeassDatabaseReconciler) reconcileServer(ctx context.Context, db *geass
 		}
 	}
 	return r.setReadyWithBackups(ctx, db, wsNS, host, string(db.Spec.Engine)+" database is ready", backups)
+}
+
+// imagePullReasons are the states of a container that mean its image cannot be had: a pull that failed, the wait
+// before the next one, and a name that is not an image at all.
+var imagePullReasons = []string{"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+
+// serverNotReadyMessage says why a server that is not ready is not. It is "starting" unless its pod says it cannot get
+// its image: that never gets better by waiting, and it was what hid the removed Bitnami images, as a database that
+// said "Service is starting" for months. A pod that is only slow to pull is ContainerCreating and is starting.
+func (r *GeassDatabaseReconciler) serverNotReadyMessage(ctx context.Context, wsNS string, srv serverSpec) string {
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, client.ObjectKey{Name: srv.name + "-0", Namespace: wsNS}, pod); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logf.FromContext(ctx).Info("Could not read the database server pod", "pod", srv.name+"-0", "error", err.Error())
+		}
+		return messageServiceStarting
+	}
+	// A pod that is being deleted is on its way to being replaced, and what it says is about the one before.
+	if !pod.DeletionTimestamp.IsZero() {
+		return messageServiceStarting
+	}
+	for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		if waiting := status.State.Waiting; waiting != nil && slices.Contains(imagePullReasons, waiting.Reason) {
+			return platform.ImagePullMessage(podContainerImage(pod, status), waiting.Reason)
+		}
+	}
+	return messageServiceStarting
+}
+
+// podContainerImage is the image a pod's container was asked to run. The pod's spec is what failed to pull, which is
+// not the StatefulSet's once its template has changed and the pod is waiting to be replaced.
+func podContainerImage(pod *corev1.Pod, status corev1.ContainerStatus) string {
+	for _, container := range slices.Concat(pod.Spec.InitContainers, pod.Spec.Containers) {
+		if container.Name == status.Name {
+			return container.Image
+		}
+	}
+	return status.Image
 }
 
 func (r *GeassDatabaseReconciler) ensureServerServices(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, srv serverSpec) error {

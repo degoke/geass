@@ -179,3 +179,64 @@ func TestAProjectThatIsNotReadyYetIsWaitedForNotCountedAsAFailure(t *testing.T) 
 		}
 	}
 }
+
+// The kubelet waits between pulls for minutes. Five passes thirty seconds apart, or three minutes, would end a
+// database whose registry was away for two, so a pull that fails is counted for longer than other failures.
+func TestAnImageThatCannotBePulledIsCountedForLongerThanOtherFailures(t *testing.T) {
+	message := ImagePullMessage("redis:7.4.11-alpine", "ImagePullBackOff")
+	if message != "Could not pull the database image redis:7.4.11-alpine (ImagePullBackOff)" {
+		t.Fatalf("unexpected message: %s", message)
+	}
+	if !IsImagePullFailure(message) || IsImagePullFailure("Service is starting") {
+		t.Fatalf("a pull failure must be told from a database that is only starting")
+	}
+	if !ReconcileFailureShouldCount(message) {
+		t.Fatalf("an image that cannot be pulled has to be counted, or it would be starting for ever")
+	}
+
+	// Past what ends any other failure, in both tries and time.
+	past := metav1.NewTime(time.Now().Add(-ReconcileFailureMaxDuration - time.Minute))
+	state := ReconcileRetryState{Failures: ReconcileFailureThreshold, FailureStarted: &past}
+	if outcome := ApplyNotReady(nil, state, 1, message); outcome.Terminal || outcome.RequeueAfter != RequeueAfterDefault {
+		t.Fatalf("a registry that has been away for a few minutes must be retried: %+v", outcome)
+	}
+	if outcome := ApplyNotReady(nil, state, 1, "upstream request timed out"); !outcome.Terminal {
+		t.Fatalf("the same history ends any other failure: %+v", outcome)
+	}
+
+	// And not for ever.
+	long := metav1.NewTime(time.Now().Add(-ImagePullFailureMaxDuration - time.Minute))
+	outcome := ApplyNotReady(nil, ReconcileRetryState{Failures: 2, FailureStarted: &long}, 4, message)
+	if !outcome.Terminal || ReadyConditionReason(outcome.Conditions) != ConditionReasonProvisionFailed || outcome.Retry.FailureGeneration != 4 {
+		t.Fatalf("an image that cannot be pulled for good must end as a failure: %+v", outcome)
+	}
+	if outcome.RequeueAfter != 0 {
+		t.Fatalf("expected no requeue when terminal")
+	}
+
+	// The first failure starts the clock.
+	first := ApplyNotReady(nil, ReconcileRetryState{}, 1, message)
+	if first.Terminal || first.Retry.FailureStarted == nil || first.Retry.Failures != 1 {
+		t.Fatalf("expected the first failure to be counted and timed: %+v", first)
+	}
+}
+
+func TestADatabaseThatIsStartingIsNotTakenForAnImagePullFailure(t *testing.T) {
+	for _, message := range []string{"Service is starting", "Postgres database is starting", "Replacing the Redis chart with Geass's own server"} {
+		if IsImagePullFailure(message) {
+			t.Fatalf("taken for a pull failure: %s", message)
+		}
+		past := metav1.NewTime(time.Now().Add(-ImagePullFailureMaxDuration - time.Minute))
+		state := ReconcileRetryState{Failures: 9, FailureStarted: &past}
+		if outcome := ApplyNotReady(nil, state, 1, message); outcome.Terminal || outcome.Retry.Failures != 0 {
+			t.Fatalf("a database that is starting is waited for, and its failures forgotten: %+v", outcome)
+		}
+	}
+}
+
+func TestWhichImageCouldNotBePulledIsKeptInTheAttemptHistory(t *testing.T) {
+	message := ImagePullMessage("mysql:8.4.11", "ErrImagePull")
+	if got := SanitizeProvisionMessage(message); got != message {
+		t.Fatalf("the image has to reach the person reading the history, got %q", got)
+	}
+}

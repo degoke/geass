@@ -614,6 +614,11 @@ function ranOutOfMemory(message) {
   return /^ran out of memory/i.test(message);
 }
 
+/** A database whose server cannot pull its image says which image, as its Ready message; it is written to be read as it is. */
+function couldNotPullImage(message) {
+  return /^could not pull the database image/i.test(message);
+}
+
 /** Classifies non-ready resources for status badges vs overview copy. */
 export function resourceNotReadyKind(item) {
   const message = readyConditionMessage(item);
@@ -682,12 +687,13 @@ export function userFacingReadyMessage(item) {
   if (reason === "ProvisionFailed") {
     const detail = latestProvisionFailureDetail(item);
     if (detail) {
-      return `Provisioning failed: ${detail} Update settings or platform configuration, then use Retry or deploy again.`;
+      // The operator writes its messages without a full stop.
+      return `Provisioning failed: ${/[.!?]$/.test(detail) ? detail : `${detail}.`} Update settings or platform configuration, then use Retry or deploy again.`;
     }
     return "Provisioning failed. Update settings or platform configuration, then use Retry or deploy again.";
   }
   if (!raw) return "";
-  if (ranOutOfMemory(raw)) return raw;
+  if (ranOutOfMemory(raw) || couldNotPullImage(raw)) return raw;
   if (/waiting for deployment/i.test(raw)) {
     return "Finish configuration, then deploy to provision this resource.";
   }
