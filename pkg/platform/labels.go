@@ -12,6 +12,8 @@ const (
 	LabelPullRequest     = "geass.dev/pull-request"
 	K8sLabelManagedBy    = "app.kubernetes.io/managed-by"
 	K8sLabelAppName      = "app.kubernetes.io/name"
+	K8sLabelInstance     = "app.kubernetes.io/instance"
+	K8sLabelComponent    = "app.kubernetes.io/component"
 	ManagedByValue       = "geass"
 	ProjectSharedSecrets = "geass-shared-secrets"
 	ProjectSharedVars    = "geass-shared-variables"

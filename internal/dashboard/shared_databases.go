@@ -33,6 +33,10 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 		redirectFormError(w, r, fallback, "A shared database server can be Postgres or MySQL")
 		return
 	}
+	if formFlag(r, "highAvailability") && platform.EngineIsSingleInstance(engine) {
+		redirectFormUserError(w, r, fallback, platform.UserError(platform.SingleInstanceMessage(engine)))
+		return
+	}
 	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	if name == "" {
 		name = "cluster-" + strings.ToLower(string(engine))

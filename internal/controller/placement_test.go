@@ -90,7 +90,9 @@ func placedDatabase(engine geassv1alpha1.GeassDatabaseEngine, placement platform
 	return db
 }
 
-func TestMySQLAndRedisValuesCarryThePlacementInsideTheirSections(t *testing.T) {
+// The Bitnami MySQL chart only still runs databases made before Geass ran the server itself; Redis is placed
+// by its own StatefulSet (see TestServerFollowsThePlacementOfItsDatabase).
+func TestMySQLChartValuesCarryThePlacementInsideTheirSections(t *testing.T) {
 	placement := platform.NewPlacement("us", []string{"storage"})
 
 	mysql := mysqlValues(storageTestDB(geassv1alpha1.DatabaseEngineMySQL, false), "", placement)
@@ -107,21 +109,11 @@ func TestMySQLAndRedisValuesCarryThePlacementInsideTheirSections(t *testing.T) {
 	secondary := parsed["secondary"].(map[string]any)
 	require.Equal(t, map[string]any{platform.LabelRegion: "us", "tag.geass.dev/storage": "true"}, secondary["nodeSelector"], "secondaries stay with the primary")
 	require.NotNil(t, secondary["persistence"])
-
-	redis := redisDatabaseValues(storageTestDB(geassv1alpha1.DatabaseEngineRedis, false), placement)
-	require.NoError(t, yaml.Unmarshal([]byte(redis), &parsed), redis)
-	require.Equal(t, map[string]any{platform.LabelRegion: "us", "tag.geass.dev/storage": "true"}, parsed["master"].(map[string]any)["nodeSelector"])
-	require.NotContains(t, parsed, "replica", "a standalone Redis has no replicas to place")
-
-	haRedis := redisDatabaseValues(storageTestDB(geassv1alpha1.DatabaseEngineRedis, true), placement)
-	require.NoError(t, yaml.Unmarshal([]byte(haRedis), &parsed), haRedis)
-	require.Equal(t, map[string]any{platform.LabelRegion: "us", "tag.geass.dev/storage": "true"}, parsed["replica"].(map[string]any)["nodeSelector"])
 }
 
 func TestValuesAreUnchangedWithoutAPlacement(t *testing.T) {
 	db := storageTestDB(geassv1alpha1.DatabaseEngineMySQL, false)
 	require.NotContains(t, mysqlValues(db, "", platform.Placement{}), "nodeSelector")
-	require.NotContains(t, redisDatabaseValues(storageTestDB(geassv1alpha1.DatabaseEngineRedis, false), platform.Placement{}), "nodeSelector")
 }
 
 func TestBackupJobsRunInTheDatabasesRegionButNotOnItsReservedNodes(t *testing.T) {

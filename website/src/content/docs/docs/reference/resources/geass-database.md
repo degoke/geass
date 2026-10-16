@@ -206,7 +206,7 @@ Defaults marked "CRD default" are filled in by the API server. Defaults marked "
 | `spec.passwordSecretRef.name` | string | CRD default `""` | None | Secret name. |
 | `spec.passwordSecretRef.key` | string | Required when `passwordSecretRef` is set | None | Key inside the Secret. |
 | `spec.passwordSecretRef.optional` | boolean | Optional | None | Standard Kubernetes field. Geass does not read it. |
-| `spec.version` | string | CRD default `"16"` | None | Postgres major version. Geass uses it as the image tag `ghcr.io/cloudnative-pg/postgresql:<version>`. MySQL, Redis and SQLite do not read it: their versions come from the chart or image Geass pins. |
+| `spec.version` | string | CRD default `"16"` | None | Postgres major version. Geass uses it as the image tag `ghcr.io/cloudnative-pg/postgresql:<version>`. MySQL, Redis and SQLite do not read it: their versions come from the image Geass pins (`mysql:8.4.11`, `redis:7.4.11-alpine`, `rqlite/rqlite:8.36.16`). |
 | `spec.instances` | integer (int32) | CRD default `1` | Minimum 1 | Number of instances. With `highAvailability` Geass uses at least 3. See the caution under [Engines and high availability](#engines-and-high-availability). |
 | `spec.storageSize` | Quantity | Optional. The controller uses `10Gi`, or `1Gi` for SQLite. | None | Disk size for each instance. Not used by Redis or external databases. The dashboard writes it explicitly. |
 | `spec.resources` | ResourceRequirements | Optional. The controller uses 250m CPU and 512Mi memory (SQLite: 100m and 128Mi). | None | CPU and memory for each instance. Geass only reads it when `requests` is set. Set `requests` and `limits` together. |
@@ -230,16 +230,16 @@ The Go types and the generated CRD agree for every field on this page.
 | Engine | What Geass runs | Host in `status.host` | Backups |
 | --- | --- | --- | --- |
 | `Postgres` | A CloudNativePG `Cluster` named after the database. | `<name>-rw.<namespace>.svc` | Continuous. Restore to any moment. |
-| `MySQL` | The Bitnami MySQL chart as the Helm release `geass-mysql-<name>`. | `geass-mysql-<name>.<namespace>.svc` (`-primary` suffix with high availability) | Daily snapshot. |
+| `MySQL` | One pod from the official `mysql:8.4.11` image, as the StatefulSet `geass-mysql-<name>` with a volume. | `geass-mysql-<name>.<namespace>.svc` | Daily snapshot. |
 | `SQLite` | One rqlite pod (`rqlite/rqlite:8.36.16`) with a volume, as a Deployment. | `<name>.<namespace>.svc` | Daily snapshot. |
-| `Redis` | The Bitnami Redis chart as the Helm release `geass-redis-db-<name>`. No volume: data does not survive the pod being replaced. | `geass-redis-db-<name>-master.<namespace>.svc` | None. |
+| `Redis` | One pod from the official `redis:7.4.11-alpine` image, as the StatefulSet `geass-redis-db-<name>-master`. No volume: data does not survive the pod being replaced. | `geass-redis-db-<name>-master.<namespace>.svc` | None. |
 
-With `highAvailability: true` Postgres runs three instances. When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. MySQL and Redis switch the chart to its `replication` architecture. SQLite refuses with the message `SQLite does not support high availability`.
+With `highAvailability: true` Postgres runs three instances. When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. MySQL and Redis run as one instance: a request for `highAvailability: true`, or for more than one instance, is refused with the message `High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL` (or the same with Redis). SQLite refuses with the message `SQLite does not support high availability`.
 
 :::caution
 Geass also treats `instances: 3` or more as a request for high availability when it checks readiness.
 
-For MySQL and Redis, Geass waits until the Helm release has as many ready pods as `instances` but only sets the chart's architecture, not its replica counts. A MySQL or Redis database with `instances: 2` and no `highAvailability` runs a standalone chart with one pod, so it can wait for a second pod forever. Leave `instances` at 1 for these engines unless you set `highAvailability: true`. This comes from reading the controller, not from running every combination. Test high availability for MySQL and Redis before you rely on it.
+MySQL and Redis never run more than one instance, so a database of either engine with `instances` above 1 is refused with the same message as one that asks for high availability. Leave `instances` at 1 for them.
 :::
 
 ### External databases
@@ -445,8 +445,8 @@ Common to every in-cluster engine:
 Per engine:
 
 - **Postgres**: a HelmChart `geass-cloudnative-pg` in `kube-system` installs the CloudNativePG operator into `cnpg-system`. Then a CNPG `Cluster` `<name>` runs in the database's namespace, with pods `<name>-1`, `<name>-2`, a volume per pod and the Services `<name>-rw`, `<name>-ro` and `<name>-r`. With backups there is a `ScheduledBackup` `<name>`. On delete, a `Backup` named `<name>-final`. A Postgres database that hosts logical databases also gets a `<name>-superuser` Secret.
-- **MySQL**: a HelmChart `geass-mysql-<name>` in `kube-system` installs a Helm release into the database's namespace.
-- **Redis**: a HelmChart `geass-redis-db-<name>` in `kube-system` does the same.
+- **MySQL**: a StatefulSet `geass-mysql-<name>` of one pod, the Services `geass-mysql-<name>` and `geass-mysql-<name>-headless`, and the volume claim `data-geass-mysql-<name>-0`. The pod's logins come from the `<name>-bootstrap` Secret. A MySQL database made on an earlier development build of Geass is still a HelmChart `geass-mysql-<name>` in `kube-system` (the Bitnami chart, whose images Bitnami has removed from Docker Hub). Geass leaves it exactly as it is.
+- **Redis**: a StatefulSet `geass-redis-db-<name>-master` of one pod and the Services `geass-redis-db-<name>-master` and `geass-redis-db-<name>-headless`, with no volume. A Redis database made on an earlier development build, as the Bitnami chart `geass-redis-db-<name>`, is moved to this server the next time it is reconciled: the chart is removed and the server is made in its place, with the message `Replacing the Redis chart with Geass's own server`. Redis keeps no data on disk, so the move costs what a restart of its pod costs.
 - **SQLite**: a Deployment `<name>`, a Service `<name>` on port 4001 and a PVC `<name>-sqlite`.
 - **External**: only the connection Secret.
 
@@ -468,9 +468,8 @@ kubectl -n "$NS" get clusters.postgresql.cnpg.io orders-db
 kubectl -n "$NS" get pods -l cnpg.io/cluster=orders-db
 kubectl -n cnpg-system get pods
 
-# MySQL or Redis (the chart and its install job)
-kubectl -n kube-system get helmcharts
-kubectl -n "$NS" get pods -l app.kubernetes.io/instance=geass-mysql-orders-db
+# MySQL or Redis
+kubectl -n "$NS" get statefulsets,pods,pvc -l app.kubernetes.io/instance=geass-mysql-orders-db
 
 # Backups
 kubectl -n "$NS" get scheduledbackups,backups
