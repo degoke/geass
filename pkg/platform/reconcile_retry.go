@@ -73,6 +73,13 @@ func ReconcileFailureShouldCount(message string) bool {
 	if msg == "" {
 		return false
 	}
+	// A server whose image cannot be pulled is counted, unlike the databases that are only starting, so that one that
+	// never gets its image ends as a failure and not as "starting" for ever. It is counted for longer than the others
+	// (reconcileFailureLimits), as the kubelet retries on a schedule of minutes. Said first: an image's name must not be
+	// taken for one of the messages below.
+	if IsImagePullFailure(message) {
+		return true
+	}
 	if strings.Contains(msg, "waiting for deployment") || strings.Contains(msg, "configured and waiting") {
 		return false
 	}
@@ -228,9 +235,10 @@ func ApplyNotReady(conditions []metav1.Condition, retry ReconcileRetryState, gen
 		retry.FailureStarted = &now
 	}
 
-	terminal := ReconcileFailureIsPermanent(message) || retry.Failures >= ReconcileFailureThreshold
+	maxFailures, maxDuration := reconcileFailureLimits(message)
+	terminal := ReconcileFailureIsPermanent(message) || retry.Failures >= maxFailures
 	if !terminal && retry.FailureStarted != nil {
-		if time.Since(retry.FailureStarted.Time) >= ReconcileFailureMaxDuration {
+		if time.Since(retry.FailureStarted.Time) >= maxDuration {
 			terminal = true
 		}
 	}

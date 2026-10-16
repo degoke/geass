@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -507,4 +510,187 @@ func TestMySQLAndRedisRefuseHighAvailabilityAndMoreThanOneInstance(t *testing.T)
 			require.False(t, e.exists(&appsv1.StatefulSet{}, mysqlServerName))
 		})
 	}
+}
+
+// --- A server that cannot get its image -----------------------------------------------------------
+
+// reason is the reason of the database's Ready condition.
+func (e *serverEnv) reason() string {
+	e.t.Helper()
+	var latest geassv1alpha1.GeassDatabase
+	require.NoError(e.t, e.client.Get(context.Background(), client.ObjectKeyFromObject(e.db), &latest))
+	return meta.FindStatusCondition(latest.Status.Conditions, platform.ConditionReady).Reason
+}
+
+// podWaits makes the pod the server's StatefulSet would have made, with its container waiting for the reason given:
+// ErrImagePull and ImagePullBackOff for an image that cannot be pulled, ContainerCreating while it is being pulled.
+// It changes the pod's state when it is called again.
+func (e *serverEnv) podWaits(name, reason string) *corev1.Pod {
+	e.t.Helper()
+	template := e.sts(name).Spec.Template
+	container := template.Spec.Containers[0]
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: testDevTargetNS, Labels: template.Labels},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{container}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: container.Name, Image: container.Image,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}},
+		}}},
+	}
+	if err := e.client.Create(context.Background(), pod); err != nil {
+		require.True(e.t, apierrors.IsAlreadyExists(err), err.Error())
+		require.NoError(e.t, e.client.Get(context.Background(), client.ObjectKeyFromObject(pod), pod))
+		pod.Status.ContainerStatuses[0].State.Waiting.Reason = reason
+		// Status is a subresource: a plain Update would silently drop it.
+		require.NoError(e.t, e.client.Status().Update(context.Background(), pod))
+	}
+	return pod
+}
+
+func TestAServerThatCannotPullItsImageSaysSoInsteadOfStarting(t *testing.T) {
+	for _, tc := range []struct {
+		name, server, image string
+		engine              geassv1alpha1.GeassDatabaseEngine
+		reconcile           func(*serverEnv) ctrlResult
+	}{
+		{"redis", redisServerName, "redis:7.4.11-alpine", geassv1alpha1.DatabaseEngineRedis, func(e *serverEnv) ctrlResult { return e.reconcileRedis() }},
+		{"mysql", mysqlServerName, "mysql:8.4.11", geassv1alpha1.DatabaseEngineMySQL, func(e *serverEnv) ctrlResult { return e.reconcileMySQL("") }},
+	} {
+		for _, reason := range []string{"ErrImagePull", "ImagePullBackOff", "InvalidImageName"} {
+			t.Run(tc.name+"/"+reason, func(t *testing.T) {
+				e := newServerEnv(t, tc.engine)
+				require.Equal(t, "Service is starting", tc.reconcile(e).message, "before there is a pod")
+				e.podWaits(tc.server, reason)
+
+				got := tc.reconcile(e)
+
+				require.Equal(t, string(metav1.ConditionFalse), got.ready)
+				require.Equal(t, "Could not pull the database image "+tc.image+" ("+reason+")", got.message)
+			})
+		}
+	}
+}
+
+func TestAServerThatIsOnlySlowOrCrashingIsNotSaidToHaveNoImage(t *testing.T) {
+	for _, reason := range []string{"ContainerCreating", "PodInitializing", "CrashLoopBackOff"} {
+		t.Run(reason, func(t *testing.T) {
+			e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+			e.reconcileRedis()
+			e.podWaits(redisServerName, reason)
+
+			require.Equal(t, "Service is starting", e.reconcileRedis().message,
+				"a pull that is still going on is ContainerCreating, and only one that failed is an image problem")
+		})
+	}
+}
+
+func TestAServerSaysItIsStartingOnceItsImageIsPulledAndReadyOnceItRuns(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	e.podWaits(redisServerName, "ImagePullBackOff")
+	require.Contains(t, e.reconcileRedis().message, "Could not pull the database image")
+
+	// The registry is back: the image is pulled and the server is starting.
+	e.podWaits(redisServerName, "ContainerCreating")
+	require.Equal(t, "Service is starting", e.reconcileRedis().message)
+
+	e.podRuns(redisServerName)
+	require.Equal(t, string(metav1.ConditionTrue), e.reconcileRedis().ready)
+}
+
+func TestTheImageNamedIsTheOneThePodWasAskedToRunNotTheStatefulSets(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	pod := e.podWaits(redisServerName, "ErrImagePull")
+	// The StatefulSet's template has moved on and the pod, made from the one before, has not been replaced yet.
+	pod.Spec.Containers[0].Image = "bitnami/redis:7.4.2"
+	require.NoError(t, e.client.Update(context.Background(), pod))
+
+	require.Equal(t, "Could not pull the database image bitnami/redis:7.4.2 (ErrImagePull)", e.reconcileRedis().message)
+}
+
+func TestAPodThatIsBeingReplacedIsNotWhatTheDatabaseReports(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	pod := e.podWaits(redisServerName, "ImagePullBackOff")
+	pod.Finalizers = []string{"test/hold"}
+	require.NoError(t, e.client.Update(context.Background(), pod))
+	require.NoError(t, e.client.Delete(context.Background(), pod))
+
+	require.Equal(t, "Service is starting", e.reconcileRedis().message,
+		"a fix replaces the pod, and what the old one says is no longer so")
+}
+
+func TestAnUnreadablePodLeavesTheDatabaseSayingItIsStarting(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	e.r.Client = interceptor.NewClient(e.client.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, isPod := obj.(*corev1.Pod); isPod {
+				return errors.New("pods is forbidden")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	require.Equal(t, "Service is starting", e.reconcileRedis().message)
+}
+
+// The kubelet waits between pulls for minutes, so a registry that is away for a little while must not end the
+// database, and a missing image must not be left saying "starting": it is given up on after
+// platform.ImagePullFailureMaxDuration, and the database then says it failed.
+func TestADatabaseWhoseImageCannotBePulledIsRetriedForAWhileAndThenFails(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	e.podWaits(redisServerName, "ImagePullBackOff")
+
+	// Passes thirty seconds apart, past what ends any other failure.
+	for range platform.ReconcileFailureThreshold + 2 {
+		require.Contains(t, e.reconcileRedis().message, "Could not pull the database image")
+		require.Equal(t, platform.ConditionReasonReconcileError, e.reason(), "the kubelet is still trying")
+	}
+
+	var latest geassv1alpha1.GeassDatabase
+	require.NoError(t, e.client.Get(context.Background(), client.ObjectKeyFromObject(e.db), &latest))
+	require.NotNil(t, latest.Status.ReconcileRetry.ReconcileFailureStarted, "the time it has been failing is kept")
+	started := metav1.NewTime(time.Now().Add(-platform.ImagePullFailureMaxDuration - time.Minute))
+	latest.Status.ReconcileRetry.ReconcileFailureStarted = &started
+	require.NoError(t, e.client.Status().Update(context.Background(), &latest))
+
+	_, err := e.r.reconcileRedis(context.Background(), e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
+
+	require.Equal(t, platform.ConditionReasonProvisionFailed, e.reason())
+	require.NoError(t, e.client.Get(context.Background(), client.ObjectKeyFromObject(e.db), &latest))
+	require.NotEmpty(t, latest.Status.Provision.ProvisionAttempts)
+	var said []string
+	for _, attempt := range latest.Status.Provision.ProvisionAttempts {
+		for _, failure := range attempt.Errors {
+			said = append(said, failure.Message)
+		}
+	}
+	require.Contains(t, said, "Could not pull the database image redis:7.4.11-alpine (ImagePullBackOff)",
+		"the attempt history keeps which image, which the ProvisionFailed message does not say")
+}
+
+func TestAnImagePullThatRecoversStartsTheCountAgain(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
+	e.reconcileRedis()
+	e.podWaits(redisServerName, "ErrImagePull")
+	e.reconcileRedis()
+	var latest geassv1alpha1.GeassDatabase
+	require.NoError(t, e.client.Get(context.Background(), client.ObjectKeyFromObject(e.db), &latest))
+	long := metav1.NewTime(time.Now().Add(-platform.ImagePullFailureMaxDuration + time.Minute))
+	latest.Status.ReconcileRetry.ReconcileFailureStarted = &long
+	require.NoError(t, e.client.Status().Update(context.Background(), &latest))
+
+	e.podWaits(redisServerName, "ContainerCreating") // pulled, and starting
+	e.reconcileRedis()
+	require.NoError(t, e.client.Get(context.Background(), client.ObjectKeyFromObject(e.db), &latest))
+	require.Zero(t, latest.Status.ReconcileRetry.ReconcileFailures)
+	require.Nil(t, latest.Status.ReconcileRetry.ReconcileFailureStarted)
+
+	e.podWaits(redisServerName, "ImagePullBackOff") // a later failure is a new one
+	e.reconcileRedis()
+	require.Equal(t, platform.ConditionReasonReconcileError, e.reason())
 }

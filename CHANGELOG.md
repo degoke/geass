@@ -34,7 +34,10 @@ The first public release.
   through a Helm chart, whose Bitnami images no longer exist on Docker Hub); high availability is for PostgreSQL only,
   and a MySQL or Redis database that asks for it, or for more than one instance, is refused with the reason. A MySQL
   volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it
-  is, and moves a Redis database to the new server (Redis keeps no data on disk, so that costs a restart).
+  is, and moves a Redis database to the new server (Redis keeps no data on disk, so that costs a restart). A MySQL or
+  Redis database whose server cannot pull its image says so, "Could not pull the database image redis:7.4.11-alpine
+  (ImagePullBackOff)", instead of "Service is starting" for ever, and is marked failed after 10 minutes of it, which
+  gives the kubelet's retries longer than other failures get.
 - **Object storage.** Buckets on an in-cluster SeaweedFS or Garage server, or in AWS S3, isolated per project.
 - **Domains and HTTPS.** Domains through Cloudflare (including Tunnels and DNS records) and certificates from
   Let's Encrypt through cert-manager.
