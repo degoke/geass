@@ -22,7 +22,7 @@ export function sharedDatabaseServers(data) {
 }
 
 function haDescription(engineHasHa, haAvailable) {
-  if (!engineHasHa) return "Only PostgreSQL servers can be highly available.";
+  if (!engineHasHa) return "Only PostgreSQL and MySQL servers can be highly available.";
   return haAvailable ? "Three instances, so the server survives losing a node." : "Needs at least three healthy nodes.";
 }
 
@@ -37,8 +37,8 @@ function SetupForm({ data, reload, onDone }) {
   const [memory, setMemory] = useState(defaults.memory);
   const [storage, setStorage] = useState(defaultStorageForEngine(engine, data?.platform?.defaultStorage));
   const [busy, setBusy] = useState(false);
-  // Only PostgreSQL has replication and failover; MySQL runs as one instance.
-  const engineHasHa = engine === "Postgres";
+  // PostgreSQL and MySQL have replication and failover; SQLite and Redis run as one instance.
+  const engineHasHa = engine === "Postgres" || engine === "MySQL";
   const haAvailable = engineHasHa && Boolean(data?.platform?.haReady);
 
   const submit = async (event) => {

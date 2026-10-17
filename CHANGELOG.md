@@ -37,9 +37,12 @@ The first public release.
   (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
   (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.
   MySQL and Redis run as one pod each from the official `mysql` and `redis` images, which Geass runs itself (not
-  through a Helm chart, whose Bitnami images no longer exist on Docker Hub); high availability is for PostgreSQL only,
-  and a MySQL or Redis database that asks for it, or for more than one instance, is refused with the reason. A MySQL
-  volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it
+  through a Helm chart, whose Bitnami images no longer exist on Docker Hub). High availability is for PostgreSQL and
+  MySQL: a MySQL database that asks for it runs three or five servers on MOCO, a MySQL operator that Geass installs the
+  first time (it needs cert-manager), with writes acknowledged by a replica, a replica promoted when the primary is
+  lost, a login and database made for the application, daily copies, and a minimum of 1 GB of memory for each server.
+  A MySQL database is one instance or high availability for its life. A Redis database that asks for high
+  availability, or for more than one instance, is refused with the reason. A MySQL volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it
   is, and moves a Redis database to the new server (Redis keeps no data on disk, so that costs a restart). A MySQL or
   Redis database whose server cannot pull its image says so, "Could not pull the database image redis:7.4.11-alpine
   (ImagePullBackOff)", instead of "Service is starting" for ever, and is marked failed after 10 minutes of it, which

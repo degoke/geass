@@ -73,6 +73,7 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=moco.cybozu.com,resources=mysqlclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=scheduledbackups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -635,6 +636,7 @@ func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db 
 	_ = helmchart.Delete(ctx, r.Client, mysqlChartName(db.Name))
 	_ = helmchart.Delete(ctx, r.Client, redisDatabaseChartName(db.Name))
 	r.deleteServerResources(ctx, db, wsNS)
+	r.deleteMySQLHAResources(ctx, db, wsNS)
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + backupCredentialsSuffix, Namespace: wsNS}}))
@@ -911,6 +913,10 @@ func databaseCapacityEstimate(db *geassv1alpha1.GeassDatabase) platform.Workload
 	label := string(db.Spec.Engine) + " database"
 	if db.Spec.Engine == "" {
 		label = "PostgreSQL database"
+	}
+	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && databaseWantsHA(db) {
+		// A MOCO server is given at least what it needs to start, which is more than a single server is.
+		return platform.EstimateFromResources(label, mysqlHAResources(db), databaseInstances(db))
 	}
 	return platform.EstimateFromResources(label, databaseInstanceResources(db), databaseInstances(db))
 }

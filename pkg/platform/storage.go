@@ -191,10 +191,10 @@ func DatabaseHasVolume(engine geassv1alpha1.GeassDatabaseEngine) bool {
 }
 
 // DatabaseStorageClass is the Geass storage class a new database volume should
-// use when Longhorn is installed. Only HA Postgres gets the single-replica class:
-// its instances replicate the data, so each volume only needs to survive on its own.
+// use when Longhorn is installed. Only HA Postgres and HA MySQL get the single-replica class:
+// their instances replicate the data, so each volume only needs to survive on its own.
 func DatabaseStorageClass(engine geassv1alpha1.GeassDatabaseEngine, highAvailability bool) string {
-	if highAvailability && (engine == geassv1alpha1.DatabaseEnginePostgres || engine == "") {
+	if highAvailability && (engine == geassv1alpha1.DatabaseEnginePostgres || engine == geassv1alpha1.DatabaseEngineMySQL || engine == "") {
 		return StorageClassSingle
 	}
 	return StorageClassReplicated

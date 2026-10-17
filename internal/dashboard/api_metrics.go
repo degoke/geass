@@ -260,6 +260,13 @@ func databaseMetricScope(db *geassv1alpha1.GeassDatabase, namespace string) metr
 	scope := metricScope{namespaces: []string{namespace}}
 	switch db.Spec.Engine {
 	case geassv1alpha1.DatabaseEngineMySQL:
+		if platform.DatabaseWantsHA(db) {
+			// A cluster MOCO runs: its pods are moco-<name>-<index>, and each has a claim made from mysql-data.
+			server := promRegexLiteral(platform.MOCOServerName(db.Name))
+			scope.podPattern = server + `-[0-9]+`
+			scope.volumePattern = `mysql-data-` + server + `-[0-9]+`
+			break
+		}
 		release := promRegexLiteral(platform.MySQLChartReleaseName(db.Name))
 		scope.podPattern = release + `(-primary|-secondary)?-[0-9]+`
 		scope.volumePattern = `data-` + release + `(-primary|-secondary)?-[0-9]+`

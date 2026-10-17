@@ -23,14 +23,14 @@ This page covers one database per resource. To share a single server between man
 | Engine | What runs | Default size per instance | Disk | Backups |
 | --- | --- | --- | --- | --- |
 | PostgreSQL | A CloudNativePG cluster using the image `ghcr.io/cloudnative-pg/postgresql:<version>`. Version 16 by default | 0.25 CPU, 512 MB | 10 GiB | Continuous, restore to any moment |
-| MySQL | The official `mysql:8.4.11` image, one pod on a volume | 0.25 CPU, 512 MB | 10 GiB | Daily copy |
+| MySQL | The official `mysql:8.4.11` image, one pod on a volume. With high availability, three or five servers run by MOCO, from its own build of MySQL 8.4 | 0.25 CPU, 512 MB (1 GB with high availability) | 10 GiB | Daily copy |
 | Redis | The official `redis:7.4.11-alpine` image, one pod, with persistence off | 0.25 CPU, 512 MB | None | None |
 | SQLite | rqlite 8.36.16, which serves SQLite over HTTP on port 4001 | 0.1 CPU, 128 MB | 1 GiB | Daily copy |
 
 Things to know about each engine:
 
 - **PostgreSQL** is the only engine that uses the **Version** field, although the dashboard shows the field for every database. It is the tag of the Postgres image, with no checking, so use a tag that exists. Geass does not migrate data between major versions. Choose the version before the first deploy.
-- **MySQL and Redis** versions come from the images Geass pins (MySQL 8.4, Redis 7.4). The **Version** field has no effect on them. Both run as one instance and cannot be made highly available: see [Instances and high availability](#instances-and-high-availability).
+- **MySQL and Redis** versions come from the images Geass pins (MySQL 8.4, Redis 7.4). The **Version** field has no effect on them. MySQL can be made highly available and Redis cannot: see [Instances and high availability](#instances-and-high-availability).
 - **Redis** keeps its data in memory. It has no disk, no size setting and no backups. A restart empties it, so use it as a cache.
 - **SQLite** runs as rqlite, one instance on one volume. Apps talk to it over HTTP at port 4001, not by opening a file. It has no login: the connection string is a plain `http://` address.
 - **CPU and memory** are one setting. The limit equals the request, so a database never bursts beyond what it reserved. Choose CPU from 0.1, 0.25, 0.5, 1 or 2, and memory from 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB.
@@ -251,7 +251,7 @@ curl -X POST https://geass.example.com/api/databases/orders/deploy \
 
 ## Instances and high availability
 
-By default a database runs one instance. A high-availability (HA) PostgreSQL database runs three CloudNativePG instances that replicate to each other, so the database survives the loss of a node. Each instance has its own disk of the size you chose, and with Longhorn each disk is a single copy on its own node.
+By default a database runs one instance. A high-availability (HA) PostgreSQL database runs three CloudNativePG instances that replicate to each other, so the database survives the loss of a node. A high-availability MySQL database runs three or five MySQL servers, which MOCO keeps replicating to each other and promotes a replica of when the primary is lost. Each instance has its own disk of the size you chose, and with Longhorn each disk is a single copy on its own node.
 
 The dashboard has no switch for HA on a project database. Create it through the API with `highAvailability=on`, then deploy it like any other database. Geass sets `instances` to 3. A database asking for three or more instances counts as HA.
 
@@ -275,7 +275,7 @@ An HA database does not start until the cluster passes the HA readiness check. U
 - the Geass cluster is Ready, and
 - the cluster add-ons are Ready.
 
-The check applies to every PostgreSQL database that asks for HA. MySQL and Redis are refused before it (see below). It does not concern control-plane HA, which is a separate topic in [High availability](/docs/operations/high-availability/).
+The check applies to every PostgreSQL and MySQL database that asks for HA. Redis is refused before it (see below). It does not concern control-plane HA, which is a separate topic in [High availability](/docs/operations/high-availability/).
 
 To run it, open **Settings**, then **Usage**, find **HA readiness** and select **Run readiness check**. The section shows **Healthy nodes** and **Ready for HA**.
 
@@ -283,9 +283,21 @@ To run it, open **Settings**, then **Usage**, find **HA readiness** and select *
 Geass creates the readiness report only when you first select **Run readiness check**. Until then every HA database waits and the shared-server **High availability** switch stays off. The button creates the report if it does not exist and does nothing if it does. Once the report exists, the operator keeps it current: it works the report out again when a node, a storage class or the Geass cluster changes, so adding a third node is enough. An HA database that is waiting checks again every 30 seconds.
 :::
 
-HA is built for PostgreSQL, and its three instances and failover come from CloudNativePG. MySQL and Redis run as one instance, so a MySQL or Redis database that asks for HA, or for more than one instance, is refused: its Ready condition reads "High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL" (with Redis for Redis), and the dashboard's create calls refuse it up front with the same words. The shared-server form disables the HA switch for MySQL. SQLite refuses HA with "SQLite does not support high availability".
+HA is built for PostgreSQL and MySQL. PostgreSQL's instances and failover come from CloudNativePG, and MySQL's from MOCO. Redis runs as one instance, so a Redis database that asks for HA, or for more than one instance, is refused: its Ready condition reads "High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL", and the dashboard's create calls refuse it up front with the same words. SQLite refuses HA with "SQLite does not support high availability".
 
 Each HA instance reserves the CPU and memory you chose, so an HA database needs three times the capacity.
+
+### High availability for MySQL
+
+A MySQL database that asks for HA runs on [MOCO](https://github.com/cybozu-go/moco), a MySQL operator. Geass installs it, as it installs the Postgres operator, the first time a database asks for it, which takes a few minutes. MOCO needs cert-manager, which is on unless you turned the add-on off: with it off the database reads "High availability requires cert-manager" until you turn it on.
+
+- **Instances.** Three, or five if you set `instances` to 5. MOCO runs an odd number of servers, so any other number is refused with "High availability requires 3 or 5 MySQL instances".
+- **One primary, the rest replicas.** Writes go to the primary and replicate to a replica before they are acknowledged (semi-synchronous replication), so a write that was acknowledged survives losing the primary. Apps connect to the primary's Service, `moco-<ID>-primary`, and Geass publishes it as the database's host. Reconnect on an error: the connection to a lost primary breaks, and the Service points at the new one a few seconds later.
+- **Failover.** When the primary is lost MOCO promotes the most advanced replica. Geass tried it on three machines: when the primary's pod was killed, or the whole machine it ran on was stopped, a replica was promoted within a minute and no acknowledged write was lost. A primary whose MySQL froze without dying took about three minutes to be replaced. A server that was lost and comes back becomes a replica again by itself. A replica that holds changes the primary does not is reported by MOCO as errant and has to be built again.
+- **At least 1 GB for each instance.** MOCO's MySQL needs about half a gigabyte before it has a single row, so an HA database is given at least 1 GB of memory for each server, whatever size you chose, and the capacity check counts that.
+- **One instance or HA for life.** A single MySQL server and a MOCO cluster are not the same servers, so a MySQL database cannot change from one to the other. Asking for it says "High availability requires a new database". Create a new one and move the data.
+- **Backups** are the daily copies the other single-server engines have, taken from the primary. There is no restore to a moment for MySQL.
+- **Spreading.** The servers prefer different nodes, which is a preference and not a rule. A region with fewer than three nodes still runs the database, on the nodes it has, and then it does not survive losing one of them. See [High availability](/docs/operations/high-availability/#where-the-instances-run).
 
 ## Where a database runs
 
@@ -524,8 +536,8 @@ Each row gives the `spec` field and the form field the API accepts.
 | `placement` | `placement` | `InCluster` or `External` | `InCluster` |
 | `provider`, `mode` | `provider`, `mode` | External only: `AWS` or `PlanetScale`, and `Create` or `Connect`. `Create` does something only for PlanetScale | None |
 | `clusterSize` | `clusterSize` | PlanetScale only: the size Geass creates the database with, for example `PS_10`. It does not resize a database later | PlanetScale's default |
-| `highAvailability` | `highAvailability` | Three instances. Needs the readiness check. PostgreSQL only: MySQL and Redis refuse it | Off |
-| `instances` | none | Number of instances. HA forces at least 3. MySQL and Redis run one | 1 |
+| `highAvailability` | `highAvailability` | Three instances. Needs the readiness check. PostgreSQL and MySQL only: Redis refuses it | Off |
+| `instances` | none | Number of instances. HA forces at least 3. MySQL runs 1, 3 or 5, and Redis runs one | 1 |
 | `version` | `version` | Postgres image tag | `16` |
 | `storageSize` | `storageSize` | Disk per instance, at least `1Gi` | `10Gi` (`1Gi` for SQLite) |
 | `resources` | `cpu`, `memory` | CPU and memory per instance | 250m and 512Mi (SQLite 100m and 128Mi) |
@@ -545,6 +557,7 @@ Each database is a `GeassDatabase` in `geass-system`. Its workloads live in the 
 
 - **PostgreSQL.** Geass installs the chart `geass-cloudnative-pg` (version 0.23.2) into `cnpg-system` on first use. Each database is a CloudNativePG `Cluster` named after the resource ID. Its pods are `<ID>-1`, and `<ID>-2` and `<ID>-3` for HA, and the read-write Service is `<ID>-rw`. The `<ID>-bootstrap` Secret holds the `app` login.
 - **MySQL.** A StatefulSet `geass-mysql-<ID>` of one pod from the official image, on the volume claim `data-geass-mysql-<ID>-0`, behind the Service `geass-mysql-<ID>`. The root and `app` logins and the database are created the first time it starts, from the `<ID>-bootstrap` Secret. A database made on an earlier development build is still the Bitnami chart (a `HelmChart` `geass-mysql-<ID>` in `kube-system`) and Geass leaves it as it is.
+- **MySQL with high availability.** Geass installs the chart `geass-moco` (version 0.27.0) into `moco-system` on first use. The database is a MOCO `MySQLCluster` named after the resource ID. Its pods are `moco-<ID>-0` to `moco-<ID>-2` (or `-4`), each on a claim `mysql-data-moco-<ID>-<index>`, and the Service that reaches the primary is `moco-<ID>-primary`, with `moco-<ID>-replica` for the replicas. MOCO makes only its own logins, so a job `<ID>-login-<id>` makes the `app` login and the database from the `<ID>-bootstrap` Secret, as MOCO's writing login. The `app` login, not a root login, is what the connection Secret holds.
 - **Redis.** A StatefulSet `geass-redis-db-<ID>-master` of one pod from the official image, with a password and no volume, behind the Service `geass-redis-db-<ID>-master`. A Redis database made on the Bitnami chart is moved to it when it is next reconciled.
 - **SQLite.** A Deployment and a Service named `<ID>`, and a volume claim `<ID>-sqlite`, run rqlite.
 - **External.** No workloads. Geass writes the connection Secret from the host, login and password you gave or, for a PlanetScale database it creates, from the login it issued.
@@ -556,6 +569,8 @@ kubectl get geassdatabase orders -n geass-system \
 kubectl get cluster.postgresql.cnpg.io,pods,pvc -n "$NS"
 kubectl get helmcharts.helm.cattle.io -n kube-system
 kubectl get pods -n cnpg-system
+kubectl get mysqlcluster.moco.cybozu.com -n "$NS"
+kubectl get pods -n moco-system
 ```
 
 Provisioning that fails repeatedly is stopped. After five counted failures in a row, or three minutes of them, the status becomes "Provisioning failed after repeated errors. Update settings or platform configuration, then save or redeploy to try again." and Geass stops retrying until you change something or select **Retry**. Waiting states such as "is starting", "Installing ... chart", the HA gate and a restore in progress are not counted.
@@ -594,8 +609,20 @@ kubectl -n <namespace> describe pod geass-redis-db-<ID>-master-0
 
 The usual causes are a node that cannot reach Docker Hub (a proxy, a firewall or DNS), Docker Hub's limit on anonymous pulls (`toomanyrequests`), and a cluster with no route to the internet, where the images have to be loaded onto the nodes or served by a registry mirror. The kubelet keeps trying, so once a node can pull the image the database becomes ready by itself. A database that cannot pull its image for 10 minutes is **Failed**, longer than other failures get because the kubelet waits minutes between tries. The message stays in the database's attempt history under **Deployments**. Fix the cause and then select **Retry**.
 
-**"SQLite does not support high availability", or "High availability requires PostgreSQL: MySQL runs as a single instance".**
-SQLite, MySQL and Redis run one instance. Turn off HA (and set `instances` back to 1) or choose PostgreSQL.
+**"SQLite does not support high availability", or "High availability requires PostgreSQL or MySQL: Redis runs as a single instance".**
+SQLite and Redis run one instance. Turn off HA (and set `instances` back to 1) or choose PostgreSQL or MySQL.
+
+**"High availability requires 3 or 5 MySQL instances, not N".**
+MOCO runs an odd number of servers. Set `instances` to 3 or 5, or turn HA off.
+
+**"High availability requires a new database: this MySQL database runs one instance ..." (or "... runs three or more instances ...").**
+A MySQL database cannot change between one instance and high availability. Turn the setting back, or create a new database and move the data.
+
+**"High availability requires cert-manager".**
+MOCO needs cert-manager. Turn the cert-manager add-on on (it is on by default).
+
+**A MySQL HA database says "Installing MySQL operator chart" for a long time.**
+Geass is installing MOCO. Check `kubectl -n kube-system get helmcharts.helm.cattle.io geass-moco` and `kubectl -n moco-system get pods`. A node that cannot reach `cybozu-go.github.io` (the chart) or `ghcr.io` (MOCO's images) cannot install it.
 
 **"Replacing the Redis chart with Geass's own server".**
 A Redis database made on the Bitnami chart is being moved to Geass's own server. It waits for Helm to remove the chart, which takes a minute or so, and is not counted as a failure. If it stays for long, look at the `HelmChart` `geass-redis-db-<ID>` in `kube-system` and the job that removes its release (`kubectl -n kube-system get helmcharts,jobs`).

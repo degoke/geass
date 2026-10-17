@@ -91,6 +91,17 @@ const (
 	RedisImage = "redis:7.4.11-alpine"
 	MySQLImage = "mysql:8.4.11"
 
+	// MySQL high availability is run by MOCO, an operator for MySQL that replicates with loss-less semi-synchronous
+	// replication and promotes a replica when the primary is lost. It is installed the first time a database asks
+	// for it, like the Postgres operator, and needs cert-manager for its webhooks. Its pods run its own build of the
+	// official MySQL, tagged with the MySQL version, which is why the image is not MySQLImage.
+	MOCOChartName    = "geass-moco"
+	MOCOChartRepo    = "https://cybozu-go.github.io/moco/"
+	MOCOChartVersion = "0.27.0"
+	MOCOTargetNS     = "moco-system"
+	MOCOReleaseChart = "moco"
+	MOCOMySQLImage   = "ghcr.io/cybozu-go/moco/mysql:8.4.10"
+
 	// BackupTransferImage moves MySQL and SQLite snapshots to and from the project's bucket. curl signs
 	// S3 requests itself (--aws-sigv4), so the image needs nothing else.
 	BackupTransferImage = "curlimages/curl:8.10.1"
@@ -110,17 +121,42 @@ func RedisChartReleaseName(database string) string { return "geass-redis-db-" + 
 // release and a Redis one with the suffix -master.
 func MySQLServerName(database string) string { return MySQLChartReleaseName(database) }
 
+// MOCOServerName is the StatefulSet MOCO makes for a MySQL database that runs for high availability; its pods are the
+// name with an index, and its claims are mysql-data- and then the pod.
+func MOCOServerName(database string) string { return "moco-" + database }
+
 func RedisServerName(database string) string { return RedisChartReleaseName(database) + "-master" }
 
 // EngineIsSingleInstance reports whether Geass runs an engine as one instance only. Replication and failover
-// come from PostgreSQL's operator; the other engines have no such thing here.
+// come from an operator: CloudNativePG for PostgreSQL and MOCO for MySQL. Redis has no such thing here.
 func EngineIsSingleInstance(engine geassv1alpha1.GeassDatabaseEngine) bool {
-	return engine == geassv1alpha1.DatabaseEngineMySQL || engine == geassv1alpha1.DatabaseEngineRedis
+	return engine == geassv1alpha1.DatabaseEngineRedis
 }
 
-// SingleInstanceMessage is what a MySQL or Redis database that asks for high availability, or for more than one
+// SingleInstanceMessage is what a Redis database that asks for high availability, or for more than one
 // instance, is told. It begins with "High availability requires" so that it is read as a wait for the user
 // and does not count toward the retries that end provisioning.
 func SingleInstanceMessage(engine geassv1alpha1.GeassDatabaseEngine) string {
-	return fmt.Sprintf("High availability requires PostgreSQL: %s runs as a single instance. Turn it off, or choose PostgreSQL", engine)
+	return fmt.Sprintf("High availability requires PostgreSQL or MySQL: %s runs as a single instance. Turn it off, or choose PostgreSQL or MySQL", engine)
+}
+
+// MessageCreatingDatabaseLogin is what a MySQL cluster says while the job that makes the application's login and
+// database runs. It is a wait: the cluster is up, and the job finishes in seconds. Counting it as a failure would end
+// provisioning after five quick passes, with the database fine and the job done.
+const MessageCreatingDatabaseLogin = "Creating the database login"
+
+// MySQLHAMessage is what a MySQL database is told when its instances cannot be run. MOCO runs an odd number of
+// MySQL servers, so a database is one instance or three or five, and it cannot change from one to the other
+// because they are not the same servers. It begins like SingleInstanceMessage and for the same reason.
+func MySQLHAMessage(instances int32) string {
+	return fmt.Sprintf("High availability requires 3 or 5 MySQL instances, not %d. Set the instances to 3 or 5, or turn high availability off", instances)
+}
+
+// MySQLChangeMessage is what a MySQL database that changed between one instance and high availability is told.
+// highlyAvailable is what the database runs as now.
+func MySQLChangeMessage(highlyAvailable bool) string {
+	if highlyAvailable {
+		return "High availability requires a new database: this MySQL database runs three or more instances and cannot become one. Turn it back on, or create a new database"
+	}
+	return "High availability requires a new database: this MySQL database runs one instance and cannot become highly available. Turn it back off, or create a new database"
 }

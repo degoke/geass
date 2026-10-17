@@ -36,7 +36,7 @@ When Longhorn is on, Geass creates two storage classes. You never choose between
 | Class | Copies | Used by | Binding |
 | --- | --- | --- | --- |
 | `geass-replicated` | 1 on a one-node cluster, 2 on two nodes, 3 on three or more | PostgreSQL (not HA), MySQL, SQLite, and the cluster object storage server | Immediate |
-| `geass-single` | 1, kept on the node where the pod runs | High-availability PostgreSQL, whose instances replicate the data themselves | When the pod is scheduled |
+| `geass-single` | 1, kept on the node where the pod runs | High-availability PostgreSQL and MySQL, whose instances replicate the data themselves | When the pod is scheduled |
 | `geass-replicated-<region>` | As above, counted over the nodes of one region | The same databases, in a project in that region, and an object storage server placed in that region | Immediate |
 | `geass-tagged-<hash>` | As above, counted over the nodes that carry a project's required tags | The same databases, in a project that requires node tags, and an object storage server placed on nodes with tags | Immediate |
 
@@ -50,7 +50,7 @@ Longhorn is installed from chart version 1.12.1, the newest line that runs on Ku
 
 A volume's class cannot change after the volume exists. Geass therefore decides a database's class once, when it first needs a volume, and records the decision in the annotation `geass.dev/storage-class` on the `GeassDatabase`. An empty value means the cluster default.
 
-- A new database gets `geass-replicated`, or `geass-single` if it is high-availability PostgreSQL, when Longhorn is installed. In a project with a region it gets the region's class, and in a project that requires node tags it gets `geass-tagged-<hash>` (see [Compliance tags and storage classes](#compliance-tags-and-storage-classes)).
+- A new database gets `geass-replicated`, or `geass-single` if it is high-availability PostgreSQL or MySQL, when Longhorn is installed. In a project with a region it gets the region's class, and in a project that requires node tags it gets `geass-tagged-<hash>` (see [Compliance tags and storage classes](#compliance-tags-and-storage-classes)).
 - A new database on a cluster without Longhorn gets the cluster default class.
 - A new database created while Longhorn is still installing waits instead of settling for local storage. Its Ready condition reads "Storage is starting". Geass waits 15 minutes, measured from when the cluster's add-ons stopped being ready, not from when the database was created. After that the message becomes "Storage is unavailable". That counts as a failure, so the status soon turns to "Provisioning failed after repeated errors" and Geass stops retrying until you select **Retry**.
 - A new database that needs a regional or tagged class that does not exist yet waits while Longhorn is serving the global class. This wait has no limit: the message stays "Storage is starting" until the cluster controller makes the class, which it does once every node in the region or tag scope has a ready Longhorn manager. If no node in that scope exists, or one of them cannot run a manager, the class is never made.
@@ -174,7 +174,7 @@ With two or three copies on different nodes, losing a node or its disk does not 
 
 Replication does not protect you from deleting data, a bad migration, a bug that corrupts rows, or deleting the database. Every copy sees the same change. Use [backups](/docs/guides/backups-and-restore/) for that.
 
-High-availability PostgreSQL does not rely on volume copies. It runs three database instances that replicate to each other, each on a `geass-single` volume with one copy kept on its own node. See [Databases](/docs/guides/databases/#instances-and-high-availability).
+High-availability PostgreSQL and MySQL do not rely on volume copies. They run three or more database instances that replicate to each other, each on a `geass-single` volume with one copy kept on its own node. See [Databases](/docs/guides/databases/#instances-and-high-availability).
 
 ## Existing volumes follow the node count
 

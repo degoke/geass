@@ -10,11 +10,12 @@ Geass has two high availability features today. A database can run as three inst
 | Part | Highly available? | Notes |
 | --- | --- | --- |
 | Postgres with **High availability** | Yes, with three instances | Replicas and failover come from the Postgres operator (CloudNativePG). Needs at least three healthy nodes. |
-| MySQL and Redis | No | One instance each. They refuse **High availability**. See [MySQL and Redis](#mysql-and-redis). |
+| MySQL with **High availability** | Yes, with three or five instances | Replicas and failover come from the MySQL operator (MOCO). Needs at least three healthy nodes. See [MySQL](#mysql). |
+| Redis | No | One instance. It refuses **High availability**. See [Redis](#redis). |
 | Services | Only as far as replicas go | Replicas are not spread by any Geass rule. See [Services](#services). |
 | Control plane: the Kubernetes API and etcd | Yes, with three servers | Join two more servers to the first. The cluster works with one lost and stops with two. See [Run three control plane servers](#run-three-control-plane-servers). |
 | The operator and the dashboard | Restarts on another server | One pod, which starts on another server when its own is lost, in one to two minutes. Nothing is reconciled and the dashboard is down in between. |
-| Single-instance databases, the object storage server, SQLite | No | One instance each. |
+| Single-instance databases (including MySQL without high availability), the object storage server, SQLite | No | One instance each. |
 
 ## Run three control plane servers
 
@@ -185,13 +186,14 @@ kubectl -n geass-system get geassdatabase orders \
   -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}{"\n"}'
 ```
 
-The gate covers Postgres. MySQL and Redis are refused before it, because they run as one instance. The capacity check also counts three instances (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
+The gate covers Postgres and MySQL. Redis is refused before it, because it runs as one instance. The capacity check also counts three instances, and for MySQL at least 1 GB of memory for each (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
 
 ## Where the instances run
 
 - **Postgres.** Geass creates a CloudNativePG cluster with three instances. It sets a node selector and tolerations only to keep the instances in the project's region and on the tags you chose. For spreading across nodes it leaves the Postgres operator's own default in place. Geass sets no rule that spreads instances across sites, and it does not check that a region has three nodes.
+- **MySQL.** Geass creates a MOCO cluster of three or five instances with the same node selector and tolerations. For spreading it asks that the instances prefer different nodes, which is a preference and not a rule, so a region with fewer nodes than instances still runs the database on the nodes it has.
 - **Required tags.** A project that requires node tags ([Compliance node tags](/docs/guides/compliance-tags/)) keeps all three instances on nodes that carry them. The readiness report counts every node in the cluster, not the tagged ones, so give the tags at least three nodes yourself.
-- **Volumes.** With the Longhorn storage add-on, a highly available Postgres uses the `geass-single` class. Each instance's volume has one copy, on the node where the instance runs, because the three instances already hold three copies of the data. See [Storage](/docs/guides/storage/).
+- **Volumes.** With the Longhorn storage add-on, a highly available Postgres or MySQL uses the `geass-single` class. Each instance's volume has one copy, on the node where the instance runs, because the three instances already hold three copies of the data. See [Storage](/docs/guides/storage/).
 - **Sites.** A node's **Site** is written as the standard `topology.kubernetes.io/zone` label, so software that reads it can use it. Geass itself does not spread replicas by site.
 
 The readiness report counts nodes in the whole cluster. A project in a region with one node still passes the gate, and its three instances may then share that node. Give a region at least three nodes before you put a highly available database in it, and check where the instances landed:
@@ -200,9 +202,25 @@ The readiness report counts nodes in the whole cluster. A project in a region wi
 kubectl get pods -n morning-beach-production -l cnpg.io/cluster=orders -o wide
 ```
 
-### MySQL and Redis
+### MySQL
 
-MySQL and Redis run as one instance each. A MySQL or Redis database that asks for high availability, or for more than one instance, is refused with "High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL". Geass has no replication or failover for them. Redis runs without persistence, so it loses its data when its pod restarts. For a highly available database, choose PostgreSQL.
+A MySQL database that asks for high availability runs on MOCO: three or five MySQL servers, one of them the primary. A write is acknowledged only once a replica has it, so losing the primary does not lose an acknowledged write, and MOCO promotes the most advanced replica. The database's address, `moco-<name>-primary`, follows the primary. Apps reconnect after the few seconds the switch takes.
+
+What Geass saw on three machines, with one MySQL server on each:
+
+| What was lost | What happened |
+| --- | --- |
+| The primary's pod | A replica was primary within seconds, and writes failed for about four seconds. The old primary was a replica again in about 15 seconds. |
+| The whole machine of the primary | A replica was primary after about 36 seconds, and writes failed for about 45. The machine's server rejoined as a replica within 90 seconds of the machine coming back. |
+| The primary's MySQL froze without dying | A replica was primary after about three minutes, as MOCO waits for the server to stop answering. |
+
+In each case every write that had been acknowledged was on the new primary. Run MOCO's controller on more than one node to keep failover working when it is on the machine you lose: Geass installs it with two copies. Give a highly available MySQL database three nodes. In Geass's test on two, two of the three servers shared one node, and when that node was lost nothing was promoted for as long as it stayed down (seven minutes), because the one server left was not a majority.
+
+A single MySQL server, without high availability, is unavailable until it runs again. A database cannot change between one instance and high availability: see [High availability for MySQL](/docs/guides/databases/#high-availability-for-mysql).
+
+### Redis
+
+Redis runs as one instance. A Redis database that asks for high availability, or for more than one instance, is refused with "High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL". Geass has no replication or failover for it. Redis runs without persistence, so it loses its data when its pod restarts.
 
 ### Services
 
@@ -215,7 +233,8 @@ A service with several replicas keeps serving while some of them are up. Geass a
 | A Postgres instance (highly available) | The Postgres operator promotes a replica if the lost instance was the primary. The `<name>-rw` service follows the primary, so clients that use the database's address reconnect. The lost instance's volume has its only copy on the lost node, so that instance is back when the node returns. The other two keep serving. |
 | A single-instance database | It is unavailable until it runs again. Whether it can restart on another node depends on its storage. See [Storage](/docs/guides/storage/). |
 | A service replica | Kubernetes starts a replacement on another node that matches the project's region and tags and has room. By default it waits five minutes before it does; Geass does not change that. A service with one replica is down in the meantime. |
-| A MySQL or Redis server | It is unavailable until it runs again. A MySQL volume on replicated storage can be attached on another node; Redis starts empty. See [MySQL and Redis](#mysql-and-redis). |
+| A MySQL instance (highly available) | MOCO promotes a replica if the lost instance was the primary, and the `moco-<name>-primary` Service follows it. See [MySQL](#mysql). |
+| A single MySQL server, or a Redis server | It is unavailable until it runs again. A MySQL volume on replicated storage can be attached on another node; Redis starts empty. See [Redis](#redis). |
 | A control plane server (of three) | The API and the cluster's data stay available from the other two. The operator starts on another server in one to two minutes if it was on the lost one. |
 | The only control plane server | See below. |
 

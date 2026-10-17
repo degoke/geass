@@ -124,7 +124,7 @@ An in-cluster database runs on nodes in its project's region, and on nodes with 
 - The nodes are chosen once, when the database is first provisioned, and recorded on the database in the annotation `geass.dev/node-placement`. Its volumes live there, so later changes to the project's region, the default region or the tags do not move it. The **Run on** choice in the database's **Settings** closes after the first deploy.
 - The number of instances comes from **High availability**, not from a replica field. See [High availability](/docs/operations/high-availability/).
 
-Choose a database's size under **Settings**. Postgres, MySQL and Redis servers default to 0.25 CPU and 512 MB for each instance; SQLite defaults to 0.1 CPU and 128 MB. The cluster's object storage server is not a database: it defaults to 0.25 CPU and 512 MB with SeaweedFS and 0.1 CPU and 256 MB with Garage, and you choose its size, and the size of its volume (10 GiB by default), when you set it up (see [Object storage](/docs/guides/object-storage/)).
+Choose a database's size under **Settings**. Postgres, MySQL and Redis servers default to 0.25 CPU and 512 MB for each instance, except that a high availability MySQL instance is never given less than 1 GB; SQLite defaults to 0.1 CPU and 128 MB. The cluster's object storage server is not a database: it defaults to 0.25 CPU and 512 MB with SeaweedFS and 0.1 CPU and 256 MB with Garage, and you choose its size, and the size of its volume (10 GiB by default), when you set it up (see [Object storage](/docs/guides/object-storage/)).
 
 ## Regions, sites and tags on nodes
 

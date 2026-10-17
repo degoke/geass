@@ -59,8 +59,9 @@ The server needs to reach these hosts over HTTPS during and after installation. 
 | `charts.jetstack.io`, `prometheus-community.github.io`, `charts.longhorn.io`, `victoriametrics.github.io`, `fluent.github.io` | Helm charts for the add-ons the installer enables |
 | `acme-v02.api.letsencrypt.org` | cert-manager registers the cluster's ACME account and requests certificates. Only once the `letsencrypt-prod` issuer exists, which needs `GEASS_ACME_EMAIL` |
 | `cloudnative-pg.github.io` | The chart installed on demand for PostgreSQL (CloudNativePG) |
+| `cybozu-go.github.io` | The chart installed on demand for high availability MySQL (MOCO). Its images come from `ghcr.io` |
 | `kedacore.github.io` | The charts for the serverless add-on (KEDA and its HTTP add-on). Only if you turn it on, to let services sleep when idle |
-| Container registries that those charts, the MySQL and Redis servers and the in-cluster object storage server (which Geass runs from pinned images rather than charts, from Docker Hub) and your own images use | Pulling images |
+| Container registries that those charts, the MySQL and Redis servers and the in-cluster object storage server (which Geass runs from pinned images rather than charts, from Docker Hub) and your own images use. High availability MySQL pulls MOCO and its MySQL build from `ghcr.io` | Pulling images |
 | `api.github.com`, `api.cloudflare.com`, AWS (S3 and IAM), `api.planetscale.com` | Only for the connectors you set up |
 | `api.ipify.org`, then `ifconfig.me` | Only when Geass needs the server's public IP for dashboard DNS and no node reports one |
 

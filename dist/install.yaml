@@ -6347,6 +6347,18 @@ rules:
   - list
   - patch
 - apiGroups:
+  - moco.cybozu.com
+  resources:
+  - mysqlclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - alertmanagerconfigs

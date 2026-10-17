@@ -100,6 +100,9 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "replacing the") && strings.Contains(msg, "chart") {
 		return false
 	}
+	if strings.Contains(msg, strings.ToLower(MessageCreatingDatabaseLogin)) {
+		return false
+	}
 	if strings.Contains(msg, "configure the bucket name") {
 		return false
 	}

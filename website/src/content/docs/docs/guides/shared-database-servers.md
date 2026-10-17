@@ -16,7 +16,7 @@ A cluster admin sets up a server. You can set up more than one, for example one 
 | Isolation | Its own pods and volume | Shared pods and volume. A login reaches only its own database |
 | Backups and restore | Yes, for PostgreSQL, MySQL and SQLite | None. Shared servers have no backups |
 | Engines | PostgreSQL, MySQL, Redis, SQLite | PostgreSQL and MySQL |
-| High availability | Through the API for PostgreSQL | A switch when you set the server up |
+| High availability | Through the API for PostgreSQL and MySQL | A switch when you set the server up |
 | Removal | Delete the database | Blocked while any project still has a database on it |
 
 Choose a dedicated database when the data matters enough to need backups and point-in-time restore, when one project needs its own size or version, or when one project's load must not affect the others. See [Databases](/docs/guides/databases/).

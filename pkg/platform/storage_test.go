@@ -47,13 +47,17 @@ func TestDatabaseStorageDefaultsCoverEveryEngineWithAVolume(t *testing.T) {
 	require.Equal(t, map[string]string{"postgres": "10Gi", "mysql": "10Gi", "sqlite": "1Gi"}, defaults)
 }
 
-func TestDatabaseStorageClassPicksSingleReplicaOnlyForHAPostgres(t *testing.T) {
-	// Postgres replicates itself across instances, so replicating the volume as
+func TestDatabaseStorageClassPicksSingleReplicaOnlyForHAPostgresAndMySQL(t *testing.T) {
+	// Postgres and MySQL replicate themselves across instances, so replicating the volume as
 	// well would store every byte three times over for no extra safety.
-	require.Equal(t, StorageClassSingle, DatabaseStorageClass(geassv1alpha1.DatabaseEnginePostgres, true))
-	require.Equal(t, StorageClassReplicated, DatabaseStorageClass(geassv1alpha1.DatabaseEnginePostgres, false))
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEnginePostgres, geassv1alpha1.DatabaseEngineMySQL} {
+		require.Equal(t, StorageClassSingle, DatabaseStorageClass(engine, true), string(engine))
+		require.Equal(t, StorageClassReplicated, DatabaseStorageClass(engine, false), string(engine))
+	}
+	require.Equal(t, StorageClassSingle, DatabaseStorageClass("", true), "an unset engine is Postgres")
 	require.Equal(t, StorageClassReplicated, DatabaseStorageClass("", false))
-	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineSQLite} {
+	// SQLite and Redis have no replicas of their own.
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEngineSQLite, geassv1alpha1.DatabaseEngineRedis} {
 		require.Equal(t, StorageClassReplicated, DatabaseStorageClass(engine, true), string(engine))
 		require.Equal(t, StorageClassReplicated, DatabaseStorageClass(engine, false), string(engine))
 	}

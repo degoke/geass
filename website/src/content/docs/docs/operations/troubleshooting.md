@@ -14,7 +14,7 @@ This page is organised by what you see. Each entry says where to look in the das
 | The operator and dashboard | Deployment `geass-controller-manager` in namespace `geass-system`. The dashboard is part of the operator and listens on port 8085 behind the service `geass-dashboard`. |
 | Geass resources (`GeassApp`, `GeassDatabase`, `GeassProject`, `GeassCluster`, `GeassNode`, `GeassBuild`, and others) | Namespace `geass-system` |
 | A project environment's pods, services and ingresses | Namespace `<project>-<environment>`, for example `morning-beach-production` |
-| Add-ons | `cert-manager`, `monitoring`, `longhorn-system`, `cnpg-system`, `geass-logging` and, when switched on, `keda` |
+| Add-ons | `cert-manager`, `monitoring`, `longhorn-system`, `cnpg-system`, `moco-system`, `geass-logging` and, when switched on, `keda` |
 | Helm installs of add-ons | `HelmChart` objects in `kube-system`, installed by `helm-install-<name>` jobs |
 
 Run the `kubectl` commands on the control plane as `sudo k3s kubectl ...`, or set `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`. This page writes `kubectl`.

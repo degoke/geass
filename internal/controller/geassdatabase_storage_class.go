@@ -183,6 +183,14 @@ func (r *GeassDatabaseReconciler) existingVolumeClass(ctx context.Context, db *g
 		if !apierrors.IsNotFound(err) {
 			return "", false, err
 		}
+		// A database that asked for high availability has MOCO's claims instead.
+		err = r.Get(ctx, client.ObjectKey{Name: mocoClaimName(db, 0), Namespace: wsNS}, pvc)
+		if err == nil {
+			return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", false, err
+		}
 		_, err = helmchart.Get(ctx, r.Client, mysqlChartName(db.Name))
 		if apierrors.IsNotFound(err) {
 			return "", false, nil

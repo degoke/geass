@@ -230,16 +230,18 @@ The Go types and the generated CRD agree for every field on this page.
 | Engine | What Geass runs | Host in `status.host` | Backups |
 | --- | --- | --- | --- |
 | `Postgres` | A CloudNativePG `Cluster` named after the database. | `<name>-rw.<namespace>.svc` | Continuous. Restore to any moment. |
-| `MySQL` | One pod from the official `mysql:8.4.11` image, as the StatefulSet `geass-mysql-<name>` with a volume. | `geass-mysql-<name>.<namespace>.svc` | Daily snapshot. |
+| `MySQL` | One pod from the official `mysql:8.4.11` image, as the StatefulSet `geass-mysql-<name>` with a volume. With `highAvailability: true`, a MOCO `MySQLCluster` of three or five servers instead. | `geass-mysql-<name>.<namespace>.svc`, or with high availability `moco-<name>-primary.<namespace>.svc` | Daily snapshot. |
 | `SQLite` | One rqlite pod (`rqlite/rqlite:8.36.16`) with a volume, as a Deployment. | `<name>.<namespace>.svc` | Daily snapshot. |
 | `Redis` | One pod from the official `redis:7.4.11-alpine` image, as the StatefulSet `geass-redis-db-<name>-master`. No volume: data does not survive the pod being replaced. | `geass-redis-db-<name>-master.<namespace>.svc` | None. |
 
-With `highAvailability: true` Postgres runs three instances. When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. MySQL and Redis run as one instance: a request for `highAvailability: true`, or for more than one instance, is refused with the message `High availability requires PostgreSQL: MySQL runs as a single instance. Turn it off, or choose PostgreSQL` (or the same with Redis). SQLite refuses with the message `SQLite does not support high availability`.
+With `highAvailability: true` Postgres and MySQL run three instances. When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. Redis runs as one instance: a request for `highAvailability: true`, or for more than one instance, is refused with the message `High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL`. SQLite refuses with the message `SQLite does not support high availability`.
 
 :::caution
 Geass also treats `instances: 3` or more as a request for high availability when it checks readiness.
 
-MySQL and Redis never run more than one instance, so a database of either engine with `instances` above 1 is refused with the same message as one that asks for high availability. Leave `instances` at 1 for them.
+Redis never runs more than one instance, so a Redis database with `instances` above 1 is refused with the same message as one that asks for high availability. Leave `instances` at 1 for it.
+
+A MySQL database runs 1, 3 or 5 instances, because MOCO runs an odd number of servers. `highAvailability: true` with `instances` of 4 or 7, or `instances: 2` without it, is refused with `High availability requires 3 or 5 MySQL instances, not N`. A MySQL database cannot change between one instance and high availability once it exists: it says `High availability requires a new database`, and keeps what it has.
 :::
 
 ### External databases
@@ -447,6 +449,7 @@ Per engine:
 
 - **Postgres**: a HelmChart `geass-cloudnative-pg` in `kube-system` installs the CloudNativePG operator into `cnpg-system`. Then a CNPG `Cluster` `<name>` runs in the database's namespace, with pods `<name>-1`, `<name>-2`, a volume per pod and the Services `<name>-rw`, `<name>-ro` and `<name>-r`. With backups there is a `ScheduledBackup` `<name>`. On delete, a `Backup` named `<name>-final`. A Postgres database that hosts logical databases also gets a `<name>-superuser` Secret.
 - **MySQL**: a StatefulSet `geass-mysql-<name>` of one pod, the Services `geass-mysql-<name>` and `geass-mysql-<name>-headless`, and the volume claim `data-geass-mysql-<name>-0`. The pod's logins come from the `<name>-bootstrap` Secret. A MySQL database made on an earlier development build of Geass is still a HelmChart `geass-mysql-<name>` in `kube-system` (the Bitnami chart, whose images Bitnami has removed from Docker Hub). Geass leaves it exactly as it is.
+- **MySQL with high availability**: a HelmChart `geass-moco` in `kube-system` installs MOCO into `moco-system`, with two controller pods, after cert-manager is running. Then a `MySQLCluster` `<name>` runs in the database's namespace: the StatefulSet `moco-<name>`, its pods `moco-<name>-0` and on, a claim `mysql-data-moco-<name>-<index>` for each, and the Services `moco-<name>-primary` and `moco-<name>-replica`. A Job `<name>-login-<id>` makes the application's login and database as MOCO's writing login, `moco-writable`, whose password is in MOCO's own Secret `moco-<name>`. Each server is given at least 1 GiB of memory.
 - **Redis**: a StatefulSet `geass-redis-db-<name>-master` of one pod and the Services `geass-redis-db-<name>-master` and `geass-redis-db-<name>-headless`, with no volume. A Redis database made on an earlier development build, as the Bitnami chart `geass-redis-db-<name>`, is moved to this server the next time it is reconciled: the chart is removed and the server is made in its place, with the message `Replacing the Redis chart with Geass's own server`. Redis keeps no data on disk, so the move costs what a restart of its pod costs.
 - **SQLite**: a Deployment `<name>`, a Service `<name>` on port 4001 and a PVC `<name>-sqlite`.
 - **External**: only the connection Secret.

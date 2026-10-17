@@ -289,6 +289,10 @@ func (s *Server) projectResourceOwners(ctx context.Context, project string) (res
 		}
 		owners.databases[db.Name] = true
 		owners.charts[platform.MySQLChartReleaseName(db.Name)] = db.Name
+		if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(db) {
+			// A MOCO cluster's pods carry the database's name as their instance, not a release name.
+			owners.charts[db.Name] = db.Name
+		}
 		owners.charts[platform.RedisChartReleaseName(db.Name)] = db.Name
 	}
 	return owners, nil

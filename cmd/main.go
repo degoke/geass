@@ -43,6 +43,7 @@ import (
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	"github.com/degoke/geass/pkg/migrations"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/release"
 	"github.com/degoke/geass/pkg/ssh"
@@ -77,6 +78,7 @@ func init() {
 	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 	utilruntime.Must(monitoringv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(cnpgv1.AddToScheme(scheme))
+	utilruntime.Must(mocov1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

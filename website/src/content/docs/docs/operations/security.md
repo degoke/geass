@@ -357,7 +357,7 @@ the user its image says, including root.
 Without network policies every pod in a Kubernetes cluster can reach every other pod. Geass applies these on its own:
 
 - **Project isolation.** Every project environment namespace gets the policy `geass-project-isolation`: only the project's own
-  namespaces, the projects you list, and the platform namespaces (`kube-system`, `geass-system`, `monitoring`, `cnpg-system` and
+  namespaces, the projects you list, and the platform namespaces (`kube-system`, `geass-system`, `monitoring`, `cnpg-system`, `moco-system` and
   `keda`, where the scale-to-zero proxy runs) can reach its pods. This is the default (`isolation: Project`). A project that sets `isolation: None` is open to
   every pod in the cluster. Details are in [Network isolation](/docs/guides/network-isolation/).
 - **Cloud metadata.** Every project namespace gets `geass-block-cloud-metadata`, which lets pods reach everything except

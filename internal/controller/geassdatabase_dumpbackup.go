@@ -16,6 +16,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -68,6 +69,16 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 		return target, deploymentReady(deploy, 1), nil
 	}
 
+	if cluster := (&mocov1.MySQLCluster{}); r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, cluster) == nil {
+		// A cluster has no root login, and is copied with the one MOCO makes for writing. Its own image holds the
+		// matching tools, as a single server's does.
+		target := &dumpTarget{
+			host: mysqlHAHost(db, wsNS), port: platform.MySQLDefaultPort, image: platform.MOCOMySQLImage, database: databaseName(db),
+			user: mocoWritableUser, passwordSecret: mocoSecretName(db), passwordKey: mocoWritableKey,
+		}
+		return target, cluster.ConditionTrue(mocov1.ConditionAvailable), nil
+	}
+
 	var sets appsv1.StatefulSetList
 	release := mysqlChartName(db.Name)
 	if err := r.List(ctx, &sets, client.InNamespace(wsNS), client.MatchingLabels{
@@ -85,7 +96,7 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 	}
 	image := containers[0].Image
 	for _, container := range containers {
-		if container.Name == "mysql" {
+		if container.Name == mysqlContainerName {
 			image = container.Image
 		}
 	}

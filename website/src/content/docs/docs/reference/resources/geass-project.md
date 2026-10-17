@@ -363,7 +363,7 @@ For each environment the operator creates and maintains these objects. `<ns>` is
 | Object | Name | Notes |
 | --- | --- | --- |
 | Namespace | `<ns>` | Labels `geass.dev/managed-by=geass`, `geass.dev/project=<project>`, `geass.dev/environment=<environment>` and `geass.dev/cluster=<cluster>`. The operator adds `geass.dev/project` to an existing namespace that lacks it. |
-| NetworkPolicy | `geass-project-isolation` | Created when isolation is `Project`, deleted when it is `None`. It allows ingress from namespaces labeled with the project or an allowed project, and from `kube-system`, `geass-system`, `monitoring`, `cnpg-system` and `keda`. |
+| NetworkPolicy | `geass-project-isolation` | Created when isolation is `Project`, deleted when it is `None`. It allows ingress from namespaces labeled with the project or an allowed project, and from `kube-system`, `geass-system`, `monitoring`, `cnpg-system`, `moco-system` and `keda`. |
 | NetworkPolicy | `geass-block-cloud-metadata` | Always present. It lets pods reach everything except the cloud provider's instance metadata range `169.254.0.0/16`. When `spec.network.blockNodeAddresses` is `true` it also excepts the cluster's node addresses, and allows the Kubernetes API port on the control plane. |
 | ResourceQuota | `geass-project-quota` | Present only when `spec.environmentQuota` or `spec.projectQuota` sets a cap. Holds `requests.cpu`, `requests.memory`, `requests.storage` and `pods` for the caps that are set: the environment's own, or what the others leave of the project's, whichever is lower. |
 | LimitRange | `geass-project-defaults` | Present only when the quota caps CPU or memory. It gives a container that asks for none a default request, so the quota can count it. |

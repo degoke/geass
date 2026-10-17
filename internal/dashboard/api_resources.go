@@ -14,6 +14,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/release"
 )
@@ -532,9 +533,22 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
 		return
 	}
+	// A pod with one container needs none named. A MOCO pod has the server and its agent, and the API refuses an
+	// exec that does not say which of them (kubectl picks the first for you; this does not).
+	container := consoleContainer(&db)
+	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(&db) {
+		command, err = s.mysqlClusterQueryCommand(r.Context(), db, query)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"output": err.Error()})
+			return
+		}
+	}
 	request := s.Kube.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(db.Status.TargetNamespace).SubResource("exec")
 	for _, part := range command {
 		request.Param("command", part)
+	}
+	if container != "" {
+		request.Param("container", container)
 	}
 	request.Param("stdout", "true").Param("stderr", "true").Param("stdin", "false").Param("tty", "false")
 	executor, err := remotecommand.NewSPDYExecutor(s.Config, http.MethodPost, request.URL())
@@ -558,6 +572,8 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 	selectors := []string{
 		"app.kubernetes.io/name=" + db.Name,
 		"cnpg.io/cluster=" + db.Name,
+		// A MOCO cluster's replicas refuse writes, so the console goes to the primary.
+		"app.kubernetes.io/instance=" + db.Name + "," + mocoRoleLabel + "=primary",
 		"app.kubernetes.io/instance=" + db.Name,
 		"app.kubernetes.io/instance=geass-mysql-" + db.Name,
 		"app.kubernetes.io/instance=geass-redis-db-" + db.Name,
@@ -574,6 +590,37 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 		}
 	}
 	return nil, fmt.Errorf("no database pods are running yet")
+}
+
+// consoleContainer is the container the console runs its command in, or empty for a pod that has just the one. A MOCO
+// pod has the server and its agent, and an exec that does not name one is refused by the API server.
+func consoleContainer(db *geassv1alpha1.GeassDatabase) string {
+	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(db) {
+		return mocov1.MySQLContainerName
+	}
+	return ""
+}
+
+// mocoRoleLabel is on the pods of a MOCO cluster and says which of them is the primary.
+const mocoRoleLabel = "moco.cybozu.com/role"
+
+// mysqlClusterQueryCommand is the console command for a MySQL cluster that MOCO runs. Its pods hold no login in
+// their environment, as the single server's do, so the application's own login is read from the database's
+// Secret and handed to the client in the command's environment. The query is an argument of the client, never
+// part of a shell script, so it cannot change what runs.
+func (s *Server) mysqlClusterQueryCommand(ctx context.Context, db geassv1alpha1.GeassDatabase, query string) ([]string, error) {
+	var secret corev1.Secret
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: db.Name + "-bootstrap", Namespace: db.Status.TargetNamespace}, &secret); err != nil {
+		return nil, fmt.Errorf("the database's login is not there yet")
+	}
+	database := strings.TrimSpace(db.Spec.DatabaseName)
+	if database == "" {
+		database = db.Name
+	}
+	return []string{
+		"env", "MYSQL_PWD=" + string(secret.Data["password"]),
+		"mysql", "--user=" + string(secret.Data["username"]), "--database=" + database, "-e", query,
+	}, nil
 }
 
 func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string) ([]string, error) {

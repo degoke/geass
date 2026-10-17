@@ -35,6 +35,26 @@ type dumpTarget struct {
 	image string
 	// database is the name of the database inside a MySQL server; SQLite has none.
 	database string
+	// user, passwordSecret and passwordKey are the login a MySQL copy is made and loaded with. A server Geass runs
+	// has a root login whose password is the database's own; a MOCO cluster has no root, and uses its writing login.
+	// Left empty they are root and the database's bootstrap Secret.
+	user           string
+	passwordSecret string
+	passwordKey    string
+}
+
+const mysqlRootUser = "root"
+
+// mysqlLogin is the login a MySQL copy or restore uses, as its name and where its password is.
+func (t dumpTarget) mysqlLogin(db *geassv1alpha1.GeassDatabase) (user, secret, key string) {
+	user, secret, key = t.user, t.passwordSecret, t.passwordKey
+	if user == "" {
+		user = mysqlRootUser
+	}
+	if secret == "" {
+		secret, key = db.Name+"-bootstrap", "password"
+	}
+	return user, secret, key
 }
 
 // dumpJobInput is everything the pod of a backup or restore Job needs to know.
@@ -79,9 +99,10 @@ func dumpPodSpec(in dumpJobInput) corev1.PodSpec {
 
 	dbEnv := []corev1.EnvVar{{Name: "DB_HOST", Value: in.target.host}}
 	if in.isMySQL() {
+		_, secret, key := in.target.mysqlLogin(in.db)
 		dbEnv = append(dbEnv,
 			corev1.EnvVar{Name: "DB_NAME", Value: in.target.database},
-			secretEnv("MYSQL_PWD", in.db.Name+"-bootstrap", "password"),
+			secretEnv("MYSQL_PWD", secret, key),
 		)
 	}
 	s3Env := []corev1.EnvVar{
@@ -134,9 +155,10 @@ func dumpCommand(in dumpJobInput) []string {
 		// --single-transaction reads a consistent view without locking tables, and a database is
 		// dumped by name so the copy recreates it. Users and grants are deliberately not copied: a
 		// restored database creates its own.
+		user, _, _ := in.target.mysqlLogin(in.db)
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
-mysqldump --host="$DB_HOST" --port=%s --user=root --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=OFF --databases "$DB_NAME" | gzip -c > %s/%s.sql.gz`,
-			in.target.port, backupMountPath, dumpBaseName)}
+mysqldump --host="$DB_HOST" --port=%s --user=%s --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=OFF --databases "$DB_NAME" | gzip -c > %s/%s.sql.gz`,
+			in.target.port, user, backupMountPath, dumpBaseName)}
 	}
 	// rqlite serves a consistent copy of its database over HTTP, as SQL text. Its binary SQLite
 	// file cannot be used: loading one back leaves the node reporting "database is closed", and its
@@ -152,8 +174,9 @@ gzip -f %[1]s/%[2]s.sql`, backupMountPath, dumpBaseName, in.target.port)}
 // loadCommand loads the downloaded copy into the running database.
 func loadCommand(in dumpJobInput) []string {
 	if in.isMySQL() {
+		user, _, _ := in.target.mysqlLogin(in.db)
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
-gunzip -c %s/%s.sql.gz | mysql --host="$DB_HOST" --port=%s --user=root`, backupMountPath, dumpBaseName, in.target.port)}
+gunzip -c %s/%s.sql.gz | mysql --host="$DB_HOST" --port=%s --user=%s`, backupMountPath, dumpBaseName, in.target.port, user)}
 	}
 	// rqlite answers a load that failed with HTTP 200 and the error in the body, and wget exits 0
 	// for it, so the response is checked: otherwise a failed restore would be reported as a success.
