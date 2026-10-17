@@ -103,6 +103,9 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageCreatingDatabaseLogin)) {
 		return false
 	}
+	if strings.Contains(msg, strings.ToLower(MessagePromotingReplica)) {
+		return false
+	}
 	if strings.Contains(msg, "configure the bucket name") {
 		return false
 	}

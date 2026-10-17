@@ -1,9 +1,9 @@
 ---
 title: "Databases"
-description: "Create PostgreSQL, MySQL, Redis and SQLite databases, connect apps, run queries, resize storage, set up high availability and connect external databases."
+description: "Create PostgreSQL, MySQL, MariaDB, Redis and SQLite databases, connect apps, run queries, resize storage, set up high availability and connect external databases."
 ---
 
-A database in Geass is a resource that belongs to one project environment. Geass runs it on your servers, creates its login, and publishes a connection string that your apps read from a Secret. You can run PostgreSQL, MySQL, Redis or SQLite in the cluster, connect an app to a database you already host elsewhere, such as AWS RDS, or have Geass create a database in your PlanetScale organization.
+A database in Geass is a resource that belongs to one project environment. Geass runs it on your servers, creates its login, and publishes a connection string that your apps read from a Secret. You can run PostgreSQL, MySQL, MariaDB, Redis or SQLite in the cluster, connect an app to a database you already host elsewhere, such as AWS RDS, or have Geass create a database in your PlanetScale organization.
 
 ![A database's panel, with its details, backups and connect string.](../../../../assets/docs/database-drawer.webp)
 *Screenshot with example data.*
@@ -14,7 +14,7 @@ This page covers one database per resource. To share a single server between man
 
 - You need a project and an environment. See [Projects and environments](/docs/guides/projects-and-environments/).
 - The cluster needs room for the database. Deploying is refused when no node can fit it. If the project requires node tags, the room has to be on nodes that carry them. See [Where a database runs](#where-a-database-runs).
-- The first PostgreSQL database on a cluster installs the CloudNativePG operator, which takes a few minutes.
+- The first PostgreSQL database on a cluster installs the CloudNativePG operator, which takes a few minutes. The first MariaDB database installs the MariaDB operator the same way, and the first highly available MySQL database installs MOCO.
 - For backups, the project needs an AWS connection. To have Geass create a PlanetScale database, it needs a PlanetScale connection. Connecting to an external database you already host needs no connection. See [Cloud connectors](/docs/guides/connectors/).
 - For resizable disks, the cluster needs the Longhorn add-on. See [Storage and volumes](/docs/guides/storage/).
 
@@ -24,6 +24,7 @@ This page covers one database per resource. To share a single server between man
 | --- | --- | --- | --- | --- |
 | PostgreSQL | A CloudNativePG cluster using the image `ghcr.io/cloudnative-pg/postgresql:<version>`. Version 16 by default | 0.25 CPU, 512 MB | 10 GiB | Continuous, restore to any moment |
 | MySQL | The official `mysql:8.4.11` image, one pod on a volume. With high availability, three or five servers run by MOCO, from its own build of MySQL 8.4 | 0.25 CPU, 512 MB (1 GB with high availability) | 10 GiB | Daily copy |
+| MariaDB | The official `mariadb:11.8.9` image, run by the MariaDB operator: one server on a volume, or with high availability three or five that replicate to each other | 0.25 CPU, 512 MB | 10 GiB | Daily copy |
 | Redis | The official `redis:7.4.11-alpine` image, one pod, with persistence off | 0.25 CPU, 512 MB | None | None |
 | SQLite | rqlite 8.36.16, which serves SQLite over HTTP on port 4001 | 0.1 CPU, 128 MB | 1 GiB | Daily copy |
 
@@ -31,12 +32,13 @@ Things to know about each engine:
 
 - **PostgreSQL** is the only engine that uses the **Version** field, although the dashboard shows the field for every database. It is the tag of the Postgres image, with no checking, so use a tag that exists. Geass does not migrate data between major versions. Choose the version before the first deploy.
 - **MySQL and Redis** versions come from the images Geass pins (MySQL 8.4, Redis 7.4). The **Version** field has no effect on them. MySQL can be made highly available and Redis cannot: see [Instances and high availability](#instances-and-high-availability).
+- **MariaDB** is a separate engine from MySQL, for software that asks for MariaDB or uses what only MariaDB has. Pick it when you create the database: an engine cannot change afterwards. The **Version** field has no effect on it. It is MariaDB 11.8 and speaks the MySQL protocol, so a MySQL client or driver connects to it, and the connection string starts `mysql://`. It can be made highly available: see [High availability for MariaDB](#high-availability-for-mariadb).
 - **Redis** keeps its data in memory. It has no disk, no size setting and no backups. A restart empties it, so use it as a cache.
 - **SQLite** runs as rqlite, one instance on one volume. Apps talk to it over HTTP at port 4001, not by opening a file. It has no login: the connection string is a plain `http://` address.
 - **CPU and memory** are one setting. The limit equals the request, so a database never bursts beyond what it reserved. Choose CPU from 0.1, 0.25, 0.5, 1 or 2, and memory from 128 MB, 256 MB, 512 MB, 1 GB, 2 GB or 4 GB.
 
 :::note
-The dashboard shows every database with a version beside its engine, so a MySQL, Redis or SQLite database appears as `mysql 16` on its card and "MySQL 16" in its panel. The API and the command line report the same `version`. The number is the default of `spec.version`, which is `16` for every engine, and is not the engine's version.
+The dashboard shows every database with a version beside its engine, so a MySQL, MariaDB, Redis or SQLite database appears as `mysql 16` on its card and "MySQL 16" in its panel. The API and the command line report the same `version`. The number is the default of `spec.version`, which is `16` for every engine, and is not the engine's version.
 :::
 
 ## Create a database
@@ -283,7 +285,7 @@ To run it, open **Settings**, then **Usage**, find **HA readiness** and select *
 Geass creates the readiness report only when you first select **Run readiness check**. Until then every HA database waits and the shared-server **High availability** switch stays off. The button creates the report if it does not exist and does nothing if it does. Once the report exists, the operator keeps it current: it works the report out again when a node, a storage class or the Geass cluster changes, so adding a third node is enough. An HA database that is waiting checks again every 30 seconds.
 :::
 
-HA is built for PostgreSQL and MySQL. PostgreSQL's instances and failover come from CloudNativePG, and MySQL's from MOCO. Redis runs as one instance, so a Redis database that asks for HA, or for more than one instance, is refused: its Ready condition reads "High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL", and the dashboard's create calls refuse it up front with the same words. SQLite refuses HA with "SQLite does not support high availability".
+HA is built for PostgreSQL, MySQL and MariaDB. PostgreSQL's instances and failover come from CloudNativePG, MySQL's from MOCO and MariaDB's from the MariaDB operator. Redis runs as one instance, so a Redis database that asks for HA, or for more than one instance, is refused: its Ready condition reads "High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL", and the dashboard's create calls refuse it up front with the same words. SQLite refuses HA with "SQLite does not support high availability".
 
 Each HA instance reserves the CPU and memory you chose, so an HA database needs three times the capacity.
 
@@ -298,6 +300,21 @@ A MySQL database that asks for HA runs on [MOCO](https://github.com/cybozu-go/mo
 - **One instance or HA for life.** A single MySQL server and a MOCO cluster are not the same servers, so a MySQL database cannot change from one to the other. Asking for it says "High availability requires a new database". Create a new one and move the data.
 - **Backups** are the daily copies the other single-server engines have, taken from the primary. There is no restore to a moment for MySQL.
 - **Spreading.** The servers prefer different nodes, which is a preference and not a rule. A region with fewer than three nodes still runs the database, on the nodes it has, and then it does not survive losing one of them. See [High availability](/docs/operations/high-availability/#where-the-instances-run).
+
+### High availability for MariaDB
+
+A MariaDB database runs on the [MariaDB operator](https://github.com/mariadb-operator/mariadb-operator), which Geass installs the first time a MariaDB database is made. That takes a few minutes, and it does not need cert-manager. Asking for HA or not decides how many servers it runs.
+
+- **Without HA** it is one server on a volume, reached at `<ID>.<namespace>.svc`.
+- **With HA**, three servers, or five if you set `instances` to 5. Any other number is refused with "High availability requires 3 or 5 MariaDB instances". Like MySQL on MOCO, a MariaDB database is one instance or highly available for its life: asking to change says "High availability requires a new database".
+- **One primary, the rest replicas.** Writes go to the primary and reach a replica before they are acknowledged (semi-synchronous replication, which gives up waiting after ten seconds if no replica answers, so a lone primary keeps working). Replicas refuse writes. Apps connect to the primary's Service `<ID>-primary`, which Geass publishes as the database's host. `<ID>-secondary` reaches the replicas, for reads that can be a moment behind. Reconnect on an error: the connection to a lost primary breaks, and the Service points at the new one a few seconds later.
+- **Failover.** When the primary's pod is lost or its server stops answering, the operator promotes a replica. Geass killed the primary's pod: a replica was primary ten seconds later, a write made then was on every server, and the old primary came back as a replica by itself. The operator cannot do this when a whole machine goes silent, because the replicas lose their primary without being told and then are neither ready nor replicating, which is all it will promote. Geass covers that: when the machine of the primary has not been ready for a minute, it chooses the replica that has seen the most of what the primary wrote, on a machine that is ready, and tells the operator to make it the primary. The database reads "Promoting a replica: the primary's machine is not responding" until it has.
+- **A replica that cannot catch up** is built again by the operator from a copy of a ready replica. Geass keeps the template for that copy, `<ID>-recovery`, which never runs on a schedule, and the copy's volume is made only when it is used.
+- **The application's login** is `app`, made with its database by the operator once every server is up. Until then the database is not reported ready, even though a server is running.
+- **Starting a server** is given five minutes. A server that is stopped in the middle of setting up its data directory, which the operator's own limit of 50 seconds did on a busy node, starts again with no root password and is not repaired by a later start.
+- **Spreading.** The servers prefer different nodes, which is a preference and not a rule, as for MySQL. See [High availability](/docs/operations/high-availability/#where-the-instances-run).
+- **Backups** are the daily copies the other single-server engines have, taken from the primary with `mariadb-dump`.
+- **Compliance tags.** The operator makes some pods itself, such as the copy used to build a replica again. On Kubernetes 1.36 or later a policy gives them the node selector of a project that requires tags; see [Compliance node tags](/docs/guides/compliance-tags/).
 
 ## Where a database runs
 
@@ -557,6 +574,7 @@ Each database is a `GeassDatabase` in `geass-system`. Its workloads live in the 
 
 - **PostgreSQL.** Geass installs the chart `geass-cloudnative-pg` (version 0.23.2) into `cnpg-system` on first use. Each database is a CloudNativePG `Cluster` named after the resource ID. Its pods are `<ID>-1`, and `<ID>-2` and `<ID>-3` for HA, and the read-write Service is `<ID>-rw`. The `<ID>-bootstrap` Secret holds the `app` login.
 - **MySQL.** A StatefulSet `geass-mysql-<ID>` of one pod from the official image, on the volume claim `data-geass-mysql-<ID>-0`, behind the Service `geass-mysql-<ID>`. The root and `app` logins and the database are created the first time it starts, from the `<ID>-bootstrap` Secret. A database made on an earlier development build is still the Bitnami chart (a `HelmChart` `geass-mysql-<ID>` in `kube-system`) and Geass leaves it as it is.
+- **MariaDB.** Geass installs the charts `geass-mariadb-operator-crds` and `geass-mariadb-operator` (version 26.10.1) into `mariadb-system` on first use. The database is a `MariaDB` named after the resource ID, with pods `<ID>-0` (and `-1` and `-2`, or to `-4`, with HA), each on a claim `storage-<ID>-<index>`. The Services are `<ID>` and, with HA, `<ID>-primary` and `<ID>-secondary`. The operator makes the `app` login and the database from the `<ID>-bootstrap` Secret. With HA there is also a suspended `PhysicalBackup` named `<ID>-recovery`.
 - **MySQL with high availability.** Geass installs the chart `geass-moco` (version 0.27.0) into `moco-system` on first use. The database is a MOCO `MySQLCluster` named after the resource ID. Its pods are `moco-<ID>-0` to `moco-<ID>-2` (or `-4`), each on a claim `mysql-data-moco-<ID>-<index>`, and the Service that reaches the primary is `moco-<ID>-primary`, with `moco-<ID>-replica` for the replicas. MOCO makes only its own logins, so a job `<ID>-login-<id>` makes the `app` login and the database from the `<ID>-bootstrap` Secret, as MOCO's writing login. The `app` login, not a root login, is what the connection Secret holds.
 - **Redis.** A StatefulSet `geass-redis-db-<ID>-master` of one pod from the official image, with a password and no volume, behind the Service `geass-redis-db-<ID>-master`. A Redis database made on the Bitnami chart is moved to it when it is next reconciled.
 - **SQLite.** A Deployment and a Service named `<ID>`, and a volume claim `<ID>-sqlite`, run rqlite.

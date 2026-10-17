@@ -8,10 +8,12 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -118,6 +120,78 @@ func TestThePolicyIsWrittenOnlyWhenItsVersionChanges(t *testing.T) {
 	require.NoError(t, r.reconcileProjectCompliance(ctx, complianceProject("hipaa"), "payments-production"))
 	healed, _, _ := policyInstalled(t, c)
 	require.Len(t, healed.Spec.Validations, 2, "a policy from an older version is brought up to date")
+	require.Equal(t, platform.ComplianceAdmissionVersion, healed.Annotations[platform.AnnotationAdmissionVersion])
+}
+
+func mutationInstalled(t *testing.T, c client.Client) (*admissionv1.MutatingAdmissionPolicy, *admissionv1.MutatingAdmissionPolicyBinding, bool) {
+	t.Helper()
+	policy := &admissionv1.MutatingAdmissionPolicy{}
+	binding := &admissionv1.MutatingAdmissionPolicyBinding{}
+	pErr := c.Get(context.Background(), client.ObjectKey{Name: platform.ComplianceMutationPolicyName}, policy)
+	bErr := c.Get(context.Background(), client.ObjectKey{Name: platform.ComplianceMutationBindingName}, binding)
+	if apierrors.IsNotFound(pErr) && apierrors.IsNotFound(bErr) {
+		return nil, nil, false
+	}
+	require.NoError(t, pErr)
+	require.NoError(t, bErr)
+	return policy, binding, true
+}
+
+func TestAProjectThatRequiresTagsAlsoInstallsThePolicyThatGivesPodsTheirTags(t *testing.T) {
+	ctx := context.Background()
+	c := complianceClient(t, complianceNamespace())
+	r := &GeassProjectReconciler{Client: c}
+
+	require.NoError(t, r.reconcileProjectCompliance(ctx, complianceProject("hipaa"), "payments-production"))
+
+	policy, binding, installed := mutationInstalled(t, c)
+	require.True(t, installed)
+	require.Equal(t, platform.ComplianceMutationPolicyName, binding.Spec.PolicyName)
+	require.Equal(t, admissionv1.Ignore, *policy.Spec.FailurePolicy, "a failure of this policy must never keep a pod out: the one that refuses is the check")
+	require.Len(t, policy.Spec.Mutations, 1)
+
+	_, _, validating := policyInstalled(t, c)
+	require.True(t, validating)
+}
+
+func TestAClusterWithoutMutatingPoliciesStillGetsTheOneThatRefuses(t *testing.T) {
+	ctx := context.Background()
+	base := complianceClient(t, complianceNamespace())
+	watching, ok := base.(client.WithWatch)
+	require.True(t, ok)
+	// Kubernetes before 1.36 does not serve the kind, which the client reports as no match for it.
+	c := interceptor.NewClient(watching, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, mutating := obj.(*admissionv1.MutatingAdmissionPolicy); mutating {
+				return &meta.NoKindMatchError{GroupKind: obj.GetObjectKind().GroupVersionKind().GroupKind()}
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+	r := &GeassProjectReconciler{Client: c}
+
+	require.NoError(t, r.reconcileProjectCompliance(ctx, complianceProject("hipaa"), "payments-production"))
+
+	_, _, installed := policyInstalled(t, base)
+	require.True(t, installed, "the policy that refuses does not depend on the mutating one")
+	_, _, mutating := mutationInstalled(t, base)
+	require.False(t, mutating)
+}
+
+func TestTheMutatingPolicyIsBroughtUpToDate(t *testing.T) {
+	ctx := context.Background()
+	c := complianceClient(t, complianceNamespace())
+	r := &GeassProjectReconciler{Client: c}
+	require.NoError(t, r.reconcileProjectCompliance(ctx, complianceProject("hipaa"), "payments-production"))
+	stale, _, _ := mutationInstalled(t, c)
+	stale.Annotations[platform.AnnotationAdmissionVersion] = "1"
+	stale.Spec.Mutations = nil
+	require.NoError(t, c.Update(ctx, stale))
+
+	require.NoError(t, r.reconcileProjectCompliance(ctx, complianceProject("hipaa"), "payments-production"))
+
+	healed, _, _ := mutationInstalled(t, c)
+	require.Len(t, healed.Spec.Mutations, 1)
 	require.Equal(t, platform.ComplianceAdmissionVersion, healed.Annotations[platform.AnnotationAdmissionVersion])
 }
 

@@ -354,7 +354,7 @@ func backupSourceOf(db *geassv1alpha1.GeassDatabase) geassv1alpha1.GeassBackupSo
 	switch source.Engine {
 	case geassv1alpha1.DatabaseEnginePostgres:
 		source.Version, source.DatabaseName = databaseVersion(db), databaseName(db)
-	case geassv1alpha1.DatabaseEngineMySQL:
+	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB:
 		source.DatabaseName = databaseName(db)
 	}
 	return source

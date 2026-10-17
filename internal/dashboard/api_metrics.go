@@ -270,6 +270,10 @@ func databaseMetricScope(db *geassv1alpha1.GeassDatabase, namespace string) metr
 		release := promRegexLiteral(platform.MySQLChartReleaseName(db.Name))
 		scope.podPattern = release + `(-primary|-secondary)?-[0-9]+`
 		scope.volumePattern = `data-` + release + `(-primary|-secondary)?-[0-9]+`
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		// mariadb-operator's pods are the database's name and an index, and its claims are storage-<pod>.
+		scope.podPattern = name + `-[0-9]+`
+		scope.volumePattern = `storage-` + name + `-[0-9]+`
 	case geassv1alpha1.DatabaseEngineRedis:
 		scope.podPattern = promRegexLiteral(platform.RedisChartReleaseName(db.Name)) + `-(master|replicas)-[0-9]+`
 	case geassv1alpha1.DatabaseEngineSQLite:

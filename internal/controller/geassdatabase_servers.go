@@ -252,7 +252,7 @@ func (r *GeassDatabaseReconciler) reconcileMySQL(ctx context.Context, db *geassv
 	case message != "":
 		return r.setNotReady(ctx, db, message)
 	}
-	if _, message := mysqlHAInstances(db); message != "" {
+	if _, message := oddInstances(db); message != "" {
 		return r.setNotReady(ctx, db, message)
 	}
 	if backend == mysqlBackendHA {

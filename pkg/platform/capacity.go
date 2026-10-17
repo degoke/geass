@@ -12,6 +12,7 @@ const (
 	WorkloadService     = "service"
 	WorkloadPostgres    = "postgres"
 	WorkloadMySQL       = "mysql"
+	WorkloadMariaDB     = "mariadb"
 	WorkloadSQLite      = "sqlite"
 	WorkloadRedis       = "redis"
 	WorkloadObjectStore = "objectstore"
@@ -41,12 +42,17 @@ type workloadDefaults struct {
 	cpuMilli int64
 	memBytes int64
 	haCount  int32
+	// haMemBytes is the memory of each instance when the workload runs for high availability, for one whose servers
+	// need more than its single server does. Zero means memBytes.
+	haMemBytes int64
 }
 
 var workloadCatalog = map[string]workloadDefaults{
-	WorkloadService:     {label: "service", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
-	WorkloadPostgres:    {label: "PostgreSQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
-	WorkloadMySQL:       {label: "MySQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
+	WorkloadService:  {label: "service", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
+	WorkloadPostgres: {label: "PostgreSQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
+	// MOCO's MySQL servers are given at least a gibibyte, which a single server is not.
+	WorkloadMySQL:       {label: "MySQL database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3, haMemBytes: 1024 * 1024 * 1024},
+	WorkloadMariaDB:     {label: "MariaDB database", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 3},
 	WorkloadSQLite:      {label: "SQLite database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 1},
 	WorkloadRedis:       {label: "Redis database", cpuMilli: 100, memBytes: 128 * 1024 * 1024, haCount: 3},
 	WorkloadObjectStore: {label: "object storage server", cpuMilli: 250, memBytes: 512 * 1024 * 1024, haCount: 1},
@@ -96,8 +102,12 @@ func EstimateWorkload(kind string, ha bool, replicas int32) WorkloadEstimate {
 	} else if ha && defaults.haCount > 1 {
 		count = defaults.haCount
 	}
+	perMem := defaults.memBytes
+	if count > 1 && defaults.haMemBytes > 0 {
+		perMem = defaults.haMemBytes
+	}
 	totalCPU := defaults.cpuMilli * int64(count)
-	totalMem := defaults.memBytes * int64(count)
+	totalMem := perMem * int64(count)
 	return WorkloadEstimate{
 		Kind:         kind,
 		Label:        defaults.label,
@@ -108,9 +118,9 @@ func EstimateWorkload(kind string, ha bool, replicas int32) WorkloadEstimate {
 		Replicas:     count,
 		Approximate:  true,
 		PerCPU:       FormatCPUMillis(defaults.cpuMilli),
-		PerMemory:    FormatMemoryBytes(defaults.memBytes),
+		PerMemory:    FormatMemoryBytes(perMem),
 		PerCPUMillis: defaults.cpuMilli,
-		PerMemBytes:  defaults.memBytes,
+		PerMemBytes:  perMem,
 	}
 }
 
@@ -122,6 +132,7 @@ func WorkloadEstimates() map[string]WorkloadEstimate {
 	}
 	out[WorkloadPostgres+"-ha"] = EstimateWorkload(WorkloadPostgres, true, 0)
 	out[WorkloadMySQL+"-ha"] = EstimateWorkload(WorkloadMySQL, true, 0)
+	out[WorkloadMariaDB+"-ha"] = EstimateWorkload(WorkloadMariaDB, true, 0)
 	out[WorkloadRedis+"-ha"] = EstimateWorkload(WorkloadRedis, true, 0)
 	return out
 }

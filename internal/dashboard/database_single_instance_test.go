@@ -122,3 +122,59 @@ func TestMySQLClusterConsoleCommandLogsInAsTheApplication(t *testing.T) {
 	_, err = (&Server{Client: newFakeClient()}).mysqlClusterQueryCommand(context.Background(), db, "SELECT 1")
 	require.Error(t, err, "before the database's login exists there is nothing to log in with")
 }
+
+// MariaDB runs on mariadb-operator, with the server in a container beside the operator's agent, and an image that has
+// MariaDB's client and no mysql.
+func TestMariaDBConsoleLogsInAsTheApplicationWithMariaDBsClient(t *testing.T) {
+	db := geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: systemNamespace},
+		Spec:       geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMariaDB},
+		Status:     geassv1alpha1.GeassDatabaseStatus{TargetNamespace: "proj-1-production"},
+	}
+	require.True(t, usesOperatorLogin(&db), "a standalone MariaDB's pod holds no login either")
+	require.Equal(t, "mariadb", consoleContainer(&db))
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-bootstrap", Namespace: "proj-1-production"},
+		Data:       map[string][]byte{"username": []byte("app"), "password": []byte("pw")},
+	}
+	srv := &Server{Client: newFakeClient(secret)}
+
+	cmd, err := srv.mysqlClusterQueryCommand(context.Background(), db, `SELECT 1; "$(reboot)"`)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"env", "MYSQL_PWD=pw", "mariadb", "--user=app", "--database=orders", "-e", `SELECT 1; "$(reboot)"`}, cmd)
+
+	// The single MySQL server and Postgres keep what they had.
+	mysql := &geassv1alpha1.GeassDatabase{Spec: geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMySQL}}
+	require.False(t, usesOperatorLogin(mysql))
+	require.True(t, usesOperatorLogin(&geassv1alpha1.GeassDatabase{Spec: geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMySQL, HighAvailability: true}}))
+}
+
+func TestMariaDBIsAnEngineAUserCanChoose(t *testing.T) {
+	require.Equal(t, geassv1alpha1.DatabaseEngineMariaDB, parseDatabaseEngine("MariaDB"))
+	require.Equal(t, geassv1alpha1.DatabaseEngineMariaDB, parseDatabaseEngine(" mariadb "))
+	require.Equal(t, platform.WorkloadMariaDB, databaseCreateWorkloadKind(geassv1alpha1.DatabaseEngineMariaDB))
+
+	srv := &Server{Client: newFakeClient(roomyTestNode())}
+	rec := apiPost(t, srv, "/databases/create", url.Values{
+		"project": {testProjectName}, "environment": {"production"}, "engine": {"MariaDB"},
+		"draft": {"1"}, "name": {"ha-maria"}, "highAvailability": {"on"},
+	})
+	require.NotEqual(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+func TestMariaDBQueryCommandFallsBackToItsOwnClient(t *testing.T) {
+	cmd, err := databaseQueryCommand(geassv1alpha1.DatabaseEngineMariaDB, "SELECT 1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"mariadb", "-e", "SELECT 1"}, cmd, "never psql, which is what an engine it did not know got")
+}
+
+func TestMariaDBMetricsAreScopedToItsPodsAndClaims(t *testing.T) {
+	scope := databaseMetricScope(&geassv1alpha1.GeassDatabase{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders"},
+		Spec:       geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMariaDB},
+	}, "shop-production")
+
+	require.Equal(t, `orders-[0-9]+`, scope.podPattern)
+	require.Equal(t, `storage-orders-[0-9]+`, scope.volumePattern, "the claims the operator's StatefulSet makes")
+}

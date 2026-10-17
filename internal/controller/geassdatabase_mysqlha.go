@@ -94,19 +94,19 @@ func mocoClaimName(db *geassv1alpha1.GeassDatabase, index int) string {
 	return fmt.Sprintf("%s-%s-%d", mocoVolumeName, mocoServerName(db), index)
 }
 
-// mysqlHAInstances is how many servers a MySQL database that asks for high availability runs, or the message that
-// says why it cannot. A database that does not ask for it is one server, and anything else is refused: MOCO runs
-// an odd number of servers, so two or four would not be a cluster that can lose one and carry on.
-func mysqlHAInstances(db *geassv1alpha1.GeassDatabase) (int32, string) {
+// oddInstances is how many servers a MySQL or MariaDB database runs, or the message that says why it cannot. A
+// database that does not ask for high availability is one server, and anything else is refused: both operators
+// run an odd number of servers, so two or four would not be a cluster that can lose one and carry on.
+func oddInstances(db *geassv1alpha1.GeassDatabase) (int32, string) {
 	instances := databaseInstances(db)
 	if !databaseWantsHA(db) {
 		if instances > 1 {
-			return 0, platform.MySQLHAMessage(instances)
+			return 0, platform.HAInstancesMessage(db.Spec.Engine, instances)
 		}
 		return 1, ""
 	}
 	if instances != 3 && instances != mocoMaxInstances {
-		return 0, platform.MySQLHAMessage(instances)
+		return 0, platform.HAInstancesMessage(db.Spec.Engine, instances)
 	}
 	return instances, ""
 }
@@ -219,7 +219,7 @@ func (r *GeassDatabaseReconciler) existingMySQLBackend(ctx context.Context, db *
 
 // reconcileMySQLHA runs the MySQL cluster of a database that asks for high availability.
 func (r *GeassDatabaseReconciler) reconcileMySQLHA(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) (ctrl.Result, error) {
-	instances, message := mysqlHAInstances(db)
+	instances, message := oddInstances(db)
 	if message != "" {
 		return r.setNotReady(ctx, db, message)
 	}

@@ -16,6 +16,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
 	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -69,6 +70,16 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 		return target, deploymentReady(deploy, 1), nil
 	}
 
+	if databaseEngine(db) == geassv1alpha1.DatabaseEngineMariaDB {
+		mdb := &mariadbv1.MariaDB{}
+		if err := r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, mdb); err != nil {
+			return nil, false, fmt.Errorf("the database is not running yet: %w", err)
+		}
+		// The root login's password is the database's own, as for a single MySQL server, and the image is the
+		// database's own, whose tools are MariaDB's.
+		target := &dumpTarget{host: mariadbHost(db, wsNS), port: platform.MySQLDefaultPort, image: platform.MariaDBImage, database: databaseName(db)}
+		return target, r.mariadbServing(ctx, db, wsNS, mdb), nil
+	}
 	if cluster := (&mocov1.MySQLCluster{}); r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, cluster) == nil {
 		// A cluster has no root login, and is copied with the one MOCO makes for writing. Its own image holds the
 		// matching tools, as a single server's does.

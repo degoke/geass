@@ -78,7 +78,21 @@ func (in dumpJobInput) engine() geassv1alpha1.GeassDatabaseEngine {
 	return in.db.Spec.Engine
 }
 
-func (in dumpJobInput) isMySQL() bool { return in.engine() == geassv1alpha1.DatabaseEngineMySQL }
+// isMySQL is whether the copy is made with MySQL's tools or MariaDB's, which are named differently and take different
+// options. A MariaDB image has only its own names.
+func (in dumpJobInput) isMySQL() bool {
+	return in.engine() == geassv1alpha1.DatabaseEngineMySQL || in.isMariaDB()
+}
+
+func (in dumpJobInput) isMariaDB() bool { return in.engine() == geassv1alpha1.DatabaseEngineMariaDB }
+
+// waitForServerScript holds a copy until the database can be reached. A pod's network rules are programmed a moment
+// after it starts, which a MariaDB client does not wait out: its first attempt is dropped and it gives up at once with
+// "Can't connect (115)", where MySQL's client retries the connection and gets through. Seen on K3s, whose network
+// policy controller admits a new pod about a second late.
+func waitForServerScript(port string) string {
+	return fmt.Sprintf(`for _ in $(seq 1 60); do (exec 3<>"/dev/tcp/$DB_HOST/%s") 2>/dev/null && break; sleep 1; done`, port)
+}
 
 // dumpPodSpec is the pod of a backup Job (dump, then upload) or, when restoreKey is set, of a
 // restore Job (download, then load).
@@ -156,6 +170,12 @@ func dumpCommand(in dumpJobInput) []string {
 		// dumped by name so the copy recreates it. Users and grants are deliberately not copied: a
 		// restored database creates its own.
 		user, _, _ := in.target.mysqlLogin(in.db)
+		if in.isMariaDB() {
+			return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
+%s
+mariadb-dump --host="$DB_HOST" --port=%s --user=%s --single-transaction --routines --events --triggers --hex-blob --databases "$DB_NAME" | gzip -c > %s/%s.sql.gz`,
+				waitForServerScript(in.target.port), in.target.port, user, backupMountPath, dumpBaseName)}
+		}
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
 mysqldump --host="$DB_HOST" --port=%s --user=%s --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=OFF --databases "$DB_NAME" | gzip -c > %s/%s.sql.gz`,
 			in.target.port, user, backupMountPath, dumpBaseName)}
@@ -175,8 +195,16 @@ gzip -f %[1]s/%[2]s.sql`, backupMountPath, dumpBaseName, in.target.port)}
 func loadCommand(in dumpJobInput) []string {
 	if in.isMySQL() {
 		user, _, _ := in.target.mysqlLogin(in.db)
+		client := "mysql"
+		if in.isMariaDB() {
+			client = "mariadb"
+		}
+		wait := ""
+		if in.isMariaDB() {
+			wait = waitForServerScript(in.target.port) + "\n"
+		}
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
-gunzip -c %s/%s.sql.gz | mysql --host="$DB_HOST" --port=%s --user=%s`, backupMountPath, dumpBaseName, in.target.port, user)}
+%sgunzip -c %s/%s.sql.gz | %s --host="$DB_HOST" --port=%s --user=%s`, wait, backupMountPath, dumpBaseName, client, in.target.port, user)}
 	}
 	// rqlite answers a load that failed with HTTP 200 and the error in the body, and wget exits 0
 	// for it, so the response is checked: otherwise a failed restore would be reported as a success.

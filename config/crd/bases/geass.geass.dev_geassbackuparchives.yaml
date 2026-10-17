@@ -116,6 +116,7 @@ spec:
                     - MySQL
                     - SQLite
                     - Redis
+                    - MariaDB
                     type: string
                   resources:
                     description: Resources is the CPU and memory the source database

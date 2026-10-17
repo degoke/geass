@@ -46,7 +46,7 @@ var (
 	filePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	imagePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*$`)
 	repoPattern     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	engines         = map[string]bool{"Postgres": true, "MySQL": true, "Redis": true, "SQLite": true}
+	engines         = map[string]bool{"Postgres": true, "MySQL": true, "MariaDB": true, "Redis": true, "SQLite": true}
 )
 
 // Template is a named set of resources.
@@ -184,7 +184,7 @@ func (r Resource) validate(databases map[string]bool) error {
 	switch r.Kind {
 	case KindDatabase:
 		if !engines[r.Engine] {
-			return fmt.Errorf("engine must be one of Postgres, MySQL, Redis, or SQLite")
+			return fmt.Errorf("engine must be one of Postgres, MySQL, MariaDB, Redis, or SQLite")
 		}
 		if len(r.Variables) > 0 {
 			return fmt.Errorf("databases cannot have variables")

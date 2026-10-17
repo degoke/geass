@@ -11,11 +11,12 @@ Geass has two high availability features today. A database can run as three inst
 | --- | --- | --- |
 | Postgres with **High availability** | Yes, with three instances | Replicas and failover come from the Postgres operator (CloudNativePG). Needs at least three healthy nodes. |
 | MySQL with **High availability** | Yes, with three or five instances | Replicas and failover come from the MySQL operator (MOCO). Needs at least three healthy nodes. See [MySQL](#mysql). |
+| MariaDB with **High availability** | Yes, with three or five instances | Replicas and failover come from the MariaDB operator, with a trigger from Geass for a machine that goes silent. Needs at least three healthy nodes. See [MariaDB](#mariadb). |
 | Redis | No | One instance. It refuses **High availability**. See [Redis](#redis). |
 | Services | Only as far as replicas go | Replicas are not spread by any Geass rule. See [Services](#services). |
 | Control plane: the Kubernetes API and etcd | Yes, with three servers | Join two more servers to the first. The cluster works with one lost and stops with two. See [Run three control plane servers](#run-three-control-plane-servers). |
 | The operator and the dashboard | Restarts on another server | One pod, which starts on another server when its own is lost, in one to two minutes. Nothing is reconciled and the dashboard is down in between. |
-| Single-instance databases (including MySQL without high availability), the object storage server, SQLite | No | One instance each. |
+| Single-instance databases (including MySQL and MariaDB without high availability), the object storage server, SQLite | No | One instance each. |
 
 ## Run three control plane servers
 
@@ -186,7 +187,7 @@ kubectl -n geass-system get geassdatabase orders \
   -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}{"\n"}'
 ```
 
-The gate covers Postgres and MySQL. Redis is refused before it, because it runs as one instance. The capacity check also counts three instances, and for MySQL at least 1 GB of memory for each (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
+The gate covers Postgres, MySQL and MariaDB. Redis is refused before it, because it runs as one instance. The capacity check also counts three instances, and for MySQL at least 1 GB of memory for each (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
 
 ## Where the instances run
 
@@ -201,6 +202,14 @@ The readiness report counts nodes in the whole cluster. A project in a region wi
 ```bash
 kubectl get pods -n morning-beach-production -l cnpg.io/cluster=orders -o wide
 ```
+
+### MariaDB
+
+A MariaDB database that asks for high availability runs on the MariaDB operator: three or five servers, one of them the primary, with semi-synchronous replication, so a write is on a replica before it is acknowledged. The database's address is the primary's Service, `<ID>-primary`, which follows the primary.
+
+The operator replaces a primary whose pod is lost or whose server stops answering. Killing the primary's pod made a replica the primary ten seconds later, with the write made in between on every server. It cannot replace a primary whose machine goes silent, because the replicas then lose their primary without being told, stop being ready and stop replicating, and it promotes only a replica that is ready and replicating. Geass does that part: it watches the machine of the primary, and when it has not been ready for a minute it names the replica that has seen the most of what the primary wrote, on a machine that is ready, as the primary, and the operator switches over to it. Spreading the servers over three machines, so that a replica is still on a machine that is up, is what makes this possible: with two of three servers on the lost machine there is one replica left to take over, and with all of them on it there is none.
+
+The operator itself runs two copies of each of its three parts, spread over nodes where there are enough of them, so that losing the machine one of them runs on does not stop it from promoting a replica. A database cannot change between one instance and high availability: see [High availability for MariaDB](/docs/guides/databases/#high-availability-for-mariadb).
 
 ### MySQL
 
@@ -234,6 +243,7 @@ A service with several replicas keeps serving while some of them are up. Geass a
 | A single-instance database | It is unavailable until it runs again. Whether it can restart on another node depends on its storage. See [Storage](/docs/guides/storage/). |
 | A service replica | Kubernetes starts a replacement on another node that matches the project's region and tags and has room. By default it waits five minutes before it does; Geass does not change that. A service with one replica is down in the meantime. |
 | A MySQL instance (highly available) | MOCO promotes a replica if the lost instance was the primary, and the `moco-<name>-primary` Service follows it. See [MySQL](#mysql). |
+| A MariaDB server (highly available) | The operator promotes a replica if the lost server was the primary; Geass does it when the primary's whole machine is lost. The `<name>-primary` Service follows it. See [MariaDB](#mariadb). |
 | A single MySQL server, or a Redis server | It is unavailable until it runs again. A MySQL volume on replicated storage can be attached on another node; Redis starts empty. See [Redis](#redis). |
 | A control plane server (of three) | The API and the cluster's data stay available from the other two. The operator starts on another server in one to two minutes if it was on the lost one. |
 | The only control plane server | See below. |

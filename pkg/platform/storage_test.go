@@ -44,13 +44,13 @@ func TestDatabaseWantsHAIsTrueForTheFlagOrThreeInstances(t *testing.T) {
 
 func TestDatabaseStorageDefaultsCoverEveryEngineWithAVolume(t *testing.T) {
 	defaults := DatabaseStorageDefaults()
-	require.Equal(t, map[string]string{"postgres": "10Gi", "mysql": "10Gi", "sqlite": "1Gi"}, defaults)
+	require.Equal(t, map[string]string{"postgres": "10Gi", "mysql": "10Gi", "mariadb": "10Gi", "sqlite": "1Gi"}, defaults)
 }
 
-func TestDatabaseStorageClassPicksSingleReplicaOnlyForHAPostgresAndMySQL(t *testing.T) {
-	// Postgres and MySQL replicate themselves across instances, so replicating the volume as
+func TestDatabaseStorageClassPicksSingleReplicaOnlyForHAPostgresMySQLAndMariaDB(t *testing.T) {
+	// Postgres, MySQL and MariaDB replicate themselves across instances, so replicating the volume as
 	// well would store every byte three times over for no extra safety.
-	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEnginePostgres, geassv1alpha1.DatabaseEngineMySQL} {
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEnginePostgres, geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB} {
 		require.Equal(t, StorageClassSingle, DatabaseStorageClass(engine, true), string(engine))
 		require.Equal(t, StorageClassReplicated, DatabaseStorageClass(engine, false), string(engine))
 	}
@@ -67,6 +67,7 @@ func TestDatabaseHasVolume(t *testing.T) {
 	require.True(t, DatabaseHasVolume(geassv1alpha1.DatabaseEnginePostgres))
 	require.True(t, DatabaseHasVolume(""))
 	require.True(t, DatabaseHasVolume(geassv1alpha1.DatabaseEngineMySQL))
+	require.True(t, DatabaseHasVolume(geassv1alpha1.DatabaseEngineMariaDB))
 	require.True(t, DatabaseHasVolume(geassv1alpha1.DatabaseEngineSQLite))
 	// Redis is deployed with persistence disabled: it is an in-memory cache here.
 	require.False(t, DatabaseHasVolume(geassv1alpha1.DatabaseEngineRedis))

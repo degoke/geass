@@ -48,7 +48,7 @@ func TestIsolationAdmitsTheProjectItsOptedInProjectsAndThePlatform(t *testing.T)
 	for _, peer := range from[1:] {
 		platformNamespaces = append(platformNamespaces, peer.NamespaceSelector.MatchLabels[LabelNamespaceName])
 	}
-	require.ElementsMatch(t, []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS, MOCOTargetNS, ServerlessTargetNS}, platformNamespaces,
+	require.ElementsMatch(t, []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS, MOCOTargetNS, MariaDBTargetNS, ServerlessTargetNS}, platformNamespaces,
 		"the ingress controller, the operator and dashboard, Prometheus, the Postgres operator and the scale-to-zero proxy all call into projects")
 }
 

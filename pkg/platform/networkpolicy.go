@@ -52,9 +52,10 @@ const (
 //   - monitoring: Prometheus scraping service metrics.
 //   - cnpg-system: the Postgres operator, which talks to the instance manager inside every database pod.
 //   - moco-system: the MySQL operator, which talks to the agent inside every pod of a highly available MySQL database.
+//   - mariadb-system: the MariaDB operator, which talks to the agent inside every pod of a MariaDB database.
 //   - keda: the scale-to-zero add-on's proxy, which passes requests on to services it has woken.
 func platformNamespacesReachingProjects() []string {
-	return []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS, MOCOTargetNS, ServerlessTargetNS}
+	return []string{"kube-system", SystemNamespace, MonitoringTargetNS, CNPGTargetNS, MOCOTargetNS, MariaDBTargetNS, ServerlessTargetNS}
 }
 
 // ManagedNetworkPolicyNames lists the policies the operator owns, so a watch can ignore the rest.

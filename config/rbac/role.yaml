@@ -65,6 +65,8 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
+  - mutatingadmissionpolicies
+  - mutatingadmissionpolicybindings
   - validatingadmissionpolicies
   - validatingadmissionpolicybindings
   verbs:
@@ -219,6 +221,19 @@ rules:
   - http.keda.sh
   resources:
   - httpscaledobjects
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - k8s.mariadb.com
+  resources:
+  - mariadbs
+  - physicalbackups
   verbs:
   - create
   - delete

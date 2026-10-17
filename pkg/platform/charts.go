@@ -102,7 +102,20 @@ const (
 	MOCOReleaseChart = "moco"
 	MOCOMySQLImage   = "ghcr.io/cybozu-go/moco/mysql:8.4.10"
 
-	// BackupTransferImage moves MySQL and SQLite snapshots to and from the project's bucket. curl signs
+	// MariaDB databases are run by mariadb-operator, which makes a MariaDB server, or a primary with replicas, from the
+	// official image, and is installed the first time a database asks for it. It comes as two charts: one for its
+	// resource definitions, which Helm does not update with the operator, and one for the operator itself, which
+	// does not need cert-manager. MariaDBImage is the official image, which the operator requires.
+	MariaDBOperatorRepo      = "https://mariadb-operator.github.io/mariadb-operator"
+	MariaDBOperatorVersion   = "26.10.1"
+	MariaDBCRDsChartName     = "geass-mariadb-operator-crds"
+	MariaDBCRDsReleaseChart  = "mariadb-operator-crds"
+	MariaDBOperatorChartName = "geass-mariadb-operator"
+	MariaDBOperatorRelease   = "mariadb-operator"
+	MariaDBTargetNS          = "mariadb-system"
+	MariaDBImage             = "mariadb:11.8.9"
+
+	// BackupTransferImage moves MySQL, MariaDB and SQLite snapshots to and from the project's bucket. curl signs
 	// S3 requests itself (--aws-sigv4), so the image needs nothing else.
 	BackupTransferImage = "curlimages/curl:8.10.1"
 )
@@ -145,18 +158,37 @@ func SingleInstanceMessage(engine geassv1alpha1.GeassDatabaseEngine) string {
 // provisioning after five quick passes, with the database fine and the job done.
 const MessageCreatingDatabaseLogin = "Creating the database login"
 
-// MySQLHAMessage is what a MySQL database is told when its instances cannot be run. MOCO runs an odd number of
-// MySQL servers, so a database is one instance or three or five, and it cannot change from one to the other
+// MessagePromotingReplica is what a MariaDB database says while a replica takes over from a primary whose machine was
+// lost. It is a wait that ends by itself, and takes a minute or more.
+const MessagePromotingReplica = "Promoting a replica: the primary's machine is not responding"
+
+// HAInstancesMessage is what a MySQL or MariaDB database is told when its instances cannot be run. Both run an odd
+// number of servers, so a database is one instance or three or five, and it cannot change from one to the other
 // because they are not the same servers. It begins like SingleInstanceMessage and for the same reason.
-func MySQLHAMessage(instances int32) string {
-	return fmt.Sprintf("High availability requires 3 or 5 MySQL instances, not %d. Set the instances to 3 or 5, or turn high availability off", instances)
+func HAInstancesMessage(engine geassv1alpha1.GeassDatabaseEngine, instances int32) string {
+	return fmt.Sprintf("High availability requires 3 or 5 %s instances, not %d. Set the instances to 3 or 5, or turn high availability off", engine, instances)
 }
 
-// MySQLChangeMessage is what a MySQL database that changed between one instance and high availability is told.
-// highlyAvailable is what the database runs as now.
-func MySQLChangeMessage(highlyAvailable bool) string {
+// HAChangeMessage is what a MySQL or MariaDB database that changed between one instance and high availability is
+// told. highlyAvailable is what the database runs as now.
+func HAChangeMessage(engine geassv1alpha1.GeassDatabaseEngine, highlyAvailable bool) string {
 	if highlyAvailable {
-		return "High availability requires a new database: this MySQL database runs three or more instances and cannot become one. Turn it back on, or create a new database"
+		return fmt.Sprintf("High availability requires a new database: this %s database runs three or more instances and cannot become one. Turn it back on, or create a new database", engine)
 	}
-	return "High availability requires a new database: this MySQL database runs one instance and cannot become highly available. Turn it back off, or create a new database"
+	return fmt.Sprintf("High availability requires a new database: this %s database runs one instance and cannot become highly available. Turn it back off, or create a new database", engine)
+}
+
+// MySQLHAMessage and MySQLChangeMessage are the two above for MySQL.
+func MySQLHAMessage(instances int32) string {
+	return HAInstancesMessage(geassv1alpha1.DatabaseEngineMySQL, instances)
+}
+
+func MySQLChangeMessage(highlyAvailable bool) string {
+	return HAChangeMessage(geassv1alpha1.DatabaseEngineMySQL, highlyAvailable)
+}
+
+// EngineRunsOddInstances reports whether a database of this engine asks for high availability with a MOCO or
+// mariadb-operator cluster, which is one instance or three or five.
+func EngineRunsOddInstances(engine geassv1alpha1.GeassDatabaseEngine) bool {
+	return engine == geassv1alpha1.DatabaseEngineMySQL || engine == geassv1alpha1.DatabaseEngineMariaDB
 }

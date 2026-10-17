@@ -42,6 +42,7 @@ import (
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
 	"github.com/degoke/geass/pkg/migrations"
 	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
@@ -79,6 +80,7 @@ func init() {
 	utilruntime.Must(monitoringv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(cnpgv1.AddToScheme(scheme))
 	utilruntime.Must(mocov1.AddToScheme(scheme))
+	utilruntime.Must(mariadbv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

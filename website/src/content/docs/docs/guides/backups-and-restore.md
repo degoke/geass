@@ -104,9 +104,10 @@ Retention is 1 to 365 days, and the default is 7. Lowering it lets Geass remove 
 - The recovery window starts at the oldest retained base backup. It ends about five minutes before now, because the newest changes may not have reached the bucket yet. It stops moving if archiving fails.
 - Retention keeps the base backups and log needed to restore anywhere in the last N days.
 
-### MySQL and SQLite: daily copies
+### MySQL, MariaDB and SQLite: daily copies
 
 - A Kubernetes CronJob named `<database ID>-backup` runs daily at about 02:00 UTC (the CronJob uses the `Etc/UTC` time zone). A first copy is taken right after setup, so the database is not unprotected until the first night. If that first copy fails, Geass starts another after 10 minutes while no copy exists.
+- MariaDB is dumped the same way with `mariadb-dump` inside its own image, and restored with `mariadb`. A job waits until the database can be reached before it starts, because a MariaDB client gives up on a connection that a new pod's network has not yet allowed.
 - MySQL is dumped with `mysqldump` inside the database's own image, with a consistent view and without locking tables. It includes routines, events and triggers. It dumps the server's main database only, so logical databases created on a project's own MySQL server, and users and grants, are not in the copy.
 - SQLite runs on rqlite, which serves a SQL dump over HTTP. Geass saves that dump.
 - Each copy is compressed and uploaded to the bucket as `<project ID>/<folder>/dumps/<UTC date and time>.sql.gz`. The bucket listing is the source of truth for restore points.

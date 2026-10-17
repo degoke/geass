@@ -143,7 +143,7 @@ func TestMySQLHAInstancesAreOneThreeOrFive(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := &geassv1alpha1.GeassDatabase{Spec: geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMySQL}}
 			tc.mutate(db)
-			got, message := mysqlHAInstances(db)
+			got, message := oddInstances(db)
 			if tc.refuse != "" {
 				require.Contains(t, message, "High availability requires 3 or 5 MySQL instances")
 				require.Contains(t, message, tc.refuse)

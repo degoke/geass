@@ -52,7 +52,7 @@ spec:
               backup:
                 description: |-
                   Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
-                  moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+                  moment), MySQL, MariaDB and SQLite (daily snapshots); nil or disabled leaves the database with no
                   recovery path beyond its own disks.
                 properties:
                   enabled:
@@ -112,6 +112,7 @@ spec:
                 - MySQL
                 - SQLite
                 - Redis
+                - MariaDB
                 type: string
               environment:
                 description: Environment is the project environment. Empty for the

@@ -182,7 +182,7 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/databases", "List databases", accessViewer, kindDatabases, nil, false},
 	{http.MethodPost, "/databases", "Create a database", accessAdmin, kindDatabases, []v1Field{
 		fieldProject, fieldEnv, {pathNameParam, jsonString, "The database's name", false},
-		{"engine", jsonString, "postgres, mysql, redis or sqlite", true}, {"highAvailability", "boolean", "Run it replicated", false},
+		{"engine", jsonString, "postgres, mysql, mariadb, redis or sqlite", true}, {"highAvailability", "boolean", "Run it replicated", false},
 	}, false},
 	{http.MethodGet, "/databases/{name}", "One database", accessViewer, kindDatabases, nil, false},
 	{http.MethodPatch, "/databases/{name}", "Change a database's settings", accessAdmin, kindDatabases, nil, false},

@@ -198,7 +198,7 @@ func DatabaseBackupKind(engine geassv1alpha1.GeassDatabaseEngine, placement geas
 	switch engine {
 	case geassv1alpha1.DatabaseEnginePostgres, "":
 		return BackupKindContinuous
-	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineSQLite:
+	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB, geassv1alpha1.DatabaseEngineSQLite:
 		return BackupKindSnapshot
 	default:
 		return BackupKindNone

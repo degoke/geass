@@ -24,7 +24,7 @@ import (
 // them here. Everything else is, and the dashboard only ever asks for a project's own namespaces.
 
 // logShipperExcludedNamespaces are not collected.
-var logShipperExcludedNamespaces = []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "monitoring", "longhorn-system", "cnpg-system", "moco-system", "cert-manager", platform.LoggingTargetNS}
+var logShipperExcludedNamespaces = []string{"kube-system", "kube-public", "kube-node-lease", "local-path-storage", "monitoring", "longhorn-system", "cnpg-system", "moco-system", "mariadb-system", "cert-manager", platform.LoggingTargetNS}
 
 // logStoreValues are the VictoriaLogs chart values. The server is bounded by age and by disk, and by memory,
 // so a chatty cluster cannot use more than a small node can spare.

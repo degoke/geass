@@ -1,11 +1,11 @@
 ---
 title: "GeassDatabase"
-description: "Reference for GeassDatabase: a Postgres, MySQL, SQLite or Redis database that runs in your cluster, or a link to an external database."
+description: "Reference for GeassDatabase: a Postgres, MySQL, MariaDB, SQLite or Redis database that runs in your cluster, or a link to an external database."
 sidebar:
   order: 3
 ---
 
-A `GeassDatabase` is one database server for a project environment. It can run in your cluster (Postgres, MySQL, SQLite or Redis), or it can point at a database that runs somewhere else. The dashboard creates and edits it when you add a database to a project, and it is the normal way to work with one. You can also create it with `kubectl`. A `GeassDatabase` with no `spec.project` is the cluster-wide shared server that many projects use through [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/) resources.
+A `GeassDatabase` is one database server for a project environment. It can run in your cluster (Postgres, MySQL, MariaDB, SQLite or Redis), or it can point at a database that runs somewhere else. The dashboard creates and edits it when you add a database to a project, and it is the normal way to work with one. You can also create it with `kubectl`. A `GeassDatabase` with no `spec.project` is the cluster-wide shared server that many projects use through [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/) resources.
 
 For the task-oriented view, see [Databases](/docs/guides/databases/), [Backups and restore](/docs/guides/backups-and-restore/) and [Shared database servers](/docs/guides/shared-database-servers/).
 
@@ -190,7 +190,7 @@ Defaults marked "CRD default" are filled in by the API server. Defaults marked "
 | --- | --- | --- | --- | --- |
 | `spec.project` | string | Optional | None | The owning project. Empty makes this the cluster-wide shared server, which runs in `geass-system`. |
 | `spec.environment` | string | Optional. Required in practice for a project database. | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | The project environment. It must be one of the project's `spec.environments`. Empty for a shared server. |
-| `spec.engine` | string | Required | Enum `Postgres`, `MySQL`, `SQLite`, `Redis` | The database engine. `SQLite` runs rqlite, which serves SQLite over HTTP on port 4001. `Redis` runs without a volume. A PlanetScale database can be `MySQL` or `Postgres`. |
+| `spec.engine` | string | Required | Enum `Postgres`, `MySQL`, `SQLite`, `Redis`, `MariaDB` | The database engine. `MariaDB` runs the official image under the MariaDB operator. `SQLite` runs rqlite, which serves SQLite over HTTP on port 4001. `Redis` runs without a volume. A PlanetScale database can be `MySQL` or `Postgres`. |
 | `spec.placement` | string | CRD default `InCluster` | Enum `InCluster`, `External` | `InCluster` runs the database in the cluster. `External` connects to a database elsewhere. |
 | `spec.provider` | string | Optional | Enum `PlanetScale`, `AWS` | The external provider. Only meaningful with `placement: External`. `PlanetScale` with `mode: Create` makes Geass create the database on PlanetScale. `AWS` only labels the status message: Geass has no RDS client. |
 | `spec.mode` | string | Optional | Enum `Create`, `Connect` | Only `Create` with `provider: PlanetScale` changes behavior. `Connect` and an empty value behave the same: Geass uses the host, username and password you give it. |
@@ -231,10 +231,11 @@ The Go types and the generated CRD agree for every field on this page.
 | --- | --- | --- | --- |
 | `Postgres` | A CloudNativePG `Cluster` named after the database. | `<name>-rw.<namespace>.svc` | Continuous. Restore to any moment. |
 | `MySQL` | One pod from the official `mysql:8.4.11` image, as the StatefulSet `geass-mysql-<name>` with a volume. With `highAvailability: true`, a MOCO `MySQLCluster` of three or five servers instead. | `geass-mysql-<name>.<namespace>.svc`, or with high availability `moco-<name>-primary.<namespace>.svc` | Daily snapshot. |
+| `MariaDB` | The official `mariadb:11.8.9` image, run by the MariaDB operator as a `MariaDB`: one server, or with `highAvailability: true` three or five that replicate to each other. | `<name>.<namespace>.svc`, or with high availability `<name>-primary.<namespace>.svc` | Daily snapshot. |
 | `SQLite` | One rqlite pod (`rqlite/rqlite:8.36.16`) with a volume, as a Deployment. | `<name>.<namespace>.svc` | Daily snapshot. |
 | `Redis` | One pod from the official `redis:7.4.11-alpine` image, as the StatefulSet `geass-redis-db-<name>-master`. No volume: data does not survive the pod being replaced. | `geass-redis-db-<name>-master.<namespace>.svc` | None. |
 
-With `highAvailability: true` Postgres and MySQL run three instances. When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. Redis runs as one instance: a request for `highAvailability: true`, or for more than one instance, is refused with the message `High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL`. SQLite refuses with the message `SQLite does not support high availability`.
+With `highAvailability: true` Postgres, MySQL and MariaDB run three instances (MySQL and MariaDB three or five, as `instances` says). When Longhorn is installed they use the single-replica storage class `geass-single`, because the instances replicate the data themselves. Redis runs as one instance: a request for `highAvailability: true`, or for more than one instance, is refused with the message `High availability requires PostgreSQL or MySQL: Redis runs as a single instance. Turn it off, or choose PostgreSQL or MySQL`. SQLite refuses with the message `SQLite does not support high availability`.
 
 :::caution
 Geass also treats `instances: 3` or more as a request for high availability when it checks readiness.
@@ -329,7 +330,7 @@ The `Ready` messages you can see, in the order Geass checks them:
 
 | Where | What it does to the `GeassDatabase` |
 | --- | --- |
-| **+ Add resource** > **Database** > **PostgreSQL**, **MySQL**, **Redis** or **SQLite** | Creates a draft with a generated name such as `falling-mist`. It sets `project`, `environment`, `engine`, `placement: InCluster`, `resources` (250m and 512Mi, or 100m and 128Mi for SQLite), `storageSize` (`10Gi`, or `1Gi` for SQLite, none for Redis) and, for Postgres, MySQL and SQLite, `backup: {enabled: true, retentionDays: 7}`. A `runOn` choice is saved only by a dashboard admin. |
+| **+ Add resource** > **Database** > **PostgreSQL**, **MySQL**, **MariaDB**, **Redis** or **SQLite** | Creates a draft with a generated name such as `falling-mist`. It sets `project`, `environment`, `engine`, `placement: InCluster`, `resources` (250m and 512Mi, or 100m and 128Mi for SQLite), `storageSize` (`10Gi`, or `1Gi` for SQLite, none for Redis) and, for Postgres, MySQL and SQLite, `backup: {enabled: true, retentionDays: 7}`. A `runOn` choice is saved only by a dashboard admin. |
 | **+ Add resource** > **Database** > **PlanetScale** or **AWS RDS** | Creates a draft with `placement: External`, `provider`, `connectionRef` and an `engine` (`MySQL` for PlanetScale, `Postgres` for AWS RDS). See the caution under [External databases](#external-databases). |
 | **+ Add resource** > **Database** > **Logical database**, or the entry for a shared server (shown as `<name> (shared)`) | Creates a [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/), not a `GeassDatabase`. |
 | Resource panel, **Settings** tab, **Database** section | **Version** writes `spec.version`. **Resources** writes `spec.resources` (the sizes are 0.1, 0.25, 0.5, 1 or 2 CPU and 128 MB to 4 GB). **Size** under **Storage** writes `spec.storageSize`. These wait for a deploy. |
@@ -365,6 +366,7 @@ Once the database is ready, Geass writes a Secret named `<name>-connection` in t
 | --- | --- |
 | Postgres | `postgresql://<user>:<password>@<host>:5432/<database>` |
 | MySQL | `mysql://<user>:<password>@<host>:3306/<database>` |
+| MariaDB | `mysql://<user>:<password>@<host>:3306/<database>` |
 | Redis | `redis://:<password>@<host>:6379` |
 | SQLite | `http://<host>:4001` |
 
@@ -379,7 +381,7 @@ Geass derives the generated password from the resource name: it is `<name>-passw
 `spec.backup` protects in-cluster databases only. The dashboard refuses to change it for Redis or external databases with `Backups are not available for this kind of database`.
 
 - Postgres is archived continuously (CloudNativePG, Barman object store) and a base backup runs daily at about 02:00 UTC. You can restore to any moment in the recovery window.
-- MySQL and SQLite are copied once a day by a CronJob named `<name>-backup` at about 02:00 UTC. The copies are compressed SQL files, and a restore returns the data as of one of them.
+- MySQL, MariaDB and SQLite are copied once a day by a CronJob named `<name>-backup` at about 02:00 UTC. The copies are compressed SQL files, and a restore returns the data as of one of them.
 - The backups go to the project's backup storage: an S3 bucket in the AWS account of a [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/). Geass creates the bucket (`geass-backups-<random>`) and an IAM user scoped to it when the project's `spec.backupStorage` is set. Until then `status.backup.state` is `NeedsStorage`. A shared server has no project, so it has nowhere to put backups.
 - Geass records each database's backups in a [GeassBackupArchive](/docs/reference/resources/geass-backup-archive/) in `geass-system`.
 - Backups are an add-on. If Geass cannot work out the backup plan, the database keeps running and Geass tries again after a minute.
@@ -449,6 +451,7 @@ Per engine:
 
 - **Postgres**: a HelmChart `geass-cloudnative-pg` in `kube-system` installs the CloudNativePG operator into `cnpg-system`. Then a CNPG `Cluster` `<name>` runs in the database's namespace, with pods `<name>-1`, `<name>-2`, a volume per pod and the Services `<name>-rw`, `<name>-ro` and `<name>-r`. With backups there is a `ScheduledBackup` `<name>`. On delete, a `Backup` named `<name>-final`. A Postgres database that hosts logical databases also gets a `<name>-superuser` Secret.
 - **MySQL**: a StatefulSet `geass-mysql-<name>` of one pod, the Services `geass-mysql-<name>` and `geass-mysql-<name>-headless`, and the volume claim `data-geass-mysql-<name>-0`. The pod's logins come from the `<name>-bootstrap` Secret. A MySQL database made on an earlier development build of Geass is still a HelmChart `geass-mysql-<name>` in `kube-system` (the Bitnami chart, whose images Bitnami has removed from Docker Hub). Geass leaves it exactly as it is.
+- **MariaDB**: a HelmChart `geass-mariadb-operator-crds` and a HelmChart `geass-mariadb-operator` in `kube-system` install the MariaDB operator into `mariadb-system`, with two copies of each of its three parts. Then a `MariaDB` `<name>` runs in the database's namespace: the StatefulSet `<name>`, its pods `<name>-0` and on, a claim `storage-<name>-<index>` for each, and the Services `<name>` (standalone) or `<name>-primary` and `<name>-secondary` (with high availability). The operator makes the `app` login and the database from the `<name>-bootstrap` Secret, and the root login from the same Secret. With high availability there is a suspended `PhysicalBackup` `<name>-recovery`. The annotation `geass.dev/mariadb-initialized` is put on the `GeassDatabase` the first time the operator says the database is ready.
 - **MySQL with high availability**: a HelmChart `geass-moco` in `kube-system` installs MOCO into `moco-system`, with two controller pods, after cert-manager is running. Then a `MySQLCluster` `<name>` runs in the database's namespace: the StatefulSet `moco-<name>`, its pods `moco-<name>-0` and on, a claim `mysql-data-moco-<name>-<index>` for each, and the Services `moco-<name>-primary` and `moco-<name>-replica`. A Job `<name>-login-<id>` makes the application's login and database as MOCO's writing login, `moco-writable`, whose password is in MOCO's own Secret `moco-<name>`. Each server is given at least 1 GiB of memory.
 - **Redis**: a StatefulSet `geass-redis-db-<name>-master` of one pod and the Services `geass-redis-db-<name>-master` and `geass-redis-db-<name>-headless`, with no volume. A Redis database made on an earlier development build, as the Bitnami chart `geass-redis-db-<name>`, is moved to this server the next time it is reconciled: the chart is removed and the server is made in its place, with the message `Replacing the Redis chart with Geass's own server`. Redis keeps no data on disk, so the move costs what a restart of its pod costs.
 - **SQLite**: a Deployment `<name>`, a Service `<name>` on port 4001 and a PVC `<name>-sqlite`.

@@ -1622,6 +1622,7 @@ spec:
                     - MySQL
                     - SQLite
                     - Redis
+                    - MariaDB
                     type: string
                   resources:
                     description: Resources is the CPU and memory the source database
@@ -2713,7 +2714,7 @@ spec:
               backup:
                 description: |-
                   Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
-                  moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+                  moment), MySQL, MariaDB and SQLite (daily snapshots); nil or disabled leaves the database with no
                   recovery path beyond its own disks.
                 properties:
                   enabled:
@@ -2773,6 +2774,7 @@ spec:
                 - MySQL
                 - SQLite
                 - Redis
+                - MariaDB
                 type: string
               environment:
                 description: Environment is the project environment. Empty for the
@@ -6175,6 +6177,8 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
+  - mutatingadmissionpolicies
+  - mutatingadmissionpolicybindings
   - validatingadmissionpolicies
   - validatingadmissionpolicybindings
   verbs:
@@ -6329,6 +6333,19 @@ rules:
   - http.keda.sh
   resources:
   - httpscaledobjects
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - k8s.mariadb.com
+  resources:
+  - mariadbs
+  - physicalbackups
   verbs:
   - create
   - delete

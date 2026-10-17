@@ -82,7 +82,7 @@ There are 16 Geass kinds. Resources that the dashboard creates for you are marke
 
 The cluster also contains objects that Geass creates but does not own: CloudNativePG `Cluster`, `Backup` and `ScheduledBackup` objects for
 Postgres, K3s `HelmChart` objects for add-ons, a CronJob for each schedule of a function, KEDA `HTTPScaledObject`s for services that sleep
-when idle, the admission policy and binding that enforce required node tags, and the monitor and alert rules for the operator. Treat those as
+when idle, the admission policies and bindings that enforce required node tags, MOCO `MySQLCluster` and mariadb-operator `MariaDB` and `PhysicalBackup` objects for highly available MySQL and for MariaDB, and the monitor and alert rules for the operator. Treat those as
 internals; change them through the Geass resource that produces them.
 
 ## Inspect resources with kubectl

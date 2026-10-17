@@ -4,10 +4,10 @@ import { formatRelativeTime } from "@/lib/services";
 export const BACKUP_RETENTION_CHOICES = [7, 14, 30, 90];
 export const DEFAULT_BACKUP_RETENTION_DAYS = 7;
 
-const BACKED_UP_ENGINES = ["Postgres", "MySQL", "SQLite"];
-const SNAPSHOT_ENGINES = ["MySQL", "SQLite"];
+const BACKED_UP_ENGINES = ["Postgres", "MySQL", "MariaDB", "SQLite"];
+const SNAPSHOT_ENGINES = ["MySQL", "MariaDB", "SQLite"];
 
-/** Postgres, MySQL and SQLite databases that run inside Geass have backups; caches and external databases do not. */
+/** Postgres, MySQL, MariaDB and SQLite databases that run inside Geass have backups; caches and external databases do not. */
 export function supportsBackups(item) {
   if (!item?.spec) return false;
   if (item.spec.placement === "External") return false;
@@ -15,7 +15,7 @@ export function supportsBackups(item) {
 }
 
 /**
- * MySQL and SQLite are backed up by a full copy every day, so they can only be restored to when a
+ * MySQL, MariaDB and SQLite are backed up by a full copy every day, so they can only be restored to when a
  * copy was taken. Postgres archives every change and can be restored to any moment.
  */
 export function isSnapshotEngine(engine) {

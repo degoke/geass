@@ -11,6 +11,7 @@ Some data has to stay on machines you can account for, such as health records on
 2. You set the tag as a required tag on the project.
 3. Geass puts the tag on everything the project runs: a node selector and a toleration on its pods, a storage class that keeps volume copies on those nodes, and the same placement for its builds and the jobs that back up its data.
 4. An admission policy refuses a new pod in the project's namespaces unless it carries the same node selector, which catches pods created outside Geass.
+5. A second policy, which changes pods and does not refuse them, gives a pod the node selector and toleration it lacks. It is for pods that operators Geass runs create themselves, such as the copy the MariaDB operator takes to build a replica again, which the operator's own settings cannot give a node selector. Without it those pods would be refused by the policy above.
 
 ## Before you start
 
@@ -18,6 +19,7 @@ Some data has to stay on machines you can account for, such as health records on
 - Setting tags on a node or on a project needs an admin: a dashboard admin, or a workspace API token with the admin role. Project tokens cannot.
 - **Databases that already hold data are not moved.** A project that has an in-cluster database on nodes without the tag cannot take the tag. See [Projects that already have databases](#projects-that-already-have-databases).
 - The admission policy needs a Kubernetes version that serves `ValidatingAdmissionPolicy` in `admissionregistration.k8s.io/v1`, which is 1.30 or later. On an older cluster everything else works, and Geass logs that pods created outside Geass are not checked.
+- The policy that adds the node selector needs `MutatingAdmissionPolicy` in `admissionregistration.k8s.io/v1`, which is 1.36 or later. On an older cluster it is not installed, Geass logs that, and a pod that an operator creates without a node selector is refused by the first policy. Everything Geass creates itself carries the selector either way.
 
 ## Mark a tag as a compliance tag
 
@@ -134,7 +136,7 @@ The fragment shows only the field involved. Add it to your project's full manife
 | The object storage server's own volume | With Longhorn, its copies stay on the nodes that carry the tags the server runs on, in its region, so its data is never replicated onto other nodes. Without Longhorn, the volume stays on the node its pod runs on. |
 | Databases on a shared server | The server must run on nodes with the tags. Otherwise the database is refused. |
 | Logs | Not sent to the shared log store. See [Logs](#logs). |
-| Pods made by anything else | Refused by the admission policy. |
+| Pods made by operators that Geass runs, and by anything else that lacks them | Given the node selector and toleration by the mutating policy on Kubernetes 1.36 or later. Where it is not available, refused by the admission policy. A pod that names its own node is always refused. |
 
 Other projects are kept off the tagged nodes by the taint on them, and their volume copies by the `geass-general` tag (see [What happens under the hood](#what-happens-under-the-hood)).
 
@@ -195,6 +197,7 @@ Longhorn's managers and its driver tolerate reserved nodes, so a compliance node
 kubectl get nodes -o custom-columns='NODE:.metadata.name,TAINTS:.spec.taints[*].key'
 kubectl get namespace morning-beach-production -o jsonpath='{.metadata.annotations}{"\n"}'
 kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding geass-required-node-tags
+kubectl get mutatingadmissionpolicy,mutatingadmissionpolicybinding geass-required-node-tags-defaults
 kubectl -n longhorn-system get nodes.longhorn.io -o custom-columns='NODE:.metadata.name,TAGS:.spec.tags'
 kubectl get storageclass
 kubectl -n geass-system get geassdatabase orders -o jsonpath='{.metadata.annotations.geass\.dev/node-placement}{"\n"}'
@@ -223,6 +226,9 @@ Expected. See [Logs](#logs).
 
 **Other projects' pods are still on a compliance node.**
 They were there before the node became a compliance node, and stay until they restart. Restart them.
+
+**A pod I created without a node selector was given one.**
+That is the second policy, `geass-required-node-tags-defaults`. It adds the node selector and toleration for each required tag that the pod lacks, keeps everything the pod already had, and sets a tag the pod set to anything but `"true"`. It does not touch a pod in a namespace that requires nothing.
 
 **Pods created with `kubectl` are not refused.**
 Check `kubectl get validatingadmissionpolicy geass-required-node-tags`. On a cluster older than 1.30 the kind may not be served, and the operator log says "Admission policies are not available, so pods created outside Geass are not checked for required node tags".

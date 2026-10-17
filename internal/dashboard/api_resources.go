@@ -14,6 +14,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
 	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/release"
@@ -536,7 +537,7 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 	// A pod with one container needs none named. A MOCO pod has the server and its agent, and the API refuses an
 	// exec that does not say which of them (kubectl picks the first for you; this does not).
 	container := consoleContainer(&db)
-	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(&db) {
+	if usesOperatorLogin(&db) {
 		command, err = s.mysqlClusterQueryCommand(r.Context(), db, query)
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]any{"output": err.Error()})
@@ -574,6 +575,8 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 		"cnpg.io/cluster=" + db.Name,
 		// A MOCO cluster's replicas refuse writes, so the console goes to the primary.
 		"app.kubernetes.io/instance=" + db.Name + "," + mocoRoleLabel + "=primary",
+		// The same for a MariaDB the operator replicates.
+		"app.kubernetes.io/instance=" + db.Name + "," + mariadbv1.RoleLabel + "=" + mariadbv1.RolePrimary,
 		"app.kubernetes.io/instance=" + db.Name,
 		"app.kubernetes.io/instance=geass-mysql-" + db.Name,
 		"app.kubernetes.io/instance=geass-redis-db-" + db.Name,
@@ -595,16 +598,25 @@ func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDat
 // consoleContainer is the container the console runs its command in, or empty for a pod that has just the one. A MOCO
 // pod has the server and its agent, and an exec that does not name one is refused by the API server.
 func consoleContainer(db *geassv1alpha1.GeassDatabase) string {
-	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(db) {
+	switch {
+	case db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(db):
 		return mocov1.MySQLContainerName
+	case db.Spec.Engine == geassv1alpha1.DatabaseEngineMariaDB:
+		return mariadbv1.ContainerName
 	}
 	return ""
+}
+
+// usesOperatorLogin is whether the console reaches the database with the application's own login, read from the
+// database's Secret, because the pods of its operator hold no login in their environment.
+func usesOperatorLogin(db *geassv1alpha1.GeassDatabase) bool {
+	return db.Spec.Engine == geassv1alpha1.DatabaseEngineMariaDB || (db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && platform.DatabaseWantsHA(db))
 }
 
 // mocoRoleLabel is on the pods of a MOCO cluster and says which of them is the primary.
 const mocoRoleLabel = "moco.cybozu.com/role"
 
-// mysqlClusterQueryCommand is the console command for a MySQL cluster that MOCO runs. Its pods hold no login in
+// mysqlClusterQueryCommand is the console command for a MySQL cluster that MOCO runs, or a MariaDB the operator runs. Its pods hold no login in
 // their environment, as the single server's do, so the application's own login is read from the database's
 // Secret and handed to the client in the command's environment. The query is an argument of the client, never
 // part of a shell script, so it cannot change what runs.
@@ -617,9 +629,14 @@ func (s *Server) mysqlClusterQueryCommand(ctx context.Context, db geassv1alpha1.
 	if database == "" {
 		database = db.Name
 	}
+	tool := "mysql"
+	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMariaDB {
+		// The image has MariaDB's own tools, and no mysql.
+		tool = "mariadb"
+	}
 	return []string{
 		"env", "MYSQL_PWD=" + string(secret.Data["password"]),
-		"mysql", "--user=" + string(secret.Data["username"]), "--database=" + database, "-e", query,
+		tool, "--user=" + string(secret.Data["username"]), "--database=" + database, "-e", query,
 	}, nil
 }
 
@@ -641,6 +658,9 @@ func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string
 		// No argument is a flag (they are refused above), so nothing can change how redis-cli connects. A "--" before
 		// them is not accepted by redis-cli, which answered every command with "Unrecognized option".
 		return append([]string{"redis-cli"}, args...), nil
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		// Reached with the application's own login (see usesOperatorLogin), which this command is replaced by.
+		return []string{"mariadb", "-e", query}, nil
 	case geassv1alpha1.DatabaseEngineSQLite:
 		return []string{"rqlite", "-e", query}, nil
 	default:
