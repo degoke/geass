@@ -53,6 +53,9 @@ type dumpOutcome struct {
 	waiting string
 	// backups is whether backups are on, which decides if their status needs refreshing later.
 	backups bool
+	// pending is true while backups are being set up and need another look soon: the database is told to use what
+	// they made a reconcile after it exists.
+	pending bool
 	// failed is true when backups could not be brought up to date this time. The database is still
 	// ready, because its data is fine, and is looked at again soon.
 	failed bool

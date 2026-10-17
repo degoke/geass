@@ -597,6 +597,71 @@ spec:
                         x-kubernetes-list-type: atomic
                     type: object
                 type: object
+              bootstrapFrom:
+                description: |-
+                  BootstrapFrom makes a new database from a backup, and from binary logs up to a moment, instead of an empty one.
+                  It is fixed once the database exists.
+                properties:
+                  pointInTimeRecoveryRef:
+                    description: PointInTimeRecoveryRef is the PointInTimeRecovery
+                      whose physical backup and binary logs are restored.
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  stagingStorage:
+                    description: StagingStorage holds the backup and the binary logs
+                      while they are restored.
+                    properties:
+                      persistentVolumeClaim:
+                        description: PersistentVolumeClaimStorage is the claim a copy
+                          is kept on.
+                        properties:
+                          accessModes:
+                            items:
+                              type: string
+                            type: array
+                          resources:
+                            description: VolumeResourceRequirements describes the
+                              storage resource requirements for a volume.
+                            properties:
+                              limits:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: |-
+                                  Limits describes the maximum amount of compute resources allowed.
+                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                type: object
+                              requests:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: |-
+                                  Requests describes the minimum amount of compute resources required.
+                                  If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                  otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                type: object
+                            type: object
+                          storageClassName:
+                            type: string
+                        type: object
+                    type: object
+                  targetRecoveryTime:
+                    description: TargetRecoveryTime is the moment to restore to. Empty
+                      restores everything that was archived.
+                    format: date-time
+                    type: string
+                type: object
               database:
                 description: Database, Username and PasswordSecretKeyRef make the
                   application's database and login when the server starts.
@@ -625,6 +690,16 @@ spec:
                     type: string
                 required:
                 - key
+                - name
+                type: object
+              pointInTimeRecoveryRef:
+                description: |-
+                  PointInTimeRecoveryRef has the primary archive its binary logs to the storage of the PointInTimeRecovery it
+                  names, so the database can be restored to any moment after a physical backup. It needs replication.
+                properties:
+                  name:
+                    type: string
+                required:
                 - name
                 type: object
               replicas:
@@ -762,6 +837,24 @@ spec:
                 required:
                 - key
                 - name
+                type: object
+              startupProbe:
+                description: |-
+                  StartupProbe is laid over the operator's own, whose handler it keeps: what is said here replaces the same
+                  field of the default and nothing else changes.
+                properties:
+                  failureThreshold:
+                    format: int32
+                    type: integer
+                  initialDelaySeconds:
+                    format: int32
+                    type: integer
+                  periodSeconds:
+                    format: int32
+                    type: integer
+                  timeoutSeconds:
+                    format: int32
+                    type: integer
                 type: object
               storage:
                 description: Storage is the volume of each server.

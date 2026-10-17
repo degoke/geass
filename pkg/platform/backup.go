@@ -190,19 +190,129 @@ const (
 	BackupKindSnapshot BackupKind = "snapshot"
 )
 
-// DatabaseBackupKind reports how a database of this engine and placement is backed up.
-func DatabaseBackupKind(engine geassv1alpha1.GeassDatabaseEngine, placement geassv1alpha1.GeassDatabasePlacement) BackupKind {
+// DatabaseBackupKind reports how a database of this engine and placement is backed up. A MariaDB database that is
+// replicated is backed up continuously, because the operator archives the binary logs of a replicated primary and
+// replays them on a new one; one server only has the daily copies.
+func DatabaseBackupKind(engine geassv1alpha1.GeassDatabaseEngine, placement geassv1alpha1.GeassDatabasePlacement, highAvailability bool) BackupKind {
 	if placement == geassv1alpha1.DatabasePlacementExternal {
 		return BackupKindNone
 	}
 	switch engine {
 	case geassv1alpha1.DatabaseEnginePostgres, "":
 		return BackupKindContinuous
-	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB, geassv1alpha1.DatabaseEngineSQLite:
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		if highAvailability {
+			return BackupKindContinuous
+		}
+		return BackupKindSnapshot
+	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineSQLite:
 		return BackupKindSnapshot
 	default:
 		return BackupKindNone
 	}
+}
+
+// ArchiveBackupKind is how the backups an archive holds were made.
+func ArchiveBackupKind(source geassv1alpha1.GeassBackupSource) BackupKind {
+	return DatabaseBackupKind(source.Engine, "", source.HighAvailability)
+}
+
+// PhysicalObjectPrefix is the key prefix that holds a replicated MariaDB database's physical backups, and
+// BinlogObjectPrefix the one that holds its archived binary logs, both with a trailing slash.
+func PhysicalObjectPrefix(project, serverName string) string {
+	return BackupObjectPrefix(project, serverName) + "physical/"
+}
+
+func BinlogObjectPrefix(project, serverName string) string {
+	return BackupObjectPrefix(project, serverName) + "binlogs/"
+}
+
+const (
+	// PhysicalBackupFilePrefix and PhysicalBackupFileSuffix are how the MariaDB operator names a gzip-compressed
+	// physical backup: physicalbackup-<UTC date and time>.xb.gz.
+	PhysicalBackupFilePrefix = "physicalbackup-"
+	PhysicalBackupFileSuffix = ".xb.gz"
+	physicalTimestampLayout  = "20060102150405"
+	// BinlogPruneMargin is how much older than the oldest physical backup an archived binary log has to be before it
+	// is removed. A log written before a backup began has nothing a restore from it needs, and the margin is for the
+	// time a log takes to reach the bucket.
+	BinlogPruneMargin = time.Hour
+)
+
+// ParsePhysicalObject reads the restore point ID and time out of a physical backup's key. Anything else in the
+// folder is not a backup. The ID is the time in the form snapshots use, so restore points look the same.
+func ParsePhysicalObject(key string) (id string, at time.Time, ok bool) {
+	name := key[strings.LastIndex(key, "/")+1:]
+	stamp, found := strings.CutPrefix(name, PhysicalBackupFilePrefix)
+	if !found {
+		return "", time.Time{}, false
+	}
+	stamp, found = strings.CutSuffix(stamp, PhysicalBackupFileSuffix)
+	if !found {
+		return "", time.Time{}, false
+	}
+	parsed, err := time.Parse(physicalTimestampLayout, stamp)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	parsed = parsed.UTC()
+	return parsed.Format(dumpTimestampLayout), parsed, true
+}
+
+// PhysicalRestorePoints turns the keys of the physical backup folder into restore points, newest first.
+func PhysicalRestorePoints(keys []string) []geassv1alpha1.GeassRestorePoint {
+	points := make([]geassv1alpha1.GeassRestorePoint, 0, len(keys))
+	for _, key := range keys {
+		if id, at, ok := ParsePhysicalObject(key); ok {
+			points = append(points, geassv1alpha1.GeassRestorePoint{ID: id, Time: metav1.NewTime(at)})
+		}
+	}
+	slices.SortFunc(points, func(a, b geassv1alpha1.GeassRestorePoint) int { return b.Time.Compare(a.Time.Time) })
+	if len(points) > MaxRestorePoints {
+		points = points[:MaxRestorePoints]
+	}
+	return points
+}
+
+// ParseRestorePointTime reads the time out of a restore point ID, in the form PhysicalRestorePoints writes.
+func ParseRestorePointTime(id string) (time.Time, bool) {
+	parsed, err := time.Parse(dumpTimestampLayout, id)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed.UTC(), true
+}
+
+// StoredObject is an object in a backup bucket with the time it was written.
+type StoredObject struct {
+	Key      string
+	Modified time.Time
+}
+
+// ExpiredBinlogs picks the archived binary logs that no restore can use any more: the ones last written before the
+// oldest physical backup that is kept began, less a margin. The operator removes old physical backups itself, by
+// the retention it was given, and never removes a log, so without this the archive of a busy database would grow for
+// ever. The inventory file is never removed, and nothing is removed while there is no backup to measure from.
+func ExpiredBinlogs(objects []StoredObject, physicalKeys []string) []string {
+	oldest := time.Time{}
+	for _, key := range physicalKeys {
+		if _, at, ok := ParsePhysicalObject(key); ok && (oldest.IsZero() || at.Before(oldest)) {
+			oldest = at
+		}
+	}
+	if oldest.IsZero() {
+		return nil
+	}
+	cutoff := oldest.Add(-BinlogPruneMargin)
+	var expired []string
+	for _, object := range objects {
+		name := object.Key[strings.LastIndex(object.Key, "/")+1:]
+		if !strings.HasSuffix(name, ".gz") || object.Modified.IsZero() || !object.Modified.Before(cutoff) {
+			continue
+		}
+		expired = append(expired, object.Key)
+	}
+	return expired
 }
 
 // DumpSchedule is a daily Kubernetes cron expression at 02:xx UTC. It uses the same minute as
@@ -305,7 +415,7 @@ func ValidateRestoreTarget(archive *geassv1alpha1.GeassBackupArchive, restorePoi
 	if restorePoint != "" && at != nil {
 		return UserError("Choose either a restore point or a time, not both")
 	}
-	if at != nil && DatabaseBackupKind(archive.Spec.Source.Engine, "") == BackupKindSnapshot {
+	if at != nil && ArchiveBackupKind(archive.Spec.Source) == BackupKindSnapshot {
 		return UserError("This database can only be restored to a restore point")
 	}
 	// Every restore starts from a base backup. Without one a recovery never finishes, and the

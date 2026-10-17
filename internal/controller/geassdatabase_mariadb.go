@@ -241,6 +241,9 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 		logf.FromContext(ctx).Info("Waiting for the MariaDB operator", "message", msg)
 		return r.setNotReady(ctx, db, msg)
 	}
+	if err := r.inheritMariaDBCredentials(ctx, db); err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
@@ -249,7 +252,11 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 			return r.setNotReady(ctx, db, err.Error())
 		}
 	}
-	mdb, err := r.ensureMariaDB(ctx, db, wsNS, storageClass, placement, instances)
+	bootstrap, err := r.mariadbRestoreBootstrap(ctx, db, wsNS, storageClass)
+	if err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
+	mdb, err := r.ensureMariaDB(ctx, db, wsNS, storageClass, placement, instances, bootstrap)
 	if err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
@@ -271,7 +278,11 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 		}
 	}
 	if !r.mariadbServing(ctx, db, wsNS, mdb) {
-		res, err := r.setNotReady(ctx, db, r.serverNotReadyMessage(ctx, wsNS, serverSpec{name: mariadbServerName(db)}))
+		message := r.serverNotReadyMessage(ctx, wsNS, serverSpec{name: mariadbServerName(db)})
+		if mdb.Spec.BootstrapFrom != nil && db.Status.RestoredAt == nil {
+			message = messageRestoringDatabase
+		}
+		res, err := r.setNotReady(ctx, db, message)
 		res.RequeueAfter = shortestRequeue(res.RequeueAfter, result.RequeueAfter)
 		return res, err
 	}
@@ -279,14 +290,12 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 	if err := r.reconcileGeneratedConnectionSecret(ctx, db, wsNS, host, platform.MySQLDefaultPort, "mysql"); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
-	var backups dumpOutcome
-	if databaseBackupKind(db) == platform.BackupKindSnapshot {
-		if backups, err = r.reconcileDumpBackups(ctx, db, wsNS); err != nil {
-			return r.setNotReady(ctx, db, err.Error())
-		}
-		if backups.waiting != "" {
-			return r.setNotReady(ctx, db, backups.waiting)
-		}
+	backups, err := r.reconcileMariaDBBackups(ctx, db, wsNS, storageClass, placement, mdb)
+	if err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
+	if backups.waiting != "" {
+		return r.setNotReady(ctx, db, backups.waiting)
 	}
 	res, err := r.setReadyWithBackups(ctx, db, wsNS, host, string(db.Spec.Engine)+" database is ready", backups)
 	if err == nil && result.RequeueAfter > 0 {
@@ -379,13 +388,15 @@ func (r *GeassDatabaseReconciler) mariadbOperatorReady(ctx context.Context) (boo
 func (r *GeassDatabaseReconciler) ensureMariaDBRecoveryTemplate(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) error {
 	desired := mariadbRecoveryTemplate(db, wsNS, storageClass, placement)
 	template := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: wsNS}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, template, func() error {
+	_, err := controllerutil.CreateOrPatch(ctx, r.Client, template, func() error {
 		applyGeassLabels(template, db, "GeassDatabase")
 		spec := desired.Spec
 		if template.ResourceVersion != "" && template.Spec.Storage.PersistentVolumeClaim != nil && spec.Storage.PersistentVolumeClaim != nil {
 			// Where a copy is kept is fixed once the template exists, as the claim of the database is.
 			spec.Storage.PersistentVolumeClaim.StorageClassName = template.Spec.Storage.PersistentVolumeClaim.StorageClassName
 		}
+		// What the operator fills in and Geass does not say is left as it is, so a pass with nothing to change sends nothing.
+		spec.Compression, spec.MaxRetention = template.Spec.Compression, template.Spec.MaxRetention
 		template.Spec = spec
 		return setSameNamespaceOwner(db, template, r.Scheme)
 	})
@@ -395,13 +406,21 @@ func (r *GeassDatabaseReconciler) ensureMariaDBRecoveryTemplate(ctx context.Cont
 // ensureMariaDB creates or updates the database and returns it as the API server last saw it. What the operator
 // refuses to change once the servers exist is kept as it is: the logins, the volume's class, and which server is
 // the primary, which is the operator's to move on a failover and Geass's on a lost machine.
-func (r *GeassDatabaseReconciler) ensureMariaDB(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, instances int32) (*mariadbv1.MariaDB, error) {
+func (r *GeassDatabaseReconciler) ensureMariaDB(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, instances int32, bootstrap *mariadbv1.BootstrapFrom) (*mariadbv1.MariaDB, error) {
 	mdb := &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, mdb, func() error {
+	archivesLogs := r.mariadbArchivesLogs(ctx, db, wsNS)
+	_, err := controllerutil.CreateOrPatch(ctx, r.Client, mdb, func() error {
 		applyGeassLabels(mdb, db, "GeassDatabase")
 		live := mdb.Spec
 		desired := mariadbSpec(db, storageClass, placement, instances)
+		// The database archives its binary logs only once the object that says where exists, and stops before it is
+		// removed. What it was started from is fixed with the database.
+		if archivesLogs {
+			desired.PointInTimeRecoveryRef = &mariadbv1.LocalRef{Name: mariadbPITRName(db)}
+		}
+		desired.BootstrapFrom = bootstrap
 		if mdb.ResourceVersion != "" {
+			desired.BootstrapFrom = live.BootstrapFrom
 			desired.RootPasswordSecretKeyRef = live.RootPasswordSecretKeyRef
 			desired.Database, desired.Username, desired.PasswordSecretKeyRef = live.Database, live.Username, live.PasswordSecretKeyRef
 			desired.Storage.StorageClassName = live.Storage.StorageClassName
@@ -606,6 +625,9 @@ func mariadbGtidSequence(position string) (int64, bool) {
 // objects are owned by the database and go with it, but the volume claims of a StatefulSet do not.
 func (r *GeassDatabaseReconciler) deleteMariaDBResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
 	log := logf.FromContext(ctx)
+	if err := r.deleteMariaDBBackupObjects(ctx, db, wsNS); err != nil {
+		log.Info("Could not delete the MariaDB backups", "name", db.Name, "error", err.Error())
+	}
 	// Deleting a kind that is not installed is not an error worth saying: nothing was ever made.
 	ignore := func(err error) bool {
 		return err == nil || apierrors.IsNotFound(err) || meta.IsNoMatchError(err)

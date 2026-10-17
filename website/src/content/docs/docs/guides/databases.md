@@ -24,7 +24,7 @@ This page covers one database per resource. To share a single server between man
 | --- | --- | --- | --- | --- |
 | PostgreSQL | A CloudNativePG cluster using the image `ghcr.io/cloudnative-pg/postgresql:<version>`. Version 16 by default | 0.25 CPU, 512 MB | 10 GiB | Continuous, restore to any moment |
 | MySQL | The official `mysql:8.4.11` image, one pod on a volume. With high availability, three or five servers run by MOCO, from its own build of MySQL 8.4 | 0.25 CPU, 512 MB (1 GB with high availability) | 10 GiB | Daily copy |
-| MariaDB | The official `mariadb:11.8.9` image, run by the MariaDB operator: one server on a volume, or with high availability three or five that replicate to each other | 0.25 CPU, 512 MB | 10 GiB | Daily copy |
+| MariaDB | The official `mariadb:11.8.9` image, run by the MariaDB operator: one server on a volume, or with high availability three or five that replicate to each other | 0.25 CPU, 512 MB | 10 GiB | One server: daily copy. With high availability: continuous, restore to any moment |
 | Redis | The official `redis:7.4.11-alpine` image, one pod, with persistence off | 0.25 CPU, 512 MB | None | None |
 | SQLite | rqlite 8.36.16, which serves SQLite over HTTP on port 4001 | 0.1 CPU, 128 MB | 1 GiB | Daily copy |
 
@@ -313,7 +313,7 @@ A MariaDB database runs on the [MariaDB operator](https://github.com/mariadb-ope
 - **The application's login** is `app`, made with its database by the operator once every server is up. Until then the database is not reported ready, even though a server is running.
 - **Starting a server** is given five minutes. A server that is stopped in the middle of setting up its data directory, which the operator's own limit of 50 seconds did on a busy node, starts again with no root password and is not repaired by a later start.
 - **Spreading.** The servers prefer different nodes, which is a preference and not a rule, as for MySQL. See [High availability](/docs/operations/high-availability/#where-the-instances-run).
-- **Backups** are the daily copies the other single-server engines have, taken from the primary with `mariadb-dump`.
+- **Backups** are a physical copy every night with the primary's binary logs archived beside it, so the database can be restored to any moment up to about fifteen minutes ago, as Postgres can. A MariaDB database that runs as one server has the daily copies the other single-server engines have, taken with `mariadb-dump`. See [Backups and restore](/docs/guides/backups-and-restore/#mariadb-with-high-availability-copies-and-archived-logs).
 - **Compliance tags.** The operator makes some pods itself, such as the copy used to build a replica again. On Kubernetes 1.36 or later a policy gives them the node selector of a project that requires tags; see [Compliance node tags](/docs/guides/compliance-tags/).
 
 ## Where a database runs

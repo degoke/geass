@@ -234,23 +234,28 @@ func metav1Time(at time.Time) metav1.Time { return metav1.NewTime(at) }
 func TestDatabaseBackupKind(t *testing.T) {
 	inCluster, external := geassv1alpha1.DatabasePlacementInCluster, geassv1alpha1.DatabasePlacementExternal
 	tests := []struct {
-		name      string
-		engine    geassv1alpha1.GeassDatabaseEngine
-		placement geassv1alpha1.GeassDatabasePlacement
-		want      BackupKind
+		name             string
+		engine           geassv1alpha1.GeassDatabaseEngine
+		placement        geassv1alpha1.GeassDatabasePlacement
+		highAvailability bool
+		want             BackupKind
 	}{
-		{"postgres", geassv1alpha1.DatabaseEnginePostgres, inCluster, BackupKindContinuous},
-		{"an unset engine is postgres", "", inCluster, BackupKindContinuous},
-		{"an unset placement is in the cluster", geassv1alpha1.DatabaseEnginePostgres, "", BackupKindContinuous},
-		{"mysql", geassv1alpha1.DatabaseEngineMySQL, inCluster, BackupKindSnapshot},
-		{"sqlite", geassv1alpha1.DatabaseEngineSQLite, inCluster, BackupKindSnapshot},
-		{"redis is a cache", geassv1alpha1.DatabaseEngineRedis, inCluster, BackupKindNone},
-		{"an external postgres is the provider's to back up", geassv1alpha1.DatabaseEnginePostgres, external, BackupKindNone},
-		{"an external mysql", geassv1alpha1.DatabaseEngineMySQL, external, BackupKindNone},
+		{"postgres", geassv1alpha1.DatabaseEnginePostgres, inCluster, false, BackupKindContinuous},
+		{"an unset engine is postgres", "", inCluster, false, BackupKindContinuous},
+		{"an unset placement is in the cluster", geassv1alpha1.DatabaseEnginePostgres, "", false, BackupKindContinuous},
+		{"mysql", geassv1alpha1.DatabaseEngineMySQL, inCluster, false, BackupKindSnapshot},
+		{"a highly available mysql is still copied daily", geassv1alpha1.DatabaseEngineMySQL, inCluster, true, BackupKindSnapshot},
+		{"one mariadb server is copied daily", geassv1alpha1.DatabaseEngineMariaDB, inCluster, false, BackupKindSnapshot},
+		{"a replicated mariadb is backed up continuously", geassv1alpha1.DatabaseEngineMariaDB, inCluster, true, BackupKindContinuous},
+		{"an external mariadb has none", geassv1alpha1.DatabaseEngineMariaDB, external, true, BackupKindNone},
+		{"sqlite", geassv1alpha1.DatabaseEngineSQLite, inCluster, false, BackupKindSnapshot},
+		{"redis is a cache", geassv1alpha1.DatabaseEngineRedis, inCluster, false, BackupKindNone},
+		{"an external postgres is the provider's to back up", geassv1alpha1.DatabaseEnginePostgres, external, false, BackupKindNone},
+		{"an external mysql", geassv1alpha1.DatabaseEngineMySQL, external, false, BackupKindNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, DatabaseBackupKind(tt.engine, tt.placement))
+			require.Equal(t, tt.want, DatabaseBackupKind(tt.engine, tt.placement, tt.highAvailability))
 		})
 	}
 }
@@ -365,4 +370,56 @@ func TestExpiredDumpKeysAreOlderThanTheRetentionButTheNewestIsNeverOne(t *testin
 
 	require.Equal(t, ExpiredDumpKeys(keys, 7, now), ExpiredDumpKeys(keys, 0, now), "unset retention uses the default")
 	require.ElementsMatch(t, []string{key(8), key(30)}, ExpiredDumpKeys(keys, 0, now))
+}
+
+func TestPhysicalBackupObjectsAreReadAsRestorePoints(t *testing.T) {
+	prefix := PhysicalObjectPrefix("proj-1", "orders-abcd1234")
+	require.Equal(t, "proj-1/orders-abcd1234/physical/", prefix)
+	require.Equal(t, "proj-1/orders-abcd1234/binlogs/", BinlogObjectPrefix("proj-1", "orders-abcd1234"))
+
+	id, at, ok := ParsePhysicalObject(prefix + "physicalbackup-20261017090623.xb.gz")
+	require.True(t, ok)
+	require.Equal(t, "20261017T090623Z", id, "the same form a snapshot's ID has")
+	require.Equal(t, time.Date(2026, 10, 17, 9, 6, 23, 0, time.UTC), at)
+	got, ok := ParseRestorePointTime(id)
+	require.True(t, ok)
+	require.Equal(t, at, got)
+
+	for _, key := range []string{prefix, prefix + "index.yaml", prefix + "physicalbackup-20261017090623.xb", prefix + "physicalbackup-nope.xb.gz", "physicalbackup-20261017090623.sql.gz"} {
+		_, _, ok := ParsePhysicalObject(key)
+		require.False(t, ok, key)
+	}
+
+	points := PhysicalRestorePoints([]string{
+		prefix + "physicalbackup-20261017085220.xb.gz", prefix + "index.yaml", prefix + "physicalbackup-20261018020000.xb.gz", prefix + "physicalbackup-20261017090623.xb.gz",
+	})
+	require.Len(t, points, 3)
+	require.Equal(t, []string{"20261018T020000Z", "20261017T090623Z", "20261017T085220Z"}, []string{points[0].ID, points[1].ID, points[2].ID}, "newest first")
+}
+
+func TestOnlyBinaryLogsOlderThanTheOldestBackupAreExpired(t *testing.T) {
+	prefix := BinlogObjectPrefix("proj-1", "orders-abcd1234")
+	physical := PhysicalObjectPrefix("proj-1", "orders-abcd1234")
+	oldest := time.Date(2026, 10, 10, 2, 0, 0, 0, time.UTC)
+	physicalKeys := []string{physical + "physicalbackup-20261010020000.xb.gz", physical + "physicalbackup-20261017020000.xb.gz"}
+	objects := []StoredObject{
+		{prefix + "index.yaml", oldest.Add(-72 * time.Hour)},
+		{prefix + "server-10/orders-bin.000001.gz", oldest.Add(-72 * time.Hour)},
+		{prefix + "server-10/orders-bin.000002.gz", oldest.Add(-2 * time.Hour)},
+		{prefix + "server-10/orders-bin.000003.gz", oldest.Add(-30 * time.Minute)},
+		{prefix + "server-10/orders-bin.000004.gz", oldest.Add(24 * time.Hour)},
+		{prefix + "server-10/orders-bin.000005.gz", time.Time{}},
+	}
+
+	require.Equal(t, []string{prefix + "server-10/orders-bin.000001.gz", prefix + "server-10/orders-bin.000002.gz"},
+		ExpiredBinlogs(objects, physicalKeys), "a log within the margin of the oldest backup stays, and the inventory is never removed")
+	require.Empty(t, ExpiredBinlogs(objects, nil), "nothing is removed while there is no backup to measure from")
+	require.Empty(t, ExpiredBinlogs(objects, []string{physical + "index.yaml"}))
+}
+
+func TestArchiveBackupKindFollowsTheSourcesTopology(t *testing.T) {
+	require.Equal(t, BackupKindContinuous, ArchiveBackupKind(geassv1alpha1.GeassBackupSource{}))
+	require.Equal(t, BackupKindSnapshot, ArchiveBackupKind(geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMariaDB}))
+	require.Equal(t, BackupKindContinuous, ArchiveBackupKind(geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMariaDB, HighAvailability: true}))
+	require.Equal(t, BackupKindSnapshot, ArchiveBackupKind(geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMySQL, HighAvailability: true}))
 }

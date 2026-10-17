@@ -1,11 +1,11 @@
 ---
 title: "Backups and restore"
-description: "Back up Postgres, MySQL and SQLite databases to an S3 bucket in your own AWS account, restore to a new database, and check that backups are healthy."
+description: "Back up Postgres, MySQL, MariaDB and SQLite databases to an S3 bucket in your own AWS account, restore to a new database, and check that backups are healthy."
 ---
 
-Geass backs up the Postgres, MySQL and SQLite databases it runs. The backups go to an S3 bucket in your own AWS account, so you keep the data and pay AWS directly. If a database's data is lost or damaged, or you delete the database, you restore it as a new database next to the original. Geass never restores in place.
+Geass backs up the Postgres, MySQL, MariaDB and SQLite databases it runs. The backups go to an S3 bucket in your own AWS account, so you keep the data and pay AWS directly. If a database's data is lost or damaged, or you delete the database, you restore it as a new database next to the original. Geass never restores in place.
 
-Postgres is backed up continuously, so you can restore it to any recent moment. MySQL and SQLite are copied once a day, so you restore to one of those copies and lose the changes made since.
+Postgres is backed up continuously, and so is a MariaDB database with high availability, so you can restore either to any recent moment. MySQL, SQLite and a MariaDB database that runs as one server are copied once a day, so you restore to one of those copies and lose the changes made since.
 
 ## What is backed up
 
@@ -13,6 +13,8 @@ Postgres is backed up continuously, so you can restore it to any recent moment. 
 | --- | --- | --- | --- |
 | PostgreSQL running in the cluster | Yes | Continuous archiving and a daily base backup | Any moment in the recovery window, or a daily restore point |
 | MySQL running in the cluster | Yes | A compressed SQL dump every day | A daily restore point |
+| MariaDB with high availability | Yes | A physical copy every night, and the binary logs archived beside it | Any moment in the recovery window, or a nightly restore point |
+| MariaDB as one server | Yes | A compressed SQL dump every day | A daily restore point |
 | SQLite running in the cluster | Yes | A compressed SQL dump every day | A daily restore point |
 | Redis | No. It is a cache with no persistence | None | Not applicable |
 | External databases (AWS RDS, PlanetScale) | No | Use your provider's backups | Not applicable |
@@ -20,7 +22,7 @@ Postgres is backed up continuously, so you can restore it to any recent moment. 
 | Buckets | No | See [Object storage](/docs/guides/object-storage/) | Not applicable |
 | Pull request environment copies | No. They are throwaway | None | Not applicable |
 
-New PostgreSQL, MySQL and SQLite databases created in the dashboard, through the REST API or from a template start with backups on and a 7-day retention. Databases created from a manifest, and databases that existed before backups did, start with backups off, so you turn them on yourself. A database with backups on protects nothing until its project has somewhere to store them.
+New PostgreSQL, MySQL, MariaDB and SQLite databases created in the dashboard, through the REST API or from a template start with backups on and a 7-day retention. Databases created from a manifest, and databases that existed before backups did, start with backups off, so you turn them on yourself. A database with backups on protects nothing until its project has somewhere to store them.
 
 ## Before you start
 
@@ -104,6 +106,18 @@ Retention is 1 to 365 days, and the default is 7. Lowering it lets Geass remove 
 - The recovery window starts at the oldest retained base backup. It ends about five minutes before now, because the newest changes may not have reached the bucket yet. It stops moving if archiving fails.
 - Retention keeps the base backups and log needed to restore anywhere in the last N days.
 
+### MariaDB with high availability: copies and archived logs
+
+- The MariaDB operator takes a physical copy of a replica every night at about 02:00 UTC, with `mariadb-backup`. The first is taken a minute or two after backups are set up, once the database has begun to archive its logs and is ready again: telling it to archive makes the operator roll the servers and move the primary, and a copy taken before that is of a primary whose logs were never archived, which a restore to a moment could not replay. A copy is compressed and uploaded to the bucket as `<project ID>/<folder>/physical/physicalbackup-<UTC date and time>.xb.gz`. The copies in the bucket are the restore points. The operator removes copies older than the retention itself.
+- The primary's binary logs are archived to `<project ID>/<folder>/binlogs/`. A log is archived only once the server has closed it, and the operator archives every ten minutes, so Geass runs a small job, `<database ID>-binlog-flush`, every five minutes that closes the log. The recovery window ends where the operator says the archived logs reach, so a database can be restored to a moment about fifteen minutes ago, and not to one a second ago.
+- The operator never removes an archived log, so Geass removes the ones no copy that is kept can use: a log last written more than an hour before the oldest copy began. It never removes the inventory file, and removes nothing while there is no copy.
+- A copy taken from a primary that has since been replaced does not reach the logs of the new one. When the primary changes, Geass asks for another copy, from the new primary, so the window keeps moving. The moments between the last log archived from the old primary and that copy are not recoverable.
+- The copy runs next to the replica it copies, with a staging volume as large as the database, which the operator makes the first time it needs it and keeps. It is removed with the database.
+- In a project that requires compliance node tags the copy's job is made by the operator without a node selector. On Kubernetes 1.36 or later a policy gives it the project's, as it does for every pod the operator makes. On an older cluster the policy that checks refuses the job and the backups say they are at risk. See [Compliance node tags](/docs/guides/compliance-tags/).
+- A backup that failed is reported as **At risk** until a later one works.
+- A restore starts a new database from the copy nearest before the moment you chose, and the operator replays the logs up to it. The new database has to be replicated like the original, and keeps the original's password. The moment has to be inside the window: from the oldest restore point to the last moment the logs reach. A restore of a few rows took about 90 seconds.
+- A restore point is one copy. Restoring to one asks for the moment it was taken.
+
 ### MySQL, MariaDB and SQLite: daily copies
 
 - A Kubernetes CronJob named `<database ID>-backup` runs daily at about 02:00 UTC (the CronJob uses the `Etc/UTC` time zone). A first copy is taken right after setup, so the database is not unprotected until the first night. If that first copy fails, Geass starts another after 10 minutes while no copy exists.
@@ -116,7 +130,7 @@ Retention is 1 to 365 days, and the default is 7. Lowering it lets Geass remove 
 
 ### Where backups sit in the bucket
 
-Every database, and every time you turn backups off and on again, gets its own folder named `<database ID, at most 40 characters>-<8 characters of its UID>`, with `-2`, `-3` and so on after re-enabling. Postgres writes `base` and `wals` inside it. MySQL and SQLite write `dumps`. The folder is inside a folder named for the project ID. The unique name means a new database that reuses an old name never writes into old backups.
+Every database, and every time you turn backups off and on again, gets its own folder named `<database ID, at most 40 characters>-<8 characters of its UID>`, with `-2`, `-3` and so on after re-enabling. Postgres writes `base` and `wals` inside it. MySQL, SQLite and a single MariaDB server write `dumps`. A MariaDB database with high availability writes `physical` and `binlogs`. The folder is inside a folder named for the project ID. The unique name means a new database that reuses an old name never writes into old backups.
 
 ### Backups and compliance tags
 
@@ -131,7 +145,8 @@ A restore creates a new database. The original is not changed. You check the new
 1. Open the database and go to its **Backups** tab, or to **Settings** and then **Backups** in the database panel.
 2. Under **Restore**, choose what to restore to:
    - PostgreSQL: **Restore most recent state**, a **Restore to a specific time** value (a date and time in your local time, inside the stated window) with **Restore to this time**, or a **Restore** button beside a restore point.
-   - MySQL and SQLite: **Restore latest backup**, or a **Restore** button beside a restore point.
+   - MySQL, SQLite and MariaDB as one server: **Restore latest backup**, or a **Restore** button beside a restore point.
+   - MariaDB with high availability: the same choices as PostgreSQL.
 3. In the **Restore to a new database** dialog, confirm. If the original environment no longer exists, choose another **Environment**.
 4. Select **Restore**. The dashboard says "Restore started. Your original database is untouched." and opens the new database's **Deployments** tab.
 
@@ -141,11 +156,11 @@ The new database:
 
 - has a new resource ID and the display name `<original name>-restored`,
 - is in the same project and, unless you chose another, the same environment,
-- keeps the original's engine, Postgres version, database name, resources and disk size, and runs one instance even if the original was high availability,
+- keeps the original's engine, Postgres version, database name, resources and disk size, and runs one instance even if the original was high availability, except for MariaDB with high availability, whose restore runs as many instances as the original did, because the operator replays the archived logs only on a database that replicates,
 - is placed like any new database: in the project's region, on nodes that carry the tags the project requires at that moment. It does not copy the original's **Run on** choice. See [Where a database runs](/docs/guides/databases/#where-a-database-runs),
 - has backups on, with the original's retention,
 - deploys at once, with no draft, and shows "Restoring database from backup" until it is ready, and
-- gets its own password and connection secret.
+- gets its own password and connection secret, except for MariaDB with high availability: a physical copy holds the logins of the server it came from, so that restore keeps the original's password (the one derived from the original's resource name) and its connection secret holds it. A database restored from a restore keeps the first one's.
 
 Add a reference from your app to the new database and deploy the app to switch over. See [Databases](/docs/guides/databases/#connect-an-app-to-a-database). For Postgres, the new database takes a fresh owner password from the new resource, so the old connection string does not work on it.
 
@@ -177,12 +192,13 @@ The dashboard refuses a restore with one of these messages before it creates any
 | Choose which backups to restore | No `archive` was given |
 | These backups are no longer available | The archive was already removed |
 | Choose either a restore point or a time, not both | Both were sent |
-| This database can only be restored to a restore point | A time was sent for MySQL or SQLite |
+| This database can only be restored to a restore point | A time was sent for MySQL, SQLite or MariaDB as one server |
 | These backups have no restore points yet | The first backup has not finished |
 | The chosen restore point is not available | The ID is not in the archive |
 | The chosen time is earlier than the oldest restore point | Before the recovery window |
 | The chosen time is later than the newest recoverable moment | After the recovery window |
 | Enter a valid date and time | The time could not be read |
+| A MariaDB database restored from backups of one with high availability has to have high availability too | A manifest asked for `restoreFrom` on a MariaDB database without it. The dashboard makes the restored database replicated by itself |
 
 A restore also needs room on the cluster, like any new database, and Geass refuses it with the usual capacity message when there is none.
 
@@ -294,7 +310,7 @@ Project `spec.backupStorage`: `connectionRef` (the AWS connection), `bucket` (3 
 ## Troubleshooting
 
 **The Backups tab is missing from a database.**
-The database is not PostgreSQL, MySQL or SQLite running in the cluster. Redis and external databases have no backups.
+The database is not PostgreSQL, MySQL, MariaDB or SQLite running in the cluster. Redis and external databases have no backups.
 
 **"Backups start after you deploy this database."**
 The database is still a draft. Deploy it.
@@ -307,6 +323,15 @@ Restore points appear after the first backup finishes. Wait for **Last backup** 
 
 **My restored database has different data than I expected.**
 A MySQL or SQLite restore holds the data as of that day's copy. A Postgres "most recent state" restore ends at the last change that reached the bucket, which can trail the moment the data was lost by a few minutes.
+
+**A restored MariaDB sits at "Restoring database from backup", and its server logs "Access denied for user 'root'".**
+The restore keeps the original's password, which Geass derives from the original's name. If the original's root password was changed by hand, the copy carries that one, and the operator cannot reach the restored server with the one Geass knows. Restore again from a copy made before the change, or change the password back first.
+
+**The first backup of a MariaDB database with high availability takes a minute or two.**
+Expected. The database is told to archive its logs, which makes the operator roll its servers, and the first copy waits for it to be ready again. See [MariaDB with high availability](#mariadb-with-high-availability-copies-and-archived-logs).
+
+**A MariaDB database's recovery window ends well before now.**
+The window ends where the operator says the archived logs reach. The operator archives every ten minutes, and Geass closes the log every five, so it trails by up to about fifteen. It does not move at all if the logs cannot be archived: check `kubectl -n <namespace> get pointintimerecovery` and the agent's log, `kubectl -n <namespace> logs <name>-0 -c agent`.
 
 **The AWS bill shows a bucket I did not make.**
 Geass created it for your project's backup storage, when a database first needed it. Unless you chose a name through the API, it is named `geass-backups-` plus 12 characters. Do not delete it while databases use it.

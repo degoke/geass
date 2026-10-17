@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
@@ -669,4 +670,49 @@ func TestMariaDBHostIsTheServiceOfItsTopology(t *testing.T) {
 	require.Equal(t, mariadbStandalone, mariadbHost(db, "payments-dev"))
 	db.Spec.HighAvailability = true
 	require.Equal(t, mariadbPrimaryHost, mariadbHost(db, "payments-dev"))
+}
+
+// The operator fills in fields Geass does not model, and some of them cannot be changed once set. An object that was
+// replaced with what Geass models sent them all back empty, and the operator's webhook refused it ("field is immutable").
+// Found on K3s the first time a change to the object had to be sent. Objects are patched, so what Geass does not say is
+// never sent, and a pass with nothing to change sends nothing.
+func TestOperatorObjectsArePatchedAndOnlyWithWhatChanged(t *testing.T) {
+	e := newMariaDBEnv(t, 3, mariadbOperatorRuns()...)
+	ctx := context.Background()
+	size := resource.MustParse("5Gi")
+	require.NoError(t, e.client.Create(ctx, &mariadbv1.PhysicalBackup{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-recovery", Namespace: testDevTargetNS},
+		Spec: mariadbv1.PhysicalBackupSpec{
+			MariaDBRef: mariadbv1.MariaDBRef{Name: "orders"}, Compression: "none", MaxRetention: &metav1.Duration{Duration: 720 * time.Hour},
+			Storage: mariadbv1.PhysicalBackupStorage{PersistentVolumeClaim: &mariadbv1.PersistentVolumeClaimStorage{
+				Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: size}},
+			}},
+		},
+	}))
+	var patches []string
+	watching, ok := e.client.(client.WithWatch)
+	require.True(t, ok)
+	e.r.Client = interceptor.NewClient(watching, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if data, err := patch.Data(obj); err == nil {
+				patches = append(patches, string(data))
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			t.Errorf("%T was replaced, which sends back every field Geass does not model as if it were empty", obj)
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+
+	require.NoError(t, e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, "", platform.Placement{}))
+
+	require.Len(t, patches, 1)
+	require.Contains(t, patches[0], "schedule", "what Geass says and the object lacks is sent")
+	require.NotContains(t, patches[0], "compression", "what the operator filled in and Geass leaves alone is not")
+	require.NotContains(t, patches[0], "maxRetention")
+
+	patches = nil
+	require.NoError(t, e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, "", platform.Placement{}))
+	require.Empty(t, patches, "nothing changed, so nothing is sent")
 }

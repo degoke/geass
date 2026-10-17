@@ -35,7 +35,8 @@ var (
 )
 
 func addKnownTypes(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(SchemeGroupVersion, &MariaDB{}, &MariaDBList{}, &PhysicalBackup{}, &PhysicalBackupList{})
+	scheme.AddKnownTypes(SchemeGroupVersion, &MariaDB{}, &MariaDBList{}, &PhysicalBackup{}, &PhysicalBackupList{},
+		&PointInTimeRecovery{}, &PointInTimeRecoveryList{})
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
 }
@@ -82,6 +83,48 @@ type MariaDBSpec struct {
 	// StartupProbe is laid over the operator's own, whose handler it keeps: what is said here replaces the same
 	// field of the default and nothing else changes.
 	StartupProbe *Probe `json:"startupProbe,omitempty"`
+	// PointInTimeRecoveryRef has the primary archive its binary logs to the storage of the PointInTimeRecovery it
+	// names, so the database can be restored to any moment after a physical backup. It needs replication.
+	PointInTimeRecoveryRef *LocalRef `json:"pointInTimeRecoveryRef,omitempty"`
+	// BootstrapFrom makes a new database from a backup, and from binary logs up to a moment, instead of an empty one.
+	// It is fixed once the database exists.
+	BootstrapFrom *BootstrapFrom `json:"bootstrapFrom,omitempty"`
+}
+
+// LocalRef names an object of the same namespace.
+type LocalRef struct {
+	Name string `json:"name"`
+}
+
+// BootstrapFrom is where a new database's data comes from.
+type BootstrapFrom struct {
+	// PointInTimeRecoveryRef is the PointInTimeRecovery whose physical backup and binary logs are restored.
+	PointInTimeRecoveryRef *LocalRef `json:"pointInTimeRecoveryRef,omitempty"`
+	// TargetRecoveryTime is the moment to restore to. Empty restores everything that was archived.
+	TargetRecoveryTime *metav1.Time `json:"targetRecoveryTime,omitempty"`
+	// StagingStorage holds the backup and the binary logs while they are restored.
+	StagingStorage *StagingStorage `json:"stagingStorage,omitempty"`
+}
+
+// StagingStorage is the temporary volume that a backup passes through on its way to or from the bucket.
+type StagingStorage struct {
+	PersistentVolumeClaim *PersistentVolumeClaimStorage `json:"persistentVolumeClaim,omitempty"`
+}
+
+// S3 is a bucket, reached with a key that Geass keeps in a Secret of the database's namespace.
+type S3 struct {
+	Bucket                      string       `json:"bucket"`
+	Endpoint                    string       `json:"endpoint"`
+	Prefix                      string       `json:"prefix,omitempty"`
+	Region                      string       `json:"region,omitempty"`
+	AccessKeyIDSecretKeyRef     SecretKeyRef `json:"accessKeyIdSecretKeyRef"`
+	SecretAccessKeySecretKeyRef SecretKeyRef `json:"secretAccessKeySecretKeyRef"`
+	TLS                         *S3TLS       `json:"tls,omitempty"`
+}
+
+// S3TLS says whether the endpoint is spoken to over TLS.
+type S3TLS struct {
+	Enabled bool `json:"enabled"`
 }
 
 // Probe is the part of a container probe that Geass changes. The operator fills in the rest, including what is asked.
@@ -184,8 +227,18 @@ func (m *MariaDB) ConditionTrue(name string) bool {
 type PhysicalBackup struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              PhysicalBackupSpec `json:"spec,omitempty"`
+	Spec              PhysicalBackupSpec   `json:"spec,omitempty"`
+	Status            PhysicalBackupStatus `json:"status,omitempty"`
 }
+
+// PhysicalBackupStatus is what the operator reports about a backup.
+type PhysicalBackupStatus struct {
+	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	LastScheduleTime *metav1.Time       `json:"lastScheduleTime,omitempty"`
+}
+
+// ConditionComplete is true while the last backup finished and false while it runs or failed.
+const ConditionComplete = "Complete"
 
 // PhysicalBackupList contains a list of PhysicalBackup resources.
 type PhysicalBackupList struct {
@@ -207,6 +260,12 @@ type PhysicalBackupSpec struct {
 	PodAffinity *bool `json:"podAffinity,omitempty"`
 	// Tolerations let the job onto the nodes a project keeps its data on.
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// Compression is how the copy is compressed before it is stored.
+	Compression string `json:"compression,omitempty"`
+	// MaxRetention is how long the operator keeps copies in storage. Older ones are removed after each backup.
+	MaxRetention *metav1.Duration `json:"maxRetention,omitempty"`
+	// StagingStorage holds a copy while it is made and before it is uploaded, when the storage is a bucket.
+	StagingStorage *StagingStorage `json:"stagingStorage,omitempty"`
 }
 
 // MariaDBRef names the database a backup is of.
@@ -218,14 +277,19 @@ type MariaDBRef struct {
 
 // PhysicalBackupSchedule is when a backup runs.
 type PhysicalBackupSchedule struct {
-	Cron    string `json:"cron,omitempty"`
-	Suspend bool   `json:"suspend,omitempty"`
+	Cron string `json:"cron,omitempty"`
+	// Immediate takes the first backup as soon as the object exists, without waiting for the schedule.
+	Immediate *bool `json:"immediate,omitempty"`
+	// OnDemand takes another backup when the value changes.
+	OnDemand string `json:"onDemand,omitempty"`
+	Suspend  bool   `json:"suspend,omitempty"`
 }
 
 // PhysicalBackupStorage is where a copy is kept. Geass uses a volume claim for the copies it makes to build replicas,
 // and the project's bucket for the copies that are backups.
 type PhysicalBackupStorage struct {
 	PersistentVolumeClaim *PersistentVolumeClaimStorage `json:"persistentVolumeClaim,omitempty"`
+	S3                    *S3                           `json:"s3,omitempty"`
 }
 
 // PersistentVolumeClaimStorage is the claim a copy is kept on.
@@ -233,4 +297,39 @@ type PersistentVolumeClaimStorage struct {
 	AccessModes      []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
 	Resources        corev1.VolumeResourceRequirements   `json:"resources,omitempty"`
 	StorageClassName *string                             `json:"storageClassName,omitempty"`
+}
+
+// PointInTimeRecovery archives the binary logs of a replicated database to a bucket. Together with a physical backup
+// it lets a new database be made as the old one was at a chosen moment.
+type PointInTimeRecovery struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              PointInTimeRecoverySpec   `json:"spec,omitempty"`
+	Status            PointInTimeRecoveryStatus `json:"status,omitempty"`
+}
+
+// PointInTimeRecoveryList contains a list of PointInTimeRecovery resources.
+type PointInTimeRecoveryList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []PointInTimeRecovery `json:"items"`
+}
+
+// PointInTimeRecoverySpec is where binary logs go and which backup they continue from.
+type PointInTimeRecoverySpec struct {
+	// PhysicalBackupRef is the backup that serves as the base: the logs are replayed on top of it.
+	PhysicalBackupRef LocalRef `json:"physicalBackupRef"`
+	// Storage is the bucket the logs are archived to.
+	Storage PhysicalBackupStorage `json:"storage"`
+	// Compression is how each log is compressed before it is stored.
+	Compression string `json:"compression,omitempty"`
+	// StrictMode makes a restore to a moment the logs do not reach fail, instead of stopping at the last one.
+	StrictMode *bool `json:"strictMode,omitempty"`
+}
+
+// PointInTimeRecoveryStatus is what the operator knows about the archived logs.
+type PointInTimeRecoveryStatus struct {
+	// LastRecoverableTime is the latest moment that can be restored: the last event in the newest archived log that
+	// continues from a completed physical backup.
+	LastRecoverableTime *metav1.Time `json:"lastRecoverableTime,omitempty"`
 }

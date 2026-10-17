@@ -41,6 +41,10 @@ spec:
           spec:
             description: PhysicalBackupSpec is how and where a copy is taken.
             properties:
+              compression:
+                description: Compression is how the copy is compressed before it is
+                  stored.
+                type: string
               mariaDbRef:
                 description: MariaDBRef names the database a backup is of.
                 properties:
@@ -53,6 +57,10 @@ spec:
                 required:
                 - name
                 type: object
+              maxRetention:
+                description: MaxRetention is how long the operator keeps copies in
+                  storage. Older ones are removed after each backup.
+                type: string
               podAffinity:
                 description: PodAffinity runs the job on the node of the server it
                   copies, so it can reach the volume.
@@ -63,8 +71,60 @@ spec:
                 properties:
                   cron:
                     type: string
+                  immediate:
+                    description: Immediate takes the first backup as soon as the object
+                      exists, without waiting for the schedule.
+                    type: boolean
+                  onDemand:
+                    description: OnDemand takes another backup when the value changes.
+                    type: string
                   suspend:
                     type: boolean
+                type: object
+              stagingStorage:
+                description: StagingStorage holds a copy while it is made and before
+                  it is uploaded, when the storage is a bucket.
+                properties:
+                  persistentVolumeClaim:
+                    description: PersistentVolumeClaimStorage is the claim a copy
+                      is kept on.
+                    properties:
+                      accessModes:
+                        items:
+                          type: string
+                        type: array
+                      resources:
+                        description: VolumeResourceRequirements describes the storage
+                          resource requirements for a volume.
+                        properties:
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                      storageClassName:
+                        type: string
+                    type: object
                 type: object
               storage:
                 description: Storage is where the copy is kept.
@@ -108,6 +168,59 @@ spec:
                         type: object
                       storageClassName:
                         type: string
+                    type: object
+                  s3:
+                    description: S3 is a bucket, reached with a key that Geass keeps
+                      in a Secret of the database's namespace.
+                    properties:
+                      accessKeyIdSecretKeyRef:
+                        description: SecretKeyRef names a key of a Secret. Geass always
+                          makes the Secret itself and never has the operator generate
+                          one.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      bucket:
+                        type: string
+                      endpoint:
+                        type: string
+                      prefix:
+                        type: string
+                      region:
+                        type: string
+                      secretAccessKeySecretKeyRef:
+                        description: SecretKeyRef names a key of a Secret. Geass always
+                          makes the Secret itself and never has the operator generate
+                          one.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      tls:
+                        description: S3TLS says whether the endpoint is spoken to
+                          over TLS.
+                        properties:
+                          enabled:
+                            type: boolean
+                        required:
+                        - enabled
+                        type: object
+                    required:
+                    - accessKeyIdSecretKeyRef
+                    - bucket
+                    - endpoint
+                    - secretAccessKeySecretKeyRef
                     type: object
                 type: object
               target:
@@ -158,6 +271,70 @@ spec:
             required:
             - mariaDbRef
             - storage
+            type: object
+          status:
+            description: PhysicalBackupStatus is what the operator reports about a
+              backup.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastScheduleTime:
+                format: date-time
+                type: string
             type: object
         type: object
     served: true

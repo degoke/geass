@@ -234,6 +234,7 @@ rules:
   resources:
   - mariadbs
   - physicalbackups
+  - pointintimerecoveries
   verbs:
   - create
   - delete

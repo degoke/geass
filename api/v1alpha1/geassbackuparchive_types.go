@@ -49,6 +49,19 @@ type GeassBackupSource struct {
 	// Resources is the CPU and memory the source database used.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	// HighAvailability is whether the source database ran as a replicated cluster. For MariaDB it decides how
+	// the backups are made and what can be restored: a replicated database can be restored to any moment, and has
+	// to be restored into a replicated database, so a restore starts with the same number of instances.
+	// +optional
+	HighAvailability bool `json:"highAvailability,omitempty"`
+	// Instances is how many instances the source database ran.
+	// +optional
+	Instances *int32 `json:"instances,omitempty"`
+	// CredentialsOrigin is the name of the database whose generated password the backed up data carries. A physical
+	// copy holds the logins of the server it was taken from, so a database restored from one has to be given the same
+	// password to be reached, and it records where it got it from for the restore of a restore.
+	// +optional
+	CredentialsOrigin string `json:"credentialsOrigin,omitempty"`
 }
 
 // GeassBackupArchiveSpec defines the backups kept for one database. The archive is created when

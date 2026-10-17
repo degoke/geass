@@ -35,7 +35,7 @@ The first public release.
   to copy instead of shipping as defaults.
 - **Databases.** PostgreSQL, MySQL, Redis and SQLite in the cluster, shared database servers, external databases
   (AWS RDS, PlanetScale), resizable volumes on Longhorn, and backups to an S3 bucket in your own AWS account
-  (Postgres continuously, MySQL and SQLite daily) with restore as a new database and a 7 day grace after deletion.
+  (Postgres and highly available MariaDB continuously, the rest daily) with restore as a new database and a 7 day grace after deletion.
   MySQL and Redis run as one pod each from the official `mysql` and `redis` images, which Geass runs itself (not
   through a Helm chart, whose Bitnami images no longer exist on Docker Hub). High availability is for PostgreSQL and
   MySQL: a MySQL database that asks for it runs three or five servers on MOCO, a MySQL operator that Geass installs the
@@ -45,7 +45,11 @@ The first public release.
   MariaDB is an engine of its own, chosen when the database is created, on the MariaDB operator that Geass installs the
   first time (it does not need cert-manager): one server, or with high availability three or five that replicate with
   semi-synchronous replication, a replica promoted when the primary's pod is lost (about ten seconds in a test), the
-  application's login made by the operator, and a daily copy with `mariadb-dump`. The operator cannot replace a primary
+  application's login made by the operator, and backups: a daily copy with `mariadb-dump` for one server, and for a
+  highly available database a physical copy every night with the binary logs archived beside it, so it can be restored to any
+  moment up to about 15 minutes ago, as a new highly available database (a restore in a test, of a database of a few rows, took
+  80 seconds). Geass closes the log every five minutes so it is archived, removes the logs no kept copy can use, asks for a
+  new copy when the primary changes, and takes a final copy when the database is deleted. The operator cannot replace a primary
   whose whole machine goes silent, so Geass does it: when that machine has not been ready for a minute it promotes the
   replica that has the most. A MariaDB database is one instance or high availability for its life. A Redis database that asks for high
   availability, or for more than one instance, is refused with the reason. A MySQL volume can be made bigger. A cluster made from a development build keeps a MySQL database on the Bitnami chart as it

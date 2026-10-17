@@ -76,6 +76,7 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=moco.cybozu.com,resources=mysqlclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=mariadbs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=scheduledbackups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -375,6 +376,8 @@ func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *g
 	case err != nil:
 	case backups.failed:
 		result.RequeueAfter = backupRetryInterval
+	case backups.pending:
+		result.RequeueAfter = mariadbBackupPending
 	case backups.backups:
 		result.RequeueAfter = platform.BackupStatusRefreshInterval
 	}
@@ -688,7 +691,7 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 			setSecretStrings(secret, map[string]string{"username": appContainerName})
 		}
 		if secretValue(secret, "password") == "" {
-			setSecretStrings(secret, map[string]string{"password": db.Name + "-password"})
+			setSecretStrings(secret, map[string]string{"password": credentialsOrigin(db) + "-password"})
 		}
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})

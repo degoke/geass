@@ -1,0 +1,176 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: pointintimerecoveries.
+spec:
+  group: ""
+  names:
+    kind: PointInTimeRecovery
+    listKind: PointInTimeRecoveryList
+    plural: pointintimerecoveries
+    singular: pointintimerecovery
+  scope: Namespaced
+  versions:
+  - name: ""
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PointInTimeRecovery archives the binary logs of a replicated database to a bucket. Together with a physical backup
+          it lets a new database be made as the old one was at a chosen moment.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PointInTimeRecoverySpec is where binary logs go and which
+              backup they continue from.
+            properties:
+              compression:
+                description: Compression is how each log is compressed before it is
+                  stored.
+                type: string
+              physicalBackupRef:
+                description: 'PhysicalBackupRef is the backup that serves as the base:
+                  the logs are replayed on top of it.'
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              storage:
+                description: Storage is the bucket the logs are archived to.
+                properties:
+                  persistentVolumeClaim:
+                    description: PersistentVolumeClaimStorage is the claim a copy
+                      is kept on.
+                    properties:
+                      accessModes:
+                        items:
+                          type: string
+                        type: array
+                      resources:
+                        description: VolumeResourceRequirements describes the storage
+                          resource requirements for a volume.
+                        properties:
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                      storageClassName:
+                        type: string
+                    type: object
+                  s3:
+                    description: S3 is a bucket, reached with a key that Geass keeps
+                      in a Secret of the database's namespace.
+                    properties:
+                      accessKeyIdSecretKeyRef:
+                        description: SecretKeyRef names a key of a Secret. Geass always
+                          makes the Secret itself and never has the operator generate
+                          one.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      bucket:
+                        type: string
+                      endpoint:
+                        type: string
+                      prefix:
+                        type: string
+                      region:
+                        type: string
+                      secretAccessKeySecretKeyRef:
+                        description: SecretKeyRef names a key of a Secret. Geass always
+                          makes the Secret itself and never has the operator generate
+                          one.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      tls:
+                        description: S3TLS says whether the endpoint is spoken to
+                          over TLS.
+                        properties:
+                          enabled:
+                            type: boolean
+                        required:
+                        - enabled
+                        type: object
+                    required:
+                    - accessKeyIdSecretKeyRef
+                    - bucket
+                    - endpoint
+                    - secretAccessKeySecretKeyRef
+                    type: object
+                type: object
+              strictMode:
+                description: StrictMode makes a restore to a moment the logs do not
+                  reach fail, instead of stopping at the last one.
+                type: boolean
+            required:
+            - physicalBackupRef
+            - storage
+            type: object
+          status:
+            description: PointInTimeRecoveryStatus is what the operator knows about
+              the archived logs.
+            properties:
+              lastRecoverableTime:
+                description: |-
+                  LastRecoverableTime is the latest moment that can be restored: the last event in the newest archived log that
+                  continues from a completed physical backup.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true

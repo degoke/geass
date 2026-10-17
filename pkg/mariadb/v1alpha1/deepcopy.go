@@ -76,6 +76,8 @@ func (in *MariaDBSpec) DeepCopyInto(out *MariaDBSpec) {
 	out.PasswordSecretKeyRef = ptrCopy(in.PasswordSecretKeyRef)
 	out.MyCnf = ptrCopy(in.MyCnf)
 	out.StartupProbe = ptrCopy(in.StartupProbe)
+	out.PointInTimeRecoveryRef = ptrCopy(in.PointInTimeRecoveryRef)
+	out.BootstrapFrom = in.BootstrapFrom.deepCopy()
 	if in.Storage.Size != nil {
 		size := in.Storage.Size.DeepCopy()
 		out.Storage.Size = &size
@@ -150,11 +152,61 @@ func (in *MariaDBStatus) DeepCopyInto(out *MariaDBStatus) {
 	}
 }
 
+func (in *BootstrapFrom) deepCopy() *BootstrapFrom {
+	if in == nil {
+		return nil
+	}
+	out := &BootstrapFrom{PointInTimeRecoveryRef: ptrCopy(in.PointInTimeRecoveryRef)}
+	if in.TargetRecoveryTime != nil {
+		out.TargetRecoveryTime = in.TargetRecoveryTime.DeepCopy()
+	}
+	out.StagingStorage = in.StagingStorage.deepCopy()
+	return out
+}
+
+func (in *StagingStorage) deepCopy() *StagingStorage {
+	if in == nil {
+		return nil
+	}
+	return &StagingStorage{PersistentVolumeClaim: in.PersistentVolumeClaim.deepCopy()}
+}
+
+func (in *PersistentVolumeClaimStorage) deepCopy() *PersistentVolumeClaimStorage {
+	if in == nil {
+		return nil
+	}
+	copied := &PersistentVolumeClaimStorage{AccessModes: slices.Clone(in.AccessModes), StorageClassName: ptrCopy(in.StorageClassName)}
+	in.Resources.DeepCopyInto(&copied.Resources)
+	return copied
+}
+
+func (in *S3) deepCopy() *S3 {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.TLS = ptrCopy(in.TLS)
+	return &out
+}
+
+func (in *PhysicalBackupStorage) deepCopy() PhysicalBackupStorage {
+	return PhysicalBackupStorage{PersistentVolumeClaim: in.PersistentVolumeClaim.deepCopy(), S3: in.S3.deepCopy()}
+}
+
 func (in *PhysicalBackup) DeepCopyInto(out *PhysicalBackup) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
+	if in.Status.Conditions != nil {
+		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))
+		for i := range in.Status.Conditions {
+			in.Status.Conditions[i].DeepCopyInto(&out.Status.Conditions[i])
+		}
+	}
+	if in.Status.LastScheduleTime != nil {
+		out.Status.LastScheduleTime = in.Status.LastScheduleTime.DeepCopy()
+	}
 }
 
 func (in *PhysicalBackup) DeepCopy() *PhysicalBackup {
@@ -204,15 +256,71 @@ func (in *PhysicalBackupList) DeepCopyObject() runtime.Object {
 func (in *PhysicalBackupSpec) DeepCopyInto(out *PhysicalBackupSpec) {
 	*out = *in
 	out.MariaDBRef.WaitForIt = ptrCopy(in.MariaDBRef.WaitForIt)
-	out.Schedule = ptrCopy(in.Schedule)
+	if in.Schedule != nil {
+		schedule := *in.Schedule
+		schedule.Immediate = ptrCopy(in.Schedule.Immediate)
+		out.Schedule = &schedule
+	}
 	out.PodAffinity = ptrCopy(in.PodAffinity)
 	out.Tolerations = copyTolerations(in.Tolerations)
-	if claim := in.Storage.PersistentVolumeClaim; claim != nil {
-		copied := &PersistentVolumeClaimStorage{
-			AccessModes:      slices.Clone(claim.AccessModes),
-			StorageClassName: ptrCopy(claim.StorageClassName),
-		}
-		claim.Resources.DeepCopyInto(&copied.Resources)
-		out.Storage.PersistentVolumeClaim = copied
+	out.Storage = in.Storage.deepCopy()
+	if in.MaxRetention != nil {
+		out.MaxRetention = in.MaxRetention.DeepCopy()
 	}
+	out.StagingStorage = in.StagingStorage.deepCopy()
+}
+
+func (in *PointInTimeRecovery) DeepCopyInto(out *PointInTimeRecovery) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	out.Spec.Storage = in.Spec.Storage.deepCopy()
+	out.Spec.StrictMode = ptrCopy(in.Spec.StrictMode)
+	if in.Status.LastRecoverableTime != nil {
+		out.Status.LastRecoverableTime = in.Status.LastRecoverableTime.DeepCopy()
+	}
+}
+
+func (in *PointInTimeRecovery) DeepCopy() *PointInTimeRecovery {
+	if in == nil {
+		return nil
+	}
+	out := &PointInTimeRecovery{}
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *PointInTimeRecovery) DeepCopyObject() runtime.Object {
+	if out := in.DeepCopy(); out != nil {
+		return out
+	}
+	return nil
+}
+
+func (in *PointInTimeRecoveryList) DeepCopyInto(out *PointInTimeRecoveryList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]PointInTimeRecovery, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *PointInTimeRecoveryList) DeepCopy() *PointInTimeRecoveryList {
+	if in == nil {
+		return nil
+	}
+	out := &PointInTimeRecoveryList{}
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *PointInTimeRecoveryList) DeepCopyObject() runtime.Object {
+	if out := in.DeepCopy(); out != nil {
+		return out
+	}
+	return nil
 }

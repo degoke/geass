@@ -549,3 +549,30 @@ func TestBootstrapListsBackupArchivesButHidesStorageFromViewers(t *testing.T) {
 	require.Nil(t, viewer.Projects.Items[0].Spec.BackupStorage)
 	require.Len(t, viewer.BackupArchives.Items[0].Status.RestorePoints, 1)
 }
+
+// Backups of a replicated MariaDB database are restored into a replicated one, because the operator replays the
+// archived logs on a database that replicates and on nothing else.
+func TestRestoringAReplicatedMariaDBMakesAReplicatedDatabase(t *testing.T) {
+	three, five := int32(3), int32(5)
+	archive := &geassv1alpha1.GeassBackupArchive{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-1a2b3c4d"},
+		Spec: geassv1alpha1.GeassBackupArchiveSpec{
+			Project: testProjectName, Environment: "production", RetentionDays: 7,
+			Source: geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMariaDB, HighAvailability: true, Instances: &five},
+		},
+	}
+
+	db := restoredDatabase(archive, "production", "", nil)
+	require.True(t, db.Spec.HighAvailability)
+	require.EqualValues(t, 5, *db.Spec.Instances, "as many instances as the original ran")
+
+	archive.Spec.Source.Instances = nil
+	db = restoredDatabase(archive, "production", "", nil)
+	require.EqualValues(t, three, *db.Spec.Instances, "three when the original did not say")
+
+	// One server, or another engine that is highly available, is restored as it always was.
+	archive.Spec.Source.HighAvailability = false
+	require.False(t, restoredDatabase(archive, "production", "", nil).Spec.HighAvailability)
+	archive.Spec.Source = geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMySQL, HighAvailability: true}
+	require.False(t, restoredDatabase(archive, "production", "", nil).Spec.HighAvailability)
+}
