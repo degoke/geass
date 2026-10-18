@@ -102,8 +102,10 @@ func TestConsoleNamesTheServerContainerOfAMySQLCluster(t *testing.T) {
 	require.Empty(t, consoleContainer(&geassv1alpha1.GeassDatabase{Spec: geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEnginePostgres, HighAvailability: true}}))
 }
 
-// The cluster's pods hold no login in their environment, so the console hands the application's login to the client in
-// the command's environment, and the query is an argument of the client, never part of a script.
+// The cluster's pods hold no login in their environment, so the console reads the application's login from its Secret and
+// writes the password to the command's standard input. It is never in the command's arguments, which are part of the exec
+// request's URL and are recorded by the API server and the pod's process list. The query is an argument of the client,
+// never part of the script.
 func TestMySQLClusterConsoleCommandLogsInAsTheApplication(t *testing.T) {
 	db := geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: systemNamespace},
@@ -115,11 +117,15 @@ func TestMySQLClusterConsoleCommandLogsInAsTheApplication(t *testing.T) {
 		Data:       map[string][]byte{"username": []byte("app"), "password": []byte("pw")},
 	}
 	srv := &Server{Client: newFakeClient(secret)}
-	cmd, err := srv.mysqlClusterQueryCommand(context.Background(), db, `SELECT 1; "$(reboot)"`)
+	cmd, password, err := srv.mysqlClusterQueryCommand(context.Background(), db, `SELECT 1; "$(reboot)"`)
 	require.NoError(t, err)
-	require.Equal(t, []string{"env", "MYSQL_PWD=pw", "mysql", "--user=app", "--database=orders", "-e", `SELECT 1; "$(reboot)"`}, cmd)
+	require.Equal(t, []string{"sh", "-c", `IFS= read -r MYSQL_PWD && export MYSQL_PWD && exec "$@"`, "sh", "mysql", "--user=app", "--database=orders", "-e", `SELECT 1; "$(reboot)"`}, cmd)
+	require.Equal(t, "pw", password)
+	for _, part := range cmd {
+		require.NotContains(t, part, "pw", "the password is not in the arguments")
+	}
 
-	_, err = (&Server{Client: newFakeClient()}).mysqlClusterQueryCommand(context.Background(), db, "SELECT 1")
+	_, _, err = (&Server{Client: newFakeClient()}).mysqlClusterQueryCommand(context.Background(), db, "SELECT 1")
 	require.Error(t, err, "before the database's login exists there is nothing to log in with")
 }
 
@@ -139,10 +145,11 @@ func TestMariaDBConsoleLogsInAsTheApplicationWithMariaDBsClient(t *testing.T) {
 	}
 	srv := &Server{Client: newFakeClient(secret)}
 
-	cmd, err := srv.mysqlClusterQueryCommand(context.Background(), db, `SELECT 1; "$(reboot)"`)
+	cmd, password, err := srv.mysqlClusterQueryCommand(context.Background(), db, `SELECT 1; "$(reboot)"`)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"env", "MYSQL_PWD=pw", "mariadb", "--user=app", "--database=orders", "-e", `SELECT 1; "$(reboot)"`}, cmd)
+	require.Equal(t, []string{"sh", "-c", `IFS= read -r MYSQL_PWD && export MYSQL_PWD && exec "$@"`, "sh", "mariadb", "--user=app", "--database=orders", "-e", `SELECT 1; "$(reboot)"`}, cmd)
+	require.Equal(t, "pw", password)
 
 	// The single MySQL server and Postgres keep what they had.
 	mysql := &geassv1alpha1.GeassDatabase{Spec: geassv1alpha1.GeassDatabaseSpec{Engine: geassv1alpha1.DatabaseEngineMySQL}}

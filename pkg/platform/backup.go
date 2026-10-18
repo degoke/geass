@@ -289,6 +289,12 @@ type StoredObject struct {
 	Modified time.Time
 }
 
+// The operator's inventory (index.yaml) keeps listing a log that is removed here, and that is safe: the timeline of a
+// restore is built from the inventory's metadata alone, skips every log that ends before the backup's GTID, and only
+// downloads the logs it keeps, and the archiver only checks that storage is empty before its first upload, never that
+// the logs the inventory lists are still there (mariadb-operator pkg/binlog, archiver.go and binlog.go, read for the
+// version Geass installs; not exercised against a running operator).
+//
 // ExpiredBinlogs picks the archived binary logs that no restore can use any more: the ones last written before the
 // oldest physical backup that is kept began, less a margin. The operator removes old physical backups itself, by
 // the retention it was given, and never removes a log, so without this the archive of a busy database would grow for

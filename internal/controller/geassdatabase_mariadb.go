@@ -43,8 +43,6 @@ import (
 // machine and names the replica to promote, which the operator then does as a switchover (mariadbFailover below).
 
 const (
-	// mariadbMaxInstances is how many servers a MariaDB database runs at most with high availability.
-	mariadbMaxInstances = 5
 	// mariadbRecoverySuffix names the copy of the database the operator takes from a ready replica to build another
 	// replica that cannot catch up. The copy is never taken on a schedule.
 	mariadbRecoverySuffix = "-recovery"
@@ -65,6 +63,21 @@ const (
 	mariadbStartupProbeFailures = 30
 
 	messageMariaDBFailingOver = platform.MessagePromotingReplica
+
+	// mariadbRestoreDeadline is how long a database that is restored from backups may take to start before the restore
+	// is reported as failed.
+	mariadbRestoreDeadline = time.Duration(restoreJobDeadline) * time.Second
+
+	// mariadbSwitchoverDeadline is how long a promotion that Geass asked for may take before it is given up: the
+	// database is returned to the primary that is serving, and another promotion waits mariadbPromotionRetryAfter. A
+	// switchover needs the old primary to answer, so one that cannot reach it never finishes by itself.
+	mariadbSwitchoverDeadline  = 10 * time.Minute
+	mariadbPromotionRetryAfter = 30 * time.Minute
+
+	// annotationPromotionStarted and annotationPromotionAbandoned are on the MariaDB and say when Geass asked for a
+	// promotion, and when it gave one up.
+	annotationPromotionStarted   = "geass.dev/promotion-started"
+	annotationPromotionAbandoned = "geass.dev/promotion-abandoned"
 
 	// annotationMariaDBInitialized is put on a database the first time the operator says it is ready. The operator
 	// makes the application's login and database only once every server is up, so until then a server that runs is not
@@ -244,6 +257,9 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 	if err := r.inheritMariaDBCredentials(ctx, db); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
+	if err := r.correctRestoredPassword(ctx, db, wsNS); err != nil {
+		return r.setNotReady(ctx, db, err.Error())
+	}
 	if err := r.reconcileBootstrapSecret(ctx, db, wsNS); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
 	}
@@ -280,7 +296,7 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 	if !r.mariadbServing(ctx, db, wsNS, mdb) {
 		message := r.serverNotReadyMessage(ctx, wsNS, serverSpec{name: mariadbServerName(db)})
 		if mdb.Spec.BootstrapFrom != nil && db.Status.RestoredAt == nil {
-			message = messageRestoringDatabase
+			message = r.mariadbRestoreMessage(mdb)
 		}
 		res, err := r.setNotReady(ctx, db, message)
 		res.RequeueAfter = shortestRequeue(res.RequeueAfter, result.RequeueAfter)
@@ -302,6 +318,16 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 		res.RequeueAfter = shortestRequeue(res.RequeueAfter, result.RequeueAfter)
 	}
 	return res, err
+}
+
+// mariadbRestoreMessage is what a database says while it starts from backups. A server that cannot (the original's
+// password was changed, a log is missing, the bucket cannot be read) stays initializing and says nothing more, so a
+// restore is given the time a restore of a dump is, and then reported as failed instead of waited for for ever.
+func (r *GeassDatabaseReconciler) mariadbRestoreMessage(mdb *mariadbv1.MariaDB) string {
+	if !mdb.CreationTimestamp.IsZero() && r.now().Sub(mdb.CreationTimestamp.Time) > mariadbRestoreDeadline {
+		return messageRestoreFailed
+	}
+	return messageRestoringDatabase
 }
 
 // existingMariaDB is the database the operator already runs for this resource, or nil when it has none yet or the
@@ -497,9 +523,31 @@ func (r *GeassDatabaseReconciler) mariadbFailover(ctx context.Context, db *geass
 	if !ok {
 		return false, nil
 	}
+	now := r.now()
+	started, asked := annotationTime(mdb, annotationPromotionStarted)
 	// A switchover is under way when the primary the spec names is not the one the operator reports.
 	if want := utilptr.Deref(mdb.Spec.Replication.Primary.PodIndex, 0); want != primaryIndex {
-		return true, nil
+		if !asked || now.Sub(started) < mariadbSwitchoverDeadline {
+			return true, nil
+		}
+		// One that Geass asked for and the operator cannot finish: the old primary is still the primary, so say so.
+		logf.FromContext(ctx).Info("Gave up the promotion of a MariaDB replica", "database", db.Name, "primary", *mdb.Status.CurrentPrimary)
+		base := mdb.DeepCopy()
+		mdb.Spec.Replication.Primary.PodIndex = utilptr.To(primaryIndex)
+		delete(mdb.Annotations, annotationPromotionStarted)
+		setAnnotation(mdb, annotationPromotionAbandoned, now.UTC().Format(time.RFC3339))
+		return false, r.Patch(ctx, mdb, client.MergeFrom(base))
+	}
+	if asked {
+		// The switchover finished.
+		base := mdb.DeepCopy()
+		delete(mdb.Annotations, annotationPromotionStarted)
+		if err := r.Patch(ctx, mdb, client.MergeFrom(base)); err != nil {
+			return false, err
+		}
+	}
+	if abandoned, ok := annotationTime(mdb, annotationPromotionAbandoned); ok && now.Sub(abandoned) < mariadbPromotionRetryAfter {
+		return false, nil
 	}
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(wsNS), client.MatchingLabels{platform.K8sLabelInstance: db.Name, platform.K8sLabelAppName: "mariadb"}); err != nil {
@@ -509,7 +557,7 @@ func (r *GeassDatabaseReconciler) mariadbFailover(ctx context.Context, db *geass
 	if err := r.List(ctx, &nodes, client.UnsafeDisableDeepCopy); err != nil {
 		return false, err
 	}
-	target, found := mariadbFailoverTarget(db, mdb, pods.Items, nodes.Items, time.Now())
+	target, found := mariadbFailoverTarget(db, mdb, pods.Items, nodes.Items, now)
 	if !found {
 		return false, nil
 	}
@@ -517,10 +565,25 @@ func (r *GeassDatabaseReconciler) mariadbFailover(ctx context.Context, db *geass
 		"database", db.Name, "primary", *mdb.Status.CurrentPrimary, "newPrimary", target)
 	base := mdb.DeepCopy()
 	mdb.Spec.Replication.Primary.PodIndex = utilptr.To(target)
+	setAnnotation(mdb, annotationPromotionStarted, now.UTC().Format(time.RFC3339))
+	delete(mdb.Annotations, annotationPromotionAbandoned)
 	if err := r.Patch(ctx, mdb, client.MergeFrom(base)); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// annotationTime is the time an annotation of the MariaDB holds, and whether it holds one.
+func annotationTime(mdb *mariadbv1.MariaDB, key string) (time.Time, bool) {
+	at, err := time.Parse(time.RFC3339, mdb.Annotations[key])
+	return at, err == nil
+}
+
+func setAnnotation(mdb *mariadbv1.MariaDB, key, value string) {
+	if mdb.Annotations == nil {
+		mdb.Annotations = map[string]string{}
+	}
+	mdb.Annotations[key] = value
 }
 
 // mariadbPodIndex is the index in a pod's name, for a pod of this database.
@@ -625,7 +688,7 @@ func mariadbGtidSequence(position string) (int64, bool) {
 // objects are owned by the database and go with it, but the volume claims of a StatefulSet do not.
 func (r *GeassDatabaseReconciler) deleteMariaDBResources(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) {
 	log := logf.FromContext(ctx)
-	if err := r.deleteMariaDBBackupObjects(ctx, db, wsNS); err != nil {
+	if err := r.deleteMariaDBBackupObjects(ctx, db, wsNS, true); err != nil {
 		log.Info("Could not delete the MariaDB backups", "name", db.Name, "error", err.Error())
 	}
 	// Deleting a kind that is not installed is not an error worth saying: nothing was ever made.
@@ -638,7 +701,7 @@ func (r *GeassDatabaseReconciler) deleteMariaDBResources(ctx context.Context, db
 	if err := r.Delete(ctx, &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}); !ignore(err) {
 		log.Info("Could not delete MariaDB", "name", db.Name, "error", err.Error())
 	}
-	for i := range mariadbMaxInstances {
+	for i := range maxClusterInstances {
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: mariadbClaimName(db, i), Namespace: wsNS}}))
 	}
 }

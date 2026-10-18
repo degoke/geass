@@ -643,8 +643,13 @@ func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db 
 	_ = helmchart.Delete(ctx, r.Client, mysqlChartName(db.Name))
 	_ = helmchart.Delete(ctx, r.Client, redisDatabaseChartName(db.Name))
 	r.deleteServerResources(ctx, db, wsNS)
-	r.deleteMySQLHAResources(ctx, db, wsNS)
-	r.deleteMariaDBResources(ctx, db, wsNS)
+	// They delete volume claims by name, so only the engine whose claims they are runs them.
+	switch db.Spec.Engine {
+	case geassv1alpha1.DatabaseEngineMySQL:
+		r.deleteMySQLHAResources(ctx, db, wsNS)
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		r.deleteMariaDBResources(ctx, db, wsNS)
+	}
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + backupCredentialsSuffix, Namespace: wsNS}}))

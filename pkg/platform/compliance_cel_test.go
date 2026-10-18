@@ -172,3 +172,40 @@ func TestComplianceMutationPatchPathsEscapeTheTagKey(t *testing.T) {
 	require.Contains(t, ComplianceMutationPolicy().Spec.Mutations[0].JSONPatch.Expression, `/spec/nodeSelector/tag.geass.dev~1"`,
 		"the \"/\" of a label key is \"~1\" in a JSON pointer, or the patch would add to a nested path")
 }
+
+// The taint of a compliance tag is tag.geass.dev/<tag>=compliance:NoSchedule. A toleration that has the key but does not
+// cover that effect or value leaves the pod unschedulable, so it must not count as the pod being covered.
+func TestComplianceMutationCountsATolerationOnlyIfItCoversTheTaint(t *testing.T) {
+	env := celEnv(t)
+	policy := ComplianceMutationPolicy()
+	missingTolerations := policy.Spec.Variables[2].Expression
+	key := TagKeyPrefix + "hipaa"
+
+	tests := []struct {
+		name       string
+		toleration map[string]any
+		wantAdded  bool
+	}{
+		{"exists, no effect named, covers everything", map[string]any{"key": key, "operator": "Exists"}, false},
+		{"exists, NoSchedule", map[string]any{"key": key, "operator": "Exists", "effect": "NoSchedule"}, false},
+		{"equal to the taint's value", map[string]any{"key": key, "operator": "Equal", "value": ComplianceTaintValue, "effect": "NoSchedule"}, false},
+		{"only NoExecute", map[string]any{"key": key, "operator": "Exists", "effect": "NoExecute"}, true},
+		{"equal to another value", map[string]any{"key": key, "operator": "Equal", "value": ReservedTaintValue, "effect": "NoSchedule"}, true},
+		{"equal with no value", map[string]any{"key": key, "operator": "Equal", "effect": "NoSchedule"}, true},
+		{"another key", map[string]any{"key": TagKeyPrefix + "pci", "operator": "Exists", "effect": "NoSchedule"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := map[string]any{"spec": map[string]any{"tolerations": []any{tt.toleration}}}
+			vars := map[string]any{"object": pod, "variables": map[string]any{"required": []any{"hipaa"}}}
+
+			missing := toAnyList(celEval(t, env, missingTolerations, vars))
+
+			if tt.wantAdded {
+				require.Equal(t, []any{"hipaa"}, missing)
+			} else {
+				require.Empty(t, missing)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,9 +239,26 @@ func TestMariaDBBinaryLogsOlderThanTheOldestCopyAreRemovedAndTheOthersKept(t *te
 	env.storage.allKeys = []string{physicalKey(oldest), physicalKey(now.Add(-time.Hour)), oldLog, newLog, inventory}
 	env.storage.modified = map[string]time.Time{oldLog: oldest.Add(-48 * time.Hour), newLog: now.Add(-30 * time.Minute), inventory: oldest.Add(-72 * time.Hour)}
 
+	// Not in the hour the pruning runs in: nothing is listed or removed.
+	env.r.clock = func() time.Time { return time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC) }
+	env.maintainMaria(mdb)
+	require.Empty(t, env.storage.deleted)
+	for _, prefix := range env.storage.listed {
+		require.NotContains(t, prefix, "/binlogs", "the logs, which are many, are only listed when they are pruned")
+	}
+
+	env.storage.listed = nil
+	env.r.clock = func() time.Time { return time.Date(2026, 10, 17, mariadbBinlogPruneHour, 15, 0, 0, time.UTC) }
 	env.maintainMaria(mdb)
 
 	require.Equal(t, []string{oldLog}, env.storage.deleted, "a log that no copy kept can use is removed, and the inventory never is")
+	physical := 0
+	for _, prefix := range env.storage.listed {
+		if strings.Contains(prefix, "/physical") {
+			physical++
+		}
+	}
+	require.Equal(t, 1, physical, "the copies are listed once and the listing is used for the restore points and for the pruning")
 }
 
 func TestMariaDBBinaryLogsAreNotTouchedWhenTheCopiesCannotBeRead(t *testing.T) {
@@ -249,6 +267,7 @@ func TestMariaDBBinaryLogsAreNotTouchedWhenTheCopiesCannotBeRead(t *testing.T) {
 	env.storage.allKeys = []string{mariaBinlogPrefix + "server-10/orders-bin.000001.gz"}
 	env.storage.modified = map[string]time.Time{mariaBinlogPrefix + "server-10/orders-bin.000001.gz": time.Now().Add(-1000 * time.Hour)}
 	env.storage.listErr = context.DeadlineExceeded
+	env.r.clock = func() time.Time { return time.Date(2026, 10, 17, mariadbBinlogPruneHour, 15, 0, 0, time.UTC) }
 
 	env.maintainMaria(mdb)
 
@@ -482,10 +501,11 @@ func TestDeletingAReplicatedMariaDBTakesAFinalPhysicalCopyFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, env.databaseGone())
 	require.False(t, env.exists(&mariadbv1.MariaDB{}, env.wsNS, testDBName), "the database goes with it")
-	for _, name := range []string{"-backup", "-final", "-pitr", "-binlog-flush"} {
-		require.False(t, env.exists(&mariadbv1.PhysicalBackup{}, env.wsNS, testDBName+name) && name != "-pitr" && name != "-binlog-flush")
+	for _, name := range []string{"-backup", "-final"} {
+		require.False(t, env.exists(&mariadbv1.PhysicalBackup{}, env.wsNS, testDBName+name), name)
 	}
 	require.False(t, env.exists(&mariadbv1.PointInTimeRecovery{}, env.wsNS, testDBName+"-pitr"))
+	require.False(t, env.exists(&batchv1.CronJob{}, env.wsNS, testDBName+"-binlog-flush"), "no flush pod every five minutes against a database that is gone")
 	archive := env.archive(testDBServerName)
 	require.NotNil(t, archive.Spec.DeleteAfter)
 	require.WithinDuration(t, time.Now().Add(platform.DeletedBackupRetention), archive.Spec.DeleteAfter.Time, time.Minute)
@@ -751,4 +771,161 @@ func TestOnlyARestoreFromAPhysicalCopyInheritsAPassword(t *testing.T) {
 	missing := mariaRestoreEnv(t, gone, geassv1alpha1.GeassDatabaseRestoreSpec{}, true)
 	require.NoError(t, missing.client.Delete(ctx, gone))
 	require.NoError(t, missing.r.inheritMariaDBCredentials(ctx, missing.db))
+}
+
+// --- what review found ------------------------------------------------------------------------
+
+// A restored database's spec still names the copy and the archive of logs it was started from, so turning its backups off
+// must not remove them: the operator could refuse the next change to the database over a reference that is not there.
+func TestTurningBackupsOffOnARestoredMariaDBKeepsWhatItWasStartedFrom(t *testing.T) {
+	source := replicatedSource("20261011T020000Z")
+	env := mariaRestoreEnv(t, source, geassv1alpha1.GeassDatabaseRestoreSpec{}, true)
+	ctx := context.Background()
+	_, err := env.r.mariadbRestoreBootstrap(ctx, env.db, env.wsNS, "")
+	require.NoError(t, err)
+	env.db.Status.Backup = &geassv1alpha1.GeassDatabaseBackupStatus{State: geassv1alpha1.BackupStateProtected}
+	require.NoError(t, env.client.Create(ctx, &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: testDBName + "-backup", Namespace: env.wsNS}}))
+
+	require.NoError(t, env.r.windDownMariaDBBackups(ctx, env.db, env.wsNS))
+
+	require.False(t, env.exists(&mariadbv1.PhysicalBackup{}, env.wsNS, testDBName+"-backup"), "its own backups are removed")
+	require.True(t, env.exists(&mariadbv1.PhysicalBackup{}, env.wsNS, testDBName+"-restore-source"), "what it was started from is not")
+	require.True(t, env.exists(&mariadbv1.PointInTimeRecovery{}, env.wsNS, testDBName+"-restore-source"))
+
+	// They go with the database.
+	env.r.deleteMariaDBResources(ctx, env.db, env.wsNS)
+	require.False(t, env.exists(&mariadbv1.PhysicalBackup{}, env.wsNS, testDBName+"-restore-source"))
+	require.False(t, env.exists(&mariadbv1.PointInTimeRecovery{}, env.wsNS, testDBName+"-restore-source"))
+}
+
+// The final copy passes through a staging volume, and in a project that requires node tags the database's own class is
+// what keeps a volume on the nodes that carry them.
+func TestTheFinalMariaDBCopyIsStagedOnTheDatabasesOwnStorageClass(t *testing.T) {
+	env, mdb := mariaDeletingEnv(t, true, 0)
+	class := "geass-tagged-4f2a"
+	require.NoError(t, env.client.Create(context.Background(), &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: mariadbClaimName(env.db, 0), Namespace: env.wsNS},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &class},
+	}))
+	env.maintainMaria(mdb)
+
+	_, err := env.reconcile()
+
+	require.NoError(t, err)
+	final := env.physicalBackup(testDBName + "-final")
+	require.Equal(t, class, *final.Spec.StagingStorage.PersistentVolumeClaim.StorageClassName, "not the cluster's default class")
+}
+
+// The window ends where the operator says the logs reach. Raised to the newest copy it offered moments no log covers, and
+// a restore to one of them came up with older data.
+func TestMariaDBWindowEndsWhereTheOperatorSaysEvenWhenACopyIsNewer(t *testing.T) {
+	env, mdb := mariaEnv(t, true)
+	env.maintainMaria(mdb)
+	now := utcSeconds(time.Now())
+	newest, recoverable := now.Add(-10*time.Minute), now.Add(-3*time.Hour)
+	env.storage.allKeys = []string{physicalKey(now.Add(-26 * time.Hour)), physicalKey(newest)}
+	pitr := env.pitr(testDBName + "-pitr")
+	pitr.Status.LastRecoverableTime = timePtr(metav1.NewTime(recoverable))
+	require.NoError(t, env.client.Update(context.Background(), pitr))
+
+	env.maintainMaria(mdb)
+
+	archive := env.archive(testDBServerName)
+	require.True(t, archive.Status.RecoveryWindowEnd.Time.Equal(recoverable), "the operator's time, not the newest copy's")
+	require.True(t, archive.Status.RestorePoints[0].Time.Time.Equal(newest), "the newer copy is still a restore point of its own")
+}
+
+// A restore to a chosen moment fails when the logs do not reach it, rather than coming up with older data. One to the
+// latest state, or to a copy, has no moment to miss.
+func TestRestoringMariaDBToAMomentIsStrictAndTheOthersAreNot(t *testing.T) {
+	at := metav1.NewTime(time.Now().Add(-5 * time.Hour).Truncate(time.Second))
+	for name, tc := range map[string]struct {
+		restore geassv1alpha1.GeassDatabaseRestoreSpec
+		strict  bool
+	}{
+		"a moment":        {geassv1alpha1.GeassDatabaseRestoreSpec{Time: &at}, true},
+		"a restore point": {geassv1alpha1.GeassDatabaseRestoreSpec{RestorePoint: "20261010T020000Z"}, false},
+		"the latest":      {geassv1alpha1.GeassDatabaseRestoreSpec{}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := mariaRestoreEnv(t, replicatedSource("20261011T020000Z", "20261010T020000Z"), tc.restore, true)
+
+			_, err := env.r.mariadbRestoreBootstrap(context.Background(), env.db, env.wsNS, "")
+
+			require.NoError(t, err)
+			require.Equal(t, tc.strict, *env.pitr(testDBName + "-restore-source").Spec.StrictMode)
+		})
+	}
+}
+
+// A database that cannot start from the backups says nothing more than that it is initializing, and was waited for for
+// ever. After the time a restore of a dump is given, it is reported as failed.
+func TestARestoreThatNeverStartsIsReportedAsFailedAfterItsDeadline(t *testing.T) {
+	env, _ := mariaEnv(t, true)
+	young := &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour))}}
+	old := &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(time.Now().Add(-mariadbRestoreDeadline - time.Minute))}}
+
+	require.Equal(t, messageRestoringDatabase, env.r.mariadbRestoreMessage(young))
+	require.Equal(t, messageRestoreFailed, env.r.mariadbRestoreMessage(old))
+	require.Equal(t, messageRestoringDatabase, env.r.mariadbRestoreMessage(&mariadbv1.MariaDB{}), "an object with no creation time is not old")
+	require.False(t, platform.ReconcileFailureShouldCount(messageRestoringDatabase), "waiting is not a failure")
+	require.True(t, platform.ReconcileFailureShouldCount(messageRestoreFailed), "failing is")
+}
+
+// The password a restore carries must be in the Secret before the server is made. A Secret that was made with the
+// database's own password first (the archive could not be read yet) is corrected until the server exists.
+func TestARestoredMariaDBsSecretIsCorrectedUntilTheServerExists(t *testing.T) {
+	ctx := context.Background()
+	source := replicatedSource("20261011T020000Z")
+	source.Spec.Database = "books"
+	env := mariaRestoreEnv(t, source, geassv1alpha1.GeassDatabaseRestoreSpec{}, true)
+	require.NoError(t, env.r.reconcileBootstrapSecret(ctx, env.db, env.wsNS)) // made first, with the database's own password
+	require.Equal(t, testDBName+"-password", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]))
+	require.NoError(t, env.r.inheritMariaDBCredentials(ctx, env.db))
+	// The test environment starts with a MariaDB in the cluster; the one the restore makes does not exist yet.
+	require.NoError(t, env.client.Delete(ctx, &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: env.wsNS}}))
+
+	require.NoError(t, env.r.correctRestoredPassword(ctx, env.db, env.wsNS))
+
+	require.Equal(t, "books-password", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]))
+
+	// Once the server exists the data holds what it was started with, and the Secret is left alone.
+	require.NoError(t, env.client.Create(ctx, &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: env.wsNS}}))
+	secret := env.secret(env.wsNS, testDBName+"-bootstrap")
+	secret.Data["password"] = []byte("changed")
+	require.NoError(t, env.client.Update(ctx, secret))
+	require.NoError(t, env.r.correctRestoredPassword(ctx, env.db, env.wsNS))
+	require.Equal(t, "changed", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]))
+}
+
+// A live PhysicalBackup that lost its schedule made every pass panic, and backups could never be repaired.
+func TestAMariaDBBackupWithoutAScheduleIsRepairedNotDereferenced(t *testing.T) {
+	env, mdb := mariaEnv(t, true)
+	env.maintainMaria(mdb)
+	backup := env.physicalBackup(testDBName + "-backup")
+	backup.Spec.Schedule = nil
+	require.NoError(t, env.client.Update(context.Background(), backup))
+
+	require.NotPanics(t, func() { env.maintainMaria(mdb) })
+
+	require.NotNil(t, env.physicalBackup(testDBName+"-backup").Spec.Schedule)
+}
+
+// Deleting a database of another engine deletes nothing named like a MySQL or MariaDB database's volumes.
+func TestDeletingADatabaseOfAnotherEngineLeavesNamedVolumesAlone(t *testing.T) {
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEngineRedis, geassv1alpha1.DatabaseEnginePostgres, geassv1alpha1.DatabaseEngineSQLite} {
+		t.Run(string(engine), func(t *testing.T) {
+			e := newMariaDBEnv(t, 3)
+			e.db.Spec.Engine = engine
+			ctx := context.Background()
+			for _, name := range []string{mariadbClaimName(e.db, 0), mocoClaimName(e.db, 0)} {
+				require.NoError(t, e.client.Create(ctx, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testDevTargetNS}}))
+			}
+
+			e.r.deleteTargetResources(ctx, e.db, testDevTargetNS)
+
+			require.True(t, e.exists(&corev1.PersistentVolumeClaim{}, mariadbClaimName(e.db, 0)), "a volume that is not this engine's is not deleted by name")
+			require.True(t, e.exists(&corev1.PersistentVolumeClaim{}, mocoClaimName(e.db, 0)))
+		})
+	}
 }

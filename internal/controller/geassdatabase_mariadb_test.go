@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -715,4 +717,122 @@ func TestOperatorObjectsArePatchedAndOnlyWithWhatChanged(t *testing.T) {
 	patches = nil
 	require.NoError(t, e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, "", platform.Placement{}))
 	require.Empty(t, patches, "nothing changed, so nothing is sent")
+}
+
+// --- what review found ------------------------------------------------------------------------
+
+// A promotion that Geass asked for and the operator cannot finish (a switchover needs the old primary to answer) was
+// waited for for ever, with the database not ready while the old primary served.
+func TestAPromotionTheOperatorCannotFinishIsGivenUpAndNotRepeatedAtOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newFailoverFixture()
+	f.lose("node-a", 10*time.Minute)
+	db := &geassv1alpha1.GeassDatabase{ObjectMeta: metav1.ObjectMeta{Name: testDBName}}
+	zero, one := 0, 1
+	spec := mariadbSpec(db, "", platform.Placement{}, 3)
+	spec.Replication.Primary.PodIndex = &one // asked for orders-1; the primary is still orders-0
+	f.mdb.ObjectMeta = metav1.ObjectMeta{Name: mariadbObject, Namespace: testDevTargetNS}
+	f.mdb.Spec = spec
+	objects := make([]client.Object, 0, 1+len(f.pods))
+	objects = append(objects, f.mdb)
+	for i := range f.pods {
+		f.pods[i].Labels = map[string]string{platform.K8sLabelInstance: testDBName, platform.K8sLabelAppName: "mariadb"}
+		objects = append(objects, &f.pods[i])
+	}
+	e := newMariaDBEnv(t, 3, objects...)
+	for i := range f.nodes {
+		require.NoError(t, e.client.Create(ctx, &f.nodes[i]))
+	}
+	load := func() *mariadbv1.MariaDB {
+		stored := e.mariadb()
+		stored.Status = f.mdb.Status
+		return stored
+	}
+	set := func(annotations map[string]string) *mariadbv1.MariaDB {
+		stored := e.mariadb()
+		stored.Annotations = annotations
+		require.NoError(t, e.client.Update(ctx, stored))
+		return load()
+	}
+	startedAgo := func(d time.Duration) string { return time.Now().Add(-d).UTC().Format(time.RFC3339) }
+
+	// Under way for a few minutes: waited for.
+	promoting, err := e.r.mariadbFailover(ctx, e.db, testDevTargetNS, set(map[string]string{annotationPromotionStarted: startedAgo(3 * time.Minute)}))
+	require.NoError(t, err)
+	require.True(t, promoting)
+	require.Equal(t, 1, *e.mariadb().Spec.Replication.Primary.PodIndex)
+
+	// Under way for longer than the operator can be given: given up, and the database says the primary is the primary.
+	promoting, err = e.r.mariadbFailover(ctx, e.db, testDevTargetNS, set(map[string]string{annotationPromotionStarted: startedAgo(mariadbSwitchoverDeadline + time.Minute)}))
+	require.NoError(t, err)
+	require.False(t, promoting)
+	stored := e.mariadb()
+	require.Equal(t, zero, *stored.Spec.Replication.Primary.PodIndex, "back to the primary that is serving")
+	require.NotContains(t, stored.Annotations, annotationPromotionStarted)
+	require.Contains(t, stored.Annotations, annotationPromotionAbandoned)
+
+	// The machine is still lost, and another promotion is not asked for straight away.
+	promoting, err = e.r.mariadbFailover(ctx, e.db, testDevTargetNS, load())
+	require.NoError(t, err)
+	require.False(t, promoting)
+	require.Equal(t, zero, *e.mariadb().Spec.Replication.Primary.PodIndex)
+
+	// After the wait it is.
+	promoting, err = e.r.mariadbFailover(ctx, e.db, testDevTargetNS, set(map[string]string{annotationPromotionAbandoned: startedAgo(mariadbPromotionRetryAfter + time.Minute)}))
+	require.NoError(t, err)
+	require.True(t, promoting)
+	stored = e.mariadb()
+	require.Equal(t, 1, *stored.Spec.Replication.Primary.PodIndex)
+	require.Contains(t, stored.Annotations, annotationPromotionStarted, "the time is recorded, so a promotion that never finishes can be given up")
+	require.NotContains(t, stored.Annotations, annotationPromotionAbandoned)
+}
+
+func TestAFinishedPromotionIsForgotten(t *testing.T) {
+	ctx := context.Background()
+	e := newMariaDBEnv(t, 3)
+	primary := "orders-1"
+	one := 1
+	mdb := &mariadbv1.MariaDB{
+		ObjectMeta: metav1.ObjectMeta{Name: mariadbObject, Namespace: testDevTargetNS, Annotations: map[string]string{annotationPromotionStarted: time.Now().UTC().Format(time.RFC3339)}},
+		Spec:       mariadbSpec(e.db, "", platform.Placement{}, 3),
+		Status:     mariadbv1.MariaDBStatus{CurrentPrimary: &primary},
+	}
+	mdb.Spec.Replication.Primary.PodIndex = &one
+	require.NoError(t, e.client.Create(ctx, mdb))
+
+	promoting, err := e.r.mariadbFailover(ctx, e.db, testDevTargetNS, mdb)
+
+	require.NoError(t, err)
+	require.False(t, promoting, "the operator reports the primary the spec names")
+	require.NotContains(t, e.mariadb().Annotations, annotationPromotionStarted)
+}
+
+// MOCO's cluster has fields the type does not model, and an update would send them back empty.
+func TestTheMOCOClusterIsPatchedAndOnlyWithWhatChanged(t *testing.T) {
+	e := newMySQLHAEnv(t, 3, append(certManagerRuns(), mocoRuns()...)...)
+	e.reconcileMySQLHA("geass-single")
+	var patches []string
+	watching, ok := e.client.(client.WithWatch)
+	require.True(t, ok)
+	e.r.Client = interceptor.NewClient(watching, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if data, err := patch.Data(obj); err == nil && strings.Contains(string(data), "replicas") {
+				patches = append(patches, string(data))
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, cluster := obj.(*mocov1.MySQLCluster); cluster {
+				t.Errorf("the cluster was replaced, which sends back every field the type does not model as if it were empty")
+			}
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+	five := int32(5)
+	e.db.Spec.Instances = &five
+
+	e.reconcileMySQLHA("geass-single")
+
+	require.Len(t, patches, 1, "the new number of servers is sent as a patch")
+	require.EqualValues(t, 5, e.mocoCluster().Spec.Replicas)
 }

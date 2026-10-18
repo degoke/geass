@@ -112,9 +112,13 @@ const (
 	// missingSelectorsExpression is the required tags whose node selector the pod does not have.
 	missingSelectorsExpression = `variables.required.filter(t, !(has(object.spec.nodeSelector) && ('` + TagKeyPrefix + `' + t) in object.spec.nodeSelector && ` +
 		`object.spec.nodeSelector['` + TagKeyPrefix + `' + t] == 'true'))`
-	// missingTolerationsExpression is the required tags whose taint the pod does not already tolerate.
+	// missingTolerationsExpression is the required tags whose taint the pod does not already tolerate. The taint is
+	// NoSchedule, with the value "compliance", so a toleration that names the key counts only if it covers that effect
+	// (none named is all of them) and either matches any value (Exists) or names the value.
 	missingTolerationsExpression = `variables.required.filter(t, !(has(object.spec.tolerations) && ` +
-		`object.spec.tolerations.exists(x, has(x.key) && x.key == '` + TagKeyPrefix + `' + t)))`
+		`object.spec.tolerations.exists(x, has(x.key) && x.key == '` + TagKeyPrefix + `' + t && ` +
+		`(!has(x.effect) || x.effect == '' || x.effect == 'NoSchedule') && ` +
+		`((has(x.operator) && x.operator == 'Exists') || (has(x.value) && x.value == '` + ComplianceTaintValue + `')))))`
 )
 
 // complianceMutationExpression is the JSON patch. A node selector or a list of tolerations that the pod has not got

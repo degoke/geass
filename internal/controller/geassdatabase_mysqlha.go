@@ -54,8 +54,9 @@ const (
 	mocoMemoryFloor = "1Gi"
 	// mocoAppName is the name label MOCO puts on the pods of every cluster.
 	mocoAppName = "mysql"
-	// mocoMaxInstances is how many servers MOCO runs at most.
-	mocoMaxInstances = 5
+	// maxClusterInstances is how many servers a highly available MySQL or MariaDB database runs at most: both operators
+	// run an odd number, one of three or five, and the volume claims of that many are cleaned up with the database.
+	maxClusterInstances = 5
 
 	labelLoginFor = "geass.dev/login-for"
 
@@ -105,7 +106,7 @@ func oddInstances(db *geassv1alpha1.GeassDatabase) (int32, string) {
 		}
 		return 1, ""
 	}
-	if instances != 3 && instances != mocoMaxInstances {
+	if instances != 3 && instances != maxClusterInstances {
 		return 0, platform.HAInstancesMessage(db.Spec.Engine, instances)
 	}
 	return instances, ""
@@ -337,10 +338,11 @@ func (r *GeassDatabaseReconciler) mocoOperatorReady(ctx context.Context) (bool, 
 
 // ensureMOCOCluster creates or updates the cluster and returns it as the API server last saw it. What decides
 // where the data lives, the volume claims, cannot change once the servers exist, so an existing cluster keeps
-// its own; the number of servers and what they ask for can.
+// its own; the number of servers and what they ask for can. It is patched, not replaced: the type models only some of
+// the cluster's fields, and an update would send the others back empty.
 func (r *GeassDatabaseReconciler) ensureMOCOCluster(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement, instances int32) (*mocov1.MySQLCluster, error) {
 	cluster := &mocov1.MySQLCluster{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cluster, func() error {
+	_, err := controllerutil.CreateOrPatch(ctx, r.Client, cluster, func() error {
 		applyGeassLabels(cluster, db, "GeassDatabase")
 		desired := mocoClusterSpec(db, storageClass, placement, instances)
 		if cluster.ResourceVersion != "" {
@@ -453,7 +455,7 @@ func (r *GeassDatabaseReconciler) deleteMySQLHAResources(ctx context.Context, db
 		log.Info("Could not delete MySQLCluster", "name", db.Name, "error", err.Error())
 	}
 	_ = r.DeleteAllOf(ctx, &batchv1.Job{}, client.InNamespace(wsNS), client.MatchingLabels{labelLoginFor: db.Name}, client.PropagationPolicy(metav1.DeletePropagationBackground))
-	for i := range mocoMaxInstances {
+	for i := range maxClusterInstances {
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: mocoClaimName(db, i), Namespace: wsNS}}))
 	}
 }

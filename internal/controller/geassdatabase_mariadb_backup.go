@@ -66,6 +66,9 @@ const (
 
 	// mariadbBackupPending is how soon a database is looked at again while its backups are being set up.
 	mariadbBackupPending = 15 * time.Second
+
+	// mariadbBinlogPruneHour is the hour of the day (UTC) when archived logs that no kept copy can use are removed.
+	mariadbBinlogPruneHour = 3
 )
 
 func mariadbBackupName(db *geassv1alpha1.GeassDatabase) string { return db.Name + mariadbBackupSuffix }
@@ -232,9 +235,9 @@ func (r *GeassDatabaseReconciler) maintainMariaDBBackups(ctx context.Context, db
 		outcome.pending = true
 	}
 
-	points, listed := r.listPhysicalBackups(ctx, db, plan)
-	if listed {
-		r.pruneBinlogs(ctx, db, plan)
+	points, copies, listed := r.listPhysicalBackups(ctx, db, plan)
+	if listed && r.now().UTC().Hour() == mariadbBinlogPruneHour {
+		r.pruneBinlogs(ctx, db, plan, copies)
 	}
 	failure, err := r.latestPhysicalBackupFailure(ctx, db, wsNS)
 	if err != nil {
@@ -267,14 +270,13 @@ func physicalObservation(points []geassv1alpha1.GeassRestorePoint, lastFailure *
 }
 
 // recoverableUntil is the latest moment a restore reaches: what the operator says the archived logs reach, or, until it
-// says anything, the newest copy.
+// says anything, the newest copy. It is not raised to the newest copy's time when the operator's is earlier, as it is
+// right after a new baseline copy: no log covers the moments between, and a restore to one of them would come up with
+// older data. That copy is still a restore point of its own.
 func (r *GeassDatabaseReconciler) recoverableUntil(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, observed observedBackups) *time.Time {
 	pitr := &mariadbv1.PointInTimeRecovery{}
 	if err := r.Get(ctx, client.ObjectKey{Name: mariadbPITRName(db), Namespace: wsNS}, pitr); err == nil && pitr.Status.LastRecoverableTime != nil {
 		end := pitr.Status.LastRecoverableTime.Time
-		if last := observed.lastBackup(); last != nil && last.After(end) {
-			end = *last
-		}
 		return &end
 	}
 	return observed.lastBackup()
@@ -292,7 +294,9 @@ func (r *GeassDatabaseReconciler) ensureMariaDBBackupObjects(ctx context.Context
 			if live := backup.Spec.StagingStorage; live != nil && live.PersistentVolumeClaim != nil && desired.StagingStorage != nil {
 				desired.StagingStorage.PersistentVolumeClaim.StorageClassName = live.PersistentVolumeClaim.StorageClassName
 			}
-			desired.Schedule.OnDemand = backup.Spec.Schedule.OnDemand
+			if backup.Spec.Schedule != nil {
+				desired.Schedule.OnDemand = backup.Spec.Schedule.OnDemand
+			}
 		}
 		if backup.Annotations == nil {
 			backup.Annotations = map[string]string{}
@@ -383,31 +387,28 @@ func (r *GeassDatabaseReconciler) mariadbArchivesLogs(ctx context.Context, db *g
 }
 
 // listPhysicalBackups reads the copies in the bucket, which is the truth: it reflects what was added, pruned or lost.
-func (r *GeassDatabaseReconciler) listPhysicalBackups(ctx context.Context, db *geassv1alpha1.GeassDatabase, plan *backupPlan) ([]geassv1alpha1.GeassRestorePoint, bool) {
+func (r *GeassDatabaseReconciler) listPhysicalBackups(ctx context.Context, db *geassv1alpha1.GeassDatabase, plan *backupPlan) (points []geassv1alpha1.GeassRestorePoint, keys []string, listed bool) {
 	if plan.access == nil || plan.archive == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	archive := plan.archive
 	storage := r.backupStorage(plan.access.accessKey, plan.access.secretKey, plan.access.region)
 	keys, err := storage.ListKeys(archive.Spec.Storage.Bucket, platform.PhysicalObjectPrefix(archive.Spec.Project, archive.Spec.ServerName))
 	if err != nil {
 		logf.FromContext(ctx).Info("Could not list backups", "database", db.Name, "reason", summarizeStorageError(err))
-		return nil, false
+		return nil, nil, false
 	}
-	return platform.PhysicalRestorePoints(keys), true
+	return platform.PhysicalRestorePoints(keys), keys, true
 }
 
-// pruneBinlogs removes the archived logs that no copy that is kept can use. Failing to is not a reason to fail the
-// database: the logs stay, and are looked at again next time.
-func (r *GeassDatabaseReconciler) pruneBinlogs(ctx context.Context, db *geassv1alpha1.GeassDatabase, plan *backupPlan) {
+// pruneBinlogs removes the archived logs that no copy that is kept can use, given the copies that are kept. It runs once a
+// day, in the hour after the nightly copy has been taken and the operator has removed the old ones: the logs are
+// listed in full, and there is one for every five minutes of the retention. Failing to is not a reason to fail the
+// database: the logs stay, and are looked at again the next day.
+func (r *GeassDatabaseReconciler) pruneBinlogs(ctx context.Context, db *geassv1alpha1.GeassDatabase, plan *backupPlan, copies []string) {
 	archive := plan.archive
 	storage := r.backupStorage(plan.access.accessKey, plan.access.secretKey, plan.access.region)
 	log := logf.FromContext(ctx)
-	copies, err := storage.ListKeys(archive.Spec.Storage.Bucket, platform.PhysicalObjectPrefix(archive.Spec.Project, archive.Spec.ServerName))
-	if err != nil {
-		log.Info("Could not list backups", "database", db.Name, "reason", summarizeStorageError(err))
-		return
-	}
 	objects, err := storage.ListObjects(archive.Spec.Storage.Bucket, platform.BinlogObjectPrefix(archive.Spec.Project, archive.Spec.ServerName))
 	if err != nil {
 		log.Info("Could not list archived logs", "database", db.Name, "reason", summarizeStorageError(err))
@@ -483,7 +484,8 @@ func (r *GeassDatabaseReconciler) windDownMariaDBBackups(ctx context.Context, db
 	if live == nil && db.Status.Backup == nil {
 		return nil
 	}
-	if err := r.deleteMariaDBBackupObjects(ctx, db, wsNS); err != nil {
+	// The objects a restored database was started from stay: its spec still names them.
+	if err := r.deleteMariaDBBackupObjects(ctx, db, wsNS, false); err != nil {
 		return err
 	}
 	if live != nil {
@@ -495,8 +497,10 @@ func (r *GeassDatabaseReconciler) windDownMariaDBBackups(ctx context.Context, db
 }
 
 // deleteMariaDBBackupObjects removes what the backups made in the cluster, never what they put in the bucket. A staging
-// volume the operator made for the copies is not owned by anything that Geass deletes, so it goes too.
-func (r *GeassDatabaseReconciler) deleteMariaDBBackupObjects(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
+// volume the operator made for the copies is not owned by anything that Geass deletes, so it goes too. The copy and the
+// archive of logs that a restored database was started from are removed only with the database (withRestoreSource):
+// the operator keeps them named in the database's spec for as long as it exists.
+func (r *GeassDatabaseReconciler) deleteMariaDBBackupObjects(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, withRestoreSource bool) error {
 	ignore := func(err error) error {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			return nil
@@ -508,8 +512,12 @@ func (r *GeassDatabaseReconciler) deleteMariaDBBackupObjects(ctx context.Context
 		&mariadbv1.PointInTimeRecovery{ObjectMeta: metav1.ObjectMeta{Name: mariadbPITRName(db), Namespace: wsNS}},
 		&mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbBackupName(db), Namespace: wsNS}},
 		&mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbFinalName(db), Namespace: wsNS}},
-		&mariadbv1.PointInTimeRecovery{ObjectMeta: metav1.ObjectMeta{Name: mariadbRestoreSourceName(db), Namespace: wsNS}},
-		&mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbRestoreSourceName(db), Namespace: wsNS}},
+	}
+	if withRestoreSource {
+		objects = append(objects,
+			&mariadbv1.PointInTimeRecovery{ObjectMeta: metav1.ObjectMeta{Name: mariadbRestoreSourceName(db), Namespace: wsNS}},
+			&mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbRestoreSourceName(db), Namespace: wsNS}},
+		)
 	}
 	for _, object := range objects {
 		if err := ignore(r.Delete(ctx, object, client.PropagationPolicy(metav1.DeletePropagationBackground))); err != nil {
@@ -543,7 +551,14 @@ func (r *GeassDatabaseReconciler) finalizeMariaDBBackups(ctx context.Context, db
 	case apierrors.IsNotFound(err):
 		// The copy is of the database at this moment, and is taken once: it has no schedule.
 		secret := db.Name + backupCredentialsSuffix
-		spec := mariadbPhysicalBackupSpec(db, live, secret, "", pinnedNodePlacement(db))
+		// The copy is staged on a volume of the database's own class, which in a project that requires node tags keeps
+		// it on the nodes that carry them. The default class would not.
+		storageClass, _, classErr := r.existingVolumeClass(ctx, db, wsNS)
+		if classErr != nil {
+			log.Info("Could not read the database's storage class for the final backup", "database", db.Name, "reason", classErr.Error())
+			return 0, r.retireMariaDBArchive(ctx, db, wsNS, live)
+		}
+		spec := mariadbPhysicalBackupSpec(db, live, secret, storageClass, pinnedNodePlacement(db))
 		spec.Schedule = nil
 		spec.MaxRetention = nil
 		final = &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbFinalName(db), Namespace: wsNS}, Spec: spec}
@@ -664,6 +679,31 @@ func (r *GeassDatabaseReconciler) inheritMariaDBCredentials(ctx context.Context,
 	return nil
 }
 
+// correctRestoredPassword puts the password a restore carries into the database's Secret when the Secret was made with
+// another before the origin was known (a stale read of the archive, or a manifest that named a backup made later). The
+// operator reaches the restored server with the Secret's password, so a wrong one never gets past initializing. It
+// can only be changed until the server exists: after that the data holds whatever it was started with.
+func (r *GeassDatabaseReconciler) correctRestoredPassword(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
+	origin := db.Annotations[annotationCredentialsOrigin]
+	if origin == "" || db.Status.RestoredAt != nil {
+		return nil
+	}
+	if existing, err := r.existingMariaDB(ctx, db, wsNS); err != nil || existing != nil {
+		return err
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: db.Name + "-bootstrap", Namespace: wsNS}, secret); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	want := origin + "-password"
+	if secretValue(secret, "password") == want {
+		return nil
+	}
+	base := secret.DeepCopy()
+	setSecretStrings(secret, map[string]string{"password": want})
+	return r.Patch(ctx, secret, client.MergeFrom(base))
+}
+
 // mariadbRestoreBootstrap prepares what a database needs to start from another one's backups: a copy and an archive of
 // logs that read the source's folders, in the database's own namespace, and the credentials for them. They are only read
 // while the database is made, and are kept as long as the database is, because the operator keeps what it was made from
@@ -720,7 +760,9 @@ func (r *GeassDatabaseReconciler) mariadbRestoreBootstrap(ctx context.Context, d
 			Storage: mariadbv1.PhysicalBackupStorage{S3: mariadbBucket(
 				source.Spec.Storage.Bucket, region, platform.BinlogObjectPrefix(source.Spec.Project, source.Spec.ServerName), secretName)},
 			Compression: "gzip",
-			StrictMode:  utilptr.To(false),
+			// A restore to a chosen moment fails when the logs do not reach it, rather than coming up with older data
+			// than was asked for. One to the latest state, or to a copy, has nothing to miss.
+			StrictMode: utilptr.To(restore.Time != nil),
 		}
 		return setSameNamespaceOwner(db, pitr, r.Scheme)
 	}); err != nil {
