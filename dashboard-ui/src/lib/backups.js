@@ -4,10 +4,10 @@ import { formatRelativeTime } from "@/lib/services";
 export const BACKUP_RETENTION_CHOICES = [7, 14, 30, 90];
 export const DEFAULT_BACKUP_RETENTION_DAYS = 7;
 
-const BACKED_UP_ENGINES = ["Postgres", "MySQL", "SQLite"];
+const BACKED_UP_ENGINES = ["Postgres", "MySQL", "MariaDB", "SQLite"];
 const SNAPSHOT_ENGINES = ["MySQL", "SQLite"];
 
-/** Postgres, MySQL and SQLite databases that run inside Geass have backups; caches and external databases do not. */
+/** Postgres, MySQL, MariaDB and SQLite databases that run inside Geass have backups; caches and external databases do not. */
 export function supportsBackups(item) {
   if (!item?.spec) return false;
   if (item.spec.placement === "External") return false;
@@ -15,20 +15,27 @@ export function supportsBackups(item) {
 }
 
 /**
- * MySQL and SQLite are backed up by a full copy every day, so they can only be restored to when a
- * copy was taken. Postgres archives every change and can be restored to any moment.
+ * MySQL and SQLite are backed up by a full copy every day, so they can only be restored to when a copy was taken, and
+ * so is a MariaDB database that runs as one server. Postgres archives every change, and so does a MariaDB database with
+ * high availability, so those can be restored to any moment.
  */
-export function isSnapshotEngine(engine) {
+export function isSnapshotEngine(engine, highAvailability = false) {
+  if (engine === "MariaDB") return !highAvailability;
   return SNAPSHOT_ENGINES.includes(engine);
 }
 
+/** A database asks for high availability with the switch or with three or more instances. */
+export function wantsHighAvailability(spec) {
+  return Boolean(spec?.highAvailability) || Number(spec?.instances) >= 3;
+}
+
 export function isSnapshotDatabase(item) {
-  return isSnapshotEngine(item?.spec?.engine);
+  return isSnapshotEngine(item?.spec?.engine, wantsHighAvailability(item?.spec));
 }
 
 /** Backups made before other engines had them record no engine and are Postgres. */
 export function isSnapshotArchive(archive) {
-  return isSnapshotEngine(archive?.spec?.source?.engine);
+  return isSnapshotEngine(archive?.spec?.source?.engine, Boolean(archive?.spec?.source?.highAvailability));
 }
 
 export function backupSpec(item) {

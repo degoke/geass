@@ -11,7 +11,7 @@ Geass has no uninstall command. You remove it by deleting your resources from th
 | --- | --- | --- |
 | The operator, the dashboard, every Geass object, secrets, dashboard users, API tokens | Deleted | They live in the cluster's database, which K3s's uninstall script removes with its data directory |
 | Workloads and their namespaces | Deleted | |
-| The add-ons and what the operator created for them: KEDA and its HTTP add-on (the `keda` namespace), the operator's `ServiceMonitor` and `PrometheusRule`, the admission policy for compliance tags, and the `CronJob` objects of function schedules | Deleted | They are objects in the cluster's database. Geass itself never uninstalls KEDA or the admission policy, so only the cluster's removal takes them away |
+| The add-ons and what the operator created for them: KEDA and its HTTP add-on (the `keda` namespace), the operator's `ServiceMonitor` and `PrometheusRule`, the admission policies for compliance tags, and the `CronJob` objects of function schedules | Deleted | They are objects in the cluster's database. Geass itself never uninstalls KEDA or the admission policies, so only the cluster's removal takes them away |
 | Volumes on K3s's `local-path` storage (metrics, log history, and the in-cluster object storage server and databases created without Longhorn) | Deleted | They are under K3s's data directory (`/var/lib/rancher/k3s` by default) |
 | Longhorn replica data (database and object storage volumes) | Left on disk | In Longhorn's data directory (`/var/lib/longhorn/` by default) on each node. Nothing refers to it any more. Remove it yourself |
 | iSCSI initiator packages the installer added | Left | |

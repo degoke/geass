@@ -68,11 +68,13 @@ spec:
 | `spec.storage.region` | string | Optional | None | The bucket's region. Geass writes the region it resolved. |
 | `spec.retentionDays` | integer (int32) | Required | Minimum 1, maximum 365 | How many days back the database can be restored. Follows the database's `spec.backup.retentionDays`. |
 | `spec.source` | object | Optional | None | What a restore needs to know about the original database. |
-| `spec.source.engine` | string | Optional. Empty means Postgres. | Enum `Postgres`, `MySQL`, `SQLite`, `Redis` | The engine of the source database. |
+| `spec.source.engine` | string | Optional. Empty means Postgres. | Enum `Postgres`, `MySQL`, `SQLite`, `Redis`, `MariaDB` | The engine of the source database. |
 | `spec.source.version` | string | Optional | None | The Postgres major version. Other engines do not record one. |
 | `spec.source.databaseName` | string | Optional | None | The database name. Recorded for Postgres and MySQL. |
 | `spec.source.storageSize` | Quantity | Optional | None | The source disk size. A restored database needs at least this much. |
 | `spec.source.resources` | ResourceRequirements | Optional | None | The CPU and memory the source used. |
+| `spec.source.highAvailability` | boolean | Optional | None | Whether the source ran as a replicated cluster. Recorded for MariaDB. A replicated MariaDB is backed up with physical copies and archived logs, restored to any moment, and has to be restored into a replicated database. |
+| `spec.source.instances` | integer | Optional | None | How many instances the source ran. A restore starts with as many. |
 | `spec.deleteAfter` | date-time | Optional | None | When Geass removes the backups. Empty while the database is protected. Set when the database is deleted or backups are turned off. |
 
 :::note

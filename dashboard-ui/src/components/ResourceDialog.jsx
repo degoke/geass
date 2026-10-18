@@ -280,6 +280,7 @@ export function ResourceDialog({ project, environment, data }) {
       const dbRows = [
         { key: "postgres", label: "PostgreSQL", engine: "Postgres", placement: "InCluster" },
         { key: "mysql", label: "MySQL", engine: "MySQL", placement: "InCluster" },
+        { key: "mariadb", label: "MariaDB", engine: "MariaDB", placement: "InCluster" },
         { key: "redis", label: "Redis", engine: "Redis", placement: "InCluster" },
         { key: "sqlite", label: "SQLite", engine: "SQLite", placement: "InCluster" },
         {

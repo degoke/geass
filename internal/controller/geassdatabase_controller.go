@@ -73,6 +73,10 @@ type GeassDatabaseReconciler struct {
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=helm.cattle.io,resources=helmcharts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=moco.cybozu.com,resources=mysqlclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=mariadbs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=scheduledbackups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -191,6 +195,8 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.reconcilePostgres(ctx, &db, wsNS, storageClass, placement, log.WithValues("engine", "Postgres"))
 	case geassv1alpha1.DatabaseEngineMySQL:
 		return r.reconcileMySQL(ctx, &db, wsNS, storageClass, placement)
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		return r.reconcileMariaDB(ctx, &db, wsNS, storageClass, placement)
 	case geassv1alpha1.DatabaseEngineRedis:
 		return r.reconcileRedis(ctx, &db, wsNS, placement)
 	case geassv1alpha1.DatabaseEngineSQLite:
@@ -370,6 +376,8 @@ func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *g
 	case err != nil:
 	case backups.failed:
 		result.RequeueAfter = backupRetryInterval
+	case backups.pending:
+		result.RequeueAfter = mariadbBackupPending
 	case backups.backups:
 		result.RequeueAfter = platform.BackupStatusRefreshInterval
 	}
@@ -465,7 +473,7 @@ func (r *GeassDatabaseReconciler) reconcileExternal(ctx context.Context, db *gea
 			username = secretValue(connSecret, platform.ConnectionKeyUsername)
 			password = secretValue(connSecret, platform.ConnectionKeyPassword)
 			// Only a Postgres login names its own database; a MySQL one connects to the database that was created.
-			if db.Spec.Engine != geassv1alpha1.DatabaseEngineMySQL {
+			if db.Spec.Engine != geassv1alpha1.DatabaseEngineMySQL && db.Spec.Engine != geassv1alpha1.DatabaseEngineMariaDB {
 				database = firstNonEmpty(secretValue(connSecret, platform.ConnectionKeyDatabase), database)
 			}
 		case apierrors.IsNotFound(err):
@@ -635,6 +643,13 @@ func (r *GeassDatabaseReconciler) deleteTargetResources(ctx context.Context, db 
 	_ = helmchart.Delete(ctx, r.Client, mysqlChartName(db.Name))
 	_ = helmchart.Delete(ctx, r.Client, redisDatabaseChartName(db.Name))
 	r.deleteServerResources(ctx, db, wsNS)
+	// They delete volume claims by name, so only the engine whose claims they are runs them.
+	switch db.Spec.Engine {
+	case geassv1alpha1.DatabaseEngineMySQL:
+		r.deleteMySQLHAResources(ctx, db, wsNS)
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		r.deleteMariaDBResources(ctx, db, wsNS)
+	}
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-bootstrap", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + "-connection", Namespace: wsNS}}))
 	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: db.Name + backupCredentialsSuffix, Namespace: wsNS}}))
@@ -681,7 +696,7 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 			setSecretStrings(secret, map[string]string{"username": appContainerName})
 		}
 		if secretValue(secret, "password") == "" {
-			setSecretStrings(secret, map[string]string{"password": db.Name + "-password"})
+			setSecretStrings(secret, map[string]string{"password": credentialsOrigin(db) + "-password"})
 		}
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})
@@ -912,6 +927,10 @@ func databaseCapacityEstimate(db *geassv1alpha1.GeassDatabase) platform.Workload
 	if db.Spec.Engine == "" {
 		label = "PostgreSQL database"
 	}
+	if db.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && databaseWantsHA(db) {
+		// A MOCO server is given at least what it needs to start, which is more than a single server is.
+		return platform.EstimateFromResources(label, mysqlHAResources(db), databaseInstances(db))
+	}
 	return platform.EstimateFromResources(label, databaseInstanceResources(db), databaseInstances(db))
 }
 
@@ -934,7 +953,7 @@ func storageSize(db *geassv1alpha1.GeassDatabase) string {
 
 func defaultPortForEngine(engine geassv1alpha1.GeassDatabaseEngine) string {
 	switch engine {
-	case geassv1alpha1.DatabaseEngineMySQL:
+	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB:
 		return platform.MySQLDefaultPort
 	case geassv1alpha1.DatabaseEngineRedis:
 		return platform.RedisDefaultPort
@@ -947,7 +966,7 @@ func defaultPortForEngine(engine geassv1alpha1.GeassDatabaseEngine) string {
 
 func schemeForEngine(engine geassv1alpha1.GeassDatabaseEngine) string {
 	switch engine {
-	case geassv1alpha1.DatabaseEngineMySQL:
+	case geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB:
 		return "mysql"
 	case geassv1alpha1.DatabaseEngineRedis:
 		return "redis"

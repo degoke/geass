@@ -23,6 +23,7 @@ type backupStorageAPI interface {
 	EnsureBucketUser(buckets []string, userName, existingAccess, existingSecret string) (string, string, error)
 	DeletePrefix(bucket, prefix string) error
 	ListKeys(bucket, prefix string) ([]string, error)
+	ListObjects(bucket, prefix string) ([]cloud.S3Object, error)
 	DeleteObject(bucket, key string) error
 }
 
@@ -31,9 +32,17 @@ type backupStorageFactory func(accessKey, secretKey, region string) backupStorag
 
 func awsBackupStorageFactory(httpClient *http.Client) backupStorageFactory {
 	return func(accessKey, secretKey, region string) backupStorageAPI {
-		return &cloud.AWSClient{HTTP: httpClient, AccessKey: accessKey, SecretKey: secretKey, Region: region}
+		client := &cloud.AWSClient{HTTP: httpClient, AccessKey: accessKey, SecretKey: secretKey, Region: region}
+		if standInS3Endpoint != "" {
+			client.Endpoint = "http://" + standInS3Endpoint
+		}
+		return client
 	}
 }
+
+// standInS3Endpoint is the host and port of an S3 server that stands in for AWS, and is empty everywhere but in a
+// build made for testing against one (see backup_standin.go). A bucket is always AWS's in a release.
+var standInS3Endpoint string
 
 // awsConnection is a project's AWS credentials, resolved from one of its cloud connections.
 type awsConnection struct {

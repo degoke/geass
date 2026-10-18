@@ -1609,6 +1609,12 @@ spec:
                 description: Source describes the database so a restore can size the
                   new one.
                 properties:
+                  credentialsOrigin:
+                    description: |-
+                      CredentialsOrigin is the name of the database whose generated password the backed up data carries. A physical
+                      copy holds the logins of the server it was taken from, so a database restored from one has to be given the same
+                      password to be reached, and it records where it got it from for the restore of a restore.
+                    type: string
                   databaseName:
                     description: DatabaseName is the name of the database inside the
                       Postgres server.
@@ -1622,7 +1628,19 @@ spec:
                     - MySQL
                     - SQLite
                     - Redis
+                    - MariaDB
                     type: string
+                  highAvailability:
+                    description: |-
+                      HighAvailability is whether the source database ran as a replicated cluster. For MariaDB it decides how
+                      the backups are made and what can be restored: a replicated database can be restored to any moment, and has
+                      to be restored into a replicated database, so a restore starts with the same number of instances.
+                    type: boolean
+                  instances:
+                    description: Instances is how many instances the source database
+                      ran.
+                    format: int32
+                    type: integer
                   resources:
                     description: Resources is the CPU and memory the source database
                       used.
@@ -2713,7 +2731,7 @@ spec:
               backup:
                 description: |-
                   Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
-                  moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+                  moment), MySQL, MariaDB and SQLite (daily snapshots); nil or disabled leaves the database with no
                   recovery path beyond its own disks.
                 properties:
                   enabled:
@@ -2773,6 +2791,7 @@ spec:
                 - MySQL
                 - SQLite
                 - Redis
+                - MariaDB
                 type: string
               environment:
                 description: Environment is the project environment. Empty for the
@@ -6175,6 +6194,8 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
+  - mutatingadmissionpolicies
+  - mutatingadmissionpolicybindings
   - validatingadmissionpolicies
   - validatingadmissionpolicybindings
   verbs:
@@ -6338,6 +6359,20 @@ rules:
   - update
   - watch
 - apiGroups:
+  - k8s.mariadb.com
+  resources:
+  - mariadbs
+  - physicalbackups
+  - pointintimerecoveries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - longhorn.io
   resources:
   - nodes
@@ -6346,6 +6381,18 @@ rules:
   - get
   - list
   - patch
+- apiGroups:
+  - moco.cybozu.com
+  resources:
+  - mysqlclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - monitoring.coreos.com
   resources:

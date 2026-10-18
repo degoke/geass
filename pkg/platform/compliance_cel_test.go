@@ -1,9 +1,12 @@
 package platform
 
 import (
+	"fmt"
+	"maps"
 	"testing"
 
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/ext"
 	"github.com/stretchr/testify/require"
 )
@@ -99,4 +102,110 @@ func TestComplianceAdmissionMessagesCompile(t *testing.T) {
 	out := celEval(t, env, message, map[string]any{"variables": map[string]any{"required": []any{"hipaa", "pci"}}})
 
 	require.Equal(t, `This project requires nodes tagged hipaa, pci, so every pod needs the node selector tag.geass.dev/<tag>: "true" for each of them`, out)
+}
+
+func TestComplianceMutationVariablesFindWhatAPodLacks(t *testing.T) {
+	env := celEnv(t)
+	policy := ComplianceMutationPolicy()
+	require.Equal(t, []string{"required", "missingSelectors", "missingTolerations"}, []string{
+		policy.Spec.Variables[0].Name, policy.Spec.Variables[1].Name, policy.Spec.Variables[2].Name,
+	})
+	missingSelectors := policy.Spec.Variables[1].Expression
+	missingTolerations := policy.Spec.Variables[2].Expression
+
+	hipaa := map[string]any{TagKeyPrefix + "hipaa": "true"}
+	tolerates := func(tags ...string) map[string]any {
+		tolerations := make([]any, 0, len(tags))
+		for _, tag := range tags {
+			tolerations = append(tolerations, map[string]any{"key": TagKeyPrefix + tag, "operator": "Exists", "effect": "NoSchedule"})
+		}
+		return map[string]any{"tolerations": tolerations}
+	}
+	with := func(selector map[string]any, extra map[string]any) map[string]any {
+		pod := podWith(selector, "")
+		maps.Copy(pod["spec"].(map[string]any), extra)
+		return pod
+	}
+
+	tests := []struct {
+		name           string
+		annotation     string
+		pod            map[string]any
+		wantSelectors  []any
+		wantTolerances []any
+	}{
+		{"nothing is required", "-", podWith(nil, ""), []any{}, []any{}},
+		{"a pod with nothing lacks everything", "hipaa,pci", podWith(nil, ""), []any{"hipaa", "pci"}, []any{"hipaa", "pci"}},
+		{"a pod that has the selector and the toleration lacks nothing", "hipaa", with(hipaa, tolerates("hipaa")), []any{}, []any{}},
+		{"only what is missing is named", "hipaa,pci", with(hipaa, tolerates("pci")), []any{"pci"}, []any{"hipaa"}},
+		{"a selector that is not true counts as missing", "hipaa", podWith(map[string]any{TagKeyPrefix + "hipaa": "false"}, ""), []any{"hipaa"}, []any{"hipaa"}},
+		{"other selectors and tolerations are not the tag's", "hipaa", with(map[string]any{"disk": "ssd"}, tolerates("other")), []any{"hipaa"}, []any{"hipaa"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vars := map[string]any{"namespaceObject": namespaceWith(tt.annotation), "object": tt.pod}
+			vars["variables"] = map[string]any{"required": celEval(t, env, policy.Spec.Variables[0].Expression, vars)}
+
+			require.Equal(t, tt.wantSelectors, toAnyList(celEval(t, env, missingSelectors, vars)), "selectors")
+			require.Equal(t, tt.wantTolerances, toAnyList(celEval(t, env, missingTolerations, vars)), "tolerations")
+		})
+	}
+}
+
+// toAnyList turns the list a CEL program returns into plain values to compare.
+func toAnyList(value any) []any {
+	out := []any{}
+	switch list := value.(type) {
+	case []any:
+		out = append(out, list...)
+	case []ref.Val:
+		for _, item := range list {
+			out = append(out, item.Value())
+		}
+	default:
+		panic(fmt.Sprintf("not a list: %T", value))
+	}
+	return out
+}
+
+func TestComplianceMutationPatchPathsEscapeTheTagKey(t *testing.T) {
+	require.Contains(t, ComplianceMutationPolicy().Spec.Mutations[0].JSONPatch.Expression, `/spec/nodeSelector/tag.geass.dev~1"`,
+		"the \"/\" of a label key is \"~1\" in a JSON pointer, or the patch would add to a nested path")
+}
+
+// The taint of a compliance tag is tag.geass.dev/<tag>=compliance:NoSchedule. A toleration that has the key but does not
+// cover that effect or value leaves the pod unschedulable, so it must not count as the pod being covered.
+func TestComplianceMutationCountsATolerationOnlyIfItCoversTheTaint(t *testing.T) {
+	env := celEnv(t)
+	policy := ComplianceMutationPolicy()
+	missingTolerations := policy.Spec.Variables[2].Expression
+	key := TagKeyPrefix + "hipaa"
+
+	tests := []struct {
+		name       string
+		toleration map[string]any
+		wantAdded  bool
+	}{
+		{"exists, no effect named, covers everything", map[string]any{"key": key, "operator": "Exists"}, false},
+		{"exists, NoSchedule", map[string]any{"key": key, "operator": "Exists", "effect": "NoSchedule"}, false},
+		{"equal to the taint's value", map[string]any{"key": key, "operator": "Equal", "value": ComplianceTaintValue, "effect": "NoSchedule"}, false},
+		{"only NoExecute", map[string]any{"key": key, "operator": "Exists", "effect": "NoExecute"}, true},
+		{"equal to another value", map[string]any{"key": key, "operator": "Equal", "value": ReservedTaintValue, "effect": "NoSchedule"}, true},
+		{"equal with no value", map[string]any{"key": key, "operator": "Equal", "effect": "NoSchedule"}, true},
+		{"another key", map[string]any{"key": TagKeyPrefix + "pci", "operator": "Exists", "effect": "NoSchedule"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := map[string]any{"spec": map[string]any{"tolerations": []any{tt.toleration}}}
+			vars := map[string]any{"object": pod, "variables": map[string]any{"required": []any{"hipaa"}}}
+
+			missing := toAnyList(celEval(t, env, missingTolerations, vars))
+
+			if tt.wantAdded {
+				require.Equal(t, []any{"hipaa"}, missing)
+			} else {
+				require.Empty(t, missing)
+			}
+		})
+	}
 }

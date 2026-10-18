@@ -172,11 +172,30 @@ func (r *GeassDatabaseReconciler) existingVolumeClass(ctx context.Context, db *g
 			return "", false, err
 		}
 		return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		// The operator's claim for the first server says the class of the database.
+		pvc := &corev1.PersistentVolumeClaim{}
+		err := r.Get(ctx, client.ObjectKey{Name: mariadbClaimName(db, 0), Namespace: wsNS}, pvc)
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
 	case geassv1alpha1.DatabaseEngineMySQL:
 		// The server's own claim says its class. A database still on the Bitnami chart has the same claim, made by
 		// the chart, so it is read the same way; a chart whose claim is not there yet is on the default class.
 		pvc := &corev1.PersistentVolumeClaim{}
 		err := r.Get(ctx, client.ObjectKey{Name: serverVolumeName + "-" + platform.MySQLServerName(db.Name) + "-0", Namespace: wsNS}, pvc)
+		if err == nil {
+			return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", false, err
+		}
+		// A database that asked for high availability has MOCO's claims instead.
+		err = r.Get(ctx, client.ObjectKey{Name: mocoClaimName(db, 0), Namespace: wsNS}, pvc)
 		if err == nil {
 			return utilptr.Deref(pvc.Spec.StorageClassName, ""), true, nil
 		}

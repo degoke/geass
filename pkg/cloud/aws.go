@@ -218,19 +218,39 @@ func (c *AWSClient) DeleteObject(bucket, key string) error {
 // caller wants the whole bucket. A failure is an error, never an empty list, so a listing that could
 // not be read is not mistaken for a folder with nothing in it.
 func (c *AWSClient) ListKeys(bucket, prefix string) ([]string, error) {
+	objects, err := c.ListObjects(bucket, prefix)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, len(objects))
+	for i := range objects {
+		keys[i] = objects[i].Key
+	}
+	return keys, nil
+}
+
+// S3Object is one object of a listing: its key, and when it was last written.
+type S3Object struct {
+	Key          string
+	LastModified time.Time
+}
+
+// ListObjects is ListKeys with the time each object was written, which is how the age of an object is known when its
+// name does not say.
+func (c *AWSClient) ListObjects(bucket, prefix string) ([]S3Object, error) {
 	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
 	if strings.TrimSpace(bucket) == "" || prefix == "" {
 		return nil, fmt.Errorf("bucket and a non-empty prefix are required to list keys")
 	}
 	prefix += "/"
-	var all []string
+	var all []S3Object
 	token := ""
 	for page := 0; page < s3EmptyMaxPages; page++ {
-		keys, next, err := c.listBucketKeys(bucket, prefix, token)
+		objects, next, err := c.listBucketObjects(bucket, prefix, token)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, keys...)
+		all = append(all, objects...)
 		if next == "" {
 			return all, nil
 		}
@@ -299,6 +319,18 @@ func readS3ListBody(r io.Reader) ([]byte, error) {
 }
 
 func (c *AWSClient) listBucketKeys(bucket, prefix, continuation string) ([]string, string, error) {
+	objects, next, err := c.listBucketObjects(bucket, prefix, continuation)
+	if err != nil {
+		return nil, "", err
+	}
+	keys := make([]string, len(objects))
+	for i := range objects {
+		keys[i] = objects[i].Key
+	}
+	return keys, next, nil
+}
+
+func (c *AWSClient) listBucketObjects(bucket, prefix, continuation string) ([]S3Object, string, error) {
 	query := url.Values{"list-type": {"2"}}
 	if prefix != "" {
 		query.Set("prefix", prefix)
@@ -330,7 +362,8 @@ func (c *AWSClient) listBucketKeys(bucket, prefix, continuation string) ([]strin
 	}
 	var parsed struct {
 		Contents []struct {
-			Key string `xml:"Key"`
+			Key          string `xml:"Key"`
+			LastModified string `xml:"LastModified"`
 		} `xml:"Contents"`
 		IsTruncated           bool   `xml:"IsTruncated"`
 		NextContinuationToken string `xml:"NextContinuationToken"`
@@ -338,19 +371,21 @@ func (c *AWSClient) listBucketKeys(bucket, prefix, continuation string) ([]strin
 	if err := xml.Unmarshal(payload, &parsed); err != nil {
 		return nil, "", fmt.Errorf("S3 ListObjects: %w", err)
 	}
-	keys := make([]string, 0, len(parsed.Contents))
+	objects := make([]S3Object, 0, len(parsed.Contents))
 	for _, item := range parsed.Contents {
-		if item.Key != "" {
-			keys = append(keys, item.Key)
+		if item.Key == "" {
+			continue
 		}
+		modified, _ := time.Parse(time.RFC3339, item.LastModified)
+		objects = append(objects, S3Object{Key: item.Key, LastModified: modified})
 	}
 	if parsed.IsTruncated {
 		if parsed.NextContinuationToken == "" {
 			return nil, "", fmt.Errorf("bucket %s listing did not advance", bucket)
 		}
-		return keys, parsed.NextContinuationToken, nil
+		return objects, parsed.NextContinuationToken, nil
 	}
-	return keys, "", nil
+	return objects, "", nil
 }
 
 // emptyBucketVersions deletes every version and delete marker under prefix. When onlyKey is set,

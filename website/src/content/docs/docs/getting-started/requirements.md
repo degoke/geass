@@ -40,7 +40,7 @@ The installer checks that it runs on Linux and nothing else about the distributi
 
 Longhorn, the storage engine Geass uses for database volumes, needs the iSCSI initiator on every node. The installer installs it for you with `apt-get`, `dnf`, `yum` or `zypper`, and enables the `iscsid` service. If the machine has none of those package managers, or the package cannot be downloaded, the installer logs the problem and carries on. Database volumes then cannot be provisioned until you install the initiator yourself (`open-iscsi` on Debian and Ubuntu, `iscsi-initiator-utils` on Red Hat family systems).
 
-One feature depends on the Kubernetes version. Compliance node tags use an admission policy (`ValidatingAdmissionPolicy`), which needs Kubernetes 1.30 or later. The installer lets K3s choose its `stable` release, and `sudo k3s kubectl version` shows which one you got. On an older Kubernetes, for example one you pinned with `INSTALL_K3S_VERSION`, everything else about compliance tags works and the operator logs that pods created outside Geass are not checked. See [Compliance node tags](/docs/guides/compliance-tags/).
+One feature depends on the Kubernetes version. Compliance node tags use an admission policy (`ValidatingAdmissionPolicy`), which needs Kubernetes 1.30 or later, and a second policy (`MutatingAdmissionPolicy`) that gives pods made by database operators their node selector, which needs 1.36 or later. The installer lets K3s choose its `stable` release, and `sudo k3s kubectl version` shows which one you got. On an older Kubernetes, for example one you pinned with `INSTALL_K3S_VERSION`, everything else about compliance tags works and the operator logs that pods created outside Geass are not checked. See [Compliance node tags](/docs/guides/compliance-tags/).
 
 A multi-site cluster (nodes at different providers) also needs a kernel that can create WireGuard interfaces: built in from Linux 5.6, or the `wireguard` package on older kernels. The installer tests this by creating and removing a throwaway interface named `geass-wgcheck`, which needs the `ip` command.
 
@@ -59,8 +59,9 @@ The server needs to reach these hosts over HTTPS during and after installation. 
 | `charts.jetstack.io`, `prometheus-community.github.io`, `charts.longhorn.io`, `victoriametrics.github.io`, `fluent.github.io` | Helm charts for the add-ons the installer enables |
 | `acme-v02.api.letsencrypt.org` | cert-manager registers the cluster's ACME account and requests certificates. Only once the `letsencrypt-prod` issuer exists, which needs `GEASS_ACME_EMAIL` |
 | `cloudnative-pg.github.io` | The chart installed on demand for PostgreSQL (CloudNativePG) |
+| `cybozu-go.github.io` | The chart installed on demand for high availability MySQL (MOCO). Its images come from `ghcr.io` |
 | `kedacore.github.io` | The charts for the serverless add-on (KEDA and its HTTP add-on). Only if you turn it on, to let services sleep when idle |
-| Container registries that those charts, the MySQL and Redis servers and the in-cluster object storage server (which Geass runs from pinned images rather than charts, from Docker Hub) and your own images use | Pulling images |
+| Container registries that those charts, the MySQL and Redis servers and the in-cluster object storage server (which Geass runs from pinned images rather than charts, from Docker Hub) and your own images use. High availability MySQL pulls MOCO and its MySQL build from `ghcr.io` | Pulling images |
 | `api.github.com`, `api.cloudflare.com`, AWS (S3 and IAM), `api.planetscale.com` | Only for the connectors you set up |
 | `api.ipify.org`, then `ifconfig.me` | Only when Geass needs the server's public IP for dashboard DNS and no node reports one |
 

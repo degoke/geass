@@ -22,7 +22,7 @@ export function ProjectBackups({ project, data, mutable, reload }) {
   return (
     <div className="rw-backup">
       <p className="rw-rail-body">
-        Geass backs up Postgres, MySQL and SQLite databases to storage in your own AWS account. If a database&apos;s data
+        Geass backs up Postgres, MySQL, MariaDB and SQLite databases to storage in your own AWS account. If a database&apos;s data
         is lost or the database is deleted, you can restore it to a new database.
       </p>
 

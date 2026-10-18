@@ -8,7 +8,7 @@ export function workloadKind(type, kind) {
 
 export function defaultSizeForKind(type, kind) {
   if (kind === "sqlite" || type === "service") return { cpu: "100m", memory: "128Mi" };
-  if (["postgres", "mysql", "redis"].includes(kind) || type === "database") return { cpu: "250m", memory: "512Mi" };
+  if (["postgres", "mysql", "mariadb", "redis"].includes(kind) || type === "database") return { cpu: "250m", memory: "512Mi" };
   return { cpu: "100m", memory: "128Mi" };
 }
 
@@ -101,7 +101,7 @@ export function sizeSummary(data, resources) {
 
 export function resourceEstimate(data, type, kind, ha) {
   const estimates = data?.platform?.capacity?.estimates || {};
-  const key = ha && (kind === "postgres" || kind === "mysql" || kind === "redis") ? `${kind}-ha` : workloadKind(type, kind);
+  const key = ha && (kind === "postgres" || kind === "mysql" || kind === "mariadb" || kind === "redis") ? `${kind}-ha` : workloadKind(type, kind);
   return estimates[key] || estimates[workloadKind(type, kind)];
 }
 

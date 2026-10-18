@@ -29,7 +29,7 @@ var (
 // databaseSupportsBackups reports whether this kind of database has a backup mechanism: Postgres,
 // MySQL and SQLite that run in the cluster do; caches and databases that run elsewhere do not.
 func databaseSupportsBackups(db *geassv1alpha1.GeassDatabase) bool {
-	return platform.DatabaseBackupKind(db.Spec.Engine, db.Spec.Placement) != platform.BackupKindNone
+	return platform.DatabaseBackupKind(db.Spec.Engine, db.Spec.Placement, platform.DatabaseWantsHA(db)) != platform.BackupKindNone
 }
 
 // defaultBackups is what a new database starts with: backups on for the kinds that support them.
@@ -211,7 +211,7 @@ func (s *Server) handleDatabaseRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := restoredDatabase(&archive, environment, restorePoint, restoreTime)
-	est := platform.EstimateWorkload(databaseCreateWorkloadKind(db.Spec.Engine), false, 0)
+	est := platform.EstimateWorkload(databaseCreateWorkloadKind(db.Spec.Engine), platform.DatabaseWantsHA(db), 0)
 	est = platform.EstimateFromResources(est.Label, databaseResources(db), est.Replicas)
 	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, s.databasePlacement(ctx, db)) {
 		return
@@ -262,6 +262,15 @@ func restoredDatabase(archive *geassv1alpha1.GeassBackupArchive, environment gea
 	if source.StorageSize != nil {
 		size := source.StorageSize.DeepCopy()
 		db.Spec.StorageSize = &size
+	}
+	// Backups of a replicated MariaDB database are restored into a replicated one: the operator replays the archived
+	// logs on a database that replicates, and on nothing else.
+	if engine == geassv1alpha1.DatabaseEngineMariaDB && source.HighAvailability {
+		instances := int32(3)
+		if source.Instances != nil {
+			instances = *source.Instances
+		}
+		db.Spec.HighAvailability, db.Spec.Instances = true, &instances
 	}
 	return db
 }

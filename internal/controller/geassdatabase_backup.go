@@ -91,7 +91,7 @@ func (r *GeassDatabaseReconciler) backupStorage(accessKey, secretKey, region str
 // databaseBackupKind says how this database is backed up: Postgres continuously, MySQL and SQLite
 // by daily snapshots, and nothing else at all (a cache, or a database that runs outside Geass).
 func databaseBackupKind(db *geassv1alpha1.GeassDatabase) platform.BackupKind {
-	return platform.DatabaseBackupKind(db.Spec.Engine, db.Spec.Placement)
+	return platform.DatabaseBackupKind(db.Spec.Engine, db.Spec.Placement, databaseWantsHA(db))
 }
 
 func databaseSupportsBackups(db *geassv1alpha1.GeassDatabase) bool {
@@ -356,6 +356,14 @@ func backupSourceOf(db *geassv1alpha1.GeassDatabase) geassv1alpha1.GeassBackupSo
 		source.Version, source.DatabaseName = databaseVersion(db), databaseName(db)
 	case geassv1alpha1.DatabaseEngineMySQL:
 		source.DatabaseName = databaseName(db)
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		source.DatabaseName = databaseName(db)
+		// A replicated database is restored into a replicated one, so what it ran as is part of what it was.
+		if databaseWantsHA(db) {
+			instances := databaseInstances(db)
+			source.HighAvailability, source.Instances = true, &instances
+			source.CredentialsOrigin = credentialsOrigin(db)
+		}
 	}
 	return source
 }
@@ -470,6 +478,9 @@ func validateRestore(db *geassv1alpha1.GeassDatabase, archive *geassv1alpha1.Gea
 	}
 	if source.DatabaseName != "" && databaseName(db) != source.DatabaseName {
 		return platform.Userf("A restored database must keep the database name %s", source.DatabaseName)
+	}
+	if sourceEngine == geassv1alpha1.DatabaseEngineMariaDB && source.HighAvailability && !databaseWantsHA(db) {
+		return platform.UserError("A MariaDB database restored from backups of one with high availability has to have high availability too")
 	}
 	if source.StorageSize != nil {
 		if size := databaseStorageQuantity(db); size.Cmp(*source.StorageSize) < 0 {
@@ -746,6 +757,9 @@ func (r *GeassDatabaseReconciler) finalizeBackups(ctx context.Context, db *geass
 	live, err := liveArchive(ctx, r.Client, db)
 	if err != nil || live == nil {
 		return 0, err
+	}
+	if mariadbContinuousBackups(db) {
+		return r.finalizeMariaDBBackups(ctx, db, wsNS, live)
 	}
 	if databaseBackupKind(db) == platform.BackupKindSnapshot {
 		return r.finalizeDumpBackups(ctx, db, wsNS, live)

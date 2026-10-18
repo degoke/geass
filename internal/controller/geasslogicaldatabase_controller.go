@@ -210,10 +210,15 @@ type loginSecretRef struct {
 
 // adminLogin finds the login that can create databases and logins on the server. Postgres has its
 // superuser secret once the operator enables it (the application's own login only owns its database);
-// MySQL's root password is the same one the server was installed with. ok is false while it is not
-// there yet.
+// MySQL's root password is the same one the server was installed with, and a MySQL cluster that runs for
+// high availability has no root and is administered with the login MOCO makes for writing. ok is false
+// while it is not there yet.
 func (r *GeassLogicalDatabaseReconciler) adminLogin(ctx context.Context, server *geassv1alpha1.GeassDatabase) (loginSecretRef, bool, error) {
 	ns := server.Status.TargetNamespace
+	if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL && databaseWantsHA(server) {
+		ref := loginSecretRef{secret: mocoSecretName(server), passwordKey: mocoWritableKey, user: mocoWritableUser, namespace: ns}
+		return ref, r.secretExists(ctx, ref), nil
+	}
 	if server.Spec.Engine == geassv1alpha1.DatabaseEngineMySQL {
 		ref := loginSecretRef{secret: server.Name + "-bootstrap", passwordKey: platform.ConnectionKeyPassword, user: "root", namespace: ns}
 		return ref, r.secretExists(ctx, ref), nil

@@ -101,6 +101,12 @@ The upgrade test reads the baseline release (`hack/crd-baseline-ref`) from git h
 shallow one it skips and says why, and `make crd-compat` fails. Set `GEASS_REQUIRE_UPGRADE_TESTS=1` to make a test that
 cannot run fail instead of skip, as CI does.
 
+Backups go to AWS, so a throwaway cluster has nowhere to put them. A manager built with `-tags geasslivetest` reads
+`GEASS_LIVETEST_S3_ENDPOINT` (a host and port) and keeps backups there instead, in an S3 server such as MinIO that the cluster's
+pods can reach (`internal/controller/backup_standin.go`). A release is not built with the tag and has no such setting. The
+project still needs a cloud connection, a backup storage choice and a Secret `geass-backup-storage-<bucket>` in `geass-system`
+(with its `geass.dev/backup-storage-config` annotation), so that Geass does not call AWS to make the bucket and its user.
+
 Tests use the standard `testing` package with testify, and Ginkgo for the e2e suite. A behaviour that depends on K3s, on a
 real node or on the network between pods is not proven by the envtest suite; the k3s integration tests exist for those, and
 the documentation says when a claim has only been checked on a particular platform.

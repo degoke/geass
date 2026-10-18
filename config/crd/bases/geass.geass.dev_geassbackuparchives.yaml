@@ -103,6 +103,12 @@ spec:
                 description: Source describes the database so a restore can size the
                   new one.
                 properties:
+                  credentialsOrigin:
+                    description: |-
+                      CredentialsOrigin is the name of the database whose generated password the backed up data carries. A physical
+                      copy holds the logins of the server it was taken from, so a database restored from one has to be given the same
+                      password to be reached, and it records where it got it from for the restore of a restore.
+                    type: string
                   databaseName:
                     description: DatabaseName is the name of the database inside the
                       Postgres server.
@@ -116,7 +122,19 @@ spec:
                     - MySQL
                     - SQLite
                     - Redis
+                    - MariaDB
                     type: string
+                  highAvailability:
+                    description: |-
+                      HighAvailability is whether the source database ran as a replicated cluster. For MariaDB it decides how
+                      the backups are made and what can be restored: a replicated database can be restored to any moment, and has
+                      to be restored into a replicated database, so a restore starts with the same number of instances.
+                    type: boolean
+                  instances:
+                    description: Instances is how many instances the source database
+                      ran.
+                    format: int32
+                    type: integer
                   resources:
                     description: Resources is the CPU and memory the source database
                       used.

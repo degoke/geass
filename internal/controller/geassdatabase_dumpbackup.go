@@ -16,6 +16,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -51,6 +53,9 @@ type dumpOutcome struct {
 	waiting string
 	// backups is whether backups are on, which decides if their status needs refreshing later.
 	backups bool
+	// pending is true while backups are being set up and need another look soon: the database is told to use what
+	// they made a reconcile after it exists.
+	pending bool
 	// failed is true when backups could not be brought up to date this time. The database is still
 	// ready, because its data is fine, and is looked at again soon.
 	failed bool
@@ -66,6 +71,26 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 		}
 		target := &dumpTarget{host: fmt.Sprintf("%s.%s.svc", db.Name, wsNS), port: platform.SQLiteDefaultPort, image: platform.SQLiteImage}
 		return target, deploymentReady(deploy, 1), nil
+	}
+
+	if databaseEngine(db) == geassv1alpha1.DatabaseEngineMariaDB {
+		mdb := &mariadbv1.MariaDB{}
+		if err := r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, mdb); err != nil {
+			return nil, false, fmt.Errorf("the database is not running yet: %w", err)
+		}
+		// The root login's password is the database's own, as for a single MySQL server, and the image is the
+		// database's own, whose tools are MariaDB's.
+		target := &dumpTarget{host: mariadbHost(db, wsNS), port: platform.MySQLDefaultPort, image: platform.MariaDBImage, database: databaseName(db)}
+		return target, r.mariadbServing(ctx, db, wsNS, mdb), nil
+	}
+	if cluster := (&mocov1.MySQLCluster{}); r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, cluster) == nil {
+		// A cluster has no root login, and is copied with the one MOCO makes for writing. Its own image holds the
+		// matching tools, as a single server's does.
+		target := &dumpTarget{
+			host: mysqlHAHost(db, wsNS), port: platform.MySQLDefaultPort, image: platform.MOCOMySQLImage, database: databaseName(db),
+			user: mocoWritableUser, passwordSecret: mocoSecretName(db), passwordKey: mocoWritableKey,
+		}
+		return target, cluster.ConditionTrue(mocov1.ConditionAvailable), nil
 	}
 
 	var sets appsv1.StatefulSetList
@@ -85,7 +110,7 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 	}
 	image := containers[0].Image
 	for _, container := range containers {
-		if container.Name == "mysql" {
+		if container.Name == mysqlContainerName {
 			image = container.Image
 		}
 	}

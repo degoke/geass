@@ -3387,6 +3387,8 @@ func parseDatabaseEngine(value string) geassv1alpha1.GeassDatabaseEngine {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "mysql":
 		return geassv1alpha1.DatabaseEngineMySQL
+	case "mariadb":
+		return geassv1alpha1.DatabaseEngineMariaDB
 	case "sqlite":
 		return geassv1alpha1.DatabaseEngineSQLite
 	case "redis":
@@ -3400,6 +3402,8 @@ func databaseCreateWorkloadKind(engine geassv1alpha1.GeassDatabaseEngine) string
 	switch engine {
 	case geassv1alpha1.DatabaseEngineMySQL:
 		return platform.WorkloadMySQL
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		return platform.WorkloadMariaDB
 	case geassv1alpha1.DatabaseEngineSQLite:
 		return platform.WorkloadSQLite
 	case geassv1alpha1.DatabaseEngineRedis:

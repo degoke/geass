@@ -331,7 +331,8 @@ to the ClusterRole `geass-manager-role`, which allows:
 | cert-manager ClusterIssuers | get, list, watch, create, update, patch |
 | Prometheus Operator ServiceMonitors, PodMonitors and PrometheusRules | create, get, list, watch, update, patch, delete |
 | KEDA HTTP add-on `HTTPScaledObjects` (`http.keda.sh`) | create, get, list, watch, update, patch, delete |
-| ValidatingAdmissionPolicies and their bindings (`admissionregistration.k8s.io`) | create, get, list, watch, update, patch, delete |
+| ValidatingAdmissionPolicies, MutatingAdmissionPolicies and their bindings (`admissionregistration.k8s.io`) | create, get, list, watch, update, patch, delete |
+| MariaDB operator `MariaDB` and `PhysicalBackup` objects (`k8s.mariadb.com`) | create, get, list, watch, update, patch, delete |
 | CloudNativePG clusters, backups and scheduled backups | create, get, list, watch, update, patch, delete |
 | Longhorn nodes and volumes | get, list, patch |
 | Geass resources | create, get, list, watch, update, patch, delete |
@@ -342,7 +343,7 @@ pod in the cluster, so treat anyone who controls the operator, its image or its 
 Geass also creates HelmChart resources, which K3s's built-in Helm controller installs for its add-ons (cert-manager, monitoring,
 Longhorn, logging, the scale-to-zero add-on and some database engines), so review the add-ons you enable. The admission policy
 rights are used for compliance tags (see [Keeping a project's data on chosen nodes](#keeping-a-projects-data-on-chosen-nodes)): the
-operator creates one policy and one binding, which apply only to namespaces it manages.
+operator creates two policies and their bindings, which apply only to namespaces it manages.
 
 The other Geass roles in the cluster are the leader-election Role in `geass-system`, a metrics authentication role, and
 admin, editor and viewer ClusterRoles for apps, databases, object stores, clusters and nodes that you can bind to people if
@@ -357,7 +358,7 @@ the user its image says, including root.
 Without network policies every pod in a Kubernetes cluster can reach every other pod. Geass applies these on its own:
 
 - **Project isolation.** Every project environment namespace gets the policy `geass-project-isolation`: only the project's own
-  namespaces, the projects you list, and the platform namespaces (`kube-system`, `geass-system`, `monitoring`, `cnpg-system` and
+  namespaces, the projects you list, and the platform namespaces (`kube-system`, `geass-system`, `monitoring`, `cnpg-system`, `moco-system`, `mariadb-system` and
   `keda`, where the scale-to-zero proxy runs) can reach its pods. This is the default (`isolation: Project`). A project that sets `isolation: None` is open to
   every pod in the cluster. Details are in [Network isolation](/docs/guides/network-isolation/).
 - **Cloud metadata.** Every project namespace gets `geass-block-cloud-metadata`, which lets pods reach everything except
@@ -394,6 +395,9 @@ set it as a required tag on the project. After that:
   applies to namespaces Geass manages, and the operator never removes it. It needs a Kubernetes version that serves
   `ValidatingAdmissionPolicy` (1.30 or later); on an older cluster the operator logs that pods created outside Geass are not checked, and
   the node selectors still apply.
+- A second policy, `geass-required-node-tags-defaults`, adds the node selector and toleration a pod lacks, so that pods which operators Geass
+  runs create themselves (the MariaDB operator's copies, for one) land on the tagged nodes instead of being refused. It only ever narrows
+  where a pod may go, never fails a pod it cannot handle, and needs Kubernetes 1.36 or later.
 - With Longhorn, the copies of a project's database volumes are kept on the tagged nodes (the operator makes a storage class for each
   combination of region and required tags), and other projects' volume copies are kept off compliance nodes. The same holds for the
   object storage server's own volume, which keeps its copies on the nodes carrying the tags it was set up with.

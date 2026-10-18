@@ -101,7 +101,7 @@ Geass does not back up the cluster's own state on a schedule. K3s's embedded etc
 | `geass-system` | The operator, every Geass object, and Geass's Secrets |
 | `<project-id>-<environment>` | One project environment's workloads, such as `proj-1a2b3c4d-production` |
 | `kube-system` | K3s's own components, Traefik, and the `HelmChart` objects for the add-ons |
-| `cert-manager`, `monitoring`, `longhorn-system`, `geass-logging`, `cnpg-system`, `keda` | The add-ons. `keda` exists only when the serverless add-on is on |
+| `cert-manager`, `monitoring`, `longhorn-system`, `geass-logging`, `cnpg-system`, `moco-system`, `mariadb-system`, `keda` | The add-ons. `keda` exists only when the serverless add-on is on |
 
 A service's Kubernetes name is its ID, which Geass generates. The dashboard shows a display name that you can change. See [Core concepts](/docs/overview/concepts/).
 
@@ -109,7 +109,7 @@ A service's Kubernetes name is its ID, which Geass generates. The dashboard show
 
 Traefik, which K3s installs, serves HTTP and HTTPS on ports 80 and 443. For each service with a hostname the operator creates an Ingress that routes that host to the service's Service. Inside the cluster, a service is reachable at `<service-id>.<namespace>.svc.cluster.local:<port>`. Nodes talk over K3s's overlay network, VXLAN by default, or WireGuard in a multi-site cluster.
 
-Each project environment is isolated by network policies that the operator creates: only services of the same project, Geass itself and visitors through your domains reach a project's services, unless you allow other projects. The platform namespaces also reach them: `kube-system`, `monitoring` for Prometheus, `cnpg-system` and, when the serverless add-on is on, `keda`. See [Network isolation](/docs/guides/network-isolation/).
+Each project environment is isolated by network policies that the operator creates: only services of the same project, Geass itself and visitors through your domains reach a project's services, unless you allow other projects. The platform namespaces also reach them: `kube-system`, `monitoring` for Prometheus, `cnpg-system`, `moco-system`, `mariadb-system` and, when the serverless add-on is on, `keda`. See [Network isolation](/docs/guides/network-isolation/).
 
 ## What Geass connects to
 

@@ -235,7 +235,8 @@ func (r *GeassDatabaseReconciler) reconcileRedis(ctx context.Context, db *geassv
 }
 
 // reconcileMySQL runs the MySQL server of a database. One that is still the Bitnami chart is left exactly as it
-// is: its data is on a volume the chart made, and moving it is not done without being asked.
+// is: its data is on a volume the chart made, and moving it is not done without being asked. One that asks for
+// high availability is a MOCO cluster, and any other is a single server.
 func (r *GeassDatabaseReconciler) reconcileMySQL(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) (ctrl.Result, error) {
 	_, err := helmchart.Get(ctx, r.Client, mysqlChartName(db.Name))
 	switch {
@@ -243,6 +244,19 @@ func (r *GeassDatabaseReconciler) reconcileMySQL(ctx context.Context, db *geassv
 		return r.reconcileHelmDatabase(ctx, db, wsNS, mysqlChartName(db.Name), platform.MySQLReleaseChart, platform.MySQLChartRepo, platform.MySQLChartVersion, mysqlValues(db, storageClass, placement), mysqlHost(db, wsNS), platform.MySQLDefaultPort, "mysql", placement)
 	case !apierrors.IsNotFound(err):
 		return r.setNotReady(ctx, db, err.Error())
+	}
+	backend, message, err := r.mysqlBackend(ctx, db, wsNS)
+	switch {
+	case err != nil:
+		return r.setNotReady(ctx, db, err.Error())
+	case message != "":
+		return r.setNotReady(ctx, db, message)
+	}
+	if _, message := oddInstances(db); message != "" {
+		return r.setNotReady(ctx, db, message)
+	}
+	if backend == mysqlBackendHA {
+		return r.reconcileMySQLHA(ctx, db, wsNS, storageClass, placement)
 	}
 	return r.reconcileServer(ctx, db, wsNS, mysqlServer(db, storageClass), placement, mysqlHost(db, wsNS), platform.MySQLDefaultPort, "mysql")
 }

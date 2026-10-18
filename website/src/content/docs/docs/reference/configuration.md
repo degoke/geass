@@ -380,6 +380,9 @@ You cannot choose other versions from the dashboard.
 | kube-prometheus-stack (chart) | 69.8.2 | `monitoring` |
 | Longhorn (chart) | 1.12.1 | `longhorn-system` |
 | CloudNativePG operator (chart) | 0.23.2 | `cnpg-system` |
+| MOCO, the MySQL operator for high availability (chart) | 0.27.0 | `moco-system` |
+| mariadb-operator, which runs MariaDB databases (charts `mariadb-operator-crds` and `mariadb-operator`) | 26.10.1 | `mariadb-system` |
+| MOCO's MySQL, for high availability MySQL (image, no chart) | 8.4.10 | the project environment |
 | Victoria Logs (chart) | 0.13.10 | `geass-logging` |
 | Fluent Bit (chart) | 0.58.3 | `geass-logging` |
 | MySQL (image, no chart) | 8.4.11 | the project environment |

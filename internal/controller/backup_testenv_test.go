@@ -19,7 +19,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/cloud"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -47,6 +49,8 @@ type fakeBackupStorage struct {
 	allKeys []string
 	listErr error
 	listed  []string // prefixes that were listed
+	// modified is when an object was written, for those a test dates; the rest were written just now.
+	modified map[string]time.Time
 	// deleted are the keys DeleteObject removed; they also leave allKeys.
 	deleted   []string
 	deleteErr error
@@ -103,6 +107,24 @@ func (f *fakeBackupStorage) ListKeys(bucket, prefix string) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+func (f *fakeBackupStorage) ListObjects(bucket, prefix string) ([]cloud.S3Object, error) {
+	keys, err := f.ListKeys(bucket, prefix)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	objects := make([]cloud.S3Object, 0, len(keys))
+	for _, key := range keys {
+		at, ok := f.modified[key]
+		if !ok {
+			at = time.Now()
+		}
+		objects = append(objects, cloud.S3Object{Key: key, LastModified: at})
+	}
+	return objects, nil
 }
 
 func (f *fakeBackupStorage) DeleteObject(bucket, key string) error {
@@ -162,6 +184,7 @@ func backupTestScheme(t *testing.T) *runtime.Scheme {
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
 	require.NoError(t, cnpgv1.AddToScheme(scheme))
+	require.NoError(t, mariadbv1.AddToScheme(scheme))
 	return scheme
 }
 

@@ -60,6 +60,7 @@ func DatabaseStorageDefaults() map[string]string {
 	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{
 		geassv1alpha1.DatabaseEnginePostgres,
 		geassv1alpha1.DatabaseEngineMySQL,
+		geassv1alpha1.DatabaseEngineMariaDB,
 		geassv1alpha1.DatabaseEngineSQLite,
 	} {
 		defaults[strings.ToLower(string(engine))] = DefaultDatabaseStorage(engine)

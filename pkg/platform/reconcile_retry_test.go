@@ -222,7 +222,7 @@ func TestAnImageThatCannotBePulledIsCountedForLongerThanOtherFailures(t *testing
 }
 
 func TestADatabaseThatIsStartingIsNotTakenForAnImagePullFailure(t *testing.T) {
-	for _, message := range []string{"Service is starting", "Postgres database is starting", "Replacing the Redis chart with Geass's own server"} {
+	for _, message := range []string{"Service is starting", "Postgres database is starting", "Replacing the Redis chart with Geass's own server", MessageCreatingDatabaseLogin, MessagePromotingReplica} {
 		if IsImagePullFailure(message) {
 			t.Fatalf("taken for a pull failure: %s", message)
 		}

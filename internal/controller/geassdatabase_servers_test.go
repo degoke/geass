@@ -21,6 +21,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -45,6 +46,7 @@ func newServerEnv(t *testing.T, engine geassv1alpha1.GeassDatabaseEngine, object
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
 	require.NoError(t, helmv1.AddToScheme(scheme))
+	require.NoError(t, mocov1.AddToScheme(scheme))
 	size := resource.MustParse("5Gi")
 	db := &geassv1alpha1.GeassDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: platform.SystemNamespace, UID: testDBUID},
@@ -460,19 +462,17 @@ func TestAMySQLVolumeClassIsReadFromItsClaimWhetherChartOrServerMadeIt(t *testin
 	require.False(t, found)
 }
 
-// MySQL and Redis run as one instance, so asking for more is refused with the reason, before anything is made
-// and before the high availability check that would wait for three nodes.
-func TestMySQLAndRedisRefuseHighAvailabilityAndMoreThanOneInstance(t *testing.T) {
+// Redis runs as one instance, so asking for more is refused with the reason, before anything is made and before the
+// high availability check that would wait for three nodes. (MySQL has its own, in geassdatabase_mysqlha_test.go.)
+func TestRedisRefusesHighAvailabilityAndMoreThanOneInstance(t *testing.T) {
 	two, three := int32(2), int32(3)
 	for name, tc := range map[string]struct {
 		engine geassv1alpha1.GeassDatabaseEngine
 		mutate func(*geassv1alpha1.GeassDatabase)
 		want   string
 	}{
-		"mysql ha":       {geassv1alpha1.DatabaseEngineMySQL, func(db *geassv1alpha1.GeassDatabase) { db.Spec.HighAvailability = true }, "MySQL runs as a single instance"},
 		"redis ha":       {geassv1alpha1.DatabaseEngineRedis, func(db *geassv1alpha1.GeassDatabase) { db.Spec.HighAvailability = true }, "Redis runs as a single instance"},
 		"redis 3":        {geassv1alpha1.DatabaseEngineRedis, func(db *geassv1alpha1.GeassDatabase) { db.Spec.Instances = &three }, "Redis runs as a single instance"},
-		"mysql 2 not ha": {geassv1alpha1.DatabaseEngineMySQL, func(db *geassv1alpha1.GeassDatabase) { db.Spec.Instances = &two }, "MySQL runs as a single instance"},
 		"redis 2 not ha": {geassv1alpha1.DatabaseEngineRedis, func(db *geassv1alpha1.GeassDatabase) { db.Spec.Instances = &two }, "Redis runs as a single instance"},
 	} {
 		t.Run(name, func(t *testing.T) {

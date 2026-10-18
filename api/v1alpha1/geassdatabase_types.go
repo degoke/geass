@@ -16,12 +16,13 @@ import (
 )
 
 // GeassDatabaseEngine identifies the database engine type.
-// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis
+// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis;MariaDB
 type GeassDatabaseEngine string
 
 const (
 	DatabaseEnginePostgres GeassDatabaseEngine = "Postgres"
 	DatabaseEngineMySQL    GeassDatabaseEngine = "MySQL"
+	DatabaseEngineMariaDB  GeassDatabaseEngine = "MariaDB"
 	DatabaseEngineSQLite   GeassDatabaseEngine = "SQLite"
 	DatabaseEngineRedis    GeassDatabaseEngine = "Redis"
 )
@@ -66,7 +67,7 @@ type GeassDatabaseSpec struct {
 	Environment GeassEnvironment `json:"environment,omitempty"`
 
 	// Engine is the database engine to provision.
-	// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis
+	// +kubebuilder:validation:Enum=Postgres;MySQL;SQLite;Redis;MariaDB
 	Engine GeassDatabaseEngine `json:"engine"`
 
 	// Placement selects in-cluster provisioning or an external provider.
@@ -147,7 +148,7 @@ type GeassDatabaseSpec struct {
 	Deploy GeassDeploySpec `json:"deploy,omitempty"`
 
 	// Backup configures backups. It applies to in-cluster Postgres (continuous, restorable to any
-	// moment), MySQL and SQLite (daily snapshots); nil or disabled leaves the database with no
+	// moment), MySQL, MariaDB and SQLite (daily snapshots); nil or disabled leaves the database with no
 	// recovery path beyond its own disks.
 	// +optional
 	Backup *GeassDatabaseBackupSpec `json:"backup,omitempty"`

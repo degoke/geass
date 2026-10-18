@@ -65,6 +65,8 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
+  - mutatingadmissionpolicies
+  - mutatingadmissionpolicybindings
   - validatingadmissionpolicies
   - validatingadmissionpolicybindings
   verbs:
@@ -228,6 +230,20 @@ rules:
   - update
   - watch
 - apiGroups:
+  - k8s.mariadb.com
+  resources:
+  - mariadbs
+  - physicalbackups
+  - pointintimerecoveries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - longhorn.io
   resources:
   - nodes
@@ -236,6 +252,18 @@ rules:
   - get
   - list
   - patch
+- apiGroups:
+  - moco.cybozu.com
+  resources:
+  - mysqlclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - monitoring.coreos.com
   resources:
