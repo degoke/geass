@@ -1,6 +1,6 @@
 ---
 title: "Databases"
-description: "Create PostgreSQL, MySQL, MariaDB, Redis and SQLite databases, connect apps, run queries, resize storage, set up high availability and connect external databases."
+description: "Create PostgreSQL, MySQL, MariaDB, Redis and SQLite databases, connect apps, run queries, resize storage, set up high availability and use external ones."
 ---
 
 A database in Geass is a resource that belongs to one project environment. Geass runs it on your servers, creates its login, and publishes a connection string that your apps read from a Secret. You can run PostgreSQL, MySQL, MariaDB, Redis or SQLite in the cluster, connect an app to a database you already host elsewhere, such as AWS RDS, or have Geass create a database in your PlanetScale organization.
