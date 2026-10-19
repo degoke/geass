@@ -224,6 +224,11 @@ sudo systemctl start k3s
 
 `--cluster-reset` ends with `restart without --cluster-reset flag now`: that is the normal end. Starting K3s again brings the cluster back as it was when the snapshot was taken, with the old operator and the old definitions. Everything that changed in the cluster since is lost: services and projects that were created, secrets, API tokens that were issued.
 
+The snapshot holds the Secrets encrypted, because the installer turns on K3s secrets encryption. On the machine the snapshot came from, the server token and the setting are already there. To restore on another machine you need two things the snapshot does not carry:
+
+- **The cluster's server token**, the one in `/var/lib/rancher/k3s/server/token`. K3s encrypts the snapshot's bootstrap data with it, and a different token stops the restore with `bootstrap data already found and encrypted with different token`. Keep a copy outside the cluster: the one in the Secret `geass-token` is inside the data you would be restoring.
+- **`secrets-encryption: true` in that machine's `/etc/rancher/k3s/config.yaml`**, which is what the installer writes. Without it the restore finishes, but reading an encrypted Secret fails with `identity transformer tried to read encrypted data`.
+
 The restore brings the cluster's data back and leaves K3s on the version it runs now, which is what you want when only Geass needs to go back: the older operator runs on the newer K3s, within the range its add-ons were tested on.
 
 If you also upgraded K3s and want the old version back, and no worker has been upgraded yet, install the old version before you restore. K3s supports going back only this way, from a snapshot that was taken on that version:

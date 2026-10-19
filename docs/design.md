@@ -39,7 +39,7 @@ Geass is:
 
 ## 2. Colour system
 
-Dark mode is the primary Geass experience. Light mode is supported for accessibility, documentation, and user preference.
+Dark and light are both first-class. The dashboard, the landing page and the docs follow the visitor's system setting, use light when the system gives none, and let the visitor choose. The dark palette below is the reference; the light palette follows it.
 
 ### Dark palette
 
@@ -403,7 +403,7 @@ Use minimal line illustration only when it improves comprehension. Avoid mascots
 
 ### Overall composition
 
-The website is editorial and product-led: large precise typography, abundant dark negative space, real interface imagery, short evidence-backed copy, and almost no decorative illustration.
+The website is editorial and product-led: large precise typography, abundant negative space, real interface imagery, short evidence-backed copy, and almost no decorative illustration.
 
 ### Homepage structure
 
@@ -436,7 +436,7 @@ Use actual or carefully maintained interface captures. Keep them straight-on and
 - Persistent code copy actions.
 - Clear version and edition labels.
 - Examples begin with the shortest successful path, followed by explanation and advanced options.
-- Built with Starlight in `website/` (theme in `website/src/styles/docs.css`); square corners, green only for links and actions, dark and light themes that follow the visitor's system setting (the landing page is always dark). Page structure and voice rules are in `website/README.md`.
+- Built with Starlight in `website/` (theme in `website/src/styles/docs.css`); square corners, green only for links and actions, dark and light themes that follow the visitor's system setting (the landing page does too, and reads the docs picker's saved choice). Page structure and voice rules are in `website/README.md`.
 
 ## 8. Iconography and imagery
 

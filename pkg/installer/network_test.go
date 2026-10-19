@@ -41,6 +41,25 @@ func TestMultiSiteServerUsesAnEncryptedOverlayOnItsPublicAddress(t *testing.T) {
 	}
 }
 
+// Secrets are what the cluster is protecting: dashboard users, cloud keys, database passwords. K3s stores them
+// unencrypted in its datastore, and in the etcd snapshots the installer takes before an upgrade, unless asked.
+func TestEveryServerEncryptsSecretsInK3sDatastore(t *testing.T) {
+	for name, network := range map[string]Network{
+		"single site": {},
+		"multi site":  {MultiSite: true, ExternalIP: "203.0.113.1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var config map[string]any
+			if err := yaml.Unmarshal([]byte(network.ServerConfig()), &config); err != nil {
+				t.Fatal(err)
+			}
+			if config["secrets-encryption"] != true {
+				t.Fatalf("secrets-encryption = %v, want true: Secrets would be stored in the clear: %v", config["secrets-encryption"], config)
+			}
+		})
+	}
+}
+
 func TestMultiSiteNeedsAValidPublicAddress(t *testing.T) {
 	if err := (Network{}).Validate(); err != nil {
 		t.Fatalf("single-site needs nothing: %v", err)

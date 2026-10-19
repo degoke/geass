@@ -116,6 +116,10 @@ func (n Network) ServerConfig() string {
 func (n Network) ServerSettings() map[string]any {
 	config := map[string]any{
 		"kubelet-arg": platform.KubeletLogArgs,
+		// Every Secret in the cluster is stored encrypted in K3s's datastore, and so is in the etcd snapshots the
+		// installer takes before an upgrade. Without this they hold the dashboard users, cloud keys and database
+		// passwords in the clear.
+		"secrets-encryption": true,
 	}
 	if n.MultiSite {
 		config["flannel-backend"] = platform.WireGuardBackend

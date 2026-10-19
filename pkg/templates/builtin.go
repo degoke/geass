@@ -7,8 +7,9 @@ const (
 
 // Builtin returns the catalog: self-hosted software that ships with Geass and can be deployed in one
 // step. Each entry pins the image it was tested with and sizes it from what that image was measured to
-// use: what it needs to run is reserved, and what it needs only for a short while, such as its first
-// start, is a ceiling. Starter examples live in the documentation, not here.
+// use: what it needs to run is reserved. The ceiling is either what it needs only for a short while, such
+// as its first start, or, where an entry says so, headroom for more data that was not measured. Starter
+// examples live in the documentation, not here.
 func Builtin() []Template {
 	list := []Template{
 		{
@@ -53,16 +54,20 @@ func Builtin() []Template {
 			ID:          "refhir",
 			Name:        "ReFHIR",
 			Description: "A FHIR R4 server for health data, with a search index, an audit trail and optional SMART App Launch, on a Postgres database.",
-			Notes: "The first start downloads the FHIR packages from packages.fhir.org, so the service needs outbound internet access. " +
-				"It takes about two minutes and uses up to 3.1 GB of memory while it does; the process then keeps about 2 GB until it " +
-				"restarts, and needs about 1.3 GB after that. GET /readyz answers once it is ready. Keep a copy of REFHIR_AUDIT_KEY: " +
-				"it keys the audit trail, which GET /_audit/verify checks. Until you turn on SMART sign-in, anyone who can reach the " +
-				"service can read and write health data, so add a domain only after you have secured it.",
+			Notes: "The FHIR packages ship inside the image, so the first start needs no internet access and takes under a minute; " +
+				"GET /readyz answers 503 until then. Keep a copy of REFHIR_AUDIT_KEY: it keys the audit trail, which " +
+				"GET /_audit/verify checks. Until you turn on SMART sign-in, anyone who can reach the service can read and write " +
+				"health data, so add a domain only after you have secured it. Packages are not downloaded unless you add " +
+				"REFHIR_PACKAGE_DOWNLOAD=true, so installing another implementation guide answers 403 until you do, and it then " +
+				"needs internet access. A search without _count returns 100 matches and a next link.",
 			Resources: []Resource{
 				{Key: databaseKey, Kind: KindDatabase, Name: "postgres", Engine: "Postgres"},
 				{
-					Key: "refhir", Kind: KindService, Name: "refhir", Image: "ghcr.io/hai-hq/refhir:0.0.1", Port: 8080,
-					Size: &Size{CPU: "500m", Memory: "2Gi", CPUMax: "2", MemoryMax: "4Gi"}, // 1.3 GB after a restart, 3.1 GB on first start
+					Key: "refhir", Kind: KindService, Name: "refhir", Image: "ghcr.io/hai-hq/refhir:0.0.2", Port: 8080,
+					// Measured on about 900 resources, a small dataset: 40 to 76 MiB at rest, 105 to 109 MiB after the busiest
+					// test and a 107 to 122 MiB peak. Raise the reserve if real data pushes it past 256 MiB; the 1 GiB
+					// ceiling is headroom that was not measured.
+					Size: &Size{CPU: "250m", Memory: "256Mi", CPUMax: "1", MemoryMax: "1Gi"},
 					Variables: []Variable{
 						{Name: "REFHIR_POSTGRES_URL", From: &Reference{Resource: databaseKey, Key: "uri"}},
 						{Name: "REFHIR_AUDIT_KEY", Generate: GenerateSecretKind},

@@ -77,6 +77,10 @@ The first public release.
   of the operator's own health.
 - **Dashboard sign-in.** Local admin and viewer users, or an external OpenID Connect provider with a role claim mapped to
   admin or viewer.
+- **Light and dark themes.** The dashboard, the website and the documentation follow the system's theme, and use light
+  when the system has none. The dashboard's account menu has System, Light and Dark, and the documentation's picker
+  saves its choice for the whole website. The dashboard used to be dark only, so someone whose system is light now sees
+  it light.
 - **Command line** (`geass`), installed with `install-cli.sh` for Linux and macOS (and as a download for Windows):
   `geass login` signs in by approving a code in the dashboard, and commands print JSON with `--json` and exit with
   codes a script can act on.
@@ -157,5 +161,12 @@ The first public release.
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+- **Secrets are encrypted at rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`) on every
+  cluster it builds, so the dashboard users, API token hashes, cloud keys, app secrets and database passwords are encrypted
+  in K3s's datastore and in the etcd snapshots, including the one taken before an upgrade. A control plane server joined
+  with `--join-server` gets the same setting. The key stays on the server's disk, and anyone the API lets read Secrets still
+  reads them. Only the Secret resource is encrypted: a value written into a service's `spec.secretData`, and plain
+  variables, stay readable in the datastore. A restore on another machine needs the cluster's server token and the same
+  setting; the Upgrading page of the documentation says how.
 
 [Unreleased]: https://github.com/degoke/geass/commits/main

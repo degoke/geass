@@ -145,6 +145,7 @@ func TestAJoinWritesTheFirstServersSettingsAndWhereToJoin(t *testing.T) {
 	require.Equal(t, "https://10.0.0.5:6443", settings["server"], "normalised, with the port K3s serves on")
 	require.Equal(t, "K10abc::server:pw", settings["token"], "trimmed: a newline from a file the token was read from would make it a different token")
 	require.Contains(t, settings, "kubelet-arg", "the same settings as the first server, because K3s refuses a server whose critical settings differ")
+	require.Equal(t, true, settings["secrets-encryption"], "a server that joined must encrypt Secrets like the first, or the cluster would keep part of its Secrets in the clear")
 	require.NotContains(t, settings, "cluster-init", "that is for the first server only: a server that joined has the cluster's database already")
 }
 

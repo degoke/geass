@@ -250,8 +250,8 @@ See the [REST API](/docs/reference/rest-api/) for authentication and errors.
   `<environment>__<NAME>`, and copied into `geass-shared-secrets` in the environment's namespace.
 - Plain variables are not secret. They sit in the service's resource and in a ConfigMap, and an admin can read them in the
   dashboard and through the API, as can a project token of that environment.
-- A Kubernetes Secret is base64-encoded in the cluster datastore, not encrypted by Geass. See
-  [Security](/docs/operations/security/).
+- A Kubernetes Secret is base64-encoded in the API, and the installer turns on K3s secrets encryption, so on a cluster it
+  built it is encrypted in the cluster datastore. See [Security](/docs/operations/security/).
 
 [Templates](/docs/guides/templates/) never copy secret values: saving a project as a template turns each secret into
 "generate a new random secret on deploy".

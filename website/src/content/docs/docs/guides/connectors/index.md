@@ -39,9 +39,9 @@ This page documents what the code does today, including those rough edges, so yo
 | [Cloudflare](/docs/guides/connectors/cloudflare/) | Dashboard DNS, optional tunnel, default hostnames | The whole cluster | API token, account ID, zone | Secret `platform-cloudflare` in `geass-system` |
 | [GitHub](/docs/guides/connectors/github/) | Repository deploys, push webhooks, PR environments, commit statuses, deployments and pull request comments back to GitHub | The cluster, linked to each project | GitHub App credentials | Secret `platform-github-app` in `geass-system` |
 
-Every connection is a Kubernetes Secret in the `geass-system` namespace. Geass does not encrypt these Secrets
-itself, and the installer does not turn on K3s secrets encryption, so they are stored like any other Secret in the
-cluster datastore. Read [Security](/docs/operations/security/) before you give Geass a broad AWS key.
+Every connection is a Kubernetes Secret in the `geass-system` namespace. The installer turns on K3s secrets encryption,
+so on a cluster it built they are encrypted in the cluster datastore, but anyone the API lets read Secrets still reads them.
+Read [Security](/docs/operations/security/) before you give Geass a broad AWS key.
 
 Only admins can add, change or remove connections. A viewer or an observer token does not get the AWS and PlanetScale
 connections the dashboard sends, but can read the **Cloud connections** list through the API (`GET /api/v1/connections`): each

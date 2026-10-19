@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Burger, Menu } from "@mantine/core";
+import { Burger, Menu, useMantineColorScheme } from "@mantine/core";
 import {
   BarChart3,
+  Check,
   ChevronDown,
   ExternalLink,
   FolderKanban,
@@ -10,9 +11,12 @@ import {
   LayoutTemplate,
   LifeBuoy,
   LogOut,
+  Monitor,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Sun,
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
@@ -26,6 +30,7 @@ import {
   settingsActive,
 } from "@/lib/platform-nav";
 import { ClusterHealth } from "@/components/ClusterHealth";
+import { GeassLogo } from "@/components/GeassLogo";
 import { DeployControls } from "@/components/DeployControls";
 import { DomainSetupBanner } from "@/components/DomainSetupBanner";
 
@@ -66,6 +71,13 @@ function useAccountNavCollapsed() {
   };
   return [collapsed, toggleCollapsed];
 }
+
+/** "auto" follows the system. The setting is kept by Mantine, in this browser. */
+const THEME_CHOICES = [
+  { value: "auto", label: "System", Icon: Monitor },
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+];
 
 function initial(username) {
   return (username || "?").slice(0, 1).toUpperCase();
@@ -178,6 +190,7 @@ function TopBar({
   navOpened,
   onToggleNav,
 }) {
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const inProject = Boolean(project && projectSlug);
   const environments = project?.spec?.environments || [];
   const pullRequests = project?.status?.pullRequests || [];
@@ -185,7 +198,7 @@ function TopBar({
     <header className="rw-top">
       <Burger className="rw-top-burger" opened={navOpened} onClick={onToggleNav} hiddenFrom="sm" size="sm" aria-label="Open navigation" />
       <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
-        <img src="/geass-logo-dark.svg" alt="Geass" height={24} width={91} />
+        <GeassLogo height={24} width={91} />
       </Link>
 
       {inProject ? (
@@ -249,6 +262,20 @@ function TopBar({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Label>{username}</Menu.Label>
+            <Menu.Divider />
+            <Menu.Label>Theme</Menu.Label>
+            {THEME_CHOICES.map(({ value, label, Icon }) => (
+              <Menu.Item
+                key={value}
+                aria-current={colorScheme === value ? "true" : undefined}
+                leftSection={<Icon size={14} />}
+                rightSection={colorScheme === value ? <Check size={14} /> : null}
+                onClick={() => setColorScheme(value)}
+              >
+                {label}
+              </Menu.Item>
+            ))}
+            <Menu.Divider />
             <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
           </Menu.Dropdown>
         </Menu>
