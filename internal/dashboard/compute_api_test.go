@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"testing"
 
@@ -404,9 +405,7 @@ func TestAStoredSSHKeyNeverTakesOverASecretItDidNotMake(t *testing.T) {
 	// "geass-nodepool" + "-ssh" is the login key's Secret, and "web-ssh" is someone's.
 	for _, name := range []string{"geass-nodepool", "web"} {
 		body := map[string]any{"name": name, "inventory": hosts}
-		for k, v := range key {
-			body[k] = v
-		}
+		maps.Copy(body, key)
 		status, out := f.call(t, f.admin, http.MethodPost, "/api/v1/pools", body)
 		require.Equal(t, http.StatusBadRequest, status, "%s: %v", name, out)
 	}
@@ -419,9 +418,7 @@ func TestAStoredSSHKeyNeverTakesOverASecretItDidNotMake(t *testing.T) {
 
 	// A Secret that this handler made is its own to replace: the same pool name, made again, takes the new key.
 	again := map[string]any{"name": "spares", "inventory": hosts}
-	for k, v := range key {
-		again[k] = v
-	}
+	maps.Copy(again, key)
 	status, _ := f.call(t, f.admin, http.MethodPost, "/api/v1/pools", again)
 	require.Equal(t, http.StatusOK, status)
 	status, _ = f.call(t, f.admin, http.MethodDelete, "/api/v1/pools/spares?confirmName=spares", nil)
