@@ -157,7 +157,7 @@ By default users come from a Kubernetes Secret, and each is an admin or a viewer
 
 ### Are my secrets safe?
 
-Secret variables are stored as Kubernetes Secrets and are never shown in the dashboard after you save them, and viewers do not see variable values at all. A **Read only, with logs** token sees the names of secrets and the values of plain variables, and every log line, so keep anything sensitive in a secret and do not print it. Dashboard passwords are stored as bcrypt hashes, and repeated failed sign-ins lock a user for a minute. Geass does not turn on K3s's secrets encryption at rest, so the contents of Secrets are readable to anyone who can read the cluster's database or its Secrets. Limit who has access to the control plane. See [Security](/docs/operations/security/).
+Secret variables are stored as Kubernetes Secrets and are never shown in the dashboard after you save them, and viewers do not see variable values at all. A **Read only, with logs** token sees the names of secrets and the values of plain variables, and every log line, so keep anything sensitive in a secret and do not print it. Dashboard passwords are stored as bcrypt hashes, and repeated failed sign-ins lock a user for a minute. The installer turns on K3s's secrets encryption at rest, so on a cluster it built, Secrets are encrypted in the cluster's database and its etcd snapshots. They are still readable to anyone who can read Secrets through the API, or who can read the control plane's disk, where K3s keeps the key. Limit who has access to the control plane. See [Security](/docs/operations/security/).
 
 ### Can one project reach another?
 

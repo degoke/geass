@@ -437,6 +437,39 @@ func TestAnUpgradeNeverRemovesK3sOrRewritesTheClusterObject(t *testing.T) {
 	require.False(t, host.ran("delete"), "nothing is deleted")
 }
 
+// Secrets encryption is set when a cluster is first built. An upgrade must not change a cluster's K3s settings behind the
+// person's back, and turning encryption on in a cluster that already stores Secrets is K3s's own procedure, not something
+// to do halfway. Only a fresh install and a server join write the K3s configuration file, and neither is an upgrade step.
+func TestNoUpgradeStepWritesTheServersConfigurationFile(t *testing.T) {
+	for _, step := range UpgradeSteps(NewUpgradePlan(UpgradeOptions{K3sVersion: "v1.36.5+k3s1"})) {
+		require.IsNotType(t, &K3sInstall{}, step)
+		require.IsNotType(t, &K3sServerJoin{}, step)
+	}
+}
+
+// The test above knows two kinds of step. This one knows every place that writes the file, so a new one has to be added here
+// on purpose, which is the moment to ask whether an upgrade can reach it.
+func TestOnlyAFreshInstallAndAServerJoinWriteTheServersConfigurationFile(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	callers := map[string]int{}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		require.NoError(t, err)
+		for line := range strings.SplitSeq(string(source), "\n") {
+			code := strings.TrimSpace(line)
+			if strings.Contains(code, "writeK3sConfig(") && !strings.HasPrefix(code, "func writeK3sConfig(") && !strings.HasPrefix(code, "//") {
+				callers[file]++
+			}
+		}
+	}
+	require.Equal(t, map[string]int{"k3s.go": 1, "join.go": 1}, callers,
+		"writeK3sConfig is called from somewhere new: can an upgrade reach it? If so it would rewrite the settings of a running cluster")
+}
+
 func TestTheOperatorIsStampedSoItRollsOutEvenWhenTheImageNameDoesNot(t *testing.T) {
 	host := setUpUpgrade(t, healthyCluster())
 	require.NoError(t, runSteps(NewUpgradePlan(UpgradeOptions{})))

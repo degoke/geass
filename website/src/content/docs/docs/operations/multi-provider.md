@@ -21,7 +21,7 @@ You choose multi-provider mode when you install the control plane. It cannot be 
 | API certificate | Local names | Also valid for the control plane's public IP |
 | Container metrics | From each node | Prometheus reaches each kubelet on its public address |
 
-The installer writes this into the K3s server configuration (`/etc/rancher/k3s/config.yaml`): `flannel-backend: wireguard-native`, `node-external-ip`, `flannel-external-ip: true`, `tls-san` with the public IP, and the kubelet log limits. The cluster object records `spec.network.multiSite: true`.
+The installer writes this into the K3s server configuration (`/etc/rancher/k3s/config.yaml`): `flannel-backend: wireguard-native`, `node-external-ip`, `flannel-external-ip: true`, `tls-san` with the public IP, the kubelet log limits, and `secrets-encryption: true`. The cluster object records `spec.network.multiSite: true`.
 
 ## Before you start
 
@@ -157,7 +157,7 @@ Work through these after you add the first worker.
 
 | On | File or object | Content |
 | --- | --- | --- |
-| Control plane | `/etc/rancher/k3s/config.yaml` | `flannel-backend: wireguard-native`, `node-external-ip`, `flannel-external-ip: true`, `tls-san`, `kubelet-arg`. |
+| Control plane | `/etc/rancher/k3s/config.yaml` | `flannel-backend: wireguard-native`, `node-external-ip`, `flannel-external-ip: true`, `tls-san`, `kubelet-arg`, `secrets-encryption: true`. |
 | Worker | `/etc/rancher/k3s/config.yaml` | `node-label`, `node-taint`, `node-external-ip`, `kubelet-arg`. |
 | Worker | Service `k3s-agent` | The K3s agent. Check it with `systemctl status k3s-agent` and `journalctl -u k3s-agent`. |
 | Cluster | `GeassCluster` `default` | `spec.network.multiSite: true` and a public `serverURL`. |
