@@ -737,6 +737,9 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 			deploy.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{*pullSecret}
 		}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
+		if appRunsManyCopies(app) {
+			spreadCopies(&deploy.Spec.Template.Spec, selector)
+		}
 		if options.scaleToZero.active {
 			// What the pods are made from, so a service that sleeps is known to need checking again when it changes.
 			if deploy.Annotations == nil {
@@ -1311,4 +1314,34 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}), builder.WithPredicates(readyOrSpecChanged())).
 		Named("geassapp").
 		Complete(r)
+}
+
+// appRunsManyCopies says whether a service is meant to run more than one copy: it is asked to, or may scale up to it. It reads what
+// the service asks for and not how many copies run now, because a pod template that changed with every scale would restart them
+// each time. A service that never has more than one copy has nothing to spread.
+func appRunsManyCopies(app *geassv1alpha1.GeassApp) bool {
+	if app.Spec.Replicas != nil && *app.Spec.Replicas > 1 {
+		return true
+	}
+	if scaling := app.Spec.Autoscaling; scaling != nil && scaling.MaxReplicas > 1 {
+		return true
+	}
+	if toZero := app.Spec.ScaleToZero; toZero != nil && toZero.MaxReplicas > 1 {
+		return true
+	}
+	return false
+}
+
+// spreadCopies asks the scheduler to put a service's copies on different machines, and then at different sites, where it can.
+// Without it the scheduler's own default tolerates two copies on one machine, so that a lost machine can take a service that
+// had two copies and leave it with none. It is only ever a preference: a cluster with one machine, or too few of them, still
+// runs every copy, which is why a hard rule is not used.
+func spreadCopies(spec *corev1.PodSpec, selector map[string]string) {
+	constraint := func(key string) corev1.TopologySpreadConstraint {
+		return corev1.TopologySpreadConstraint{
+			MaxSkew: 1, TopologyKey: key, WhenUnsatisfiable: corev1.ScheduleAnyway,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: selector},
+		}
+	}
+	spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{constraint(corev1.LabelHostname), constraint(platform.LabelZone)}
 }

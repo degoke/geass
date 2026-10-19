@@ -84,6 +84,25 @@ The first public release.
   allows.
 - **JSON API** under `/api/v1`, described by an OpenAPI document, with full access, read-only, read-only with logs and
   per-environment project tokens.
+- **Disaster recovery.** Copies of the cluster's own state in an S3 bucket of your own, which you opt in to: the
+  installer asks on a terminal (the answer is no unless it is yes), takes `--etcd-snapshots`, or turns it on later with
+  `etcd-snapshots enable`, and the dashboard's **Cluster backup** sets or changes the bucket with no restart. K3s sends
+  each snapshot there, and the operator says whether they are arriving and raises a **Cluster problem** alert when they
+  stop. A cluster whose control plane disk is lost can be rebuilt on a new machine from the newest copy and the server
+  token, which the installer asks you to store; the steps are in the documentation and the restore is tested against a
+  real K3s (`make test-k3s-restore`). **Recover databases from a bucket** reads a record that each database's backups now
+  have beside them and offers them for restore again on a new cluster; it never deletes what it finds. New
+  **Storage failing** alerts for a disk that has gone read-only and for a volume that has lost a copy or cannot be read
+  (Longhorn is scraped when monitoring is on), checked with `make test-alert-rules`. A service set to run more than one
+  replica asks the scheduler to spread them over machines and then sites, as a preference (a nudge: it was seen to put
+  both replicas on one machine). A database on a node that has been lost for 15 minutes is looked after: a database with
+  one instance, or whose volume has copies on other nodes, starts on another node (Postgres, Redis and MySQL servers),
+  and a lost instance of a highly available Postgres database, or one whose volume has lost its only copy, is replaced
+  by a new one built from the primary, never while the primary is down. Longhorn is set to replace pods that were on a
+  node that is down (only when it is still `do-nothing`). Rebuilding a control plane server is tested on real machines;
+  the documentation says to run the installer with `--force` when it refuses for volumes that are short of a copy, and
+  how to tell Longhorn about the new disk. `etcd-snapshots enable` on a rebuilt machine says the cluster already has its
+  bucket and takes a copy.
 - **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
   provenance that can be verified with `gh attestation verify`.
 

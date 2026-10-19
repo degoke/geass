@@ -186,6 +186,12 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformRegistrySave(w, mutation)
 	case mutation.URL.Path == "/settings/registry/clear":
 		s.handlePlatformRegistryClear(w, mutation)
+	case mutation.URL.Path == "/backups/recover":
+		s.handleBackupsRecover(w, mutation)
+	case mutation.URL.Path == "/settings/etcd-snapshots/save":
+		s.handleEtcdSnapshotsSave(w, mutation)
+	case mutation.URL.Path == "/settings/etcd-snapshots/clear":
+		s.handleEtcdSnapshotsClear(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/settings/alerts/"):
 		s.handleAlertSettings(w, mutation)
 	case mutation.URL.Path == "/settings/auth/save":

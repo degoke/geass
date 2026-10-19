@@ -68,7 +68,8 @@ var Kinds = []Kind{
 	{geassv1alpha1.AlertNodeUnhealthy, "Node not ready", "A node of the cluster is not ready, or could not be set up."},
 	{geassv1alpha1.AlertWorkloadCrashLooping, "Crash loop", "A pod keeps crashing and being restarted."},
 	{geassv1alpha1.AlertStorageFilling, "Storage filling", "A volume or a node's disk is nearly full."},
-	{geassv1alpha1.AlertClusterIssue, "Cluster problem", "A cluster upgrade stopped, certificates cannot be issued, network policies are not enforced, or the operator is not doing its work."},
+	{geassv1alpha1.AlertStorageFailing, "Storage failing", "A node's disk has gone read-only, or a volume has lost a copy of its data or cannot be read."},
+	{geassv1alpha1.AlertClusterIssue, "Cluster problem", "A cluster upgrade stopped, certificates cannot be issued, network policies are not enforced, copies of the cluster's state have stopped reaching their bucket, or the operator is not doing its work."},
 }
 
 // ValidKind reports whether id is a kind a channel can subscribe to.

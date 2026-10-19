@@ -3,6 +3,8 @@ import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
+import { ClusterBackup } from "@/components/ClusterBackup";
+import { RecoverBackups } from "@/components/RecoverBackups";
 import { ClusterVersion } from "@/components/ClusterVersion";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
@@ -119,6 +121,8 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       )}
       <NetworkPolicySection data={data} />
       <ClusterVersion data={data} />
+      <ClusterBackup mutable={mutable} />
+      <RecoverBackups mutable={mutable} />
       <PageSection title="Nodes" description="Per-node allocatable resources and pressure.">
         <DataTable
           columns={[

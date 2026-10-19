@@ -281,7 +281,9 @@ the Cloudflare token, the GitHub App key, app secrets and shared secrets, functi
 
 - **At rest.** Geass does not encrypt Secrets, and the installer does not enable K3s secrets encryption, so they are stored
   in the cluster datastore like any other Secret. Anyone who can read the datastore, an etcd snapshot or the server's disk
-  can read them. K3s offers secrets encryption at rest; if you want it, turn it on in K3s yourself.
+  can read them. K3s offers secrets encryption at rest; if you want it, turn it on in K3s yourself. The same goes for the
+  copies of the cluster that you can ask K3s to send to an S3 bucket ([Disaster recovery](/docs/operations/disaster-recovery/)):
+  each holds every Secret, so keep that bucket to itself, with encryption on, public access blocked and a key that can use only it.
 - **In the API.** Secret values are never copied into a resource's `status`. The dashboard sends the names of secret keys,
   never their values, and viewers do not even get those. The exception is a service you wrote `spec.secretData` into by
   hand: that field is part of the resource, so admins get its values in `GET /api/bootstrap` (the values are blanked in the

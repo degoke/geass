@@ -1,8 +1,10 @@
 package cloud
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -631,4 +633,70 @@ func TestDeleteObjectRemovesEveryVersionOfThatKeyOnly(t *testing.T) {
 	require.Equal(t, "p/s/dumps/a.sql.gz", versionPrefix)
 	require.ElementsMatch(t, []string{"v1", "v2"}, deletedVersions,
 		"a versioned bucket keeps old versions behind a delete marker, and a key that merely starts the same must be left alone")
+}
+
+func TestAnObjectIsWrittenAndReadBackThroughSignedRequests(t *testing.T) {
+	stored := map[string][]byte{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(t, r.Header.Get("Authorization"), "AWS4-HMAC-SHA256")
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(body)), r.Header.Get("X-Amz-Content-Sha256"), "what is written is signed whole")
+			stored[r.URL.Path] = body
+		case http.MethodGet:
+			body, ok := stored[r.URL.Path]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`<Error><Code>NoSuchKey</Code></Error>`))
+				return
+			}
+			_, _ = w.Write(body)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+
+	require.NoError(t, client.PutObject("state", "shop/orders-1a2b3c4d/geass-archive.json", []byte(`{"schema":1}`)))
+	got, err := client.GetObject("state", "shop/orders-1a2b3c4d/geass-archive.json", 1024)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"schema":1}`, string(got))
+	require.Contains(t, stored, "/state/shop/orders-1a2b3c4d/geass-archive.json", "path style, with the key as it is written, slashes and all")
+
+	_, err = client.GetObject("state", "shop/none/geass-archive.json", 1024)
+	require.ErrorIs(t, err, ErrObjectNotFound, "an object that is not there is told from a bucket that cannot be read")
+}
+
+func TestAnObjectOverTheLimitIsAnErrorAndNotAShortRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(make([]byte, 5000)) }))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+	_, err := client.GetObject("state", "big", 100)
+	require.ErrorContains(t, err, "exceeded")
+}
+
+func TestFoldersAreTheNamesDirectlyUnderAPrefixAcrossPages(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		require.Equal(t, "/", r.URL.Query().Get("delimiter"))
+		if r.URL.Query().Get("continuation-token") == "" {
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>page2</NextContinuationToken>
+				<CommonPrefixes><Prefix>shop/orders-1a2b3c4d/</Prefix></CommonPrefixes><Contents><Key>shop/stray.txt</Key></Contents></ListBucketResult>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>shop/cache-9f8e7d6c/</Prefix></CommonPrefixes></ListBucketResult>`))
+	}))
+	t.Cleanup(srv.Close)
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", Endpoint: srv.URL}
+
+	folders, err := client.ListFolders("state", "shop")
+	require.NoError(t, err)
+	require.Equal(t, []string{"shop/orders-1a2b3c4d/", "shop/cache-9f8e7d6c/"}, folders, "the slash is added, and a stray file is not a folder")
+	require.Contains(t, queries[0], "prefix=shop%2F")
+
+	queries = nil
+	_, err = client.ListFolders("state", "")
+	require.NoError(t, err)
+	require.NotContains(t, queries[0], "prefix=", "the top of the bucket has no prefix to name")
 }

@@ -37,6 +37,10 @@ reads these environment variables (see [Install](/docs/getting-started/install/)
 | `GEASS_K3S_VERSION` | the current `stable` K3s | The K3s release, in full (`v1.36.5+k3s1`), to build a new cluster on. The same as `--k3s-version` for a new cluster; when a cluster that exists is updated it is ignored (with a warning), so a value left over from the install does not upgrade K3s: pass `--k3s-version` for that |
 | `GEASS_JOIN_SERVER` | none | The address of a cluster's server, such as `https://10.0.0.5:6443`. With it the installer does not build a cluster: it makes this machine an additional control plane server of that one. The same as `--join-server`, and it also needs the K3s release the cluster runs, in `GEASS_K3S_VERSION` or `--k3s-version`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `GEASS_JOIN_TOKEN` | none | The cluster's server token, from `/var/lib/rancher/k3s/server/token` on its first server. Needed with `GEASS_JOIN_SERVER`. Pass it here and not as `--join-token`, which other users of the machine can read in the process list |
+| `GEASS_ETCD_SNAPSHOTS` | off | `1`, `true`, `yes` or `on`: same as `--etcd-snapshots`. Setting a bucket (below) also turns copies on |
+| `GEASS_ETCD_SNAPSHOTS_BUCKET` | none | The S3 bucket that copies of the cluster's own state go to. With it the installer also says so on the cluster object and stores the key, and takes a first copy at once. Needs `_ACCESS_KEY` and `_SECRET_KEY`. [Disaster recovery](/docs/operations/disaster-recovery/#keep-copies-of-the-clusters-state) |
+| `GEASS_ETCD_SNAPSHOTS_REGION`, `_ENDPOINT`, `_FOLDER`, `_INSECURE` | none | The bucket's region; the address of an S3-compatible server that is not AWS, with no scheme; the folder in the bucket (`geass`); and `1` to send over plain HTTP, for a network that is closed to everyone else |
+| `GEASS_ETCD_SNAPSHOTS_ACCESS_KEY`, `_SECRET_KEY` | none | A key that can use that bucket and nothing else. Pass them here and not as options |
 | `GEASS_REINSTALL` | off | `1`, `true`, `yes` or `on`: same as `--reinstall` |
 | `GEASS_YES` | off | `1`, `true`, `yes` or `on`: same as `--yes` |
 | `GEASS_INSTALL_LOG` | `geass-install-<UTC timestamp>.log` in the current directory | Where the installer writes its log. If that path is not writable it falls back to the system temp directory |
@@ -50,6 +54,8 @@ reads these environment variables (see [Install](/docs/getting-started/install/)
 | `--allow-untested-k3s` | Allow a K3s outside the range this release's add-ons are known to run on |
 | `--skip-snapshot` | Update without an etcd snapshot first |
 | `--force` | Update although the cluster is not ready or a Longhorn volume is degraded |
+| `--etcd-snapshots` | A new cluster, or a server that joins one: also keep copies of the cluster's state in an S3 bucket of your own. Without it a terminal is asked, and the answer is no unless it is yes. See [Disaster recovery](/docs/operations/disaster-recovery/) |
+| `etcd-snapshots enable`, `disable`, `status` | On a cluster that is here: turn on, turn off or look at K3s sending its snapshots to S3. `enable` restarts K3s, which takes the API server away for about a minute |
 | `--join-server <url>` | Do not build a cluster: make this machine an additional control plane server of the one at this address. Needs the server token in `GEASS_JOIN_TOKEN` (or `--join-token`) and the K3s release the cluster runs in `--k3s-version` (or `GEASS_K3S_VERSION`). See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `--reinstall` | Delete the cluster on this machine and build a new one. Asks for confirmation on the terminal |
 | `--yes` | Do not ask for confirmation of `--reinstall` |

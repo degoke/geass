@@ -25,6 +25,7 @@ type backupStorageAPI interface {
 	ListKeys(bucket, prefix string) ([]string, error)
 	ListObjects(bucket, prefix string) ([]cloud.S3Object, error)
 	DeleteObject(bucket, key string) error
+	PutObject(bucket, key string, body []byte) error
 }
 
 // backupStorageFactory builds a storage client from AWS credentials.

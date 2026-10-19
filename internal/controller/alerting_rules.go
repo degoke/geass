@@ -39,6 +39,8 @@ const (
 	detailReady   = "ready"
 	detailIssuer  = "issuer"
 	detailNetpol  = "netpol"
+	// detailSnapshots is a cluster whose copies, in the bucket that was set up for them, have stopped arriving.
+	detailSnapshots = "snapshots"
 )
 
 // alertSnapshot is what the rules look at: the resources as they are now, and what was a problem at the last look.
@@ -320,6 +322,12 @@ func (e *problemEvaluation) clusters() {
 		}
 		if policy := meta.FindStatusCondition(cluster.Status.Conditions, platform.ConditionNetworkPolicyEnforced); policy != nil && policy.Status == metav1.ConditionFalse {
 			add(detailNetpol, alerts.SeverityWarning)
+		}
+		// Waiting for the first copy is not a problem: it is what setting a bucket up looks like for up to half a day.
+		// A copy that is not arriving is the one thing the cluster has no other way back from if its disk is lost.
+		if copies := meta.FindStatusCondition(cluster.Status.Conditions, platform.ConditionEtcdSnapshotsCurrent); copies != nil &&
+			copies.Status == metav1.ConditionFalse && copies.Reason != platform.EtcdSnapshotsReasonWaiting {
+			add(detailSnapshots, alerts.SeverityWarning)
 		}
 	}
 }

@@ -182,7 +182,11 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 
 The installer passes its whole environment on to the K3s install script, so K3s's own `INSTALL_K3S_*` variables take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself and overrides yours, and sets `INSTALL_K3S_VERSION` when you pass `GEASS_K3S_VERSION`. K3s selects its release channel when you set nothing: the `stable` channel at the moment you install.
 
-The installer also takes options, which go after `-s --` when you pipe it: `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--join-server`, `--version` and `--help`. The update options are described in [Upgrade Geass](/docs/operations/upgrading/#options).
+The installer also takes options, which go after `-s --` when you pipe it: `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--join-server`, `--etcd-snapshots`, `--version` and `--help`. The update options are described in [Upgrade Geass](/docs/operations/upgrading/#options).
+
+### Copies of the cluster's state
+
+On a terminal the installer asks one question before it installs K3s: whether to keep copies of the cluster's own state in an S3 bucket of your own, so that it can be rebuilt if this machine's disk is lost. The default is **no**, and it is no whenever there is no terminal to ask on, as in a script. To say yes ahead, pass `--etcd-snapshots`, or name the bucket with `GEASS_ETCD_SNAPSHOTS_BUCKET` and the variables that go with it. If you say yes it shows you the cluster's server token on the terminal, once, and asks you to store it somewhere that is not this machine. You can also turn it on later. See [Disaster recovery](/docs/operations/disaster-recovery/).
 
 :::note
 By default `sudo` drops variables you set before it. Write `sudo env NAME=value sh`, not `NAME=value sudo sh`.

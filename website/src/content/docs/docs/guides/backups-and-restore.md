@@ -204,6 +204,12 @@ A restore also needs room on the cluster, like any new database, and Geass refus
 
 A database you create from a manifest with `spec.restoreFrom` is checked by the operator after the object exists, so these messages appear as its Ready condition instead: "Backups from another project cannot be restored here", "A restored database must use the same engine as the original (X)", "A restored database must use Postgres version X, the version of the backup", "A restored database must keep the database name X" and "A restored database needs at least X of storage, the size of the original". The restore the dashboard builds already meets these rules.
 
+## Recover databases from a bucket
+
+The record of a database's backups lives in the cluster, and a cluster can be lost. Beside each database's backups Geass therefore keeps a small file in the bucket, `geass-archive.json`, that says what they are copies of: the engine and version, the size, the database's name, the project and the environment. It holds nothing secret. A new cluster reads these files and offers the databases for restore again. See [Disaster recovery](/docs/operations/disaster-recovery/#recover-databases-from-a-bucket) for how.
+
+What is found there appears under **Recently deleted databases** in the project's **Settings**, **Backups**, marked "Found in the bucket", and is restored like any other. These records are offered for 30 days, and when they expire only the record is removed: Geass never deletes the data in a bucket it found, because the cluster that put it there may still be running.
+
 ## Delete a database
 
 When you delete a database that has backups, Geass first takes a final backup so nothing written since the last one is lost. It checks every 10 seconds and waits up to 10 minutes. If the database is not running, the final backup cannot start, or it fails or times out, Geass deletes the database anyway and keeps the backups that already exist. A failing backup never leaves a database stuck deleting.

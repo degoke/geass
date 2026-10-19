@@ -40,7 +40,10 @@ export function ProjectBackups({ project, data, mutable, reload }) {
                   <span className="rw-rail-list-title">{archiveDisplayName(archive)}</span>
                   {archive.spec?.environment ? <span className="rw-vars-kind">{archive.spec.environment}</span> : null}
                   <span className="rw-backup-meta">
-                    Deleted · restorable until {formatDateTime(archive.spec?.deleteAfter)}
+                    {archive.metadata?.labels?.["geass.dev/recovered"] === "true"
+                      ? "Found in the bucket · offered until "
+                      : "Deleted · restorable until "}
+                    {formatDateTime(archive.spec?.deleteAfter)}
                   </span>
                   {mutable ? (
                     <span className="rw-list-row-end">
