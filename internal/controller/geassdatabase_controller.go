@@ -38,6 +38,8 @@ import (
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	"github.com/degoke/geass/pkg/helmchart"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -167,12 +169,21 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if databaseWantsHA(&db) {
-		ready, err := r.haReady(ctx)
+		// The check is for making a highly available database. One that is already there has its instances where they
+		// are, and a lost node must not make Geass stop looking after it: that is when a MariaDB replica has to be
+		// promoted, and a cluster of three nodes has two healthy ones from the moment it loses one.
+		made, err := r.haDatabaseExists(ctx, &db, wsNS)
 		if err != nil {
 			return r.setNotReady(ctx, &db, err.Error())
 		}
-		if !ready {
-			return r.setNotReady(ctx, &db, "High availability requires a cluster with at least three healthy nodes")
+		if !made {
+			ready, err := r.haReady(ctx)
+			if err != nil {
+				return r.setNotReady(ctx, &db, err.Error())
+			}
+			if !ready {
+				return r.setNotReady(ctx, &db, "High availability requires a cluster with at least three healthy nodes")
+			}
 		}
 	}
 
@@ -616,6 +627,27 @@ func (r *GeassDatabaseReconciler) validateDatabaseCloudConnection(ctx context.Co
 
 func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, project, name string) (*geassv1alpha1.GeassCloudConnection, *corev1.Secret, error) {
 	return platform.LoadCloudConnection(ctx, r.Client, project, name)
+}
+
+// haDatabaseExists says whether the cluster of instances of a highly available database has been made: the Postgres, MOCO or
+// MariaDB object that its engine's operator looks after.
+func (r *GeassDatabaseReconciler) haDatabaseExists(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (bool, error) {
+	var object client.Object
+	meta := metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}
+	switch db.Spec.Engine {
+	case geassv1alpha1.DatabaseEnginePostgres, "":
+		object = &cnpgv1.Cluster{ObjectMeta: meta}
+	case geassv1alpha1.DatabaseEngineMySQL:
+		object = &mocov1.MySQLCluster{ObjectMeta: meta}
+	case geassv1alpha1.DatabaseEngineMariaDB:
+		object = &mariadbv1.MariaDB{ObjectMeta: meta}
+	default:
+		return false, nil
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return true, nil
 }
 
 func (r *GeassDatabaseReconciler) haReady(ctx context.Context) (bool, error) {

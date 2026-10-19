@@ -509,6 +509,26 @@ func TestMariaDBFailoverNeedsAPrimaryWhoseMachineIsGone(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, 1, index)
 	})
+	t.Run("a primary that was made again with nowhere to run is lost once it has waited the grace period", func(t *testing.T) {
+		// Longhorn removes the pod that cannot be reached, and the StatefulSet makes it again: its volume is on the lost
+		// machine, so it is Pending with no machine, and there is no machine left to ask.
+		f := newFailoverFixture()
+		f.pods[0].Spec.NodeName = ""
+		f.pods[0].Status.Phase = corev1.PodPending
+		f.pods[0].CreationTimestamp = metav1.NewTime(f.now.Add(-mariadbNodeLossGrace))
+		index, found := f.target()
+		require.True(t, found)
+		require.Equal(t, 1, index)
+
+		f.pods[0].CreationTimestamp = metav1.NewTime(f.now.Add(-mariadbNodeLossGrace + time.Second))
+		_, found = f.target()
+		require.False(t, found, "a pod that has only just been made is being started, not lost")
+
+		f.pods[0].CreationTimestamp = metav1.NewTime(f.now.Add(-time.Hour))
+		f.pods[0].Status.Phase = corev1.PodRunning
+		_, found = f.target()
+		require.False(t, found, "a pod that is not waiting for a machine is not this case")
+	})
 	t.Run("a replica that is being deleted is not promoted", func(t *testing.T) {
 		f := newFailoverFixture()
 		f.lose("node-a", 10*time.Minute)

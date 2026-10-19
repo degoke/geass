@@ -94,15 +94,19 @@ The first public release.
   have beside them and offers them for restore again on a new cluster; it never deletes what it finds. New
   **Storage failing** alerts for a disk that has gone read-only and for a volume that has lost a copy or cannot be read
   (Longhorn is scraped when monitoring is on), checked with `make test-alert-rules`. A service set to run more than one
-  replica asks the scheduler to spread them over machines and then sites, as a preference (a nudge: it was seen to put
-  both replicas on one machine). A database on a node that has been lost for 15 minutes is looked after: a database with
+  replica asks the scheduler to spread them over machines, and over sites when every node has one, as a preference. (Asking
+  for sites on nodes that have none cancelled the preference for machines too, and put both replicas on one machine in
+  eight cases of ten on three real machines; found by testing it, and fixed.) A database on a node that has been lost for 15 minutes is looked after: a database with
   one instance, or whose volume has copies on other nodes, starts on another node (Postgres, Redis and MySQL servers),
   and a lost instance of a highly available Postgres database, or one whose volume has lost its only copy, is replaced
   by a new one built from the primary, never while the primary is down. Longhorn is set to replace pods that were on a
   node that is down (only when it is still `do-nothing`). Rebuilding a control plane server is tested on real machines;
   the documentation says to run the installer with `--force` when it refuses for volumes that are short of a copy, and
   how to tell Longhorn about the new disk. `etcd-snapshots enable` on a rebuilt machine says the cluster already has its
-  bucket and takes a copy.
+  bucket and takes a copy. Testing it on real machines also found two faults that stopped Geass promoting a MariaDB
+  replica when the primary's machine was lost, now fixed: a highly available database that already existed was held by
+  the check for three healthy nodes (which a cluster of three fails the moment it loses one), and Longhorn's removal
+  of the lost primary's pod left it with no machine for the promotion to look at.
 - **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
   provenance that can be verified with `gh attestation verify`.
 

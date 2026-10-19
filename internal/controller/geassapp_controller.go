@@ -552,6 +552,13 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		port = 8080
 	}
 
+	spreadBySite := false
+	if appRunsManyCopies(app) {
+		if spreadBySite, err = r.everyNodeHasASite(ctx); err != nil {
+			return err
+		}
+	}
+
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS},
 	}
@@ -738,7 +745,7 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
 		if appRunsManyCopies(app) {
-			spreadCopies(&deploy.Spec.Template.Spec, selector)
+			spreadCopies(&deploy.Spec.Template.Spec, selector, spreadBySite)
 		}
 		if options.scaleToZero.active {
 			// What the pods are made from, so a service that sleeps is known to need checking again when it changes.
@@ -1332,16 +1339,43 @@ func appRunsManyCopies(app *geassv1alpha1.GeassApp) bool {
 	return false
 }
 
-// spreadCopies asks the scheduler to put a service's copies on different machines, and then at different sites, where it can.
-// Without it the scheduler's own default tolerates two copies on one machine, so that a lost machine can take a service that
-// had two copies and leave it with none. It is only ever a preference: a cluster with one machine, or too few of them, still
-// runs every copy, which is why a hard rule is not used.
-func spreadCopies(spec *corev1.PodSpec, selector map[string]string) {
+// spreadCopies asks the scheduler to put a service's copies on different machines, and, when bySite, at different sites too,
+// where it can. Without it the scheduler's own default tolerates two copies on one machine, so that a lost machine can take a
+// service that had two copies and leave it with none. It is only ever a preference: a cluster with one machine, or too few of
+// them, still runs every copy, which is why a hard rule is not used.
+//
+// The site is only asked for when every node has one (see everyNodeHasASite). The scheduler scores no node for a preference
+// whose label the node lacks, and a cluster whose nodes have no sites (the usual case: K3s sets no zone) would then be given
+// a constraint that cancels the preference for machines as well, and replaces the scheduler's own defaults: on a cluster of
+// three machines that put both copies of a service on one machine in eight cases of ten.
+func spreadCopies(spec *corev1.PodSpec, selector map[string]string, bySite bool) {
 	constraint := func(key string) corev1.TopologySpreadConstraint {
 		return corev1.TopologySpreadConstraint{
 			MaxSkew: 1, TopologyKey: key, WhenUnsatisfiable: corev1.ScheduleAnyway,
 			LabelSelector: &metav1.LabelSelector{MatchLabels: selector},
 		}
 	}
-	spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{constraint(corev1.LabelHostname), constraint(platform.LabelZone)}
+	spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{constraint(corev1.LabelHostname)}
+	if bySite {
+		spec.TopologySpreadConstraints = append(spec.TopologySpreadConstraints, constraint(platform.LabelZone))
+	}
+}
+
+// everyNodeHasASite says whether every node a service can run on has a site, which a node gets as the standard zone label.
+func (r *GeassAppReconciler) everyNodeHasASite(ctx context.Context) (bool, error) {
+	var nodes corev1.NodeList
+	if err := r.List(ctx, &nodes); err != nil {
+		return false, err
+	}
+	usable := 0
+	for i := range nodes.Items {
+		if !nodeSchedulable(&nodes.Items[i]) {
+			continue
+		}
+		if nodes.Items[i].Labels[platform.LabelZone] == "" {
+			return false, nil
+		}
+		usable++
+	}
+	return usable > 0, nil
 }

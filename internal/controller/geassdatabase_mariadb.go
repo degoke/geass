@@ -615,10 +615,17 @@ func mariadbFailoverTarget(db *geassv1alpha1.GeassDatabase, mdb *mariadbv1.Maria
 		nodeByName[nodes[i].Name] = &nodes[i]
 	}
 	primaryPod, ok := byName[primary]
-	if !ok || primaryPod.Spec.NodeName == "" {
+	if !ok {
 		return 0, false
 	}
-	if !nodeUnresponsive(nodeByName[primaryPod.Spec.NodeName], now) {
+	if primaryPod.Spec.NodeName == "" {
+		// A pod that was removed from a machine that is lost (Longhorn does it, to start the pods of a StatefulSet
+		// elsewhere) is made again with nowhere to go: its volume is on the lost machine alone. The machine it was
+		// on is no longer there to ask, so how long the pod has waited stands for how long the machine has been gone.
+		if primaryPod.Status.Phase != corev1.PodPending || now.Sub(primaryPod.CreationTimestamp.Time) < mariadbNodeLossGrace {
+			return 0, false
+		}
+	} else if !nodeUnresponsive(nodeByName[primaryPod.Spec.NodeName], now) {
 		return 0, false
 	}
 	best, bestSequence, found := 0, int64(-1), false

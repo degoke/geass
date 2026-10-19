@@ -72,7 +72,7 @@ kubectl -n geass-system patch geassapp web --type json \
 With autoscaling on, Geass writes your **Replicas** value back into the Deployment each time it reconciles the service: when you deploy, when you save settings, when the operator restarts, and every 30 seconds while the service is not ready. Expect the count to return to **Replicas** at those moments and the autoscaler to move it again afterwards. A service that sleeps when idle is different: Geass does not set its replica count at all while it sleeps, so the add-on that starts and stops it is the only thing that does.
 :::
 
-A service that is set to run more than one replica, or may scale up to more, asks the scheduler to spread them over machines and then over sites, as a preference. It never refuses to run a replica, and it creates no pod disruption budget, so two replicas can still end up on the same node, when there is no other and also when there is: it is a nudge to the scheduler, not a guarantee, and running replicas are not moved. See [High availability](/docs/operations/high-availability/#services) for what this means.
+A service that is set to run more than one replica, or may scale up to more, asks the scheduler to spread them over machines, and over sites too when every node has a Site, as a preference. It never refuses to run a replica, and it creates no pod disruption budget, so two replicas can still end up on the same node: it is a preference to the scheduler, not a guarantee, and running replicas are not moved. See [High availability](/docs/operations/high-availability/#services) for what this means.
 
 ### Change replicas from a script
 

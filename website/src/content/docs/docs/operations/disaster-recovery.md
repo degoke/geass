@@ -248,6 +248,7 @@ A disk can fail quietly without any of this: a few bad sectors that nothing has 
 
 - A copy of the cluster holds its objects, not the contents of databases, volumes or in-cluster buckets. Databases need their own [backups](/docs/guides/backups-and-restore/).
 - Redis has no backup, and the cluster's object storage server is not backed up.
+- Geass replaces an instance of a highly available Postgres database when its node was lost, or its volume has no copy left. An instance whose volume is healthy but empty, because its data was removed from a disk that is still there, keeps crashing: Longhorn makes a new empty copy, and nothing tells that from a database that is slow to start. Replace it by hand by removing its claim and then its pod.
 - Geass does not create machines, so replacing one starts with you adding it.
 - The copies are as old as the last 00:00 or 12:00. Take one before something risky with `sudo k3s etcd-snapshot save`.
 - A cluster that was not installed by Geass, or that uses another database than K3s's own etcd, cannot send copies this way.
