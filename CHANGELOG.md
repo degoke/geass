@@ -94,5 +94,12 @@ The first public release.
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+- **Secrets are encrypted at rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`) on every
+  cluster it builds, so the dashboard users, API token hashes, cloud keys, app secrets and database passwords are encrypted
+  in K3s's datastore and in the etcd snapshots, including the one taken before an upgrade. A control plane server joined
+  with `--join-server` gets the same setting. The key stays on the server's disk, and anyone the API lets read Secrets still
+  reads them. Only the Secret resource is encrypted: a value written into a service's `spec.secretData`, and plain
+  variables, stay readable in the datastore. A restore on another machine needs the cluster's server token and the same
+  setting; the Upgrading page of the documentation says how.
 
 [Unreleased]: https://github.com/degoke/geass/commits/main

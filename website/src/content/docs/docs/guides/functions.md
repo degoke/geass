@@ -297,8 +297,8 @@ greeting = os.environ.get("GREETING", "Hello")
 A change to a variable applies on the next deploy. A variable named `PORT` that you add on the **Variables** tab does
 not replace the `PORT` Geass sets: change the **Port** setting instead. Geass also sets `GEASS_TRIGGER_TOKEN` on a
 function in handler mode or with schedules. To give a function a database connection, use **Add Reference**; the
-built-in **Function with Postgres** [template](/docs/guides/templates/) does this and reads `DATABASE_URL` with Bun's
-built-in SQL client. See [Environment variables and secrets](/docs/guides/environment-variables/).
+**Function with Postgres** [example template](/docs/guides/templates/#examples-to-copy) does this and reads
+`DATABASE_URL` with Bun's built-in SQL client. See [Environment variables and secrets](/docs/guides/environment-variables/).
 
 ## How functions differ from apps
 

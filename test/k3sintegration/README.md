@@ -10,10 +10,13 @@ make test-k3s-objectstorage   # the cluster's object storage, SeaweedFS and Gara
 make test-k3s-limits          # a project's node block and its quotas, per environment and for the whole project (about 4 minutes)
 make test-k3s-burst           # a service that reserves less than it may use, and a copy stopped for memory saying so (about 2 minutes, a little more the first time)
 make test-k3s-alerting        # alerts from a failing build or crashing pod to Alertmanager and out to Slack and mail stand-ins (about 20 minutes, a little more the first time)
+make test-k3s-encryption      # a service reads its secret, and the value is not in k3s's datastore, which holds encrypted values (about 3 minutes, a little more the first time)
 make k3s-down                 # removes it
 ```
 
-`make k3s-up` does not touch your own kubeconfig; it writes its own under `/tmp/geass-k3s`. Ports 6444 (API)
+`make k3s-up` starts k3s with the configuration file the installer writes (`hack/k3sconfig` prints it from `pkg/installer`:
+secrets encryption and log rotation), so the tests run on a cluster set up the way a real one is. A k3s that is already running
+is reused as it is, so after a change to that file run `make k3s-down` first. It does not touch your own kubeconfig; it writes its own under `/tmp/geass-k3s`. Ports 6444 (API)
 and 18080 (ingress) are used and can be changed with `K3S_API_PORT` and `K3S_HTTP_PORT`.
 
 `TestServerlessFunctionsOnK3s` starts the cluster, project and app controllers in the test process, turns on the

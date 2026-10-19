@@ -78,23 +78,27 @@ k3s-down: ## Remove the k3s that k3s-up started.
 
 .PHONY: test-k3s-serverless
 test-k3s-serverless: ## Run the scale-to-zero and function schedule test against the k3s that k3s-up started (takes about 15 minutes the first time).
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestServerlessFunctionsOnK3s -v -timeout 40m
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestServerlessFunctionsOnK3s -v -timeout 40m
 
 .PHONY: test-k3s-burst
 test-k3s-burst: ## Run the burstable service test (a service that reserves less than it may use, and a copy stopped for memory saying so) against the k3s that k3s-up started (about 2 minutes, a little more the first time).
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestBurstableServicesOnK3s -v -timeout 25m
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestBurstableServicesOnK3s -v -timeout 25m
 
 .PHONY: test-k3s-objectstorage
 test-k3s-objectstorage: ## Run the cluster object storage test (SeaweedFS and Garage, network policy, isolation) against the k3s that k3s-up started (takes about 10 minutes the first time).
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestObjectStorageOnK3s -v -timeout 60m
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestObjectStorageOnK3s -v -timeout 60m
 
 .PHONY: test-k3s-limits
 test-k3s-limits: ## Run the project limits test (a project keeping its services away from the nodes, and per-environment quotas) against the k3s that k3s-up started. Add a second node to it first (see test/k3sintegration/README.md) so a remote node is probed too.
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestProjectLimitsOnK3s -v -timeout 25m
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestProjectLimitsOnK3s -v -timeout 25m
 
 .PHONY: test-k3s-alerting
 test-k3s-alerting: ## Run the alerting test (problems to Prometheus rules to Alertmanager to Slack and mail stand-ins on the host) against the k3s that k3s-up started (about 20 minutes, a little more the first time).
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestAlertingOnK3s -v -timeout 50m
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestAlertingOnK3s -v -timeout 50m
+
+.PHONY: test-k3s-encryption
+test-k3s-encryption: ## Run the secrets encryption test (a service reads its secret, and the value is not in k3s's datastore) against the k3s that k3s-up started (about 3 minutes, a little more the first time).
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestSecretsAreEncryptedAtRestOnK3s -v -timeout 25m
 
 .PHONY: test-k3s-ha
 test-k3s-ha: ## Run a three-server K3s in Docker, run the operator on it, and take down the server it runs on (about 10 minutes).
@@ -106,7 +110,7 @@ loadtest: ## Measure what the operator costs as a cluster grows. Use: make loadt
 
 .PHONY: test-k3s-integration
 test-k3s-integration: ## Run K3s HelmChart integration tests (requires K3S_INTEGRATION=true and kubeconfig).
-	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/...
+	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/...
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

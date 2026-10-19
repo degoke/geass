@@ -39,27 +39,28 @@ tested with. Deploying one creates drafts, so you can change anything before it 
 | --- | --- | --- |
 | **Gatus** | One service, `gatus`, running `twinproduction/gatus:v5.37.0` on port 8080. It has a `config.yaml` file that checks Gatus itself, and sets `GATUS_CONFIG_PATH` to that file. | Add your own checks to the `config.yaml` variable on the service's **Variables** tab, then deploy the change. Results are kept in memory, so they reset when the service restarts. |
 | **Infisical** | A Postgres database, a Redis database and a service, `infisical`, running `infisical/infisical:v0.166.8` on port 8080. It reserves 0.5 CPU and 1 GB of memory and may use up to 2 GB. It gets `DB_CONNECTION_URI` and `REDIS_URL` from the databases and a generated `ENCRYPTION_KEY` and `AUTH_SECRET`. `SITE_URL` starts as `http://localhost:8080`. | Add a domain to the service and set `SITE_URL` to its address. Keep a copy of `ENCRYPTION_KEY`, because without it the stored secrets cannot be read. The first start runs database migrations and takes a few minutes. |
-| **ReFHIR** | A Postgres database and a service, `refhir`, running `ghcr.io/hai-hq/refhir:0.0.1` on port 8080, a FHIR R4 server. It reserves 0.5 CPU and 2 GB and may use up to 2 CPU and 4 GB. It gets `REFHIR_POSTGRES_URL` from the database and a generated `REFHIR_AUDIT_KEY`. | The first start downloads the FHIR packages from `packages.fhir.org`, so the service needs outbound internet access, and takes about two minutes. `GET /readyz` answers once it is ready. Keep a copy of `REFHIR_AUDIT_KEY`, which keys the audit trail that `GET /_audit/verify` checks. Until you turn on SMART sign-in the API needs no credentials, so secure it before you add a domain. |
+| **ReFHIR** | A Postgres database and a service, `refhir`, running `ghcr.io/hai-hq/refhir:0.0.2` on port 8080, a FHIR R4 server. It reserves 0.25 CPU and 256 MB and may use up to 1 CPU and 1 GB. It gets `REFHIR_POSTGRES_URL` from the database and a generated `REFHIR_AUDIT_KEY`. | The FHIR packages ship inside the image, so the first start needs no internet access and takes under a minute; `GET /readyz` answers 503 until then. Keep a copy of `REFHIR_AUDIT_KEY`, which keys the audit trail that `GET /_audit/verify` checks. Until you turn on SMART sign-in the API needs no credentials, so secure it before you add a domain. Packages are not downloaded unless you add `REFHIR_PACKAGE_DOWNLOAD=true`, so installing another implementation guide answers 403 until you do, and it then needs internet access. A search without `_count` returns 100 matches and a `next` link. |
 | **browserbay** | One service, `browserbay`, running `ghcr.io/degoke/browserbay:0.2.2` on port 8788: a relay and a Chromium node in one process. It reserves 0.5 CPU and 1 GB and may use up to 2 CPU and 4 GB. It gets a generated `BROWSERBAY_API_KEY`. | Add a domain and serve it over HTTPS before anything outside the cluster uses it. Your services present the API key to take a browser. It runs up to 5 browsers at once. A browser can open any address the service can reach, so give browser tokens only to services you trust. |
 
 Geass shows these notes again in the dialog before you deploy and in the message after it.
 
 ### How the catalog is sized
 
-A catalog entry reserves what the software needs to run, and may use up to what it needs for a short while, such as its
-first start. The reserved amount is what the capacity check and your project limits count, so the entry does not hold
-memory it only needs once. A service that goes over what it reserved is the first to be stopped when its server runs out
+A catalog entry reserves what the software needs to run. It may use up to a ceiling, which is either what it needs for a
+short while, such as its first start (Infisical and browserbay), or room for more data that was not measured (ReFHIR).
+The reserved amount is what the capacity check and your project limits count, so the entry does not hold memory it
+needs only occasionally. A service that goes over what it reserved is the first to be stopped when its server runs out
 of memory, and one that goes over what it may use is stopped at once (see [Apps](/docs/guides/apps/#scale)). Databases
 always use what they reserve.
 
-Each size comes from running the pinned image in Docker under that limit, with swap off. The memory figures are the
+Each size comes from running the pinned image in Docker under a memory limit, with swap off unless a row says otherwise. The memory figures are the
 container's working set, in MiB (1 GB in the dashboard is 1024 MiB). A "peak" also counts the file cache, which the
 server gives back when it needs the memory.
 
 | Entry | Reserved | May use up to | What was measured |
 | --- | --- | --- | --- |
 | **Infisical** | 0.5 CPU, 1 GB | 0.5 CPU, 2 GB | In Docker, 835 to 961 MiB once it has started and 1147 MiB at its first-start peak, ready after 84 seconds at 0.5 CPU. On K3s through Geass, 937 MiB at the peak and 804 MiB settled, with Geass showing it ready 102 seconds after the deploy, databases included. |
-| **ReFHIR** | 0.5 CPU, 2 GB | 2 CPU, 4 GB | First start: peak 3190 MiB at 2 CPU (ready after 105 seconds) and 2802 MiB at 0.5 CPU (ready after 150 seconds). It then holds 2132 MiB (2217 MiB on K3s) until it restarts. After a restart it is ready in 5 seconds, peaks at 2027 MiB and settles near 1.3 GB. A 2 GB limit killed the first start. On K3s through Geass, the first start peaked at 2991 MiB with no restart, and a restart was ready in 6 seconds, peaked at 2029 MiB and settled at 1334 MiB. |
+| **ReFHIR** | 0.25 CPU, 256 MB | 1 CPU, 1 GB | In Docker with Postgres, on a network with no internet access, the first start was ready after 23 seconds at 0.5 CPU and 33 seconds at 0.25 CPU, and peaked at 99 and 122 MiB. After 900 writes in transactions, validation against four profiles and a plain resource, six value set expansions (two more were refused, including `all-languages`, the largest, so it was not exercised) and 960 concurrent searches it had peaked at 107 MiB (122 MiB under a 256 MB limit, with no restart), and a restart was ready in 10 to 17 seconds. The data was about 900 resources, so raise the reserve if yours is much larger. The 1 GB ceiling is room for more data, not a figure that was measured. These runs used limits of 1 GB at 0.5 CPU and 256 MB at 0.25 CPU, not the entry's reserve and ceiling together, and left swap on, which did not matter because the peak stayed far below the limit. Version 0.0.2 was run in Docker only. Version 0.0.1 peaked at 3190 MiB on its first start in earlier Docker runs here (ReFHIR's own release notes give about 2.2 GB for their measurement) and was also run on K3s through Geass; ReFHIR's release notes explain what changed in 0.0.2. |
 | **browserbay** | 0.5 CPU, 1 GB | 2 CPU, 4 GB | 220 to 520 MiB idle and 730 MiB with one page open. Five busy pages (Wikipedia, GitHub, BBC News and Hacker News) peaked at 1569 MiB at 2 CPU and 1202 MiB at 0.5 CPU, where the last page loaded after 37 seconds instead of 16. A 1 GB limit made one of the five pages time out. On K3s through Geass, 217 MiB idle, a peak of 1415 MiB with the five pages and 302 MiB after they closed. |
 
 Starter examples, such as a database with a web UI or a function with a database, are not in the catalog. They are in
@@ -98,7 +99,8 @@ A few things to know after you deploy a template:
   failure. On a cluster that has never had a database, the first one takes a few minutes, because the Postgres operator is
   installed first.
 - A template sets no health check, so Geass shows a service as ready once its pod runs. Infisical and ReFHIR can be shown
-  ready before they answer, because their first start takes minutes. Add a health check in the service's settings if
+  ready before they answer: Infisical's first start takes minutes, and ReFHIR answers `GET /readyz` with 503 for 20 to 35
+  seconds. Add a health check in the service's settings if
   something depends on it (see [Deploy settings](/docs/guides/apps/#deploy)).
 - Backups are on by default for new Postgres, MySQL and SQLite databases, but they protect nothing until the project has
   backup storage. See [Backups and restore](/docs/guides/backups-and-restore/). Turn them off in the database's

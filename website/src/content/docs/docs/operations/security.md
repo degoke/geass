@@ -25,7 +25,7 @@ had no independent audit, and nothing here should be read as one.
 | Metrics and log stores | Network policies that admit only platform namespaces |
 | Object storage server | A network policy, `geass-s3`, that opens the S3 port to every namespace, opens Garage's admin port to the platform only, and closes every other port |
 | HTTPS certificates | cert-manager and a Let's Encrypt `ClusterIssuer` that Geass creates once you give it a contact email |
-| Secrets | Kubernetes Secrets, not encrypted by Geass |
+| Secrets | Kubernetes Secrets, encrypted at rest by K3s on clusters the installer builds |
 | Outbound webhooks | Signed with a per-webhook secret; private and loopback addresses refused |
 | GitHub webhooks into Geass | HMAC-SHA256 signature check |
 | Geass reporting to GitHub | The GitHub App's short-lived installation token, with write access only to commit statuses, deployments and pull requests; one switch per project turns it off |
@@ -279,9 +279,12 @@ Everything secret is a Kubernetes Secret: dashboard users and the session key, A
 the Cloudflare token, the GitHub App key, app secrets and shared secrets, function schedule tokens, database passwords, the K3s join token
 (`geass-token`) and SSH keys. [Cloud connectors](/docs/guides/connectors/) lists the names.
 
-- **At rest.** Geass does not encrypt Secrets, and the installer does not enable K3s secrets encryption, so they are stored
-  in the cluster datastore like any other Secret. Anyone who can read the datastore, an etcd snapshot or the server's disk
-  can read them. K3s offers secrets encryption at rest; if you want it, turn it on in K3s yourself.
+- **At rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`, AES-CBC) on the clusters it builds,
+  so Secrets are encrypted in K3s's datastore and in its etcd snapshots, including the one the installer takes before an
+  upgrade. It does not keep a Secret from anyone the API lets read it, because the API server decrypts it for them, or from
+  root on a control plane server. K3s keeps the key in `/var/lib/rancher/k3s/server/cred/` on that server's disk, so a copy of
+  the whole disk gives up every Secret. A cluster the installer did not build, such as K3s you installed by hand, has no
+  encryption unless you turned it on in K3s yourself.
 - **In the API.** Secret values are never copied into a resource's `status`. The dashboard sends the names of secret keys,
   never their values, and viewers do not even get those. The exception is a service you wrote `spec.secretData` into by
   hand: that field is part of the resource, so admins get its values in `GET /api/bootstrap` (the values are blanked in the
@@ -493,8 +496,10 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
    internet only if you publish services (certificates need 80), and limit 22 to the addresses you use.
 7. Keep project network isolation on (`Project`, the default), and open a project up only on purpose. In-cluster database passwords are predictable,
    so isolation is their main protection.
-8. Turn on K3s secrets encryption, and encrypt the control plane's disk and any etcd snapshots, because they contain every
-   Secret.
+8. Encrypt the control plane's disk, and keep the server token (`/var/lib/rancher/k3s/server/token`) and your etcd snapshots
+   somewhere outside the cluster and protected. The installer turns on K3s secrets encryption, but K3s keeps the key on the
+   server's disk, and a restore needs the token (see [Go back](/docs/operations/upgrading/#go-back)). If you run K3s you
+   installed by hand, turn on `secrets-encryption` in it.
 9. Only build repositories you trust, and join only servers you trust.
 10. Set up database backups (see [Backups and restore](/docs/guides/backups-and-restore/)) and test a restore.
 11. Approve a device code only when it matches the one on your own terminal, and choose the shortest expiry that works. Protect

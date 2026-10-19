@@ -85,12 +85,13 @@ Files it writes on the server:
 
 | Path | Content |
 | --- | --- |
-| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below) and, for multi-site, the WireGuard backend, external IP and certificate name |
+| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below), secrets encryption (`secrets-encryption: true`) and, for multi-site, the WireGuard backend, external IP and certificate name |
 | `/etc/rancher/k3s/k3s.yaml` | The admin kubeconfig K3s writes |
 | `/var/lib/rancher/k3s/server/node-token` | The join token, also copied to the Secret `geass-token` |
 
 Geass sets `container-log-max-size=50Mi` and `container-log-max-files=5` on every node's kubelet, so a service's recent logs stay on
-the node. Workers get the same settings plus their labels and taints when they join.
+the node. Workers get the same kubelet settings plus their labels and taints when they join. Secrets encryption is a server
+setting, so workers do not get it, and a control plane server that you join with `--join-server` gets it from the installer too.
 
 ## Operator flags
 
