@@ -1,20 +1,17 @@
 /**
- * Geass design tokens: "The Contract". Single source for the dashboard and the marketing site.
+ * Geass design tokens: "The Contract". The reference for the dashboard and the marketing site.
  * Palette: geass-colors.json
  *
- * Dark is the primary experience. The accent is C.C. green on dark and deep green on light.
+ * Dark and light are both first-class: which one shows follows the visitor's system setting (light when the system
+ * gives none), and the visitor can choose. The accent is C.C. green on dark and deep green on light.
  * Corners are square; the only round things are status dots.
+ *
+ * dashboard-ui/src/styles.css and website/src/styles/landing.css carry copies of these values under their own token
+ * names (`--geass-btn-*` here is `--geass-btn-primary-*`; the landing page's are `--void`, `--green` and so on).
+ * Neither imports this file (the dashboard bundle is built from dashboard-ui alone), so change a value in all three.
  */
 
 :root {
-  --geass-signal: #7ce0a0;
-  --geass-signal-hover: #94e8b2;
-  --geass-on-signal: #0a0a0a;
-  --geass-healthy: #7ce0a0;
-  --geass-warning: #e8a84a;
-  --geass-critical: #ff8a8a;
-  --geass-critical-solid: #c93c3c;
-
   --geass-radius: 0;
 
   --geass-font-sans: "Space Grotesk Variable", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
@@ -28,7 +25,8 @@
 :root,
 [data-mantine-color-scheme="dark"] {
   --geass-canvas: #0a0a0a;
-  --geass-subtle: #0f0f0f;
+  --geass-subtle: #111111;
+  --geass-inset: #000000;
   --geass-terminal-bg: #000000;
   --geass-surface: #151515;
   --geass-elevated: #1a1a1a;
@@ -39,37 +37,70 @@
   --geass-text: #f2f2f2;
   --geass-text-secondary: #a1a1a1;
   --geass-text-muted: #8f8f8f;
+
+  /* Green as a fill or a dot (--geass-signal) and as text (--geass-signal-text): the same on dark. */
+  --geass-signal: #7ce0a0;
+  --geass-signal-hover: #94e8b2;
+  --geass-signal-text: #7ce0a0;
+  --geass-on-signal: #0a0a0a;
   --geass-accent: #7ce0a0;
+  --geass-healthy: #7ce0a0;
+  --geass-warning: #e8a84a;
+  --geass-critical: #ff8a8a;
+  --geass-critical-text: #ffb4b4;
+  --geass-critical-solid: #c93c3c;
+  --geass-critical-solid-hover: #b33434;
+
   --geass-btn-primary-bg: #7ce0a0;
   --geass-btn-primary-fg: #0a0a0a;
+  --geass-btn-primary-hover: #94e8b2;
   --geass-accent-surface: color-mix(in srgb, var(--geass-signal) 10%, var(--geass-surface));
   --geass-grid-line: rgb(255 255 255 / 4.5%);
   --geass-grid-dot: color-mix(in srgb, #ffffff 16%, transparent);
   --geass-shadow-card: none;
   --geass-shadow-elevated: 0 16px 40px rgb(0 0 0 / 40%);
+  --geass-shadow-rgb: 0 0 0;
+  --geass-shadow-strength: 1;
   --geass-focus-ring: 0 0 0 2px color-mix(in srgb, var(--geass-signal) 55%, transparent);
 }
 
 [data-mantine-color-scheme="light"] {
   --geass-canvas: #ffffff;
   --geass-subtle: #f4f4f2;
+  --geass-inset: #f4f4f2;
   --geass-terminal-bg: #0a0a0a;
   --geass-surface: #ffffff;
   --geass-elevated: #ffffff;
   --geass-hover: #f4f4f2;
   --geass-border-subtle: #e3e2de;
   --geass-border: #d5d4cf;
-  --geass-border-strong: #0a0a0a;
+  --geass-border-strong: #8a8a85;
   --geass-text: #0a0a0a;
   --geass-text-secondary: #45454b;
   --geass-text-muted: #6b6b70;
+
+  /* #16935a is 3.9:1 on white, enough for a fill or a dot but not for small text, which uses --geass-signal-text. */
+  --geass-signal: #16935a;
+  --geass-signal-hover: #1ca468;
+  --geass-signal-text: #0f7a49;
+  --geass-on-signal: #0a0a0a;
   --geass-accent: #16935a;
+  --geass-healthy: #16935a;
+  --geass-warning: #a5670a;
+  --geass-critical: #c93c3c;
+  --geass-critical-text: #a32626;
+  --geass-critical-solid: #c93c3c;
+  --geass-critical-solid-hover: #b33434;
+
   --geass-btn-primary-bg: #0a0a0a;
   --geass-btn-primary-fg: #ffffff;
+  --geass-btn-primary-hover: #2a2a2a;
   --geass-accent-surface: color-mix(in srgb, #16935a 8%, #ffffff);
   --geass-grid-line: rgb(10 10 10 / 5%);
   --geass-grid-dot: color-mix(in srgb, #0a0a0a 18%, transparent);
   --geass-shadow-card: none;
   --geass-shadow-elevated: 0 16px 40px rgb(10 10 10 / 12%);
+  --geass-shadow-rgb: 10 10 10;
+  --geass-shadow-strength: 0.3;
   --geass-focus-ring: 0 0 0 2px color-mix(in srgb, #16935a 45%, transparent);
 }

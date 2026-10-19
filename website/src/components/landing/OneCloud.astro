@@ -1,5 +1,5 @@
 ---
-import logo from "../../assets/geass-logo.svg";
+import Logo from "./Logo.astro";
 import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
 ---
   <section class="sec sec-black" id="cloud" aria-labelledby="cloud-title">
@@ -21,7 +21,7 @@ import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
         </div>
         <div class="topo-link" aria-hidden="true"><span></span></div>
         <div class="topo-core">
-          <img src={logo.src} alt="" height="40" width="151" />
+          <Logo alt="" height="40" width="151" />
           <ul class="topo-runs mono">
             <li>Apps</li>
             <li>Databases</li>

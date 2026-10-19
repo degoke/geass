@@ -15,7 +15,7 @@ import "@/styles.css";
 const queryClient = new QueryClient();
 
 createRoot(document.getElementById("root")).render(
-  <MantineProvider theme={geassTheme} forceColorScheme="dark">
+  <MantineProvider theme={geassTheme} defaultColorScheme="auto">
     <Notifications position="top-right" />
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
