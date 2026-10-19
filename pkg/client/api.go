@@ -486,6 +486,11 @@ type Node struct {
 	} `json:"tags,omitempty"`
 	CPU    string `json:"cpu,omitempty"`
 	Memory string `json:"memory,omitempty"`
+	// Pool is the pool the node belongs to, empty for a node that was added on its own or came with the cluster.
+	Pool string `json:"pool,omitempty"`
+	// Ephemeral says the node must not hold data: databases and volumes stay off it, and it may be removed when the
+	// load goes.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // Nodes lists the cluster's nodes.

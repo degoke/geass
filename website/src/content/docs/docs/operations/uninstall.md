@@ -22,6 +22,7 @@ Geass has no uninstall command. You remove it by deleting your resources from th
 | The GitHub App | Left | Delete it in GitHub |
 | PlanetScale databases and passwords | Left | |
 | Worker servers | K3s agents keep running | Remove workers first, or run the agent uninstall script on each |
+| Machines Geass created at a cloud (pools and servers added with a cloud connection) | **Keep running and keep billing** | Delete the pools and servers first, while the operator and the connection still work: that is the only thing that deletes the machines. See [Step 3](#step-3-remove-workers) |
 | Images your builds pushed to a registry | Left | |
 | The `geass` command line's saved logins on your machines, the tokens in your CI secrets, and the `geass mcp` entries in AI agent hosts | Left | They hold tokens that the deleted cluster no longer recognizes. See [Clean up your own machines](#clean-up-your-own-machines) |
 
@@ -70,10 +71,13 @@ In **Settings → Connectors**:
 - **Cloudflare → Disconnect.** Type `remove-cloudflare`. This stops the `cloudflared` deployment and automatic DNS updates. Your Cloudflare account, the tunnel named `geass` and every DNS record Geass created stay. Delete them in Cloudflare: the proxied `A` record for the dashboard host (`geass.<your domain>` by default), the `CNAME` records pointing at the tunnel (dashboard and service hostnames, in Tunnel mode), and the tunnel.
 - **GitHub → Remove GitHub App.** Type `remove-github`. This removes Geass's copy of the app's credentials. The GitHub App itself and its installations stay: delete them in your GitHub settings.
 - **AWS and PlanetScale.** Connections are removed with their project (see above). Revoke the access keys and tokens at the provider.
+- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before: a connection that pools or machines still use cannot be removed from the dashboard, because without it the machines could no longer be deleted. **Remove** on each connection under **Cloud connections** (or `geass connections remove NAME`) deletes the connection and its Secret, and the credentials stay valid at the cloud until you revoke them there.
 
 ## Step 3: remove workers
 
-Delete each node object from the control plane. Geass connects over SSH, runs `/usr/local/bin/k3s-agent-uninstall.sh` and removes the node from the cluster:
+**Machines that Geass created at a cloud come first.** Delete every [pool](/docs/guides/node-pools/) (`geass pools delete NAME`, or **Delete pool** on its page) and every server added with a cloud connection (**Remove** in the **Nodes** table, or `geass servers remove NAME`). Each node is drained for up to five minutes, removed, and its machine deleted at the cloud. Wait until `geass nodes list` shows them gone, then look in the cloud's own console for machines that are left (they carry the labels `geass-managed` and `geass-cluster`). If you uninstall K3s first, nothing can delete those machines any more, and they keep billing you.
+
+Then, for servers you joined over SSH, delete each node object from the control plane. Geass connects over SSH, runs `/usr/local/bin/k3s-agent-uninstall.sh` and removes the node from the cluster:
 
 ```bash
 sudo k3s kubectl -n geass-system get geassnodes
@@ -121,6 +125,7 @@ The cluster's removal deletes every API token, but the places that hold a token 
 | --- | --- |
 | AWS S3 | Buckets of your own buckets, if a deletion did not finish. The backup bucket (default name `geass-backups-` plus 12 hex characters), and the objects in it under `<project-id>/<database-id>-<8 characters>/`, where the last part comes from the database's UID |
 | AWS IAM | Users whose names start with `geass-`: one per bucket, and one per backup bucket. Delete their access keys and the users |
+| Every cloud that made machines | Machines labelled `geass-managed=true` (for OVHcloud, named `geass-...`), the firewalls Geass made (`geass-<cluster>`), and the credentials you gave a connection: revoke them. A security group or firewall rule Geass added for the control plane carries the description `geass` (AWS) or `geass-access` (Hetzner) |
 | Cloudflare | DNS records for the dashboard and your services, the tunnel `geass`, and the API token you gave Geass |
 | GitHub | The GitHub App and its installations |
 | PlanetScale | Databases and passwords created through Geass, and the service token |

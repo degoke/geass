@@ -87,6 +87,73 @@ The first public release.
 - **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
   provenance that can be verified with `gh attestation verify`.
 
+- **Machines at a cloud (experimental).** Geass creates and deletes servers at Amazon EC2, Microsoft Azure,
+  DigitalOcean, Google Cloud, Hetzner Cloud, Linode, Oracle Cloud, OVHcloud Public Cloud, Scaleway, UpCloud and Vultr,
+  and, through a webhook that follows a small HTTP contract, at any other provider: 12 drivers. A
+  `GeassCloudConnection` with the purpose `Compute` holds the credentials. It belongs to the cluster, never to a
+  project, and only an admin can use it. The credentials go into a Secret and are never shown again. The cloud is asked
+  whether it accepts them when they are saved and every 15 minutes, and `status` carries the account, the answer,
+  warnings and, where the cloud says, the expiry. An AWS connection made for buckets never creates machines: make
+  another, with its own key (the IAM policy is in the docs). **Amazon EC2 has run against a live account**
+  (`eu-north-1`): a real control plane, a pool that scaled up and down, a replaced machine, a quota refusal, a paused and
+  resumed pool, control plane firewall sync, a single server, and the dashboard. Spot machines were not tested: the
+  account's organization denied the launch. The other eleven drivers were written from the provider's documentation and
+  tested against an in-memory simulation of its API only.
+- **Node pools and autoscaling (experimental).** A `GeassNodePool` makes machines at a cloud, joins them over SSH
+  with a key and a host key that Geass makes (the join token is never put in a machine's user data), and removes them.
+  `maxNodes` is required and caps the cost. A fixed pool keeps `minNodes`. An autoscaling pool adds nodes for pods that
+  cannot start (after a delay, packed by size, up to `maxScaleUp`) and removes under-used nodes after emptying them
+  through the eviction API, with `minNodeLifetimeMinutes` for clouds that bill each started hour, `spareNodes`, fallback
+  sizes and regions, and spot machines. Safety: three machines in a row that fail to join pause the pool for 30
+  minutes, a failed node's machine is deleted at once, machines are deleted only by the ID recorded for them, a
+  machine the cloud took back is replaced, and machines that no node owns are reported (or deleted, with
+  `orphanPolicy: Delete`).
+- **Pools of servers you own.** An inventory pool joins servers from a list when it needs room, and takes K3s off
+  them when it does not.
+- **Add a server** from **Add server** on the **Usage** page or with `geass servers add`: a machine at a cloud, or a
+  server you have, which is joined over SSH. The `GeassNode` route with `kubectl` still works.
+- **Control plane firewall sync.** `spec.network.controlPlaneFirewall` on the cluster lets Geass open the control
+  plane's 6443/tcp (and 51820/udp in a multi-site cluster) for each new machine in an AWS security group or a Hetzner
+  firewall, and close it when the machine goes.
+- **Dashboard.** A **Pools** page, **Cloud connections** under **Settings** → **Connectors** (connect, verify, edit,
+  remove), and on **Usage** an **Add server** button and a **Pool** column with an **Ephemeral** badge. **Remove**
+  on a connection refuses, and names what is in the way, while a pool, a machine, an object store, a database, the
+  backups of a deleted database, a project's backup bucket or the control plane firewall still uses it. A viewer sees
+  which clouds are connected and whether they work, but not the cloud account or the cloud's own message.
+- **Command line.** `geass providers`, `sizes`, `connections`, `pools` and `servers`, and `POOL` and `EPHEMERAL`
+  columns in `geass nodes list`.
+- **MCP tools.** `compute_providers`, `cloud_connections`, `node_pools`, `node_pool`, `cloud_sizes`,
+  `create_node_pool`, `update_node_pool`, `resume_node_pool` and, with `--allow-delete`, `delete_node_pool`. No tool takes
+  a credential, makes a connection or adds a server, and what an agent may set is capped (a pool of at most 10 machines,
+  3 made at once, 3 kept spare; a person sets up to 200). An admin token now sees 38 tools (40 with `--allow-delete`), an
+  observer 21 and a viewer 18.
+- **API.** `/api/v1/compute/providers`, `/compute/sizes`, `/connections`, `/pools` and `/servers`, and `pool` and
+  `ephemeral` on `/nodes`.
+
+### Changed
+
+- The first pool whose nodes hold no data (`storage: None`, the default), or the first single server added with
+  `storage: None`, makes every service roll once, so that its pods tolerate the taint `geass.dev/ephemeral`. It happens
+  again when the last one is deleted. A cluster that has neither sees no change.
+- `GeassCloudConnection.spec.provider` accepts `GCP`, `DigitalOcean`, `Hetzner`, `OVHcloud`, `Vultr`, `Linode`,
+  `Scaleway`, `Azure`, `OCI`, `UpCloud` and `Webhook` besides `AWS` and `PlanetScale`, and the resource gains
+  `spec.purposes` and `status.account`, `message`, `verifiedAt`, `expiresAt` and `warnings`. Connections without
+  `purposes` keep their old meaning. `GeassCluster` gains `spec.network.controlPlaneFirewall`, `GeassNode` gains
+  `spec.pool`, `spec.storage` and `spec.cloud`, and there is a new `GeassNodePool` resource.
+- The capacity check lets a workload in when an autoscaling pool could make room for it, and refuses it, as before,
+  when the pool is at its maximum.
+- Nodes that hold no data are not counted by high availability readiness, are never used for volume replicas
+  (Longhorn is told not to schedule on them), and DNS never points at a node of a pool.
+- The operator's pod cache keeps the volumes that hold data on a node (claims, host paths and on-disk `emptyDir`s), which
+  the autoscaler needs to know before it removes a node.
+- The operator may now create `pods/eviction`, to drain a node before removing it.
+- A machine Geass creates is joined only after its SSH host key has been checked against the one Geass put on it, and
+  only once the control plane's addresses are known for its firewall: either missing makes the node wait. A node's cloud
+  connection, region and pool cannot be edited after it is made. A rule opened in the control plane's firewall is closed
+  on the firewall it was opened on, even if the cluster's `controlPlaneFirewall` was changed. The dashboard no longer
+  shows a viewer what the cloud said about a pool or its nodes. A webhook service is never connected to at a link-local
+  address, however it is reached. DNS never points at a server added with `storage: None`.
+
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).

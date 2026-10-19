@@ -136,6 +136,8 @@ For each worker that runs an older K3s than the target, one at a time and in nam
 4. Waits until the node is ready and reports the new version.
 5. Uncordons the node, if the upgrade is what cordoned it.
 
+Machines that Geass created at a cloud, including the nodes of a [pool](/docs/guides/node-pools/), are upgraded the same way, with the SSH key Geass made for them. An autoscaling pool removes no node while the upgrade is going on, and a machine made after it installs the control plane's K3s version.
+
 The node is **cordoned, not drained**. The agent restarts without stopping the containers it runs, so services keep serving through it, and a drain would move a database's pod away from its local data. A node that you had cordoned yourself stays cordoned.
 
 It stops at the first node that does not come back ready on the new version within 15 minutes, leaves that node cordoned, and never starts the next one. Watch it:

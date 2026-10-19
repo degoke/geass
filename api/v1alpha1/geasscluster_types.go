@@ -117,6 +117,29 @@ type GeassClusterNetworkSpec struct {
 	// and workers are joined to match it.
 	// +optional
 	MultiSite bool `json:"multiSite,omitempty"`
+
+	// ControlPlaneFirewall names the cloud firewall in front of the control plane. When it is set, the address of each
+	// machine a pool creates is let through it (the API port and the overlay port) before the machine joins, and
+	// taken out again when the machine is removed, so the control plane need not be open to the internet. Without it
+	// the control plane's TCP 6443 and UDP 51820 must already accept the new machines.
+	// +optional
+	ControlPlaneFirewall *GeassControlPlaneFirewall `json:"controlPlaneFirewall,omitempty"`
+}
+
+// GeassControlPlaneFirewall says which firewall guards the control plane, and the connection that may change it.
+type GeassControlPlaneFirewall struct {
+	// ConnectionRef is the cloud connection (for Compute) at the provider where the control plane runs. It may be
+	// another provider than the one that creates the machines.
+	// +kubebuilder:validation:MinLength=1
+	ConnectionRef string `json:"connectionRef"`
+
+	// Target is the provider's id for the firewall or security group, such as sg-0abc123 or a Hetzner firewall id.
+	// +kubebuilder:validation:MinLength=1
+	Target string `json:"target"`
+
+	// Region is where the firewall is, for a provider that answers per region.
+	// +optional
+	Region string `json:"region,omitempty"`
 }
 
 // GeassClusterK3sSpec says which K3s release the cluster's nodes should run.

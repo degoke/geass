@@ -1,0 +1,722 @@
+/*
+ * Machines: connections to clouds, pools and servers. Colours come from the dashboard's tokens only, so the
+ * light theme reaches these screens with the rest; prefixes: cp- (compute page).
+ */
+
+.cp-page {
+  max-width: 1200px;
+}
+
+.cp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.cp-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.cp-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cp-back {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--geass-text-secondary);
+  text-decoration: none;
+}
+
+.cp-back:hover {
+  color: var(--geass-text);
+  text-decoration: underline;
+}
+
+.cp-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cp-subtitle {
+  margin: 4px 0 0;
+  color: var(--geass-text-secondary);
+  font-size: 14px;
+}
+
+.cp-intro {
+  margin: 0 0 18px;
+  max-width: 72ch;
+  color: var(--geass-text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.cp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* A line of facts above a table. */
+.cp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  color: var(--geass-text-secondary);
+}
+
+.cp-facts strong {
+  color: var(--geass-text);
+  font-weight: 600;
+}
+
+/* Alerts above the list: a paused pool, a degraded one, machines nobody owns. */
+.cp-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.rw-settings-alert.cp-alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  max-width: none;
+  margin-bottom: 0;
+}
+
+.cp-alert-body {
+  flex: 1;
+  min-width: min(100%, 280px);
+}
+
+.cp-alert-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.cp-alert-text {
+  margin: 0;
+}
+
+.cp-alert-text + .cp-alert-text {
+  margin-top: 4px;
+}
+
+.cp-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.cp-mono {
+  font-family: var(--geass-font-mono);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+/* Table cells. */
+.cp-name-link {
+  color: var(--geass-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cp-name-link:hover {
+  text-decoration: underline;
+}
+
+.cp-cell-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--geass-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cp-cell-sub.is-problem {
+  color: var(--geass-critical);
+}
+
+.cp-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cp-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cp-warn-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mantine-color-yellow-text);
+}
+
+/* Facts about one pool, in a grid. */
+.cp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px 20px;
+}
+
+.cp-stat dt {
+  margin: 0 0 3px;
+  font-size: 12px;
+  color: var(--geass-text-muted);
+}
+
+.cp-stat dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--geass-text);
+}
+
+.cp-stat dd small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--geass-text-secondary);
+}
+
+/* The form, in a sheet or on a page. */
+.cp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 640px;
+}
+
+.cp-form-wide {
+  max-width: 760px;
+}
+
+.cp-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.cp-fieldset + .cp-fieldset {
+  padding-top: 18px;
+  border-top: 1px solid var(--geass-border);
+}
+
+.cp-fieldset > legend {
+  float: left;
+  width: 100%;
+  margin: 0 0 2px;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--geass-text);
+}
+
+.cp-fieldset > legend + * {
+  clear: both;
+}
+
+.cp-fieldset-note {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--geass-text-secondary);
+}
+
+.cp-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+}
+
+.cp-row > .rw-rail-field {
+  max-width: none;
+}
+
+.cp-optional {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--geass-text-muted);
+}
+
+.cp-required {
+  margin-left: 4px;
+  color: var(--geass-critical);
+}
+
+.cp-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.cp-callout {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--geass-text-secondary);
+}
+
+.cp-callout strong {
+  color: var(--geass-text);
+}
+
+.cp-callout.is-cost {
+  border-color: color-mix(in srgb, var(--geass-signal) 40%, var(--geass-border));
+}
+
+.cp-callout.is-danger {
+  border-color: color-mix(in srgb, var(--geass-critical) 50%, var(--geass-border));
+}
+
+/* Repeating rows: servers of an inventory, free settings. */
+.cp-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cp-repeat {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 1fr) 76px auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.cp-repeat.is-pair {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+}
+
+.cp-repeat .rw-rail-field {
+  max-width: none;
+}
+
+@media (max-width: 640px) {
+  .cp-repeat,
+  .cp-repeat.is-pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* The size picker: free text on top, the cloud's sizes below it. */
+.cp-sizes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-size-list {
+  max-height: 232px;
+  overflow: auto;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+}
+
+.cp-size-head,
+.cp-size {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 64px 76px 76px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.cp-size-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--geass-surface);
+  border-bottom: 1px solid var(--geass-border);
+  color: var(--geass-text-muted);
+  font-size: 12px;
+}
+
+.cp-size {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--geass-border) 55%, transparent);
+  background: transparent;
+  color: var(--geass-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cp-size:last-child {
+  border-bottom: 0;
+}
+
+.cp-size:hover,
+.cp-size:focus-visible {
+  background: var(--geass-hover);
+  outline: none;
+}
+
+.cp-size:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--geass-signal);
+}
+
+.cp-size[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--geass-signal) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--geass-signal);
+}
+
+.cp-size-id {
+  font-family: var(--geass-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-size-id small {
+  margin-left: 6px;
+  color: var(--geass-text-muted);
+  font-family: var(--geass-font-sans);
+  font-size: 11px;
+}
+
+.cp-size-price {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cp-size-head > :last-child {
+  text-align: right;
+}
+
+.cp-size-note {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--geass-text-muted);
+}
+
+@media (max-width: 640px) {
+  .cp-size-head,
+  .cp-size {
+    grid-template-columns: minmax(0, 1.4fr) 48px 64px minmax(0, 1fr);
+  }
+
+  .cp-size-head > :nth-child(4),
+  .cp-size > :nth-child(4) {
+    display: none;
+  }
+}
+
+/* Autoscale settings, one after the other, each with its words. */
+.cp-scale-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 20px;
+}
+
+.cp-scale-grid > .rw-rail-field {
+  max-width: none;
+}
+
+.cp-unit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cp-unit .rw-rail-input {
+  width: 110px;
+}
+
+.cp-unit span {
+  font-size: 13px;
+  color: var(--geass-text-secondary);
+}
+
+.cp-check {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 62ch;
+}
+
+.cp-check-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--geass-text-muted);
+}
+
+.cp-credential-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--geass-text-muted);
+}
+
+.cp-secret-input {
+  font-family: var(--geass-font-mono);
+  font-size: 13px;
+}
+
+.cp-textarea-mono {
+  font-family: var(--geass-font-mono);
+  font-size: 13px;
+  min-height: 120px;
+}
+
+.cp-empty {
+  margin: 0;
+  padding: 6px 0;
+  color: var(--geass-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.cp-danger-note {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.cp-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* A form that is switched off as a whole, for a viewer or while it is saving. */
+.cp-lock {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cp-details {
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+}
+
+.cp-details > summary {
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--geass-text);
+}
+
+.cp-details > summary:focus-visible {
+  outline: 1px solid var(--geass-signal);
+  outline-offset: -1px;
+}
+
+.cp-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 12px 14px;
+}
+
+.cp-cell-sub.is-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 28ch;
+}
+
+/* Tables of machines have many short columns: keep them in one line each and let a narrow screen scroll them. */
+.cp-table table {
+  min-width: 880px;
+}
+
+.cp-table.is-medium table {
+  min-width: 760px;
+}
+
+.cp-table th,
+.cp-table td {
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.cp-table .cp-cell-sub {
+  white-space: normal;
+  max-width: 34ch;
+}
+
+/* Mantine lets a badge shrink to nothing inside a table cell: a status must always be read in full. */
+.cp-table .mantine-Badge-root,
+.cp-badge-fit .mantine-Badge-root {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+}
+
+.cp-table .mantine-Badge-label,
+.cp-badge-fit .mantine-Badge-label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.cp-table td:first-child .cp-cell-sub {
+  min-width: 24ch;
+}
+
+.cp-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+  color: var(--geass-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cp-choice:hover {
+  background: var(--geass-hover);
+}
+
+.cp-choice:focus-visible {
+  outline: 1px solid var(--geass-signal);
+  outline-offset: 1px;
+}
+
+.cp-choice.is-selected {
+  border-color: var(--geass-signal);
+  background: color-mix(in srgb, var(--geass-signal) 10%, var(--geass-surface));
+  box-shadow: inset 0 0 0 1px var(--geass-signal);
+}
+
+.cp-choice-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cp-choice-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--geass-text-secondary);
+}
+
+/* Connections are a list of cards: what is said about each is too long for a table in the narrow settings column. */
+.cp-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cp-conn {
+  padding: 14px 16px;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+}
+
+.cp-conn-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cp-conn-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.cp-conn-cloud {
+  color: var(--geass-text-secondary);
+  font-size: 13px;
+}
+
+.cp-conn-line {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--geass-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.cp-conn-line.is-problem {
+  color: var(--geass-critical);
+}
+
+.cp-conn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* A confirm button that cannot be pressed yet must not look pressable. */
+.rw-danger-modal .cp-confirm-actions .mantine-Button-root[data-geass-variant="danger"]:disabled,
+.rw-danger-modal .cp-confirm-actions .mantine-Button-root[data-geass-variant="danger"][data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The Pool column of the nodes table. */
+.cp-pool-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+

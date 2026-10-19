@@ -198,8 +198,22 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformAuthLogoutPolicy(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
-	case mutation.URL.Path == "/cloud-connections/create":
+	case mutation.URL.Path == "/cloud-connections/create" || mutation.URL.Path == "/connections/create":
+		if mutation.ParseForm() == nil && computeConnectionRequested(mutation) {
+			s.handleComputeConnectionCreate(w, mutation)
+			return
+		}
 		s.handleCloudConnectionCreate(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/connections/"):
+		s.handleConnectionRoutes(w, mutation)
+	case mutation.URL.Path == "/pools/create":
+		s.handlePoolCreate(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/pools/"):
+		s.handlePoolRoutes(w, mutation)
+	case mutation.URL.Path == "/servers/create":
+		s.handleServerCreate(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/servers/"):
+		s.handleServerRoutes(w, mutation)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}

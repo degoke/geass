@@ -23,6 +23,7 @@ to see the command list, and `geass help <command>` (or `geass <command> --help`
 | Services | `apps`, `deploy`, `build`, `status`, `logs`, `env`, `scale`, `rollback`, `metrics` |
 | Functions | `functions` |
 | Data and cluster | `projects` (with `quota` and `network`), `databases`, `stores`, `nodes`, `compliance` |
+| Clouds and machines | `providers`, `sizes`, `connections`, `pools`, `servers` |
 | Raw API and agents | `api`, `openapi`, `mcp` |
 | Built in | `help`, `completion`, `--help` (`-h`), `--version` (`-v`) |
 
@@ -144,7 +145,9 @@ creates its folder with mode `0700`, and replaces it atomically. A file that is 
 - `geass deploy` and `geass build` print `{"deployed": [...]}` or `{"building": [...]}` with `--json` when they do not wait, and `{"items": [...]}` (the services' statuses) when they do.
 - These commands print plain text lines whatever `--json` says: `scale`, `rollback`, `env set`, `env unset`,
   `apps create`, `apps delete`, `nodes tag`, `compliance set`, `compliance clear`, `projects network set`, `functions triggers add`,
-  `functions triggers remove`, `logout`, `config use-context` and `config set-context`.
+  `functions triggers remove`, `logout`, `config use-context`, `config set-context`, and the commands that change connections, pools
+  and servers (`connections add`, `update`, `remove` and `verify`, `pools create`, `update`, `delete` and `resume`, `servers add` and
+  `remove`).
 - With `--json`, `geass logs` prints one indented JSON object per log line. The objects are not on one line each, so
   read them as a stream (`jq -c .` reads them).
 - Ages in tables are `30s`, `5m`, `3h` (under 48 hours) or `4d`.
@@ -965,18 +968,21 @@ Lists the cluster's nodes and tags them. Also `geass node`.
 geass nodes list
 ```
 
-Also `geass nodes ls`. Prints `NAME`, `STATUS` (`Ready` or `NotReady`), `REGION`, `ZONE`, `TAGS`, `CPU` and `MEMORY`.
-A reserved tag shows as `gpu (reserved)` and a compliance tag as `hipaa (compliance)`.
+Also `geass nodes ls`. Prints `NAME`, `STATUS` (`Ready` or `NotReady`), `REGION`, `ZONE`, `TAGS`, `CPU`, `MEMORY`, `POOL`
+(the [pool](/docs/guides/node-pools/) the node belongs to) and `EPHEMERAL` (`yes` when the node keeps data off itself: databases and
+volumes never run there, and it may be removed when the load goes). A reserved tag shows as `gpu (reserved)` and a compliance tag as
+`hipaa (compliance)`.
 
 ```text
-NAME      STATUS    REGION  ZONE  TAGS                CPU  MEMORY
-worker-1  Ready     eu      -     -                   4    8Gi
-worker-2  Ready     eu      fsn1  hipaa (compliance)  4    8Gi
-worker-3  NotReady  -       -     -                   -    -
+NAME         STATUS    REGION  ZONE  TAGS                CPU  MEMORY  POOL   EPHEMERAL
+worker-1     Ready     eu      -     -                   4    8Gi     -      -
+worker-2     Ready     eu      fsn1  hipaa (compliance)  4    8Gi     -      -
+burst-x7k2m  Ready     eu      fsn1  -                   2    3Gi     burst  yes
+worker-3     NotReady  -       -     -                   -    -       -      -
 ```
 
 With `--json` it prints `{"items": [...]}` where each node has `name`, `ready`, `schedulable`, `controlPlane`,
-`region`, `zone`, `tags`, `cpu` and `memory`.
+`region`, `zone`, `tags`, `cpu` and `memory`, and `pool` and `ephemeral` when they apply.
 
 **API calls:** `GET /nodes`. **Needs:** any workspace token. A project token gets `403`.
 
@@ -1058,6 +1064,201 @@ Stops requiring node tags for a project. Prints `PROJECT no longer requires node
 **API calls (set and clear):** `POST /projects/{name}/compliance` with `{"requiredTags": "hipaa,pci"}` (an empty
 string for `clear`). **Needs:** Full access.
 
+## Clouds and machines
+
+These commands make Geass create and delete machines at a cloud, which costs money. Everything that spends or changes needs a **Full access**
+token, and a project token cannot reach any of them. They are experimental, like the clouds behind them: see
+[Cloud connections for machines](/docs/guides/connectors/clouds/#how-far-to-trust-it).
+
+### `geass providers`
+
+Lists the clouds Geass can create machines at, and what each takes. Also `geass clouds`.
+
+```text
+geass providers [NAME]
+```
+
+Without a name it prints `ID`, `NAME`, `CREDENTIALS` (a secret is marked `secret`, and one that may be left out `optional`) and
+`SETTINGS` (the settings a pool can give the cloud). With a name, such as `geass providers Hetzner` (case does not matter), it describes the cloud: what its credentials should
+be, what a region means there, and each credential and setting with its help text. A credential of several lines is marked as one to give with
+`--credential-file`.
+
+**API calls:** `GET /compute/providers`. **Needs:** any workspace token.
+
+### `geass sizes`
+
+Lists the machine sizes a cloud offers in a region, cheapest first.
+
+```text
+geass sizes --connection NAME [--region REGION] [--min-vcpus N] [--min-memory GIB] [--limit N]
+```
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--connection` | string | none | The connection to ask the cloud with. Required. |
+| `--region` | string | the connection's | The cloud's region or location. |
+| `--min-vcpus` | integer | none | Only sizes with at least this many processors. |
+| `--min-memory` | number | none | Only sizes with at least this much memory, in GiB. |
+| `--limit` | integer | all | Show at most this many sizes. |
+
+Prints `SIZE`, `VCPUS`, `MEMORY`, `DISK`, `ARCH` and `PER HOUR` (the cloud's list price for an hour, `-` where the cloud states none). A size's
+name is what a pool's `--size` takes. With `--json` it prints `{"items": [...]}`.
+
+```bash
+geass sizes --connection hetzner --region fsn1
+geass sizes --connection aws --region eu-north-1 --min-vcpus 4 --min-memory 8 --limit 10
+```
+
+**API calls:** `GET /compute/sizes?connection=&region=`. **Needs:** Full access, because it calls the cloud with the connection's
+credentials.
+
+### `geass connections`
+
+Connects clouds, so that Geass can create machines there. Also `geass connection` and `geass conn`.
+
+```text
+geass connections list
+geass connections show NAME
+geass connections add NAME --provider CLOUD [--region REGION] [--purpose PURPOSE]... [--credential KEY=VALUE]... [--credential-file KEY=PATH]...
+geass connections update NAME [--region REGION] [--purpose PURPOSE]... [--credential KEY=VALUE]... [--credential-file KEY=PATH]...
+geass connections remove NAME
+geass connections verify NAME
+```
+
+`list` (also `ls`) prints `NAME`, `PROVIDER`, `PURPOSES`, `REGION`, `STATUS` (`accepted`, `not accepted` or `not checked yet`), `USED BY` (the pools and
+machines that depend on it) and `AGE`. `show` prints the connection with the cloud's message, the account, when the cloud last accepted it, when the credentials expire, each warning and what uses it.
+
+`add` stores the credentials in a Secret, asks the cloud at once whether it accepts them, waits a few seconds for the answer, and prints it with the
+cloud's warnings. It fails with the cloud's message when the cloud refuses the credentials. `update` changes only what you name, and after replacing
+credentials it asks the cloud again. `verify` asks again. `remove` asks you to confirm (`--yes` skips it) and refuses while a pool or a machine uses the
+connection, so that those machines can still be deleted at the cloud. It does not revoke the credentials there.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--provider` | string | none | `add` only. The cloud, as `geass providers` lists it (case does not matter). Required. |
+| `--region` | string | none | The connection's default region, used when a pool or a server names none. On `update`, an empty value clears it. |
+| `--purpose` | list of strings | `Compute` | What it is for: `Compute`, and for AWS also `Storage` and `Database`. `add` makes connections that create machines, so `Compute` has to be one of them. On `update` the list replaces the old one. |
+| `--credential` | list of `KEY=VALUE` | none | A credential that is not secret. A secret given this way stays in your shell's history, and the command says so. |
+| `--credential-file` | list of `KEY=PATH` | none | A credential read from a file (`-` reads standard input). A trailing newline is dropped. |
+
+A credential can also come from the environment: `GEASS_CREDENTIAL_` and the key in capitals, with an underscore at each capital inside it
+(`GEASS_CREDENTIAL_TOKEN`, `GEASS_CREDENTIAL_ACCESS_KEY_ID`). A key the cloud does not take is refused, and no value appears in an error. A required
+credential that nobody gave is asked for, without showing it, when a person is at the keyboard, except one of several lines, which must come from a file.
+
+```bash
+geass connections add hetzner --provider Hetzner --credential-file token=./hetzner-token.txt
+GEASS_CREDENTIAL_TOKEN=$(pass hetzner/geass) geass connections add hetzner --provider Hetzner
+geass connections add aws-compute --provider AWS --region eu-north-1 \
+  --credential accessKeyId=AKIA... --credential-file secretAccessKey=./secret.txt
+geass connections update hetzner --credential-file token=./new-token.txt
+```
+
+**API calls:** `GET /connections` and `GET /connections/{name}`; `POST /connections` for `add`, `PATCH /connections/{name}` for `update`,
+`DELETE /connections/{name}?confirmName={name}` for `remove` and `POST /connections/{name}/verify` for `verify`, each with
+`GET /compute/providers` and, after a change, reads of the connection to wait for the cloud's answer. **Needs:** any workspace token to list and
+show, **Full access** to change. A connection for buckets or databases is made in the dashboard. See
+[Cloud connections for machines](/docs/guides/connectors/clouds/).
+
+### `geass pools`
+
+Pools of nodes that Geass adds and removes as the load needs. Also `geass pool`. See [Node pools and autoscaling](/docs/guides/node-pools/).
+
+```text
+geass pools list
+geass pools show NAME
+geass pools create NAME --max N (--connection CLOUD --size SIZE | --inventory-file FILE) [flags]
+geass pools update NAME [flags]
+geass pools delete NAME
+geass pools resume NAME
+```
+
+`list` (also `ls`) prints `NAME`, `SOURCE` (the connection and its cloud, or `inventory (N)`), `SIZE`, `READY/NODES`, `MIN-MAX`, `AUTOSCALING`
+(`on`, `off` or `suspended`), `PHASE`, `PER HOUR` (what its machines cost now, at the cloud's list price) and `AGE`. `show` prints the settings, what
+the pool is doing and why, its pending pods, its cost, the last failure, any machines no node owns, and a table of its nodes with their phase,
+address, size, region, age and message.
+
+`create` is refused without `--max`, the most nodes the pool can ever have and the cap on what it costs, and without a source: `--connection` and
+`--size` for a cloud, or `--inventory-file` for servers you own. When `--max` is above `--min` it also needs `--autoscale` or `--no-autoscale`: a pool that does not
+autoscale keeps exactly `--min` nodes. `update` sends only the flags you give: the size, region, image and settings apply to machines made from then
+on. `delete` asks you to confirm (`--yes` skips it), deletes the pool's nodes and their machines, and says to check the cloud. `resume` ends the pause
+of a pool that stopped after three failed machines in a row, and forgets those failures.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--connection` | string | none | The connection that creates the machines. On `update`, another connection for machines made from now on. |
+| `--inventory-file` | path | none | Servers of yours instead of a cloud: a JSON list of `{"name", "address", "sshUser", "sshPort"?, "sshKeySecret"?}` (`-` reads standard input). An unknown field is an error. |
+| `--inventory-key-file` | path | none | The SSH private key of those servers, stored as a Secret. Goes with `--inventory-file`. |
+| `--region` | string | the connection's | The cloud's region or location. |
+| `--size` | string | none | The cloud's name for a machine size. Required for a cloud. |
+| `--fallback-size`, `--fallback-region` | list of strings | none | Sizes and regions to try, in order, when the cloud has no room. Up to five each. Empty clears them. |
+| `--image` | string | the cloud's Ubuntu 24.04 | The operating system image. |
+| `--spot`, `--no-spot` | switch | off | Use the cloud's spot machines, which it may take back. |
+| `--address-type` | string | `public` | `public` or `private`: which address of a machine Geass reaches it on. |
+| `--setting` | list of `KEY=VALUE` | none | A setting of the cloud, such as `firewallId=42`. On `update` the others keep their values, and `KEY=` removes one. |
+| `--storage` | string | `none` | `none` keeps databases and volumes off the nodes. `allow` makes them ordinary workers. |
+| `--min`, `--max` | integer | 0 and none | The fewest and the most nodes, each 0 to 200. A pool that does not autoscale has exactly `--min`. |
+| `--autoscale`, `--no-autoscale` | switch | none | Follow the load between `--min` and `--max`, or keep exactly `--min`. |
+| `--suspend`, `--no-suspend` | switch | off | Stop adding and removing nodes, or let the pool again. |
+| `--scale-up-delay` | integer | 30 | Seconds a pod must be unable to start before a node is added. |
+| `--max-scale-up` | integer | 5 | The most nodes added in one step. |
+| `--scale-down-utilization` | integer | 50 | A node used less than this percent is a candidate for removal. |
+| `--scale-down-after` | integer | 10 | Minutes a node must be a candidate before it is removed. |
+| `--scale-down-delay-after-add` | integer | 10 | No node is removed for this many minutes after one was added. |
+| `--min-node-lifetime` | integer | 0 | Minutes a node lives at least, for clouds that bill each started hour. |
+| `--spare-nodes` | integer | 0 | Empty nodes kept ready for a burst. Each one costs money while it waits. |
+| `--placement-region`, `--placement-zone` | string | none | The region and site the nodes carry. |
+| `--tag`, `--reserved-tag` | list of strings | none | Node tags the nodes carry; a reserved tag also keeps all other work off them. A change to the placement replaces the region, site and tags together: name every tag. |
+| `--orphans` | string | `report` | `report` or `delete`: what to do with a machine at the cloud that no node owns. |
+
+```bash
+geass pools create burst --connection hetzner --region fsn1 --size cx23 --fallback-size cx33 --min 0 --max 5 --autoscale
+geass pools create fixed --connection hetzner --size cx23 --min 2 --max 2 --no-autoscale
+geass pools create spare --inventory-file ./servers.json --inventory-key-file ~/.ssh/geass_ed25519 --max 3 --autoscale
+geass pools update burst --max 8
+geass pools update burst --suspend
+geass pools update burst --setting firewallId=77 --fallback-size ''
+geass pools resume burst
+```
+
+**API calls:** `GET /pools` and `GET /pools/{name}`; `POST /pools` for `create`; `PATCH /pools/{name}` for `update` (and a read first when a change
+to the settings or placement needs the current values); `DELETE /pools/{name}?confirmName={name}` for `delete`; `POST /pools/{name}/resume` for `resume`. **Needs:**
+any workspace token to list and show, **Full access** to change.
+
+### `geass servers`
+
+Adds one server to the cluster, or removes one that was added. Also `geass server`. See [Add servers](/docs/getting-started/add-servers/).
+
+```text
+geass servers add [NAME] (--connection CLOUD --size SIZE | --address ADDRESS --ssh-user USER (--ssh-key-file FILE | --ssh-key-secret SECRET)) [flags]
+geass servers remove NAME
+```
+
+With `--connection` and `--size`, Geass creates a machine at the cloud. It costs money until the server is removed, and a name is made up when you give none. With
+`--address`, the server is one you have: a name is required, and Geass joins it over SSH as `--ssh-user`. `remove` (also `rm` and `delete`) asks you
+to confirm (`--yes` skips it), moves the server's services elsewhere if there is room and deletes a machine Geass made for it. It refuses a node that belongs to a pool, and the
+control plane.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--connection`, `--region`, `--size`, `--image` | string | none | For a machine at a cloud: the connection, its region, the size and the image. |
+| `--setting` | list of `KEY=VALUE` | none | For a machine at a cloud: a setting of the cloud. |
+| `--address` | string | none | For a server you have: where Geass reaches it over SSH. |
+| `--ssh-user` | string | none | For a server you have: `root`, or a user that can use `sudo` without a password. |
+| `--ssh-port` | integer | 22 | For a server you have. |
+| `--ssh-key-file` | path | none | For a server you have: the private key, stored as a Secret named `NAME-ssh` (`-` reads standard input). |
+| `--ssh-key-secret` | string | none | For a server you have: a Secret that already holds the key. |
+| `--known-hosts-file` | path | none | For a server you have: its host keys, to pin it. |
+| `--placement-region`, `--placement-zone`, `--tag`, `--reserved-tag` | string, list | none | The region, site and tags the node carries. |
+| `--storage` | string | `allow` | `allow` or `none`: whether databases and volumes may run on it. |
+
+```bash
+geass servers add --connection hetzner --region fsn1 --size cx23
+geass servers add edge-1 --address 198.51.100.7 --ssh-user root --ssh-key-file ~/.ssh/geass_ed25519 --tag edge
+geass servers remove edge-1
+```
+
+**API calls:** `POST /servers`, `DELETE /servers/{name}?confirmName={name}`. **Needs:** Full access.
+
 ## Raw API and agents
 
 ### `geass api`
@@ -1107,7 +1308,7 @@ Each operation carries an `x-access` value that says who may call it: `public`, 
 
 ### `geass mcp`
 
-Runs an MCP server so AI agents can deploy and monitor services.
+Runs an MCP server so AI agents can deploy and monitor services. With an admin token it can also look at the clouds Geass uses and run pools of nodes.
 
 ```text
 geass mcp [--read-only] [--allow-delete] [--listen ADDRESS]
@@ -1115,8 +1316,8 @@ geass mcp [--read-only] [--allow-delete] [--listen ADDRESS]
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. An admin token still gets `database_connection`, which only reads. |
-| `--allow-delete` | boolean | `false` | Also offer the tool that permanently deletes resources. |
+| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. An admin token still gets `database_connection` and `cloud_sizes`, which only read. |
+| `--allow-delete` | boolean | `false` | Also offer the tools that permanently delete resources: `delete_resource` and `delete_node_pool`. |
 | `--listen` | string | none | Serve MCP over HTTP at this address, such as `127.0.0.1:8765`, instead of standard input and output. |
 
 Without `--listen` it speaks MCP over standard input and output as the saved login (or `--token`, `$GEASS_TOKEN`).

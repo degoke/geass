@@ -15,8 +15,8 @@ an agent, read [MCP server for AI agents](/docs/guides/mcp-server/).
   (`dev` when the build did not set one).
 - **Instructions.** When an agent connects, the server sends it a short briefing (see [Instructions](#instructions)).
 - **Transports.** Standard input and output, or Streamable HTTP with `--listen`.
-- **31 tools in all**, 30 without `delete_resource`. Which of them an agent sees depends on its token
-  (see [Which tools an agent sees](#which-tools-an-agent-sees)).
+- **40 tools in all**, 38 without the two that delete (`delete_resource` and `delete_node_pool`). Which of them an agent sees
+  depends on its token (see [Which tools an agent sees](#which-tools-an-agent-sees)).
 
 Every tool takes a JSON object. An argument that is not in the tool's schema is rejected. A tool's result is one block
 of text: indented JSON for every tool except `get_logs`, which returns plain lines. A result longer than 60,000
@@ -25,7 +25,7 @@ characters is cut and ends with `... (cut: the result was too long; narrow it wi
 ### Hints
 
 Each tool carries the standard MCP annotations, so an agent host can decide when to ask you first. `read-only` means
-`readOnlyHint: true`. `idempotent` means `idempotentHint: true`. Every tool except `delete_resource` has
+`readOnlyHint: true`. `idempotent` means `idempotentHint: true`. Every tool except `delete_resource` and `delete_node_pool` has
 `destructiveHint: false`, and every tool has `openWorldHint: false`.
 
 ### Errors
@@ -76,7 +76,16 @@ fails while the agent waits for it is not an error: it is a result that says why
 | [`remove_function_trigger`](#remove_function_trigger) | Removes a function's schedule | Full access or project token | idempotent |
 | [`invoke_function`](#invoke_function) | Calls a function at its public address | Full access or project token | |
 | [`create_app`](#create_app) | Creates a service from an image or a repository | Full access | |
+| [`compute_providers`](#compute_providers) | The clouds Geass can create machines at, and what each takes | Any workspace token | read-only |
+| [`cloud_connections`](#cloud_connections) | The connections to clouds, and what depends on each | Any workspace token | read-only |
+| [`node_pools`](#node_pools) | Lists the pools of nodes | Any workspace token | read-only |
+| [`node_pool`](#node_pool) | One pool, with its nodes | Any workspace token | read-only |
+| [`cloud_sizes`](#cloud_sizes) | The machine sizes a cloud offers in a region | Full access | read-only |
+| [`create_node_pool`](#create_node_pool) | Makes a pool, which creates machines that cost money | Full access | |
+| [`update_node_pool`](#update_node_pool) | Changes a pool | Full access | idempotent |
+| [`resume_node_pool`](#resume_node_pool) | Ends the pause of a pool that kept failing | Full access | idempotent |
 | [`delete_resource`](#delete_resource) | Permanently deletes a resource | Full access, and `--allow-delete` | destructive |
+| [`delete_node_pool`](#delete_node_pool) | Permanently deletes a pool, its nodes and their machines | Full access, and `--allow-delete` | destructive |
 
 **Needs** uses the access names of the dashboard. **Full access** is the `admin` role, **Read only, with logs** is
 `observer`, and **Read only** is `viewer`. A **project token** is limited to one environment of one project. Where a
@@ -87,15 +96,15 @@ means a project token cannot. **Read only, with logs** also covers **Full access
 ## Which tools an agent sees
 
 A tool that a token cannot use is not registered at all, so the agent never sees it. The flags of `geass mcp` narrow
-this further. `--read-only` removes every tool that changes anything. It keeps `database_connection` for a **Full
-access** token, because that tool only reads. `--allow-delete` adds `delete_resource`.
+this further. `--read-only` removes every tool that changes anything. It keeps `database_connection` and `cloud_sizes` for a **Full
+access** token, because those tools only read. `--allow-delete` adds `delete_resource` and `delete_node_pool`.
 
 | Token | Tools |
 | --- | --- |
-| **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance`, `project_network`, `project_quota` (14) |
-| **Read only, with logs** (`observer`) | The 14 above, plus `get_logs`, `deployment_logs`, `list_variables` (17) |
-| **Full access** (`admin`) | All except `delete_resource` (30), and `delete_resource` with `--allow-delete` (31) |
-| **Full access** with `--read-only` | The 17 of an `observer`, plus `database_connection` (18). |
+| **Read only** (`viewer`) | `whoami`, `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `list_databases`, `get_database`, `list_buckets`, `list_nodes`, `project_compliance`, `project_network`, `project_quota`, `compute_providers`, `cloud_connections`, `node_pools`, `node_pool` (18) |
+| **Read only, with logs** (`observer`) | The 18 above, plus `get_logs`, `deployment_logs`, `list_variables` (21) |
+| **Full access** (`admin`) | All except the two that delete (38), and `delete_resource` and `delete_node_pool` with `--allow-delete` (40) |
+| **Full access** with `--read-only` | The 21 of an `observer`, plus `database_connection` and `cloud_sizes` (23). |
 | Project token | `whoami`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics`, `get_logs`, `deployment_logs`, `list_variables`, `deploy_app`, `rebuild_app`, `rollback_app`, `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable`, `set_function_trigger`, `remove_function_trigger`, `invoke_function` (19) |
 
 A project token with `--read-only` gets the first nine tools in its list. Hiding a tool is a convenience. The API
@@ -115,6 +124,10 @@ token:
 - Otherwise: `Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and
   know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. To
   build a service from its repository again without a push, call rebuild_app (also with wait=true).`
+- For a token that can change things and is not a project token, one more sentence: `Node pools create machines at a cloud, and
+  every machine costs money until it is removed: create_node_pool needs max_nodes, the most it can ever have, which caps what it
+  can cost. Connections to clouds hold credentials and single servers are billed until removed, so people make those, and no tool
+  here does.`
 
 Every version ends with `Secret values are never returned by any tool. Plain configuration is not secret and is returned
 as it is, so keep anything sensitive in a secret.`
@@ -741,6 +754,128 @@ wakes it if it is asleep.
 - It fails with `the function has no public address to call: give it a domain first` for a function without a
   public address.
 
+## Node pools and clouds
+
+These tools show an agent the clouds Geass uses and let it run [pools of nodes](/docs/guides/node-pools/): machines that Geass creates at a cloud as the load needs them. **A pool creates machines that cost money**, billed to the account of the connection until they are removed. All of them are hidden from project tokens.
+
+No tool takes a credential, makes, changes, verifies or removes a connection, or adds or removes a single server. A connection holds the credentials of a billing account, and a single server is billed until someone removes it, so those two decisions stay with a person (in the dashboard or with `geass connections` and `geass servers`), in the way `project_network` can be read and not changed. An agent cannot be handed a secret it could leak, and it cannot choose which of your accounts to spend. What it can do is look at what exists, and run a pool that a person's connection already pays for, within a most that is set in the pool itself. It cannot make a pool of servers you own either. The tools that read return no credential, only the names of the credentials a cloud takes.
+
+### `compute_providers`
+
+Lists the clouds Geass can create machines at, with the credentials each takes (their names and whether each is secret, never a value) and the settings a pool can give each.
+
+- **Arguments:** none. **Needs:** any workspace token. **Calls:** `GET /compute/providers`.
+- **Returns:** `{"items": [...]}`. Each cloud has `id`, `label`, `summary`, `fields` (each with `key`, `label`, `help`, and `secret`, `optional` or `multiline` when true), `settings`, `freeSettings` and `regionHelp`.
+
+### `cloud_connections`
+
+Lists the connections to clouds: which cloud each is for, what it is for (`Compute` makes machines), whether the cloud accepts its credentials, and the pools and machines that depend on it.
+
+- **Arguments:** none. **Needs:** any workspace token. **Calls:** `GET /connections`.
+- **Returns:** `{"items": [...]}`. Each has `name`, `provider`, `purposes`, `project`, `region`, `available`, `account`, `message`, `warnings`, `verifiedAt`, `expiresAt`, `usedBy` and `machines`. No credential is ever in it.
+
+### `node_pools`
+
+Lists the pools: each one's connection and size, the fewest and most nodes it may have, how many it has and how many are ready, whether it autoscales, how it is doing and what it costs for an hour.
+
+- **Arguments:** none. **Needs:** any workspace token. **Calls:** `GET /pools`.
+- **Returns:** `{"items": [...]}` of pools without their nodes.
+
+### `node_pool`
+
+Shows one pool: its settings, its phase and message, the pods waiting for room, its cost, whether it is paused and why, the machines at the cloud that no node owns, and each of its nodes.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | yes | The pool's name, as `node_pools` lists it. |
+
+- **Needs:** any workspace token. **Calls:** `GET /pools/{name}`.
+
+### `cloud_sizes`
+
+Lists the machine sizes a cloud offers in a region, cheapest first, with processors, memory and the price for an hour at the cloud's list price. The names are what `create_node_pool` takes as `size`. It asks the cloud with a connection's credentials and changes nothing.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `connection` | string | yes | The connection to ask with, as `cloud_connections` lists it. |
+| `region` | string | no | The cloud's region or location. Default: the connection's. |
+| `min_vcpus` | integer | no | Only sizes with at least this many processors. |
+| `min_memory_mib` | integer | no | Only sizes with at least this much memory, in MiB (`8192` is 8 GiB). |
+| `limit` | integer | no | How many to return, cheapest first. Default 30, at most 200. |
+
+- **Needs:** Full access. It is offered with `--read-only` too, since it only reads. **Calls:** `GET /compute/sizes`.
+- **Returns:** `{"items": [...], "matched": 42, "note": "..."}`. The note says when only the cheapest were returned and how to narrow the list.
+
+### `create_node_pool`
+
+Makes a pool. Geass creates machines at the cloud of a connection when pods cannot start for lack of room, and removes them when they sit idle. **It creates machines that cost money.** `min_nodes` machines are made at once.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | yes | Lowercase letters, numbers and hyphens, at most 48 characters. |
+| `connection` | string | yes | A connection for `Compute`, from `cloud_connections`. |
+| `size` | string | yes | The cloud's name for a size, from `cloud_sizes`. |
+| `max_nodes` | integer | yes | The most nodes the pool can ever have, 1 to 10. It caps what the pool can cost: choose it deliberately, and ask the person if unsure. A person makes a larger pool, up to 200, in the dashboard or with `geass pools`. |
+| `min_nodes` | integer | no | The fewest nodes, 0 to 3, default 0. A pool that does not autoscale has exactly this many. |
+| `autoscaling` | boolean | when `max_nodes` is above `min_nodes` | `true` follows the load between the two, `false` keeps exactly `min_nodes`. It is never assumed. |
+| `region` | string | no | The cloud's region or location. |
+| `fallback_sizes`, `fallback_regions` | list of strings | no | Tried in order when the cloud has no room. A fallback may cost more. |
+| `image` | string | no | The operating system image. |
+| `spot` | boolean | no | Use spot machines, which the cloud may take back. |
+| `storage` | string | no | `none` (the default) or `allow`. |
+| `settings` | object | no | Settings of the cloud, such as `{"firewallId": "42"}`. `compute_providers` lists the keys. |
+| `scale_down_after_minutes` | integer | no | Minutes a node must be a candidate for removal before it goes. Default 10. |
+| `spare_nodes` | integer | no | Empty nodes kept ready for a burst, 0 to 3. Each costs money while it waits. |
+| `placement_region`, `placement_zone` | string | no | The region and site the nodes carry. |
+| `tags`, `reserved_tags` | list of strings | no | Node tags the nodes carry. |
+
+- **Needs:** Full access (a workspace admin). **Calls:** `POST /pools`, then `GET /pools/{name}`.
+- **Returns:** `created`, `connection`, `minNodes`, `maxNodes`, a `note` that says the machines cost money until they are removed and that the pool never has more than `max_nodes`, `next` (`call node_pool to see how it is going`) and the `pool`.
+- It fails with `max_nodes is required and at least 1 ...` without `max_nodes`, and with `max_nodes N is above min_nodes M, so say whether the pool follows the load ...` when `autoscaling` is not given and the pool could grow. A number above what an agent may set (`max_nodes` 10, `min_nodes` 3, `spare_nodes` 3) fails with a message that says to ask a person, who can set up to 200 in the dashboard or with `geass pools`.
+
+```json title="Example call"
+{ "name": "burst", "connection": "hetzner", "size": "cx23", "region": "fsn1", "min_nodes": 0, "max_nodes": 5, "autoscaling": true, "fallback_sizes": ["cx33"] }
+```
+
+### `update_node_pool`
+
+Changes a pool. Name only what to change. Raising `max_nodes`, `min_nodes` or `spare_nodes`, or choosing a larger size, raises what the pool can cost, and `min_nodes` and `spare_nodes` make machines at once. `size` applies to nodes made from then on.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | yes | The pool to change. |
+| `min_nodes`, `max_nodes` | integer | no | The fewest and the most nodes (`min_nodes` 0 to 3, `max_nodes` 1 to 10). |
+| `autoscaling` | boolean | no | `true` follows the load, `false` keeps exactly `min_nodes`. |
+| `suspend` | boolean | no | `true` stops the pool adding and removing nodes (the ones it has stay), `false` lets it again. |
+| `size` | string | no | The size of nodes made from now on. |
+| `spare_nodes` | integer | no | Empty nodes kept ready, 0 to 3. |
+
+- **Needs:** Full access. **Calls:** `PATCH /pools/{name}`, then `GET /pools/{name}`. **Returns:** `updated` and the `pool` as it is afterwards.
+- It fails with `name at least one thing to change ...` when nothing is named.
+
+### `resume_node_pool`
+
+Ends the pause of a pool that stopped adding nodes after three machines in a row failed to become nodes. The pool forgets the failures and tries again, which makes machines and costs money, so read `node_pool` first: its last failure says what went wrong, and a cause that is not fixed fails again.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | yes | The pool's name. |
+
+- **Needs:** Full access. **Calls:** `POST /pools/{name}/resume`. **Returns:** `{"resumed": "burst", "next": "call node_pool to see whether it recovers"}`.
+
+### `delete_node_pool`
+
+Permanently deletes a pool, its nodes and their machines at the cloud. What runs on those nodes moves if other nodes have room, and stops if not. To keep the machines but stop the pool adding and removing them, use `update_node_pool` with `suspend` set to `true`.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `name` | string | yes | The pool to delete. |
+| `confirm` | string | yes | The pool's name again, to confirm. |
+
+- **Needs:** Full access, and `geass mcp --allow-delete`. Without the flag the tool does not exist. Hidden from project tokens and from `--read-only`. **Calls:** `DELETE /pools/{name}?confirmName={name}`.
+- **Returns:** `{"deleted": "burst", "note": "its machines are being deleted at the cloud"}`. It fails with `not deleted: confirm must be exactly "burst"` when `confirm` is not the name.
+- It has `destructiveHint: true`, like `delete_resource`.
+
 ## Deleting
 
 ### `delete_resource`
@@ -757,7 +892,7 @@ Permanently deletes a service, database, bucket or logical database. This cannot
   project tokens and from `--read-only`. **Calls:** `DELETE /{kind}/{name}?confirmName={name}`.
 - **Returns:** `{"deleted": "orders"}`. It fails with `not deleted: confirm must be exactly "orders"` when `confirm` is
   not the name, and with `kind must be apps, databases, object-stores or logical-databases` for another kind.
-- It is the only tool with `destructiveHint: true`, so a host that asks before destructive tools asks before this one.
+- It and [`delete_node_pool`](#delete_node_pool) are the only tools with `destructiveHint: true`, so a host that asks before destructive tools asks before them.
 
 ```json title="Example call"
 { "kind": "databases", "name": "orders", "confirm": "orders" }

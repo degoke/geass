@@ -13,7 +13,7 @@ This page defines the words the dashboard and the rest of these docs use, and ho
 ```text
 cluster (your servers, one control plane + workers)
  |-- platform settings (domain, connectors, tokens, object storage, shared databases)
- |-- nodes (with optional region, site, tags)
+ |-- nodes (with optional region, site, tags), singly or in pools
  `-- projects
       `-- environments (production, staging ...)
            `-- resources: services, functions, databases, logical databases, buckets
@@ -70,7 +70,11 @@ A service can be set to **Sleep when idle**: after it has had no requests for a 
 
 ## Nodes
 
-A node is one server in the cluster. The first is the **control plane**: it runs K3s's server, the operator and the dashboard. Others are **workers**, joined over SSH with a `GeassNode` object. Geass shows nodes in the **Nodes** table on the **Usage** page, in the left rail, with their role, region, tags, CPU, memory, pressure and status (**Ready**, **Not ready** or **Unschedulable**). See [Add servers](/docs/getting-started/add-servers/).
+A node is one server in the cluster. The first is the **control plane**: it runs K3s's server, the operator and the dashboard. Others are **workers**, joined over SSH with a `GeassNode` object. A worker is a server you have, or a machine Geass creates at a cloud. Geass shows nodes in the **Nodes** table on the **Usage** page, in the left rail, with their role, the pool they belong to, region, tags, CPU, memory, pressure and status (**Ready**, **Not ready** or **Unschedulable**). See [Add servers](/docs/getting-started/add-servers/).
+
+## Node pools
+
+A **pool** (`GeassNodePool`) is a group of nodes that Geass adds and removes for you. It makes machines at a cloud, or joins servers you listed, and has a most it can ever have, which is the cap on what it can cost. A pool that does not autoscale keeps a fixed number. An autoscaling pool adds nodes when pods cannot start for lack of room, and removes idle ones after emptying them. By default a pool's nodes are **ephemeral**: they run services and never databases, buckets or volumes, so any of them can go at any time. Pools need a **connection for machines**, the credentials Geass uses to create and delete servers at a cloud, which belongs to the cluster and which only an admin can use. This is experimental. See [Node pools and autoscaling](/docs/guides/node-pools/) and [Cloud connections for machines](/docs/guides/connectors/clouds/).
 
 ## Regions, sites and tags
 
@@ -85,7 +89,7 @@ See [Scaling and placement](/docs/guides/scaling-and-placement/) and [Compliance
 
 ## Connections and connectors
 
-Geass can use accounts you already have. **Settings → Connectors** shows four cards:
+Geass can use accounts you already have. **Settings → Connectors** shows four cards, and a list of **Cloud connections** below them:
 
 | Connector | Used for | Scope |
 | --- | --- | --- |
@@ -94,7 +98,7 @@ Geass can use accounts you already have. **Settings → Connectors** shows four 
 | AWS | S3 buckets, database backups | One project: each connection is saved for a single project |
 | PlanetScale | PlanetScale databases | One project |
 
-AWS and PlanetScale credentials are called **cloud connections** (`GeassCloudConnection`). Every one is scoped to a single project and is usable only by it. The credentials are stored as Kubernetes Secrets in the cluster. See [Cloud connectors](/docs/guides/connectors/).
+AWS and PlanetScale credentials are called **cloud connections** (`GeassCloudConnection`). Every one is scoped to a single project and is usable only by it. A cloud connection can also be for creating machines (its purpose is `Compute`): then it belongs to the cluster, never to a project, and only an admin can use it. Geass can create machines at Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud, Vultr and, through a webhook, any other provider (experimental). The credentials are stored as Kubernetes Secrets in the cluster. See [Cloud connectors](/docs/guides/connectors/).
 
 ## Platform settings
 
@@ -130,7 +134,9 @@ A *project token* can deploy, scale, roll back, edit variables and read logs in 
 
 - **Add-on:** a platform component that Geass installs for you: cert-manager, metrics, Longhorn storage and log collection, and, only when you turn it on, the serverless add-on for sleep when idle.
 - **Command line:** `geass`, a program for your own machine that deploys and runs services through the dashboard's `/api/v1` API. `geass mcp` is the same program as an MCP server for AI agents. See [Command line](/docs/guides/command-line/) and [MCP server for AI agents](/docs/guides/mcp-server/).
-- **Capacity gate:** the check that refuses a deploy when the cluster lacks the CPU and memory it asks for. See [Usage and capacity](/docs/guides/usage-and-capacity/).
+- **Capacity gate:** the check that refuses a deploy when the cluster lacks the CPU and memory it asks for. With an autoscaling pool that could make room, it lets the deploy in. See [Usage and capacity](/docs/guides/usage-and-capacity/).
+- **Ephemeral node:** a node, usually of a pool, that keeps data off itself: services run there, databases and volumes never do. See [Node pools](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
+- **Orphan machine:** a machine at a cloud that carries a pool's labels and belongs to no node, and may still be billing you. See [Node pools](/docs/guides/node-pools/#machines-no-node-owns).
 - **Backup:** a copy of a database in a bucket in your AWS account. See [Backups and restore](/docs/guides/backups-and-restore/).
 - **Network isolation:** each project is private to others unless you allow them. See [Network isolation](/docs/guides/network-isolation/).
 
@@ -141,5 +147,6 @@ The [Glossary](/docs/reference/glossary/) lists every term with a link.
 - [What is Geass](/docs/overview/introduction/)
 - [How Geass works](/docs/overview/how-it-works/)
 - [Deploy your first app](/docs/getting-started/first-app/)
+- [Node pools and autoscaling](/docs/guides/node-pools/)
 - [Users and API tokens](/docs/guides/users-and-tokens/)
 - [Glossary](/docs/reference/glossary/)

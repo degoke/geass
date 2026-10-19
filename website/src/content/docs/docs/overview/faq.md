@@ -29,7 +29,7 @@ You run `geass login --url https://geass.example.com`. It prints a short code an
 
 ### Does Geass send data to its authors?
 
-No. The repository contains no telemetry or analytics code. Geass does make outbound requests that you should expect: the installer downloads from GitHub and `get.k3s.io`; the cluster downloads Helm charts and container images from public hosts; when you connect them, the operator calls the GitHub, Cloudflare, AWS and PlanetScale APIs; it asks `api.ipify.org`, then `ifconfig.me`, for the server's public IP only when no node reports one and it needs the address for dashboard DNS; and cert-manager talks to Let's Encrypt once the certificate issuer exists. The `geass` command line talks only to the Geass address you give it. See [Requirements](/docs/getting-started/requirements/#outbound-network-access).
+No. The repository contains no telemetry or analytics code. Geass does make outbound requests that you should expect: the installer downloads from GitHub and `get.k3s.io`; the cluster downloads Helm charts and container images from public hosts; when you connect them, the operator calls the GitHub, Cloudflare, AWS and PlanetScale APIs, and the API of any cloud you connect for machines; it asks `api.ipify.org`, then `ifconfig.me`, for the server's public IP only when no node reports one and it needs the address for dashboard DNS; and cert-manager talks to Let's Encrypt once the certificate issuer exists. The `geass` command line talks only to the Geass address you give it. See [Requirements](/docs/getting-started/requirements/#outbound-network-access).
 
 ### Which license does Geass use, and can I use it at work?
 
@@ -39,7 +39,7 @@ The [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license), in 
 
 ### Do I need one server or several?
 
-One is a complete install: the installer builds a K3s server and runs everything on it. You add capacity by joining workers over SSH. See [Add servers](/docs/getting-started/add-servers/).
+One is a complete install: the installer builds a K3s server and runs everything on it. You add capacity by joining workers over SSH, or by having Geass create machines at a cloud for you. See [Add servers](/docs/getting-started/add-servers/) and [Node pools](/docs/guides/node-pools/).
 
 ### Is there a highly available control plane?
 
@@ -51,7 +51,7 @@ Not alongside it. On a machine that already has a K3s, the installer stops and s
 
 ### Which providers and operating systems work?
 
-Any Linux server on `amd64` or `arm64` that K3s supports, from any provider. The installer checks only that it runs on Linux, on one of those two architectures, with enough memory and disk. Geass does not create servers at any provider: you bring them. A cluster whose nodes are at different providers is experimental. See [Requirements](/docs/getting-started/requirements/) and [Multi-provider clusters](/docs/operations/multi-provider/).
+Any Linux server on `amd64` or `arm64` that K3s supports, from any provider. The installer checks only that it runs on Linux, on one of those two architectures, with enough memory and disk. You can bring servers from any provider, and Geass can also create machines at Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud and Vultr, or through a webhook of your own (experimental). A cluster whose nodes are at different providers is experimental too. See [Requirements](/docs/getting-started/requirements/), [Cloud connections for machines](/docs/guides/connectors/clouds/) and [Multi-provider clusters](/docs/operations/multi-provider/).
 
 ### Why does the installer reject my 2 GB server?
 
@@ -111,12 +111,13 @@ Nothing to install or to deploy a service. Each account unlocks specific feature
 | GitHub | Repository deploys, push-to-deploy, pull request environments, builds and deploys reported back to GitHub | A GitHub App that Geass registers. The dashboard needs a public domain first |
 | AWS | S3 buckets, database backups | An access key that can create and delete S3 buckets and objects, and create and delete IAM users with their keys and policy |
 | PlanetScale | PlanetScale databases | A service token and the organization name |
+| Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud, Vultr, or your own webhook | Machines that Geass creates and deletes, for [node pools](/docs/guides/node-pools/) and single servers (experimental) | Credentials that can create and delete machines in a project or account of its own. They differ per cloud: see [Cloud connections for machines](/docs/guides/connectors/clouds/) |
 
-AWS and PlanetScale credentials belong to one project. See [Cloud connectors](/docs/guides/connectors/).
+AWS and PlanetScale credentials belong to one project. Credentials for machines belong to the cluster, and only an admin can use them. See [Cloud connectors](/docs/guides/connectors/).
 
 ### Does Geass create servers, or work with Google Cloud or Azure?
 
-No to both. Geass has no connector that creates machines, and no Google Cloud or Azure integration. A server at any provider can join as a node.
+Yes to both, as an experimental feature. With a [connection for machines](/docs/guides/connectors/clouds/), Geass creates a server at Google Cloud, Azure, Amazon EC2, DigitalOcean, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or Vultr, or through a webhook for any other provider. It can create one server (**Add server** on the **Usage** page, or `geass servers add`) or run a [pool](/docs/guides/node-pools/) that adds machines when pods cannot start and deletes them when they sit idle. Amazon EC2 has run against a live account; every other driver was written from the provider's documentation and tested against a simulation only, so start small. A server at any provider can still join as a node, as before.
 
 ## Data and backups
 
@@ -172,6 +173,10 @@ Yes, as **Sleep when idle**, for any service: an image, a build from GitHub, or 
 ### Can I keep a project on certain servers for compliance?
 
 Yes, with compliance tags. Tag the nodes that qualify, for example `hipaa`, and mark the tag as a compliance tag on them (**Usage**, then **Edit** on a node). Then require it under the project's **Settings → Compliance**. Everything the project runs, including its databases, buckets, builds and backup jobs, stays on nodes with the tag, those nodes take no other project's work, and the project's log history is not sent to the shared log store. It is about where Geass places work. It does not move data that is already elsewhere (a project with databases has to restore them into new ones first), it does not protect against a compromised node, and the control plane, backups to S3 and external databases sit outside it. See [Compliance node tags](/docs/guides/compliance-tags/).
+
+### Can the cluster add servers by itself when it is full?
+
+Yes, with an autoscaling [node pool](/docs/guides/node-pools/): when pods cannot start for lack of room, it creates machines at a cloud (or joins servers you listed), up to a maximum you set, and removes idle ones. It is experimental, it spends money at the cloud, and its nodes run services only unless you say otherwise. Without a pool, nothing adds nodes: pods wait until you do.
 
 ### Can I run code on a schedule?
 

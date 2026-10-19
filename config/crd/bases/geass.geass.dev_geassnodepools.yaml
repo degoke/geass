@@ -1,0 +1,539 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassnodepools.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassNodePool
+    listKind: GeassNodePoolList
+    plural: geassnodepools
+    singular: geassnodepool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.minNodes
+      name: Min
+      type: integer
+    - jsonPath: .spec.maxNodes
+      name: Max
+      type: integer
+    - jsonPath: .status.nodes
+      name: Nodes
+      type: integer
+    - jsonPath: .status.readyNodes
+      name: Ready
+      type: integer
+    - jsonPath: .spec.size
+      name: Size
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GeassNodePool is the Schema for the geassnodepools API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of GeassNodePool
+            properties:
+              addressType:
+                default: Public
+                description: |-
+                  AddressType says which address of a machine Geass reaches it on. Private suits a cluster whose nodes share
+                  one private network with the machines of the pool; Public is for a multi-site cluster.
+                enum:
+                - Public
+                - Private
+                type: string
+              autoscaling:
+                description: Autoscaling makes the pool follow load between minNodes
+                  and maxNodes.
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled lets the pool grow and shrink between minNodes
+                      and maxNodes. Off, the pool keeps exactly minNodes.
+                    type: boolean
+                  maxScaleUp:
+                    default: 5
+                    description: MaxScaleUp is the most nodes added in one step.
+                    format: int32
+                    maximum: 50
+                    minimum: 1
+                    type: integer
+                  minNodeLifetimeMinutes:
+                    description: |-
+                      MinNodeLifetimeMinutes is how long a node lives before it may be removed. Most providers bill each started
+                      hour, so a node removed after ten minutes costs a full hour; setting this to 55 keeps a node for the hour
+                      that is paid for anyway, ready for the next load.
+                    format: int32
+                    maximum: 10080
+                    minimum: 0
+                    type: integer
+                  scaleDownAfterMinutes:
+                    default: 10
+                    description: ScaleDownAfterMinutes is how long a node must have
+                      been a candidate before it is removed.
+                    format: int32
+                    maximum: 1440
+                    minimum: 1
+                    type: integer
+                  scaleDownDelayAfterAddMinutes:
+                    default: 10
+                    description: |-
+                      ScaleDownDelayAfterAddMinutes is how long after a node was added the pool removes none, so that it does not
+                      remove capacity that the load which asked for it has not used yet.
+                    format: int32
+                    maximum: 1440
+                    minimum: 1
+                    type: integer
+                  scaleDownUtilizationPercent:
+                    default: 50
+                    description: |-
+                      ScaleDownUtilizationPercent is the share of a node's CPU or memory, whichever is higher, that its pods
+                      reserve, below which the node is a candidate for removal.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  scaleUpDelaySeconds:
+                    default: 30
+                    description: |-
+                      ScaleUpDelaySeconds is how long a pod must have been unable to start before the pool adds a node for it. It
+                      keeps a pod that is merely slow to be scheduled from buying a machine.
+                    format: int32
+                    maximum: 3600
+                    minimum: 1
+                    type: integer
+                  spareNodes:
+                    description: |-
+                      SpareNodes is how many nodes beyond what pods ask for the pool keeps empty, so that a burst finds room at
+                      once instead of waiting minutes for a machine. They count against maxNodes and cost money while idle.
+                    format: int32
+                    maximum: 20
+                    minimum: 0
+                    type: integer
+                type: object
+              cluster:
+                default: default
+                description: Cluster is the GeassCluster the nodes join. It defaults
+                  to default.
+                type: string
+              connectionRef:
+                description: |-
+                  ConnectionRef names the GeassCloudConnection that creates the machines. It must be a connection for
+                  compute that is not scoped to a project.
+                type: string
+              fallbackRegions:
+                description: FallbackRegions are tried, in order, when the provider
+                  has no room in region.
+                items:
+                  type: string
+                maxItems: 5
+                type: array
+              fallbackSizes:
+                description: FallbackSizes are tried, in order, when the provider
+                  has no room for size or the account is at a limit for it.
+                items:
+                  type: string
+                maxItems: 5
+                type: array
+              image:
+                description: Image is the operating system image. It defaults to the
+                  provider's Ubuntu 24.04.
+                type: string
+              inventory:
+                description: Inventory lists servers you own, instead of a cloud connection.
+                properties:
+                  hosts:
+                    items:
+                      description: |-
+                        GeassInventoryHost is a server you already own that a pool may join to the cluster when it needs room and give
+                        back when it does not.
+                      properties:
+                        address:
+                          description: |-
+                            Address is where Geass reaches the server over SSH, and the address the node advertises in a multi-site
+                            cluster.
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the node's name once it joins.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        sshKeySecretRef:
+                          description: SSHKeySecretRef is the Secret that holds the
+                            user's private key (and, optionally, known_hosts).
+                          properties:
+                            name:
+                              description: name is unique within a namespace to reference
+                                a secret resource.
+                              type: string
+                            namespace:
+                              description: namespace defines the space within which
+                                the secret name must be unique.
+                              type: string
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        sshPort:
+                          default: 22
+                          description: SSHPort is the SSH port. It defaults to 22.
+                          format: int32
+                          type: integer
+                        sshUser:
+                          description: SSHUser is a user that is root or can use sudo
+                            without a password.
+                          minLength: 1
+                          type: string
+                      required:
+                      - address
+                      - name
+                      - sshKeySecretRef
+                      - sshUser
+                      type: object
+                    maxItems: 100
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                required:
+                - hosts
+                type: object
+              maxNodes:
+                description: MaxNodes is the most nodes the pool ever has. It is required,
+                  so that no pool can grow without a bound.
+                format: int32
+                maximum: 200
+                minimum: 0
+                type: integer
+              minNodes:
+                default: 0
+                description: MinNodes is how many nodes the pool always has. A pool
+                  that does not autoscale has exactly this many.
+                format: int32
+                maximum: 200
+                minimum: 0
+                type: integer
+              orphanPolicy:
+                default: Report
+                description: OrphanPolicy says what to do with a machine of this pool
+                  at the provider that no node owns.
+                enum:
+                - Report
+                - Delete
+                type: string
+              placement:
+                description: Placement is the region, zone and tags the nodes carry.
+                properties:
+                  region:
+                    description: |-
+                      Region groups nodes that are close together, such as "us" or "eu". A project pinned to a
+                      region only runs on nodes in it.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  tags:
+                    description: Tags describe what the node is for.
+                    items:
+                      description: GeassNodeTag is a free-form label on a node, such
+                        as "storage" or "gpu".
+                      properties:
+                        compliance:
+                          description: |-
+                            Compliance marks the tag as a compliance boundary, such as "hipaa". A compliance tag is always
+                            reserved, so nothing but the projects that require it can land on the node.
+                          type: boolean
+                        name:
+                          description: Name is the tag, a lowercase DNS label.
+                          maxLength: 40
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        reserved:
+                          description: |-
+                            Reserved keeps every workload that does not ask for this tag off the node, so the node is
+                            dedicated to the work that does.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  zone:
+                    description: |-
+                      Zone is the provider or site inside the region, such as "aws-us-east-1". Replicas of a highly
+                      available database are spread across zones.
+                    maxLength: 40
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                type: object
+              region:
+                description: 'Region is the provider''s own place: a location, zone
+                  or region, as its connection documents.'
+                type: string
+              settings:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Settings are values specific to the provider, such as a subnet or a security group. The provider's
+                  documentation lists them.
+                type: object
+              size:
+                description: Size is the provider's name for a machine size, such
+                  as cx23 or t3.medium.
+                type: string
+              spot:
+                description: |-
+                  Spot asks for the provider's cheaper machines that it may take back, where it has them. A node that is
+                  taken back is replaced.
+                type: boolean
+              storage:
+                default: None
+                description: Storage says whether the nodes may hold data. It defaults
+                  to None.
+                enum:
+                - None
+                - Allow
+                type: string
+              suspend:
+                description: Suspend stops the pool from adding or removing nodes.
+                  Nodes it has stay.
+                type: boolean
+            required:
+            - maxNodes
+            - minNodes
+            type: object
+            x-kubernetes-validations:
+            - message: maxNodes must not be below minNodes
+              rule: self.maxNodes >= self.minNodes
+            - message: a pool uses either a cloud connection or an inventory of servers,
+                not both and not neither
+              rule: has(self.connectionRef) != has(self.inventory)
+            - message: a pool that creates machines at a cloud needs a size
+              rule: '!has(self.connectionRef) || has(self.size)'
+          status:
+            description: status defines the observed state of GeassNodePool
+            properties:
+              conditions:
+                description: conditions represent the current state of the GeassNodePool
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              consecutiveFailures:
+                description: |-
+                  ConsecutiveFailures counts machines that failed to become nodes since the last one that did. Three of them
+                  pause the pool.
+                format: int32
+                type: integer
+              countedFailures:
+                description: CountedFailures are the nodes whose failure is already
+                  in ConsecutiveFailures.
+                items:
+                  type: string
+                maxItems: 20
+                type: array
+              desiredNodes:
+                description: DesiredNodes is how many nodes the pool is working towards.
+                format: int32
+                type: integer
+              estimatedHourlyCost:
+                description: |-
+                  EstimatedHourlyCost is what the pool's nodes cost for an hour at the provider's list price, when the provider
+                  states one. Taxes and traffic are not in it.
+                type: string
+              fallbackSince:
+                format: date-time
+                type: string
+              fallbackStep:
+                description: |-
+                  FallbackStep says which size and region of the pool's lists new nodes are made with: 0 is the first of each,
+                  and each step after it is the next combination, taken when the provider has no room or the account is at a
+                  limit. It goes back to 0 an hour later.
+                format: int32
+                type: integer
+              lastFailure:
+                description: LastFailure is why the most recent machine failed to
+                  become a node, and LastFailureAt is when.
+                type: string
+              lastFailureAt:
+                format: date-time
+                type: string
+              lastScaleDown:
+                format: date-time
+                type: string
+              lastScaleUp:
+                description: LastScaleUp and LastScaleDown are when the pool last
+                  added and last removed a node.
+                format: date-time
+                type: string
+              message:
+                description: Message says what the pool is doing, or why it is not
+                  doing something.
+                type: string
+              nodeAllocatable:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: |-
+                  NodeAllocatable is what a new node of the pool offers to pods, after the system's own use. The capacity check
+                  uses it to tell whether the pool can make room for a workload.
+                type: object
+              nodes:
+                description: Nodes is how many nodes the pool has, whatever state
+                  they are in.
+                format: int32
+                type: integer
+              observedGeneration:
+                description: ObservedGeneration is the generation of the spec the
+                  status describes.
+                format: int64
+                type: integer
+              orphans:
+                description: Orphans are machines at the provider that carry the pool's
+                  labels and belong to no node.
+                items:
+                  type: string
+                maxItems: 50
+                type: array
+              pausedUntil:
+                description: PausedUntil is when a pool that was paused after repeated
+                  failures tries again.
+                format: date-time
+                type: string
+              pendingPods:
+                description: PendingPods is how many pods were unable to start, and
+                  could start on a node of this pool, at the last look.
+                format: int32
+                type: integer
+              phase:
+                description: Phase is how the pool is doing.
+                type: string
+              readyNodes:
+                description: ReadyNodes is how many of them are ready.
+                format: int32
+                type: integer
+              scaleDownBackoffUntil:
+                description: |-
+                  ScaleDownBackoffUntil is when a pool whose last attempt to remove a node failed (a pod would not leave) tries
+                  again.
+                format: date-time
+                type: string
+              size:
+                description: Size is the machine size nodes are created with, as the
+                  provider describes it.
+                properties:
+                  currency:
+                    type: string
+                  hourlyPrice:
+                    type: string
+                  memoryMiB:
+                    format: int64
+                    type: integer
+                  name:
+                    description: Name is the size in use. It differs from spec.size
+                      while a fallback size is in use.
+                    type: string
+                  vcpus:
+                    format: int32
+                    type: integer
+                type: object
+              unneededSince:
+                additionalProperties:
+                  format: date-time
+                  type: string
+                description: UnneededSince records, for each node that is a candidate
+                  for removal, since when.
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

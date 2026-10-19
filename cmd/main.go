@@ -40,6 +40,7 @@ import (
 	"github.com/degoke/geass/internal/dashboard"
 	"github.com/degoke/geass/internal/netcheck"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	_ "github.com/degoke/geass/pkg/compute/all"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
@@ -251,10 +252,14 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassproject")
 		os.Exit(1)
 	}
+	// Creates machines at the cloud providers that connections stand for. Every provider is registered by importing
+	// pkg/compute/all.
+	computeFactory := &controller.ConnectionComputeFactory{Reader: mgr.GetClient()}
 	if err := (&controller.GeassNodeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		SSH:    ssh.New(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		SSH:     ssh.New(),
+		Compute: computeFactory,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnode")
 		os.Exit(1)
@@ -339,8 +344,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.GeassCloudConnectionReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Compute: computeFactory,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscloudconnection")
 		os.Exit(1)
@@ -375,6 +381,16 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "alertrouting")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassNodePoolReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Compute:  computeFactory,
+		PodUsage: podUsage,
+		Reader:   mgr.GetAPIReader(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassnodepool")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if dashboardAddr != "0" {
@@ -386,6 +402,7 @@ func main() {
 			Config:    restConfig,
 			GitHubApp: githubapp.LoadConfigFromEnv(),
 			Webhooks:  webhookDispatcher,
+			Compute:   computeFactory,
 		}); err != nil {
 			setupLog.Error(err, "Failed to add dashboard server")
 			os.Exit(1)

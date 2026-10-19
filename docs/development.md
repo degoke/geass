@@ -96,6 +96,17 @@ cannot be ordered.
 | k3s integration | `eval "$(make -s k3s-up)"`, then `make test-k3s-serverless`, `test-k3s-objectstorage`, `test-k3s-limits` | Docker | Things only a real k3s has: its Helm controller, Traefik, KEDA, object storage, network policy. See [test/k3sintegration/README.md](../test/k3sintegration/README.md). |
 | High availability | `make test-k3s-ha` | Docker | A three-server K3s where the server running the operator is taken down. |
 | Load | `make loadtest LOADTEST_ARGS="-apps 250,500,1000"` | Docker | What the operator costs as a cluster grows. See [hack/loadtest/main.go](../hack/loadtest/main.go). |
+| Node pools, simulated | `make test-k3s-nodepool` (after `make k3s-up`) | Docker | A pool adding and removing nodes on a real scheduler, with a container standing in for each machine. |
+| Amazon EC2, live | `go test -tags live -run TestLive -v ./pkg/compute/aws` | An AWS account and an IAM user's key (below) | The EC2 driver against the real API. It spends a few cents. |
+
+The EC2 live test is behind the `live` build tag, so no ordinary test run reaches AWS. It needs `GEASS_LIVE_AWS_ACCESS_KEY_ID` and
+`GEASS_LIVE_AWS_SECRET_ACCESS_KEY` (and `GEASS_LIVE_AWS_REGION`, default `eu-north-1`), the key of an IAM user that has only the
+policy in [Cloud connections for machines](../website/src/content/docs/docs/guides/connectors/clouds.md#amazon-ec2): the driver takes an
+access key and secret, not a session token, so a role's temporary credentials do not work. It launches one `t3.micro`, checks it
+boots and answers on port 22, and terminates it. Its cleanup terminates every instance and tries to delete every security group that
+carries its run's `geass-cluster` tag, but the policy does not let the key delete a group (Geass never does), so sweep what is left
+with an administrator's key, by that tag, and check the console. Do not run it in an account where an organization policy denies
+`ec2:RunInstances`.
 
 The upgrade test reads the baseline release (`hack/crd-baseline-ref`) from git history, so it needs a full clone: in a
 shallow one it skips and says why, and `make crd-compat` fails. Set `GEASS_REQUIRE_UPGRADE_TESTS=1` to make a test that

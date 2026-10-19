@@ -905,6 +905,12 @@ func (c *AWSClient) ensurePathStyleBucket(bucket string) error {
 	return fmt.Errorf("object store %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 }
 
+// SignAWSRequest signs a request with AWS Signature Version 4 for a service and region, using an IAM user's access
+// key. The compute provider for EC2 uses it, so that signing exists once.
+func SignAWSRequest(req *http.Request, payload []byte, accessKey, secretKey, service, region string) error {
+	return (&AWSClient{AccessKey: accessKey, SecretKey: secretKey}).signWithRegion(req, payload, service, region)
+}
+
 func (c *AWSClient) sign(req *http.Request, payload []byte, service string) error {
 	return c.signWithRegion(req, payload, service, c.region())
 }

@@ -82,6 +82,11 @@ type Placement struct {
 	// Tags, but the short-lived jobs that work on the workload's data keep them (see Jobs), where
 	// they drop Tags. Sorted and without duplicates; set them with WithRequired.
 	Required []string
+	// Ephemeral lets the workload run on nodes that must not hold data (the nodes of a pool made for that), which
+	// are tainted against everything else. Only services set it: they keep nothing on the node, so the node may
+	// be removed from under them. It does not say where a workload must run, so it is not part of IsZero or of
+	// what is stored.
+	Ephemeral bool
 }
 
 // NewPlacement normalizes a region and tags into a Placement.
@@ -145,10 +150,13 @@ func (p Placement) NodeSelector() map[string]string {
 // Tolerations let the workload onto nodes that reserve the tags it asks for.
 func (p Placement) Tolerations() []corev1.Toleration {
 	tags := p.AllTags()
-	if len(tags) == 0 {
+	if len(tags) == 0 && !p.Ephemeral {
 		return nil
 	}
-	tolerations := make([]corev1.Toleration, 0, len(tags))
+	tolerations := make([]corev1.Toleration, 0, len(tags)+1)
+	if p.Ephemeral {
+		tolerations = append(tolerations, EphemeralToleration())
+	}
 	for _, tag := range tags {
 		tolerations = append(tolerations, corev1.Toleration{Key: TagKey(tag), Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule})
 	}
@@ -214,6 +222,9 @@ func (p Placement) Matches(node *corev1.Node) bool {
 func (p Placement) Tolerates(taint corev1.Taint) bool {
 	if taint.Effect != corev1.TaintEffectNoSchedule && taint.Effect != corev1.TaintEffectNoExecute {
 		return true
+	}
+	if taint.Key == TaintEphemeral {
+		return p.Ephemeral
 	}
 	for _, tag := range p.AllTags() {
 		if taint.Key == TagKey(tag) {

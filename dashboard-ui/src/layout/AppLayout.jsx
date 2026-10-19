@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ExternalLink,
   FolderKanban,
+  Layers,
   LayoutTemplate,
   LifeBuoy,
   LogOut,
@@ -18,6 +19,7 @@ import { alertUser } from "@/lib/notify";
 import { canMutate, dashboardSession, useBootstrap } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import {
+  ACCOUNT_POOLS,
   ACCOUNT_PRIMARY,
   ACCOUNT_USAGE,
   FOOTER_LINKS,
@@ -31,6 +33,7 @@ const NAV_ICONS = {
   projects: FolderKanban,
   templates: LayoutTemplate,
   cluster: BarChart3,
+  pools: Layers,
   general: Settings,
 };
 
@@ -292,6 +295,7 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
   const usageActive = ACCOUNT_USAGE.active(pathname);
   const settingsOn = settingsActive(pathname) && !usageActive;
   const UsageIcon = NAV_ICONS.cluster;
+  const PoolsIcon = NAV_ICONS.pools;
   const sideLink = (to, active, icon, label) => (
     <Link
       key={label}
@@ -315,6 +319,7 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
             return sideLink(item.to, item.active(pathname), <Icon size={16} />, item.label);
           })}
           {sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label)}
+          {sideLink(ACCOUNT_POOLS.to, ACCOUNT_POOLS.active(pathname), <PoolsIcon size={16} />, ACCOUNT_POOLS.label)}
           {sideLink("/settings", settingsOn, <Settings size={16} />, "Settings")}
         </nav>
 

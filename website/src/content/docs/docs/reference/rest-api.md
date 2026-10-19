@@ -300,10 +300,35 @@ here.
 
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
-| `GET /nodes` | Any (not a project token) | none | `{"items": [{"name", "ready", "schedulable", "controlPlane", "region", "zone", "tags": [{"name", "reserved", "compliance"}], "cpu", "memory"}]}` |
+| `GET /nodes` | Any (not a project token) | none | `{"items": [{"name", "ready", "schedulable", "controlPlane", "region", "zone", "tags": [{"name", "reserved", "compliance"}], "cpu", "memory", "pool", "ephemeral"}]}`. `pool` is the pool the node belongs to, and `ephemeral` is `true` for a node that keeps data off itself; both are left out when they do not apply |
 | `POST /nodes/{name}/placement` | Admin | `region`, `zone`, `tags` (list), `reserved` (list), `compliance` (list) | `{"ok": true, "warnings": [...]}`; see [Cluster and platform](#cluster-and-platform) |
 | `GET /cluster/metrics` | Any (not a project token) | `?window=` | Series for the whole cluster |
 | `GET /operator/metrics` | Any (not a project token) | `?window=` | Series for the operator: `reconcileErrors`, `reconcileTime`, `apiLatency`, `apiRequests`, `queueDepth`, `statusWrites`, `statusSkipped` |
+
+#### Machines: clouds, pools and servers
+
+Geass creates machines at clouds for [node pools](/docs/guides/node-pools/) and single servers. A connection that creates machines belongs to the cluster, never to a project, and none of these routes is open to a project token. They are experimental, like the clouds behind them. A write answers `{"ok": true}`, and a create also has the `name`. An error is a `400` with the reason.
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /compute/providers` | Any (not a project token) | none | `{"items": [{"id", "label", "summary", "fields": [{"key", "label", "help", "secret", "optional", "multiline"}], "settings": [{"key", "label", "help", "required"}], "freeSettings", "regionHelp"}]}`: the clouds, the credentials each takes and the settings a pool can give it. Never a credential value |
+| `GET /compute/sizes` | Admin (not a project token) | `?connection=`* , `?region=` | `{"items": [{"id", "description", "vcpus", "memoryMiB", "diskGB", "hourlyPrice", "currency", "arch"}]}`, cheapest first. It calls the cloud with the connection's credentials, so `403` for anyone but an admin, `502` when the cloud cannot list its sizes, and `503` when the server cannot reach clouds |
+| `GET /connections` | Any (not a project token) | none | `{"items": [connection, ...]}` of every cloud connection, sorted by name. A connection has `name`, `provider`, `purposes`, `project`, `region`, `available`, `account`, `message`, `warnings`, `verifiedAt`, `expiresAt`, `usedBy` (pools), `machines` and `createdAt`, and never a credential |
+| `GET /connections/{name}` | Any (not a project token) | none | One connection; `404` `no such connection` |
+| `POST /connections` | Admin | `name`* (lowercase letters, numbers and hyphens, at most 50 characters), `provider`* (an ID from `/compute/providers`), `purposes` (list: `Compute`, and for AWS `Storage` and `Database`; `Compute` when left out), `region`, and each credential the cloud names, as a field of its own key (`token`, `accessKeyId`, ...) | `{"ok": true, "name": "hetzner"}`. The credentials go into the Secret `<name>-credentials` in `geass-system` and are never shown again. `400` when a required credential is missing or `project` is sent |
+| `PATCH /connections/{name}` | Admin | `purposes`, `region`, and the credentials to replace (send only the ones that change) | `{"ok": true}` |
+| `DELETE /connections/{name}` | Admin | `confirmName`* | `{"ok": true}`. Removes the connection and its Secret. Refused while a pool or a machine uses it |
+| `POST /connections/{name}/verify` | Admin | none | `{"ok": true}`. Asks the cloud again whether it accepts the credentials; read `GET /connections/{name}` for the answer |
+| `GET /pools` | Any (not a project token) | none | `{"items": [pool, ...]}` without nodes |
+| `GET /pools/{name}` | Any (not a project token) | none | One pool, with its nodes under `members` |
+| `POST /pools` | Admin | `name`*, `maxNodes`* (the cost cap), `connection` or `inventory` (a list of `{name, address, sshUser, sshPort?, sshKeySecret?}`) with `inventoryKey`, `region`, `size`, `fallbackSizes`, `fallbackRegions`, `image`, `spot`, `addressType` (`Public` or `Private`), `settings` (a JSON object), `placementRegion`, `placementZone`, `tags`, `reservedTags`, `storage` (`None` or `Allow`), `minNodes`, `autoscaling`, `scaleUpDelaySeconds`, `maxScaleUp`, `scaleDownUtilizationPercent`, `scaleDownAfterMinutes`, `scaleDownDelayAfterAddMinutes`, `minNodeLifetimeMinutes`, `spareNodes`, `orphanPolicy` (`Report` or `Delete`) | `{"ok": true, "name": "burst"}`. `400` without `maxNodes`, for a connection that is not for Compute or belongs to a project, and for a setting the cloud does not read |
+| `PATCH /pools/{name}` | Admin | Any of the fields of `POST /pools`. A change to the placement replaces the region, site and tags together | `{"ok": true}`. `400` when it would change a pool from a cloud to servers or the other way |
+| `DELETE /pools/{name}` | Admin | `confirmName`* | `{"ok": true}`. Deletes the pool, its nodes and their machines |
+| `POST /pools/{name}/resume` | Admin | none | `{"ok": true}`. Ends the pause of a pool that kept failing, and forgets the failures |
+| `POST /servers` | Admin | `name` (made up for a machine at a cloud), `source` (`cloud` or `existing`; `existing` when `address` is sent), for a cloud `connection`*, `region`, `size`*, `image`, `settings`; for a server you have `address`*, `sshUser`*, `sshPort`, and `sshPrivateKey` or `sshKeySecret`*, `knownHosts`; and `placementRegion`, `placementZone`, `tags`, `storage` (`None` or `Allow`, `Allow` by default) | `{"ok": true, "name": "server-x7k2m"}`. A machine at a cloud costs money until the server is removed |
+| `DELETE /servers/{name}` | Admin | `confirmName`* | `{"ok": true}`. Refused for the control plane, and for a node that belongs to a pool |
+
+A pool in a response has `name`, `cluster`, `connection`, `provider`, `inventory`, `region`, `size`, `fallbackSizes`, `fallbackRegions`, `image`, `spot`, `addressType`, `settings`, `placement`, `storage`, `minNodes`, `maxNodes`, `autoscaling` (with every setting, defaults filled in), `orphanPolicy`, `suspended`, and its state: `phase`, `message`, `desiredNodes`, `nodes`, `readyNodes`, `pendingPods`, `activeSize`, `estimatedHourlyCost`, `consecutiveFailures`, `lastFailure`, `lastFailureAt`, `pausedUntil`, `lastScaleUp`, `lastScaleDown`, `orphans`, `fallbackStep` and `createdAt`. A node under `members` has `name`, `phase`, `message`, `ready`, `deleting`, `instanceId`, `address`, `size`, `region`, `createdAt` and `readyAt`.
 
 #### Templates and project tokens
 
@@ -846,9 +871,12 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/auth/mode` | `mode` (`local` or `external`) | Switches how people sign in. `external` needs the settings to be complete, a test sign-in of exactly them in the last 30 minutes as someone who maps to admin, and an admin with a password; `400` says which is missing. Turning it on ends the open sessions of users of the Secret who are not admins. `local` is always allowed. A signed-in admin only, not a token |
 | `POST /api/settings/auth/logout-policy` | `revokeTokens` (`on` or `off`) | Sets whether a back-channel logout from the identity provider also revokes the tokens and deploy hooks the person made (their sessions always end). Default on. It does not change who can sign in, so it can be changed while people sign in through the provider. `400` for another value or while no provider is set up. A signed-in admin only, not a token |
 | `POST /api/settings/auth/clear` | none | Removes the identity provider and its client secret and goes back to local sign-in. A signed-in admin only, not a token |
-| `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project |
+| `POST /api/cloud-connections/create` | `name`, `provider` (`AWS` or `PlanetScale`, default `AWS`), `project` (the `proj-...` ID, required), and `accessKeyId`, `secretAccessKey`, `region` or `token`, `organization` | Adds an AWS or PlanetScale connection for buckets, backups or databases. `{"ok":true}`. It writes the Secret `<name>-credentials` before it checks the project. A request that names a cloud that creates machines, or the purpose `Compute`, goes to `/api/connections/create` instead |
+| `POST /api/connections/create`, `/api/connections/{name}/update`, `/delete`, `/verify` | As `POST`, `PATCH` and `DELETE /connections` and `POST /connections/{name}/verify` in the table above | Connections for machines. `delete` takes `confirmName` |
+| `POST /api/pools/create`, `/api/pools/{name}/update`, `/delete`, `/resume` | As `POST` and `PATCH /pools`, `DELETE /pools/{name}` and `POST /pools/{name}/resume`; `delete` takes `confirmName` | Node pools. On a form, a switch (`spot`, `suspend`, `autoscaling`) is on when sent as `on`, `true`, `1` or `yes`, and a list is the field repeated |
+| `POST /api/servers/create`, `/api/servers/{name}/delete` | As `POST /servers` and `DELETE /servers/{name}` | Single servers |
 
-Details of the last group are in [Cloud connectors](/docs/guides/connectors/).
+Details of the last groups are in [Cloud connectors](/docs/guides/connectors/), [Cloud connections for machines](/docs/guides/connectors/clouds/) and [Node pools](/docs/guides/node-pools/).
 
 ### Project token endpoints
 

@@ -50,7 +50,7 @@ const doc = (slug: string) => withBase(`docs/${slug}/`);
         <article class="tile">
           <span class="eyebrow mono">SCALE</span>
           <h3>From one server to a fleet</h3>
-          <p>Join another VPS or bare-metal machine and your work spreads across it.</p>
+          <p>Join another VPS or bare-metal machine and your work spreads across it. Or let Geass create machines at a cloud when pods cannot start, up to a cap you set.</p>
           <div class="viz" aria-hidden="true">
             <div class="nodes">
               <span class="node"><b><i class="dot"></i>node-1</b><small>eu</small></span>
@@ -59,10 +59,11 @@ const doc = (slug: string) => withBase(`docs/${slug}/`);
               <span class="node ghost">+ join</span>
             </div>
           </div>
-          <ul class="chips"><li>Regions and tags</li><li>Autoscaling</li><li>HA Postgres</li><li>Replicated volumes</li></ul>
+          <ul class="chips"><li>Regions and tags</li><li>Node pools (experimental)</li><li>HA Postgres</li><li>Replicated volumes</li></ul>
           <div class="tile-docs">
             <span>Docs</span>
             <a href={doc("getting-started/add-servers")}>Add servers</a>
+            <a href={doc("guides/node-pools")}>Node pools</a>
             <a href={doc("guides/scaling-and-placement")}>Scaling and placement</a>
             <a href={doc("operations/high-availability")}>High availability</a>
           </div>
