@@ -1,6 +1,6 @@
 import { createTheme } from "@mantine/core";
 
-// "signal" is C.C. green. Shade 5 (#7ce0a0) is the brand accent on dark surfaces.
+// "signal" is C.C. green. Shade 5 (#7ce0a0) is the brand accent on dark surfaces; shade 7 (#16935a) is the deep green used on light.
 const signal = [
   "#effcf4",
   "#d9f8e5",
@@ -9,7 +9,7 @@ const signal = [
   "#90e5b0",
   "#7ce0a0",
   "#5fc487",
-  "#46a46c",
+  "#16935a",
   "#2f8352",
   "#1d5f39",
 ];
@@ -19,12 +19,11 @@ const mono = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-
 
 export const geassTheme = createTheme({
   primaryColor: "signal",
-  primaryShade: 5,
-  // The accent is a light colour, so Mantine must pick dark text for filled controls.
+  primaryShade: { light: 7, dark: 5 },
+  // Shade 5 is a light colour, so Mantine must pick dark text for filled controls on dark; shade 7 gets white.
   autoContrast: true,
   colors: { signal },
-  black: "#f2f2f2",
-  white: "#151515",
+  black: "#0a0a0a",
   // The Contract is square-cornered: every radius token resolves to 0.
   defaultRadius: 0,
   radius: { xs: "0", sm: "0", md: "0", lg: "0", xl: "0" },

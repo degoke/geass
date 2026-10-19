@@ -1,4 +1,4 @@
-/* Docs theme: "The Contract" applied to Starlight. Near-black field, hairline rules, square corners,
+/* Docs theme: "The Contract" applied to Starlight. Hairline rules, square corners,
    C.C. green (deep green on light) for links and actions only. Starlight's gray scale runs from
    gray-1 (strongest text) to gray-7 (faintest surface) in both themes. */
 
@@ -68,17 +68,22 @@ h1#_top {
   letter-spacing: -0.02em;
 }
 
-/* Links read as links on the dark field. */
+/* Links read as links on the page. */
 .sl-markdown-content a:not(.sl-link-button):not([class*="card"]) {
   text-underline-offset: 0.18em;
 }
 
-/* Primary buttons follow the landing page: solid green, near-black text. */
+/* Primary buttons follow the landing page: solid mint with near-black text, on both themes. */
 .sl-link-button.primary {
-  background: var(--sl-color-accent);
-  border-color: var(--sl-color-accent);
-  color: var(--sl-color-text-invert);
+  background: #7ce0a0;
+  border-color: #7ce0a0;
+  color: #0a0a0a;
   font-weight: 600;
+}
+
+.sl-link-button.primary:hover {
+  background: #94e8b2;
+  border-color: #94e8b2;
 }
 
 /* Cards: a hairline that turns green on hover, like the landing page tiles. */
