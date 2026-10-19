@@ -79,26 +79,27 @@ func TestEveryCatalogImageIsPinnedToAVersion(t *testing.T) {
 	}
 }
 
-// ReFHIR needs about 1.3 GB to run and 3.1 GB on its first start, which a 2 GB limit does not survive.
-// The catalog reserves what it runs on and lets it use what it starts on.
-func TestReFHIRReservesWhatItRunsOnAndMayUseWhatItStartsOn(t *testing.T) {
+// ReFHIR 0.0.2 starts from FHIR packages prepared inside the image and peaked near 120 MiB, where 0.0.1
+// peaked near 3.1 GB. The catalog reserves a small amount and leaves room above it for more data.
+func TestReFHIRReservesLittleAndMayUseHeadroomAboveIt(t *testing.T) {
 	refhir, ok := Find("refhir")
 	require.True(t, ok)
 	require.NotEmpty(t, refhir.Notes)
+	require.Contains(t, refhir.Notes, "REFHIR_PACKAGE_DOWNLOAD", "downloads are off by default, so installing a package answers 403, and the note says how to allow it")
 	var service Resource
 	for _, resource := range refhir.Resources {
 		if resource.Kind == KindService {
 			service = resource
 		}
 	}
-	require.Equal(t, "ghcr.io/hai-hq/refhir:0.0.1", service.Image)
+	require.Equal(t, "ghcr.io/hai-hq/refhir:0.0.2", service.Image)
 	require.Equal(t, int32(8080), service.Port)
 
 	resources := service.AppResources()
-	require.Equal(t, "2Gi", resources.Requests.Memory().String())
-	require.Equal(t, "4Gi", resources.Limits.Memory().String(), "the first start was killed at 2 GB and peaked near 3.1 GB")
-	require.Equal(t, "500m", resources.Requests.Cpu().String())
-	require.Equal(t, "2", resources.Limits.Cpu().String())
+	require.Equal(t, "256Mi", resources.Requests.Memory().String())
+	require.Equal(t, "1Gi", resources.Limits.Memory().String(), "about 8 times the busiest peak measured (107 to 122 MiB) and 4 times the reserve")
+	require.Equal(t, "250m", resources.Requests.Cpu().String())
+	require.Equal(t, "1", resources.Limits.Cpu().String())
 
 	variables := map[string]Variable{}
 	for _, variable := range service.Variables {
@@ -106,6 +107,10 @@ func TestReFHIRReservesWhatItRunsOnAndMayUseWhatItStartsOn(t *testing.T) {
 	}
 	require.Equal(t, &Reference{Resource: databaseKey, Key: "uri"}, variables["REFHIR_POSTGRES_URL"].From)
 	require.Equal(t, GenerateSecretKind, variables["REFHIR_AUDIT_KEY"].Generate, "the audit key has to be set, and Geass makes one")
+	// The entry starts from the packages bundled in the image. Allowing downloads, or switching the bundle off,
+	// would bring back the first-start network dependency and the memory it cost.
+	require.NotContains(t, variables, "REFHIR_PACKAGE_DOWNLOAD")
+	require.NotContains(t, variables, "REFHIR_PACKAGE_BUNDLE")
 	require.Contains(t, refhir.Summary(), "1 database")
 }
 
