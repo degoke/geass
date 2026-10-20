@@ -26,6 +26,9 @@ const sessionAdminOnly = "can only be changed from the dashboard by a signed-in 
 const (
 	maxDisplayName = 60
 	minSessionMins = 5
+	// minRefreshMins and maxRefreshMins bound how often the provider is asked again about people, and how long it may be out of reach.
+	minRefreshMins = 5
+	maxRefreshMins = 1440
 	maxSessionMins = 720
 )
 
@@ -80,13 +83,19 @@ type authSettingsView struct {
 	RoleMap        map[string]string `json:"roleMap"`
 	RequireClaim   map[string]string `json:"requireClaim"`
 	SessionMinutes int               `json:"sessionMinutes"`
-	CallbackURL    string            `json:"callbackURL"`
-	LogoutURL      string            `json:"backchannelLogoutURL"`
+	// RefreshMinutes is how often the provider is asked again about people who signed in (0 is never), and StaleGraceMinutes how
+	// long it can be unreachable before what could not be checked is ended.
+	RefreshMinutes    int    `json:"refreshMinutes"`
+	StaleGraceMinutes int    `json:"staleGraceMinutes"`
+	CallbackURL       string `json:"callbackURL"`
+	LogoutURL         string `json:"backchannelLogoutURL"`
 	// RevokeTokensOnLogout is whether a logout from the provider also revokes the tokens the person made.
 	RevokeTokensOnLogout bool           `json:"revokeTokensOnLogout"`
 	Test                 *ssoTestResult `json:"test"`
 	HasPasswordAdmin     bool           `json:"hasPasswordAdmin"`
 	CanEnable            bool           `json:"canEnable"`
+	// Tenancy is how the token names organizations, and whether they are on.
+	Tenancy tenancyView `json:"tenancy"`
 }
 
 // handleAPIAuthSettings says how people sign in and how the provider is set up. A signed-in admin only: the roles
@@ -109,6 +118,7 @@ func (s *Server) handleAPIAuthSettings(w http.ResponseWriter, r *http.Request) {
 		Mode: settings.Mode, Configured: settings.Configured(), DisplayName: settings.DisplayName, Issuer: settings.Config.Issuer,
 		ClientID: settings.Config.ClientID, HasSecret: settings.HasSecret, Scopes: settings.Config.Scopes, RoleClaim: settings.Config.RoleClaim,
 		RoleMap: settings.Config.RoleMap, RequireClaim: settings.Config.RequireClaim, SessionMinutes: settings.SessionMinutes,
+		RefreshMinutes: settings.RefreshMinutes, StaleGraceMinutes: int(settings.StaleGrace / time.Minute),
 		CallbackURL: ssoRedirectURL(r, settings.DashboardURL), LogoutURL: strings.TrimSuffix(ssoRedirectURL(r, settings.DashboardURL), oidcCallbackPath) + oidcLogoutPath,
 		RevokeTokensOnLogout: settings.RevokeTokensOnLogout,
 		Test:                 s.ssoTest(fingerprint), HasPasswordAdmin: hasPasswordAdmin,
@@ -116,6 +126,29 @@ func (s *Server) handleAPIAuthSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if view.Scopes == nil {
 		view.Scopes = []string{}
+	}
+	view.Tenancy = tenancyView{
+		Enabled: settings.TenancyOn, OrgsClaim: settings.Config.Tenancy.OrgsClaim, PlatformClaim: settings.Config.Tenancy.PlatformClaim,
+		PlatformValues: settings.Config.Tenancy.PlatformValues,
+	}
+	if view.Tenancy.PlatformValues == nil {
+		view.Tenancy.PlatformValues = []string{}
+	}
+	view.Tenancy.AutoProvision, view.Tenancy.AutoProvisionAllow, view.Tenancy.AutoProvisionMax = "off", []string{}, defaultAutoProvisionMax
+	if config, err := s.platformConfig(r.Context()); err == nil {
+		if spec := tenancySpecOf(config).AutoProvision; spec != nil {
+			view.Tenancy.AutoProvision = strings.ToLower(spec.Mode)
+			view.Tenancy.AutoProvisionAllow = nonNil(spec.Allow)
+			if spec.Max != nil {
+				view.Tenancy.AutoProvisionMax = int(*spec.Max)
+			}
+		}
+	}
+	if orgs, orgsErr := s.listOrganizations(r.Context()); orgsErr == nil {
+		view.Tenancy.Organizations = len(orgs)
+		if !view.Tenancy.Enabled {
+			view.Tenancy.EnableProblem = s.tenancyEnableProblem(r.Context(), settings, hasPasswordAdmin, len(orgs))
+		}
 	}
 	writeJSON(w, http.StatusOK, view)
 }
@@ -155,6 +188,19 @@ func (s *Server) handlePlatformAuthSave(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	refreshMinutes, staleMinutes := 0, 0
+	if raw := strings.TrimSpace(r.FormValue("refreshMinutes")); raw != "" {
+		if refreshMinutes, err = strconv.Atoi(raw); err != nil || (refreshMinutes != 0 && (refreshMinutes < minRefreshMins || refreshMinutes > maxRefreshMins)) {
+			fail(fmt.Sprintf("How often the provider is asked again is 0 (never), or between %d and %d minutes.", minRefreshMins, maxRefreshMins))
+			return
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("staleGraceMinutes")); raw != "" {
+		if staleMinutes, err = strconv.Atoi(raw); err != nil || staleMinutes < minRefreshMins || staleMinutes > maxRefreshMins {
+			fail(fmt.Sprintf("How long the provider can be out of reach is between %d and %d minutes.", minRefreshMins, maxRefreshMins))
+			return
+		}
+	}
 	displayName := strings.TrimSpace(r.FormValue("displayName"))
 	if len(displayName) > maxDisplayName {
 		fail(fmt.Sprintf("The provider's name can be at most %d characters.", maxDisplayName))
@@ -164,6 +210,23 @@ func (s *Server) handlePlatformAuthSave(w http.ResponseWriter, r *http.Request) 
 	candidate := oidcauth.Config{
 		Issuer: issuer, ClientID: strings.TrimSpace(r.FormValue("clientID")), RoleClaim: strings.TrimSpace(r.FormValue("roleClaim")),
 		RoleMap: roleMap, RequireClaim: requireClaim, Scopes: splitList(r.FormValue("scopes")),
+		// How the token names organizations is saved on its own, and is kept: without it there would be no role claim to
+		// validate for a setup that reads the role from each organization.
+		Tenancy: ssoSettingsOf(config).Config.Tenancy,
+	}
+	// The claim that lists the organizations may come with the provider, because a setup that reads the role from each
+	// organization has no role claim to save the provider with, and the claim cannot be saved on its own before there is a
+	// provider. While organizations are on it cannot change: people are working in them.
+	orgsClaim := ""
+	if formHasValue(r, "orgsClaim") {
+		orgsClaim = strings.TrimSpace(r.FormValue("orgsClaim"))
+		if current := tenancySpecOf(config); orgsClaim != current.OrgsClaim {
+			if current.Enabled {
+				fail("Turn organizations off before changing how the token names them: people are working in them now.")
+				return
+			}
+			candidate.Tenancy.OrgsClaim = orgsClaim
+		}
 	}
 	if err := candidate.Validate(); err != nil {
 		fail(err.Error())
@@ -195,6 +258,7 @@ func (s *Server) handlePlatformAuthSave(w http.ResponseWriter, r *http.Request) 
 	spec := &geassv1alpha1.GeassPlatformOIDCSpec{
 		DisplayName: displayName, Issuer: candidate.Issuer, ClientID: candidate.ClientID, Scopes: candidate.Scopes,
 		RoleClaim: candidate.RoleClaim, RoleMap: candidate.RoleMap, RequireClaim: candidate.RequireClaim, SessionMinutes: int32(minutes),
+		RefreshMinutes: int32(refreshMinutes), StaleGraceMinutes: int32(staleMinutes),
 	}
 	// What a logout does to the tokens is set on its own (see handlePlatformAuthLogoutPolicy), so saving the provider keeps it.
 	if previous != nil {
@@ -231,6 +295,11 @@ func (s *Server) handlePlatformAuthSave(w http.ResponseWriter, r *http.Request) 
 			c.Spec.Auth = &geassv1alpha1.GeassPlatformAuthSpec{Mode: platform.AuthModeLocal}
 		}
 		c.Spec.Auth.OIDC = spec
+		if formHasValue(r, "orgsClaim") && orgsClaim != tenancySpecOf(*c).OrgsClaim {
+			tenancy := tenancySpecOf(*c)
+			tenancy.OrgsClaim = orgsClaim
+			c.Spec.Auth.Tenancy = &tenancy
+		}
 	}
 	if creating {
 		setProvider(&config)

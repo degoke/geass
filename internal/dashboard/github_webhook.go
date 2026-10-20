@@ -183,6 +183,7 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 		return 0, err
 	}
 	changed := payload.changedFiles()
+	requireInstallation := s.tenancyOn(ctx)
 	triggered := 0
 	var failures []error
 	for i := range apps.Items {
@@ -204,9 +205,11 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 		if !platform.WatchPatternsTrigger(git.WatchPatterns, changed) {
 			continue
 		}
-		if payload.Installation.ID > 0 {
+		if requireInstallation || payload.Installation.ID > 0 {
+			// With organizations on, an event that names no installation is nobody's: two organizations can build
+			// repositories of the same name, and only the installation says whose this one is.
 			matches, err := s.appMatchesInstallation(ctx, app, payload.Installation.ID)
-			if err != nil || !matches {
+			if err != nil || !matches || payload.Installation.ID <= 0 {
 				continue
 			}
 		}
@@ -237,7 +240,7 @@ func (s *Server) appMatchesInstallation(ctx context.Context, app *geassv1alpha1.
 		return false, err
 	}
 	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
 		return false, err
 	}
 	return githubapp.InstallationIDFromSecret(secret) == installationID, nil
@@ -266,7 +269,7 @@ func (s *Server) validateGitConnectionForProject(ctx context.Context, project, c
 		return fmt.Errorf("GitHub connection is unavailable")
 	}
 	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
 		return fmt.Errorf("GitHub connection Secret is unavailable")
 	}
 	if githubapp.InstallationIDFromSecret(secret) == 0 && githubapp.TokenFromSecret(secret) == "" {
@@ -286,7 +289,7 @@ func (s *Server) validateCloudConnectionForProject(ctx context.Context, project,
 		}
 		return fmt.Errorf("cloud connection is unavailable")
 	}
-	return platform.ValidateCloudConnectionForProject(ctx, s.Client, *connection, project)
+	return platform.ValidateCloudConnectionForProject(ctx, s.system(), *connection, project)
 }
 
 func hmacSHA256(secret string, body []byte) string {

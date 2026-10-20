@@ -209,7 +209,7 @@ func (s *Server) buildLogSection(ctx context.Context, buildName string) deployme
 // so the newest pod is the last attempt. Its kaniko container has the build; when that never started because
 // the clone failed, the output of the git container is what says why.
 func (s *Server) buildPodOutput(ctx context.Context, build *geassv1alpha1.GeassBuild) string {
-	pods, err := s.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + build.Name + "-kaniko"})
+	pods, err := s.Kube.CoreV1().Pods(buildJobNamespace(build)).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + build.Name + "-kaniko"})
 	if err != nil || len(pods.Items) == 0 {
 		return ""
 	}
@@ -220,7 +220,7 @@ func (s *Server) buildPodOutput(ctx context.Context, build *geassv1alpha1.GeassB
 		return strings.Compare(b.Name, a.Name)
 	})
 	for _, container := range []string{"kaniko", buildCloneContainer} {
-		data, err := s.Kube.CoreV1().Pods(build.Namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{Container: container}).Do(ctx).Raw()
+		data, err := s.Kube.CoreV1().Pods(buildJobNamespace(build)).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{Container: container}).Do(ctx).Raw()
 		if err == nil && len(data) > 0 {
 			return string(data)
 		}

@@ -242,7 +242,7 @@ func (s *Server) logStore() logStoreReader {
 // loggingEnabled reports whether the cluster was set up to keep logs.
 func (s *Server) loggingEnabled(ctx context.Context) (enabled bool, retentionDays int32) {
 	var clusters geassv1alpha1.GeassClusterList
-	if err := s.Client.List(ctx, &clusters, client.InNamespace(systemNamespace)); err != nil {
+	if err := s.Client.List(asSystem(ctx), &clusters, client.InNamespace(systemNamespace)); err != nil {
 		return false, 0
 	}
 	for i := range clusters.Items {
@@ -271,7 +271,7 @@ func (s *Server) handleAPIProjectLogHistory(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "project not found"})
 		return
 	}
-	if len(project.Spec.RequiredTags) > 0 {
+	if tags, _ := platform.ProjectTags(r.Context(), s.system(), &project); len(tags) > 0 {
 		// The shared log store may sit on any node, so logs of a project limited to tagged nodes are never
 		// sent to it. The live logs are read from the nodes themselves and are not affected.
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": []string{},

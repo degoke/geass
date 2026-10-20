@@ -294,14 +294,16 @@ func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
 	s.devices.mu.Unlock()
 
 	token, record, err := apitokens.New(apitokens.Request{
-		Name: "CLI: " + clientName, Scope: apitokens.ScopeWorkspace, Role: role, CreatedBy: session.Username, CreatedByID: session.Identity, ExpiresInDays: days,
+		Name: "CLI: " + clientName, Scope: apitokens.ScopeWorkspace, Role: role, CreatedBy: session.Username, CreatedByID: session.Identity,
+		// The token acts for the organization and workspace of the person who approves it.
+		Org: session.Org, Workspace: session.Workspace, ExpiresInDays: days,
 	}, time.Now())
 	if err != nil {
 		writeV1Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	err = s.mutateAPITokens(r.Context(), func(records map[string]apitokens.Record) (bool, error) {
-		if len(records) >= apitokens.MaxTokens {
+		if tooManyTokens(records, record.Org) {
 			return false, errTooManyTokens
 		}
 		records[record.ID] = record

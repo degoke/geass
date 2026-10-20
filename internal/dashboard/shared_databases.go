@@ -46,11 +46,22 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var existing geassv1alpha1.GeassDatabase
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: systemNamespace}, &existing); err == nil {
+	if err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: name, Namespace: systemNamespace}, &existing); err == nil {
 		redirectFormError(w, r, fallback, "A database with that name already exists")
 		return
 	} else if !apierrors.IsNotFound(err) {
 		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	// A server can be made for an organization: only its projects may take databases on it, and its people see it. It runs
+	// where the organization requires its work to.
+	org, err := s.organization(r.Context(), strings.TrimSpace(r.FormValue("org")))
+	if err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
+	if orgName := strings.TrimSpace(r.FormValue("org")); orgName != "" && org == nil {
+		redirectFormError(w, r, fallback, "There is no such organization")
 		return
 	}
 	region := strings.ToLower(strings.TrimSpace(r.FormValue("region")))
@@ -59,8 +70,11 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	effectiveRegion := region
+	if effectiveRegion == "" && org != nil {
+		effectiveRegion = org.Spec.Region
+	}
 	if effectiveRegion == "" {
-		effectiveRegion, _ = platform.DefaultRegion(r.Context(), s.Client, "")
+		effectiveRegion, _ = platform.DefaultRegion(r.Context(), s.system(), "")
 	}
 	tags := splitNames(r.Form["runOnTags"])
 	if err := s.validateTags(r.Context(), effectiveRegion, tags); err != nil {
@@ -82,6 +96,7 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 			Resources:        res,
 			ServerRegion:     region,
 			RunOn:            geassv1alpha1.GeassWorkloadPlacement{Tags: tags},
+			Org:              orgNameOf(org),
 			// There is no project to deploy from, so it starts running at once, as the cluster's object storage does.
 			Deploy: geassv1alpha1.GeassDeploySpec{Enabled: true},
 		},
@@ -98,7 +113,11 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 	db.Spec.StorageSize = storageSize
 	est := platform.EstimateWorkload(databaseCreateWorkloadKind(engine), db.Spec.HighAvailability, 0)
 	est = platform.EstimateFromResources(est.Label, databaseResources(db), est.Replicas)
-	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, platform.NewPlacement(effectiveRegion, tags)) {
+	placement := platform.NewPlacement(effectiveRegion, tags)
+	if org != nil {
+		placement = placement.WithRequired(org.Spec.RequiredTags)
+	}
+	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, placement) {
 		return
 	}
 	if err := s.Client.Create(r.Context(), db); err != nil {
@@ -113,6 +132,14 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 	redirect(w, r, fallback)
 }
 
+// orgNameOf is the name of an organization, or empty for none.
+func orgNameOf(org *geassv1alpha1.GeassOrganization) string {
+	if org == nil {
+		return ""
+	}
+	return org.Name
+}
+
 // formFlag reads a checkbox or switch: "on" from a form, or anything strconv reads as true from the API.
 func formFlag(r *http.Request, key string) bool {
 	value := strings.ToLower(strings.TrimSpace(r.FormValue(key)))
@@ -125,8 +152,10 @@ func formFlag(r *http.Request, key string) bool {
 
 // logicalDatabasesOn lists the logical databases that live on a server.
 func (s *Server) logicalDatabasesOn(ctx context.Context, server string) ([]geassv1alpha1.GeassLogicalDatabase, error) {
+	// Every logical database on the server is counted, whoever's it is: a server is not removed from under data that is
+	// not the remover's to see.
 	var logical geassv1alpha1.GeassLogicalDatabaseList
-	if err := s.Client.List(ctx, &logical, client.InNamespace(systemNamespace)); err != nil {
+	if err := s.Client.List(asSystem(ctx), &logical, client.InNamespace(systemNamespace)); err != nil {
 		return nil, err
 	}
 	var on []geassv1alpha1.GeassLogicalDatabase
@@ -183,11 +212,27 @@ func (s *Server) validateLogicalDatabaseServer(ctx context.Context, project, env
 		}
 		return "", nil
 	}
+	// A server an organization owns is for that organization's projects.
+	if server.Spec.Org != "" {
+		var owner geassv1alpha1.GeassProject
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &owner); err != nil {
+			if apierrors.IsNotFound(err) {
+				return "That project does not exist", nil
+			}
+			return "", err
+		}
+		if owner.Spec.Org != server.Spec.Org {
+			if isPlatformContext(ctx) {
+				return "That server belongs to an organization the project is not in", nil
+			}
+			return "That database server does not exist", nil
+		}
+	}
 	serverRegion := s.databasePlacement(ctx, &server).Region
 	if serverRegion == "" {
 		serverRegion = server.Spec.ServerRegion
 	}
-	projectRegion, err := platform.ProjectRegion(ctx, s.Client, project)
+	projectRegion, err := platform.ProjectRegion(ctx, s.system(), project)
 	if err != nil {
 		return "", err
 	}

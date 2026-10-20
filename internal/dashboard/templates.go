@@ -51,7 +51,7 @@ func (s *Server) listTemplates(ctx context.Context) ([]templates.Template, error
 		builtinIDs[template.ID] = true
 	}
 	var configMaps corev1.ConfigMapList
-	if err := s.Client.List(ctx, &configMaps, client.InNamespace(systemNamespace), client.MatchingLabels{templateLabel: templateLabelOn}); err != nil {
+	if err := s.Client.List(asSystem(ctx), &configMaps, client.InNamespace(systemNamespace), client.MatchingLabels{templateLabel: templateLabelOn}); err != nil {
 		return nil, err
 	}
 	saved := make([]templates.Template, 0, len(configMaps.Items))
@@ -81,7 +81,7 @@ func (s *Server) findTemplate(ctx context.Context, id string) (templates.Templat
 		return template, true, nil
 	}
 	var configMap corev1.ConfigMap
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: templatePrefix + id, Namespace: systemNamespace}, &configMap); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: templatePrefix + id, Namespace: systemNamespace}, &configMap); err != nil {
 		if apierrors.IsNotFound(err) {
 			return templates.Template{}, false, nil
 		}

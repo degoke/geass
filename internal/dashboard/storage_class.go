@@ -32,7 +32,7 @@ type storageClassIndex struct {
 func (s *Server) storageClasses(ctx context.Context) storageClassIndex {
 	index := storageClassIndex{byName: map[string]*storagev1.StorageClass{}}
 	var clusters geassv1alpha1.GeassClusterList
-	if err := s.Client.List(ctx, &clusters); err == nil {
+	if err := s.Client.List(asSystem(ctx), &clusters); err == nil {
 		for i := range clusters.Items {
 			if geassv1alpha1.LonghornEnabled(clusters.Items[i].Spec.Addons) {
 				index.longhornEnabled = true
@@ -40,7 +40,7 @@ func (s *Server) storageClasses(ctx context.Context) storageClassIndex {
 		}
 	}
 	var classes storagev1.StorageClassList
-	if err := s.Client.List(ctx, &classes); err != nil {
+	if err := s.Client.List(asSystem(ctx), &classes); err != nil {
 		return index
 	}
 	for i := range classes.Items {

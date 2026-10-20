@@ -19,7 +19,7 @@ import (
 // tells GitHub about, and the switch that turns reporting off.
 
 func (s *Server) githubReportResolver() *githubapp.Resolver {
-	return &githubapp.Resolver{Client: s.Client, HTTP: s.HTTPClient, Namespace: systemNamespace}
+	return &githubapp.Resolver{Client: s.system(), HTTP: s.HTTPClient, Namespace: systemNamespace}
 }
 
 func (s *Server) githubReportGuard() *githubapp.Guard {

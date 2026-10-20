@@ -59,7 +59,7 @@ func (s *Server) projectRequiredTagsChange(ctx context.Context, name string, req
 	if len(tags) == 0 {
 		return nil, nil
 	}
-	region, err := platform.ProjectRegion(ctx, s.Client, name)
+	region, err := platform.ProjectRegion(ctx, s.system(), name)
 	if err != nil {
 		return nil, err
 	}
@@ -153,13 +153,17 @@ func (s *Server) handleAPIProjectCompliance(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "project not found"})
 		return
 	}
-	required := platform.NewPlacement("", project.Spec.RequiredTags).Tags
+	required, err := platform.ProjectTags(ctx, s.system(), &project)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not read the project's organization"})
+		return
+	}
 	nodes, err := s.listNodes(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not read the nodes"})
 		return
 	}
-	region, _ := platform.ProjectRegion(ctx, s.Client, name)
+	region, _ := platform.ProjectRegion(ctx, s.system(), name)
 	var databases geassv1alpha1.GeassDatabaseList
 	if err := s.Client.List(ctx, &databases, client.InNamespace(systemNamespace)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not read the databases"})

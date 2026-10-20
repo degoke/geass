@@ -183,14 +183,32 @@ func describeRole(me client.Identity) string {
 	if me.Scope == "project" {
 		return fmt.Sprintf("project token for %s/%s", me.Project, me.Environment)
 	}
+	role := ""
 	switch me.Role {
 	case "admin":
-		return "admin"
+		role = "admin"
 	case "observer":
-		return "read-only, with logs"
+		role = "read-only, with logs"
 	default:
-		return "read-only"
+		role = "read-only"
 	}
+	return role + describePlace(me)
+}
+
+// describePlace says where the caller works, when the platform has organizations: " of Acme / Payments team", or
+// " of the platform".
+func describePlace(me client.Identity) string {
+	switch {
+	case me.PlatformAdmin:
+		return " of the platform"
+	case me.Org == "":
+		return ""
+	}
+	place := firstSet(me.OrgName, me.Org)
+	if me.Workspace != "" {
+		place += " / " + firstSet(me.WorkspaceName, me.Workspace)
+	}
+	return " of " + place
 }
 
 func (a *App) logoutCmd() *cobra.Command {

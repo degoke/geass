@@ -335,6 +335,31 @@ func addActualUsage(ctx context.Context, metrics vectorMetricsClient, projects [
 	return true
 }
 
+// withOrganizationRegions is the projects as they run: one that names no region of its own is in its organization's.
+// The projects are copied, so what is stored is not changed.
+func (s *Server) withOrganizationRegions(ctx context.Context, projects []geassv1alpha1.GeassProject) []geassv1alpha1.GeassProject {
+	orgs, err := s.listOrganizations(ctx)
+	if err != nil || len(orgs) == 0 {
+		return projects
+	}
+	regions := map[string]string{}
+	for i := range orgs {
+		if orgs[i].Spec.Region != "" {
+			regions[orgs[i].Name] = orgs[i].Spec.Region
+		}
+	}
+	if len(regions) == 0 {
+		return projects
+	}
+	out := slices.Clone(projects)
+	for i := range out {
+		if out[i].Spec.Region == "" {
+			out[i].Spec.Region = regions[out[i].Spec.Org]
+		}
+	}
+	return out
+}
+
 // handleAPIUsage serves GET /api/usage.
 func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -349,19 +374,34 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var pods corev1.PodList
-	if err := s.Client.List(ctx, &pods); err != nil {
+	if err := s.Client.List(asSystem(ctx), &pods); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not read cluster pods"})
 		return
 	}
 	var claims corev1.PersistentVolumeClaimList
-	if err := s.Client.List(ctx, &claims); err != nil {
+	if err := s.Client.List(asSystem(ctx), &claims); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not read volumes"})
 		return
 	}
-	defaultRegion, _ := platform.DefaultRegion(ctx, s.Client, "")
-	report := buildUsage(projects.Items, nodes, pods.Items, claims.Items, defaultRegion)
+	defaultRegion, _ := platform.DefaultRegion(ctx, s.system(), "")
+	report := buildUsage(s.withOrganizationRegions(ctx, projects.Items), nodes, pods.Items, claims.Items, defaultRegion)
 	if vector, ok := s.metricsClient(ctx, true).(vectorMetricsClient); ok {
 		report.ActualAvailable = addActualUsage(ctx, vector, projects.Items, &report)
 	}
+	if !isPlatformContext(ctx) {
+		report = tenantUsage(report)
+	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// tenantUsage is what an organization is told of the usage: its own projects. What is left over, which would add up
+// everyone else's projects and the platform's own, and what the cluster as a whole can give, are not its to see, and
+// neither are the shares, which would give the size of the cluster away.
+func tenantUsage(report usageReport) usageReport {
+	own := usageReport{ActualAvailable: report.ActualAvailable, Projects: make([]projectUsage, len(report.Projects))}
+	copy(own.Projects, report.Projects)
+	for i := range own.Projects {
+		own.Projects[i].ShareOfCPU, own.Projects[i].ShareOfMemory = 0, 0
+	}
+	return own
 }

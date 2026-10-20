@@ -97,6 +97,19 @@ type dashboardSessionInfo struct {
 	// Identity names a person who signed in through an identity provider (their stable key there), and is empty for
 	// a local user. It is what the tokens they make are tied to.
 	Identity string `json:"-"`
+	// PlatformAdmin is whether the session acts for the platform as a whole and not for an organization: its
+	// password administrators, install-wide tokens, and anyone the provider names as one. While organizations are off
+	// everyone acts for the platform, whatever this says.
+	PlatformAdmin bool `json:"platformAdmin,omitempty"`
+	// Org and Workspace are what an organization's session acts for: the GeassOrganization and the workspace in it
+	// ("" for all of the organization's, which only its administrators are given).
+	Org       string `json:"org,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	// Grants are where a person from the provider may work, which they choose between. They are in the session's cookie;
+	// the dashboard lists them with their names (see Scopes).
+	Grants []sessionGrant `json:"-"`
+	// Scopes is where the person may work, for the page to offer; it is filled in where a session is told to the page.
+	Scopes []sessionScope `json:"scopes,omitempty"`
 }
 
 type loginAttempt struct {
@@ -107,6 +120,10 @@ type loginAttempt struct {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Who is asking is worked out by the dashboard for itself: it reads the users and the tokens, which no
+		// organization may. The handler then runs for the tenant that comes out of it, or, for a path that is public,
+		// as the dashboard's own work, which is what it has always been.
+		r = r.WithContext(asSystem(r.Context()))
 		if dashboardPublicPath(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -144,6 +161,12 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "viewer role cannot access this"})
 			return
 		}
+		tenant := s.tenantOfSession(r, session)
+		if routeScopeOf(r.Method, r.URL.Path) == scopePlatform && !tenant.Platform {
+			writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: "only the platform's administrators can do this"})
+			return
+		}
+		r = r.WithContext(withTenant(r.Context(), tenant))
 		// A stream or a terminal that stays open is checked against its credentials again from time to time.
 		r, stop := s.guardStream(r)
 		defer stop()
@@ -328,7 +351,12 @@ func (s *Server) handleDashboardSession(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, answer)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "username": session.Username, "role": session.Role, "canMutate": session.CanMutate})
+	answer := map[string]any{"authenticated": true, "username": session.Username, "role": session.Role, "canMutate": session.CanMutate}
+	// Where the person works, and where else they may, once organizations are on.
+	if scopes := s.sessionScopes(r.Context(), session); len(scopes) > 0 {
+		answer["org"], answer["workspace"], answer["platformAdmin"], answer["scopes"] = session.Org, session.Workspace, session.PlatformAdmin, scopes
+	}
+	writeJSON(w, http.StatusOK, answer)
 }
 
 func (s *Server) sessionCanMutate(r *http.Request) bool {
@@ -373,7 +401,7 @@ func (s *Server) currentSession(r *http.Request) *dashboardSessionInfo {
 	if liveRole == "" {
 		liveRole = dashboardRoleViewer
 	}
-	return &dashboardSessionInfo{Username: user.Username, Role: liveRole, CanMutate: liveRole == dashboardRoleAdmin, CanReadSensitive: liveRole == dashboardRoleAdmin}
+	return &dashboardSessionInfo{Username: user.Username, Role: liveRole, CanMutate: liveRole == dashboardRoleAdmin, CanReadSensitive: liveRole == dashboardRoleAdmin, PlatformAdmin: true}
 }
 
 func (s *Server) dashboardAuth(r *http.Request) (*dashboardAuth, error) {
@@ -415,7 +443,7 @@ func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, ma
 		}
 	}
 	secret := &corev1.Secret{}
-	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
+	err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	epochs := map[string]int64{}
 	secretUsers := []dashboardUser{}
 	if err == nil {
@@ -500,12 +528,12 @@ func (s *Server) persistDashboardSessionKey(r *http.Request, existing *corev1.Se
 				"session-epochs": string(payload),
 			},
 		}
-		if createErr := s.Client.Create(r.Context(), created); createErr != nil {
+		if createErr := s.Client.Create(asSystem(r.Context()), created); createErr != nil {
 			if !apierrors.IsAlreadyExists(createErr) {
 				return nil, createErr
 			}
 			latest := &corev1.Secret{}
-			if getLatest := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, latest); getLatest != nil {
+			if getLatest := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, latest); getLatest != nil {
 				return nil, getLatest
 			}
 			decoded, decodeErr := decodeDashboardSessionKey(latest.Data["session-key"])
@@ -522,7 +550,7 @@ func (s *Server) persistDashboardSessionKey(r *http.Request, existing *corev1.Se
 	}
 	latest.Data["session-key"] = []byte(encodedKey)
 	latest.Data["session-epochs"] = payload
-	if err := s.Client.Update(r.Context(), latest); err != nil {
+	if err := s.Client.Update(asSystem(r.Context()), latest); err != nil {
 		return nil, err
 	}
 	return sessionKey, nil
@@ -547,12 +575,12 @@ func (s *Server) persistHashedDashboardUsers(r *http.Request, existing *corev1.S
 				"session-epochs": string(epochPayload),
 			},
 		}
-		if createErr := s.Client.Create(r.Context(), created); createErr != nil {
+		if createErr := s.Client.Create(asSystem(r.Context()), created); createErr != nil {
 			if !apierrors.IsAlreadyExists(createErr) {
 				return createErr
 			}
 			latest := &corev1.Secret{}
-			if getLatest := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, latest); getLatest != nil {
+			if getLatest := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, latest); getLatest != nil {
 				return getLatest
 			}
 			return s.updateDashboardUsersSecret(r.Context(), latest, users, sessionKey, epochs)
@@ -580,14 +608,14 @@ func (s *Server) updateDashboardUsersSecret(ctx context.Context, secret *corev1.
 	if len(sessionKey) > 0 {
 		latest.Data["session-key"] = []byte(encodeDashboardSessionKey(sessionKey))
 	}
-	return s.Client.Update(ctx, latest)
+	return s.Client.Update(asSystem(ctx), latest)
 }
 
 func (s *Server) revokeDashboardSession(r *http.Request, username string) error {
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
 	secret := &corev1.Secret{}
-	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
+	err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	epochs := map[string]int64{}
 	if err == nil {
 		parsedEpochs, parseErr := parseDashboardSessionEpochs(secret)
@@ -612,7 +640,7 @@ func (s *Server) revokeDashboardSession(r *http.Request, username string) error 
 		if marshalErr != nil {
 			return marshalErr
 		}
-		return s.Client.Create(r.Context(), &corev1.Secret{
+		return s.Client.Create(asSystem(r.Context()), &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace},
 			Type:       corev1.SecretTypeOpaque,
 			StringData: map[string]string{"session-epochs": string(payload)},
@@ -627,7 +655,7 @@ func (s *Server) revokeDashboardSession(r *http.Request, username string) error 
 		latest.Data = map[string][]byte{}
 	}
 	latest.Data["session-epochs"] = payload
-	return s.Client.Update(r.Context(), latest)
+	return s.Client.Update(asSystem(r.Context()), latest)
 }
 
 func normalizeDashboardUsername(username string) string {
@@ -1125,7 +1153,7 @@ func pruneLoginLockouts(lockouts map[string]loginAttempt, keep string, now time.
 
 func (s *Server) loadLoginLockout(r *http.Request, username string) (loginAttempt, error) {
 	secret := &corev1.Secret{}
-	err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
+	err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	if apierrors.IsNotFound(err) {
 		return loginAttempt{}, nil
 	}
@@ -1143,7 +1171,7 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 	var lastErr error
 	for range 8 {
 		secret := &corev1.Secret{}
-		err := s.Client.Get(r.Context(), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
+		err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 		if apierrors.IsNotFound(err) {
 			if attempt.Count == 0 && attempt.LockedUntil.IsZero() {
 				return nil
@@ -1153,7 +1181,7 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 			if marshalErr != nil {
 				return marshalErr
 			}
-			createErr := s.Client.Create(r.Context(), &corev1.Secret{
+			createErr := s.Client.Create(asSystem(r.Context()), &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace},
 				Type:       corev1.SecretTypeOpaque,
 				StringData: map[string]string{dashboardLoginLockoutsSecretKey: string(payload)},
@@ -1188,7 +1216,7 @@ func (s *Server) persistLoginLockout(r *http.Request, username string, attempt l
 			latest.Data = map[string][]byte{}
 		}
 		latest.Data[dashboardLoginLockoutsSecretKey] = payload
-		lastErr = s.Client.Update(r.Context(), latest)
+		lastErr = s.Client.Update(asSystem(r.Context()), latest)
 		if lastErr == nil || !apierrors.IsConflict(lastErr) {
 			return lastErr
 		}

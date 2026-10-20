@@ -7,3 +7,4 @@ package dashboard
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassobjectstores,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassbackuparchives,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassorganizations,verbs=get;list;watch;create;update;patch;delete

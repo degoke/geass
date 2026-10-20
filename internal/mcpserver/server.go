@@ -84,6 +84,13 @@ func instructions(me client.Identity, opts Options) string {
 	if me.Scope == "project" {
 		fmt.Fprintf(&b, "You act with a token limited to %s/%s: you can only see and change services there. ", me.Project, me.Environment)
 	}
+	if me.Org != "" {
+		place := firstNonEmpty(me.OrgName, me.Org)
+		if me.Workspace != "" {
+			place += " / " + firstNonEmpty(me.WorkspaceName, me.Workspace)
+		}
+		fmt.Fprintf(&b, "You act for %s: you can only see and change what belongs to it. ", place)
+	}
 	if !canWrite(me, opts) {
 		b.WriteString("You can only read: nothing here can change anything. ")
 	} else {
@@ -91,6 +98,15 @@ func instructions(me client.Identity, opts Options) string {
 	}
 	b.WriteString("Secret values are never returned by any tool. Plain configuration is not secret and is returned as it is, so keep anything sensitive in a secret.")
 	return b.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func canWrite(me client.Identity, opts Options) bool { return me.CanMutate && !opts.ReadOnly }

@@ -109,7 +109,7 @@ func (s *Server) handleProjectDeployPending(w http.ResponseWriter, r *http.Reque
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	s.notifyDashboardChange("projects", projectName, "deploy")
+	s.notifyChangeIn(projectName, "projects", projectName, "deploy")
 	if isJSONRequest(r) || isHXRequest(r) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deployed": deployed})
 		return

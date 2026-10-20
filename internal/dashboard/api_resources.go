@@ -38,6 +38,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPITokensList(w, r)
 	case r.URL.Path == "/api/usage":
 		s.handleAPIUsage(w, r)
+	case r.URL.Path == "/api/orgs":
+		s.handleAPIOrgs(w, r)
 	case r.URL.Path == "/api/events":
 		s.handleDashboardEvents(w, r)
 	case r.URL.Path == "/api/settings/github":
@@ -50,6 +52,10 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIAuthSettings(w, r)
 	case r.URL.Path == "/api/settings/alerts":
 		s.handleAPIAlertSettings(w, r)
+	case r.URL.Path == "/api/alerts":
+		s.handleAPIOrgAlerts(w, r)
+	case r.URL.Path == "/api/registry":
+		s.handleAPIOrgRegistry(w, r)
 	case r.URL.Path == "/api/planetscale/cluster-sizes":
 		s.handleAPIPlanetScaleClusterSizes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
@@ -179,7 +185,18 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 			break
 		}
 	}
-	info.Capacity = s.clusterCapacity(ctx)
+	// An organization is not shown the cluster's object storage server among its stores, but its buckets are made on it,
+	// so it is told whether there is one.
+	if !info.ObjectStorageAvailable && !isPlatformContext(ctx) {
+		if server, err := s.clusterObjectStore(ctx); err == nil && server != nil {
+			info.ObjectStorageEngine = string(server.Spec.Engine)
+			_, info.ObjectStorageAvailable = platform.ObjectStoreServerFor(server.Spec.Engine)
+		}
+	}
+	// How many machines the cluster has, and how full they are, is the platform's to know.
+	if isPlatformContext(ctx) {
+		info.Capacity = s.clusterCapacity(ctx)
+	}
 	info.Release = releaseOf(data.Clusters.Items)
 	for i := range data.Clusters.Items {
 		if region := data.Clusters.Items[i].Spec.DefaultRegion; region != "" {
@@ -209,7 +226,9 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 
 func (s *Server) dashboardSession(r *http.Request) dashboardSessionInfo {
 	if session := s.currentSession(r); session != nil {
-		return *session
+		info := *session
+		info.Scopes = s.sessionScopes(r.Context(), session)
+		return info
 	}
 	return dashboardSessionInfo{Role: dashboardRoleViewer}
 }
@@ -630,7 +649,7 @@ const mocoRoleLabel = "moco.cybozu.com/role"
 // cannot change what runs.
 func (s *Server) mysqlClusterQueryCommand(ctx context.Context, db geassv1alpha1.GeassDatabase, query string) (command []string, password string, err error) {
 	var secret corev1.Secret
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: db.Name + "-bootstrap", Namespace: db.Status.TargetNamespace}, &secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: db.Name + "-bootstrap", Namespace: db.Status.TargetNamespace}, &secret); err != nil {
 		return nil, "", fmt.Errorf("the database's login is not there yet")
 	}
 	database := strings.TrimSpace(db.Spec.DatabaseName)

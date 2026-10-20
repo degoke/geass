@@ -80,6 +80,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, payload githubPullR
 		return nil, err
 	}
 	var results []pullRequestResult
+	requireInstallation := s.tenancyOn(ctx)
 	for i := range projects.Items {
 		project := &projects.Items[i]
 		config := project.Spec.PREnvironments
@@ -90,9 +91,10 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, payload githubPullR
 				continue
 			}
 		}
-		if payload.Installation.ID > 0 {
+		if requireInstallation || payload.Installation.ID > 0 {
+			// As for a push: with organizations on, only the installation says whose a repository is.
 			matches, err := s.projectMatchesInstallation(ctx, project, payload.Installation.ID)
-			if err != nil || !matches {
+			if err != nil || !matches || payload.Installation.ID <= 0 {
 				continue
 			}
 		}
@@ -277,7 +279,7 @@ func (s *Server) createPullRequestEnvironment(ctx context.Context, project *geas
 	secretName := project.Name + "-shared-secrets"
 	// Copy secret values first so the variables never point at a missing key.
 	var source corev1.Secret
-	haveSource := s.Client.Get(ctx, client.ObjectKey{Name: secretName, Namespace: systemNamespace}, &source) == nil
+	haveSource := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: secretName, Namespace: systemNamespace}, &source) == nil
 	for _, variable := range project.Spec.SharedVariables {
 		if variable.Environment != base || variable.SecretRef == nil || !haveSource {
 			continue
@@ -441,7 +443,7 @@ func (s *Server) cloneEnvironmentResources(ctx context.Context, project *geassv1
 // copySecret duplicates a secret in the system namespace. It reports false when the source is gone.
 func (s *Server) copySecret(ctx context.Context, from, to string) (bool, error) {
 	var source corev1.Secret
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: from, Namespace: systemNamespace}, &source); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: from, Namespace: systemNamespace}, &source); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
@@ -452,7 +454,7 @@ func (s *Server) copySecret(ctx context.Context, from, to string) (bool, error) 
 		Type:       source.Type,
 		Data:       source.DeepCopy().Data,
 	}
-	if err := s.Client.Create(ctx, target); err != nil && !apierrors.IsAlreadyExists(err) {
+	if err := s.Client.Create(asSystem(ctx), target); err != nil && !apierrors.IsAlreadyExists(err) {
 		return false, err
 	}
 	return true, nil

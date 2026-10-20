@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/githubapp"
@@ -47,14 +49,14 @@ func (s *Server) projectGitHubConnection(ctx context.Context, project string) (*
 
 func (s *Server) githubConnectionSecret(ctx context.Context, connection *geassv1alpha1.GeassGitHubConnection) (*corev1.Secret, error) {
 	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
 		return nil, err
 	}
 	return secret, nil
 }
 
 func (s *Server) githubTokenResolver() *githubapp.TokenResolver {
-	return &githubapp.TokenResolver{Client: s.Client, HTTP: s.HTTPClient, Namespace: systemNamespace}
+	return &githubapp.TokenResolver{Client: s.system(), HTTP: s.HTTPClient, Namespace: systemNamespace}
 }
 
 func (s *Server) githubConnectionToken(ctx context.Context, connection *geassv1alpha1.GeassGitHubConnection) (string, error) {
@@ -159,11 +161,100 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
+	if err := s.proveInstallation(r, gh, installationID); err != nil {
+		if errors.Is(err, errInstallationNotTheirs) || errors.Is(err, errNoAuthorizationCode) || errors.Is(err, errGitHubUserUnconfirmed) {
+			redirectFormError(w, r, fallback, err.Error())
+			return
+		}
+		redirectFormInternalError(w, r, fallback)
+		return
+	}
 	if err := s.saveGitHubInstallation(r.Context(), project, environment, installationID); err != nil {
+		if errors.Is(err, errInstallationHeld) {
+			redirectFormError(w, r, fallback, errInstallationHeld.Error())
+			return
+		}
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
 	redirect(w, r, fallback)
+}
+
+var (
+	errNoAuthorizationCode   = errors.New("GitHub did not say who is connecting. In the GitHub App's settings turn on \"Request user authorization (OAuth) during installation\", then connect again")
+	errGitHubUserUnconfirmed = errors.New("GitHub did not confirm who is connecting; connect again")
+	errInstallationNotTheirs = errors.New("GitHub does not list that installation among the ones you can use; install the GitHub App from your own account, or ask an owner of the account it is on to connect it")
+)
+
+// proveInstallation is what makes the installation id in the callback's address someone's to use. One GitHub App serves
+// every organization and the id is only text in a link, so with organizations on, an organization's person has to show
+// that GitHub itself lists the installation among the ones their own account can use. GitHub says so when the App asks for
+// the person's authorization during installation: the callback then carries a code, which is traded for their token. The
+// platform's administrators are not asked, since they may connect any installation as it is.
+func (s *Server) proveInstallation(r *http.Request, gh *githubapp.Client, installationID int64) error {
+	ctx := r.Context()
+	if !s.tenancyOn(ctx) {
+		return nil
+	}
+	if tenant, ok := tenantOf(ctx); ok && tenant.Platform {
+		return nil
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		return errNoAuthorizationCode
+	}
+	token, err := gh.UserAccessToken(code)
+	if err != nil {
+		ctrllog.FromContext(ctx).Info("GitHub did not accept the authorization code", "reason", err.Error())
+		return errGitHubUserUnconfirmed
+	}
+	listed, err := gh.UserHasInstallation(token, installationID)
+	if err != nil {
+		ctrllog.FromContext(ctx).Info("Could not list the GitHub installations of a person", "reason", err.Error())
+		return errGitHubUserUnconfirmed
+	}
+	if !listed {
+		return errInstallationNotTheirs
+	}
+	return nil
+}
+
+// errInstallationHeld is what someone is told when the GitHub installation they came back with is connected to another
+// organization's project. It does not say whose.
+var errInstallationHeld = errors.New("that GitHub installation is already connected to another organization; disconnect it there first, or install the GitHub App again for this one")
+
+// installationHeldByAnotherOrg is whether a project that belongs to another organization (or to none, when this one has
+// one) is connected to the GitHub installation. It reads the connections of every project: the answer is all it gives back.
+func (s *Server) installationHeldByAnotherOrg(ctx context.Context, installationID int64, project *geassv1alpha1.GeassProject) (bool, error) {
+	ctx = asSystem(ctx)
+	var projects geassv1alpha1.GeassProjectList
+	if err := s.Client.List(ctx, &projects, client.InNamespace(systemNamespace)); err != nil {
+		return false, err
+	}
+	for i := range projects.Items {
+		other := &projects.Items[i]
+		if other.Name == project.Name || other.Spec.Org == project.Spec.Org || other.Spec.GitHubConnectionRef == nil {
+			continue
+		}
+		connection := &geassv1alpha1.GeassGitHubConnection{}
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: other.Spec.GitHubConnectionRef.Name, Namespace: systemNamespace}, connection); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		secret := &corev1.Secret{}
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		if githubapp.InstallationIDFromSecret(secret) == installationID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) saveGitHubInstallation(ctx context.Context, project, environment string, installationID int64) error {
@@ -184,6 +275,17 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &p); err != nil {
 		return err
 	}
+	// One GitHub App serves every organization, and the installation id comes back in the address of the callback: an
+	// installation another organization's project uses is not for this one to take.
+	if s.tenancyOn(ctx) {
+		held, err := s.installationHeldByAnotherOrg(ctx, installationID, &p)
+		if err != nil {
+			return err
+		}
+		if held {
+			return errInstallationHeld
+		}
+	}
 
 	connectionName := githubConnectionName(project)
 	tokenSecretName := connectionName + "-token"
@@ -198,12 +300,12 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 			"account_type":    []byte(installation.Account.Type),
 		},
 	}
-	if err := s.Client.Create(ctx, tokenSecret); err != nil {
+	if err := s.Client.Create(asSystem(ctx), tokenSecret); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 		existing := &corev1.Secret{}
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: tokenSecretName, Namespace: systemNamespace}, existing); err != nil {
+		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: tokenSecretName, Namespace: systemNamespace}, existing); err != nil {
 			return err
 		}
 		if existing.Data == nil {
@@ -213,7 +315,7 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 		existing.Data["installation_id"] = []byte(strconv.FormatInt(installationID, 10))
 		existing.Data["account"] = []byte(installation.Account.Login)
 		existing.Data["account_type"] = []byte(installation.Account.Type)
-		if err := s.Client.Update(ctx, existing); err != nil {
+		if err := s.Client.Update(asSystem(ctx), existing); err != nil {
 			return err
 		}
 	}

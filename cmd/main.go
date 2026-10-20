@@ -324,6 +324,12 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasslogicaldatabase")
 		os.Exit(1)
 	}
+	if err := (&controller.GeassOrganizationReconciler{
+		Client: mgr.GetClient(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "geassorganization")
+		os.Exit(1)
+	}
 	if err := (&controller.GeassHAReadinessReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -379,7 +385,8 @@ func main() {
 
 	if dashboardAddr != "0" {
 		if err := mgr.Add(&dashboard.Server{
-			Client:    mgr.GetClient(),
+			// Everything the dashboard reads and writes goes through the client that limits it to the caller's tenant.
+			Client:    dashboard.ScopeClient(mgr.GetClient()),
 			Cache:     mgr.GetCache(),
 			Addr:      dashboardAddr,
 			Kube:      kubernetes.NewForConfigOrDie(restConfig),

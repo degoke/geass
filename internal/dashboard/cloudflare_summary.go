@@ -27,7 +27,7 @@ func (s *Server) cloudflareConnectionSummary(ctx context.Context, config geassv1
 	}
 	out.ZoneID = strings.TrimSpace(config.Spec.CloudflareZoneID)
 	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: systemNamespace}, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.PlatformCloudflareSecretName, Namespace: systemNamespace}, secret); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return out
 		}

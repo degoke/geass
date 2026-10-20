@@ -78,12 +78,12 @@ func (s *Server) clusterCapacityFor(ctx context.Context, placement platform.Plac
 		return snapshot
 	}
 	var nodes corev1.NodeList
-	if err := s.Client.List(ctx, &nodes); err != nil {
+	if err := s.Client.List(asSystem(ctx), &nodes); err != nil {
 		snapshot.Message = "Could not read cluster nodes"
 		return snapshot
 	}
 	var pods corev1.PodList
-	if err := s.Client.List(ctx, &pods); err != nil {
+	if err := s.Client.List(asSystem(ctx), &pods); err != nil {
 		snapshot.Message = "Could not read cluster pods"
 		return snapshot
 	}

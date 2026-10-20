@@ -128,6 +128,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleDeviceToken(w, mutation)
 	case mutation.URL.Path == "/auth/device/approve":
 		s.handleDeviceApprove(w, mutation)
+	case mutation.URL.Path == "/session/scope":
+		s.handleSessionScope(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/orgs/"):
+		s.handleOrgRoutes(w, mutation)
 	case mutation.URL.Path == "/tokens/create":
 		s.handleAPITokenCreate(w, mutation)
 	case mutation.URL.Path == "/tokens/revoke":
@@ -188,6 +192,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformRegistryClear(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/settings/alerts/"):
 		s.handleAlertSettings(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/alerts/channels/"):
+		s.handleOrgAlertChannels(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/registry/"):
+		s.handleOrgRegistry(w, mutation)
 	case mutation.URL.Path == "/settings/auth/save":
 		s.handlePlatformAuthSave(w, mutation)
 	case mutation.URL.Path == "/settings/auth/mode":
@@ -196,6 +204,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformAuthClear(w, mutation)
 	case mutation.URL.Path == "/settings/auth/logout-policy":
 		s.handlePlatformAuthLogoutPolicy(w, mutation)
+	case mutation.URL.Path == "/settings/auth/tenancy":
+		s.handlePlatformAuthTenancy(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create":
@@ -213,14 +223,23 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeDashboardUnavailable(w)
 		return
 	}
-	if viewer {
+	platformView := isPlatformContext(ctx)
+	switch {
+	case viewer:
 		sanitizeDashboardForViewer(&data)
 		data.Platform = s.dashboardPlatformForViewer(ctx, data)
-	} else {
+	case !platformView:
+		// An organization's administrator sees what is the organization's, and not how the platform is set up.
+		data.Platform = s.dashboardPlatformFromInventory(ctx, data)
+	default:
 		data.Platform = s.dashboardPlatform(ctx, data)
 	}
 	data.Platform.Session = s.dashboardSession(r)
+	// The overview numbers are the whole cluster's, so they are the platform's alone.
 	for _, metric := range overviewMetrics {
+		if !platformView {
+			break
+		}
 		value, err := s.metricsClient(ctx, !viewer).QueryInstant(ctx, metric.Query)
 		state := "measured"
 		if err != nil {

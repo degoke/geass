@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/cloud"
 	"github.com/degoke/geass/pkg/platform"
@@ -208,7 +210,14 @@ func (s *Server) validateClusterSize(ctx context.Context, db *geassv1alpha1.Geas
 
 // planetScaleClient returns a client for a PlanetScale connection that belongs to the project.
 func (s *Server) planetScaleClient(ctx context.Context, project, ref string) (*cloud.PlanetScaleClient, error) {
-	connection, secret, err := platform.LoadCloudConnection(ctx, s.Client, project, ref)
+	// For an organization, the project is shown to be its own before the credentials are read for it.
+	if !isPlatformContext(ctx) {
+		var owned geassv1alpha1.GeassProject
+		if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &owned); err != nil {
+			return nil, fmt.Errorf("project %q was not found", project)
+		}
+	}
+	connection, secret, err := platform.LoadCloudConnection(ctx, s.system(), project, ref)
 	if err != nil {
 		return nil, err
 	}

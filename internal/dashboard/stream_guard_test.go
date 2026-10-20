@@ -297,7 +297,7 @@ func TestTheChecksOfOpenStreamsShareWhatTheyReadAndStillSeeChanges(t *testing.T)
 	cookie := cookieOf(t, f.srv, "admin", dashboardRoleAdmin)
 	open := httptest.NewRequest(http.MethodGet, "/api/events", nil)
 	open.AddCookie(cookie)
-	was := streamCredentials{role: dashboardRoleAdmin}
+	was := streamCredentials{role: dashboardRoleAdmin, platform: true}
 	reads.reads.Store(0)
 
 	for range 50 {
