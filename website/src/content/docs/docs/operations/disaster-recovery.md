@@ -1,6 +1,6 @@
 ---
 title: "Disaster recovery"
-description: "What survives losing a node, a disk or the control plane in Geass, how to keep copies of the cluster's own state in your S3 bucket, and how to rebuild a cluster from them."
+description: "What survives losing a node, a disk or the control plane, how to keep copies of the cluster's state in your own S3 bucket, and how to rebuild from them."
 ---
 
 Geass protects your data in three layers, and they protect against different things. This page says which loss each one covers, how to turn on the one that is not on by default (copies of the cluster's own state, in a bucket of yours), and how to rebuild a cluster from it when its disk is gone.
