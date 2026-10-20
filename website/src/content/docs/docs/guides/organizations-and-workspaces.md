@@ -1,6 +1,6 @@
 ---
 title: "Organizations and workspaces"
-description: "Run several organizations on one cluster and keep each one's projects apart: how Geass reads organizations and workspaces from your identity provider, who sees what, and what this does not isolate."
+description: "Run several organizations on one cluster and keep their projects apart: how Geass reads them from your identity provider, and what it does not isolate."
 ---
 
 By default every person who can sign in to the dashboard sees every project: there is one workspace, and one set of roles. Turn on organizations when one Geass serves several groups of people who should not see each other's work: teams of one company, or customers you know.
