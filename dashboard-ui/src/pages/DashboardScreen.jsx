@@ -15,6 +15,8 @@ import { ProjectSettingsPage } from "@/pages/ProjectSettingsPage";
 import { ProjectMonitorPage } from "@/pages/ProjectMonitorPage";
 import { ProjectLogsPage } from "@/pages/ProjectLogsPage";
 import { PlatformSettingsPage } from "@/pages/platform/PlatformSettingsPage";
+import { PoolsPage } from "@/pages/platform/PoolsPage";
+import { PoolDetailPage } from "@/pages/platform/PoolDetailPage";
 import { PlatformSettingsLayout } from "@/layout/PlatformSettingsLayout";
 
 export function DashboardScreen({ mode }) {
@@ -59,6 +61,8 @@ export function DashboardScreen({ mode }) {
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   if (mode === "projects") { content = <ProjectsPage data={data} />; }
   else if (mode === "templates") { content = <TemplatesPage data={data} />; }
+  else if (mode === "pools") { content = <PoolsPage data={data} />; }
+  else if (mode === "pool") { content = <PoolDetailPage name={params.poolName} data={data} />; }
   else if (mode === "device") { content = <DeviceApprovePage data={data} code={search.code} />; }
   else if (mode === "workspace" && project) {
     content = (

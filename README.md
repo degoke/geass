@@ -43,13 +43,15 @@ on hardware they can account for.
 - **Databases and storage**: PostgreSQL, MySQL, Redis and SQLite, shared database servers, resizable Longhorn volumes, buckets on SeaweedFS, Garage or AWS S3, and [backups and restore](https://rungeass.com/docs/guides/backups-and-restore/) to a bucket in your own AWS account.
 - **Domains and HTTPS** through Cloudflare and Let's Encrypt.
 - **Scaling and placement**: replicas, CPU autoscaling, regions and node tags, [compliance tags](https://rungeass.com/docs/guides/compliance-tags/) that keep a project on chosen machines, and [services that sleep when idle](https://rungeass.com/docs/guides/scale-to-zero/).
+- **Machines at a cloud (experimental)**: connect Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or Vultr, or a webhook of your own, and Geass can create a server there, or run a [node pool](https://rungeass.com/docs/guides/node-pools/) that adds machines when pods cannot start and removes idle ones, up to a maximum you set. Amazon EC2 has run against a live account (one region); the other drivers were written from the provider's documentation and tested against a simulation only. You can also just join servers you already have over SSH.
 - **Isolation by default**: projects cannot reach each other until you allow it.
 - **Observability**: metrics, live logs with history, a terminal in a service, and a query box for databases.
 - **Updates that keep your data**: run a newer installer on the control plane and the cluster [updates in place](https://rungeass.com/docs/operations/upgrading/), with an etcd snapshot first and no downgrades.
 - **Automation**: a [command line](https://rungeass.com/docs/guides/command-line/), an [MCP server](https://rungeass.com/docs/guides/mcp-server/) and a versioned [JSON API](https://rungeass.com/docs/reference/rest-api/), all under the same access rules as the dashboard.
 
-Be aware of what it is not: it is not a hosted service (you run the servers), the control plane is one server, and it
-does not create machines for you. [What is Geass](https://rungeass.com/docs/overview/introduction/) lists the limits
+Be aware of what it is not: it is not a hosted service (you run the servers), and the control plane is one server. Servers
+at more than one provider in one cluster is experimental, and so is having Geass create machines at a cloud for you, which
+costs money until they are removed. [What is Geass](https://rungeass.com/docs/overview/introduction/) lists the limits
 before you commit.
 
 ## Install
@@ -72,7 +74,7 @@ curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh \
   | sudo env GEASS_VERSION=v0.1.0 GEASS_ACME_EMAIL=you@yourdomain.com sh
 ```
 
-Then [sign in to the dashboard](https://rungeass.com/docs/getting-started/sign-in/), [add servers](https://rungeass.com/docs/getting-started/add-servers/) and
+Then [sign in to the dashboard](https://rungeass.com/docs/getting-started/sign-in/), [add servers](https://rungeass.com/docs/getting-started/add-servers/) (ones you have, or machines at a cloud) and
 [deploy your first app](https://rungeass.com/docs/getting-started/first-app/). To update a running cluster, run the installer
 of the release you want on the control plane: it keeps the cluster and its data. See
 [Upgrade Geass](https://rungeass.com/docs/operations/upgrading/).

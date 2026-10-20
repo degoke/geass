@@ -45,6 +45,9 @@ type App struct {
 	OpenBrowser func(url string) error
 	// Interactive says whether a person is at the keyboard, which is what lets a command ask a question.
 	Interactive func() bool
+	// ReadSecret asks a person for a line without showing what is typed, for a credential that was not given another
+	// way. Nil means there is no way to ask, and a missing credential is an error that says how to give it.
+	ReadSecret func(prompt string) (string, error)
 	// Sleep waits; tests replace it so they do not.
 	Sleep func(time.Duration)
 	// Version is the command line's own version.
@@ -73,6 +76,7 @@ func NewApp(version string) *App {
 		},
 		OpenBrowser: openBrowser,
 		Interactive: stdinIsTerminal,
+		ReadSecret:  promptSecret,
 		Sleep:       time.Sleep,
 		Version:     version,
 	}
@@ -179,6 +183,7 @@ func (a *App) Root() *cobra.Command {
 	root.AddCommand(
 		a.loginCmd(), a.logoutCmd(), a.whoamiCmd(), a.versionCmd(), a.configCmd(),
 		a.projectsCmd(), a.appsCmd(), a.databasesCmd(), a.storesCmd(), a.nodesCmd(), a.complianceCmd(),
+		a.providersCmd(), a.sizesCmd(), a.connectionsCmd(), a.poolsCmd(), a.serversCmd(),
 		a.deployCmd(), a.buildCmd(), a.statusCmd(), a.logsCmd(), a.envCmd(), a.scaleCmd(), a.rollbackCmd(), a.metricsCmd(),
 		a.functionsCmd(), a.apiCmd(), a.openapiCmd(), a.mcpCmd(),
 	)

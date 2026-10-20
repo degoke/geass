@@ -125,7 +125,7 @@ The report is a `GeassHAReadiness` object named `platform` in `geass-system`. It
 
 | Condition | True when |
 | --- | --- |
-| `NodesReady` | At least three nodes are ready and not cordoned. Every region and the control plane node count. |
+| `NodesReady` | At least three nodes are ready and not cordoned. Every region and the control plane node count. A node that must not hold data (an ephemeral node of a [pool](/docs/guides/node-pools/#what-runs-on-a-pools-nodes)) does not: it cannot host a database replica. |
 | `StorageReady` | The cluster has at least one storage class. |
 | `ClusterReady` | The cluster's `Ready` condition is true. |
 | `AddonsReady` | The cluster's add-ons are ready (cert-manager, monitoring, and Longhorn when it is on). |
@@ -193,6 +193,7 @@ The gate covers Postgres, MySQL and MariaDB. Redis is refused before it, because
 
 - **Postgres.** Geass creates a CloudNativePG cluster with three instances. It sets a node selector and tolerations only to keep the instances in the project's region and on the tags you chose. For spreading across nodes it leaves the Postgres operator's own default in place. Geass sets no rule that spreads instances across sites, and it does not check that a region has three nodes.
 - **MySQL.** Geass creates a MOCO cluster of three or five instances with the same node selector and tolerations. For spreading it asks that the instances prefer different nodes, which is a preference and not a rule, so a region with fewer nodes than instances still runs the database on the nodes it has.
+- **Ephemeral nodes.** The instances never run on a node that keeps data off itself, such as a node of a pool with `storage: None`, and the readiness report does not count one. A pool whose nodes may hold data (`storage: Allow`) counts like any other node, and the autoscaler never removes such a node while it holds a volume.
 - **Required tags.** A project that requires node tags ([Compliance node tags](/docs/guides/compliance-tags/)) keeps all three instances on nodes that carry them. The readiness report counts every node in the cluster, not the tagged ones, so give the tags at least three nodes yourself.
 - **Volumes.** With the Longhorn storage add-on, a highly available Postgres or MySQL uses the `geass-single` class. Each instance's volume has one copy, on the node where the instance runs, because the three instances already hold three copies of the data. See [Storage](/docs/guides/storage/).
 - **Sites.** A node's **Site** is written as the standard `topology.kubernetes.io/zone` label, so software that reads it can use it. Geass itself does not spread replicas by site.

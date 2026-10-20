@@ -92,6 +92,10 @@ test-k3s-objectstorage: ## Run the cluster object storage test (SeaweedFS and Ga
 test-k3s-limits: ## Run the project limits test (a project keeping its services away from the nodes, and per-environment quotas) against the k3s that k3s-up started. Add a second node to it first (see test/k3sintegration/README.md) so a remote node is probed too.
 	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestProjectLimitsOnK3s -v -timeout 25m
 
+.PHONY: test-k3s-nodepool
+test-k3s-nodepool: ## Run the node pool test (an autoscaling pool adding a node for pods that do not fit and removing it, with a pod on it, when they are gone) against the k3s that k3s-up started. Needs Docker and the rancher/k3s image that k3s-up used (about 3 minutes).
+	K3S_INTEGRATION=true go test -tags=k3sintegration ./test/k3sintegration/ -run TestNodePoolAutoscalingOnK3s -v -timeout 20m
+
 .PHONY: test-k3s-alerting
 test-k3s-alerting: ## Run the alerting test (problems to Prometheus rules to Alertmanager to Slack and mail stand-ins on the host) against the k3s that k3s-up started (about 20 minutes, a little more the first time).
 	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestAlertingOnK3s -v -timeout 50m

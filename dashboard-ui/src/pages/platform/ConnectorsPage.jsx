@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { Cloud, CloudCog, Database, GitBranch } from "lucide-react";
 import { list } from "@/lib/api";
+import { canMutate } from "@/lib/dashboard";
 import { Button } from "@/components/geass-ui";
-import { SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
+import { CloudConnections } from "@/components/compute/CloudConnections";
+import { SettingsDivider, SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 import { GitHubConnectorPanel } from "@/pages/platform/GitHubConnectorPanel";
 import { CloudflareConnectorPanel } from "@/pages/platform/CloudflareConnectorPanel";
 import { CloudConnectionConnectorPanel } from "@/pages/platform/CloudConnectionConnectorPanel";
@@ -111,6 +113,9 @@ export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
           />
         </div>
       </SettingsSection>
+
+      <SettingsDivider />
+      <CloudConnections mutable={canMutate(data)} />
 
       <SettingsSheet
         opened={active === "github"}

@@ -16,6 +16,11 @@ database backups there. Geass supports three things with it:
   port, user and password you give it and builds the connection Secret. It never creates, resizes or deletes an RDS
   instance. Treat it as "attach an existing database".
 
+This page is about the AWS connection for buckets and backups, which belongs to one project. Geass can also create **EC2
+machines** in your AWS account, for [node pools](/docs/guides/node-pools/). That needs a different connection, with the purpose
+Compute, that belongs to the cluster and has its own key and policy: see [Cloud connections for machines](/docs/guides/connectors/clouds/#amazon-ec2).
+A connection made as described below never creates machines, and the key on this page cannot launch instances.
+
 ## Before you start
 
 - An AWS account, and an IAM user that is only for Geass. The next section lists the permissions it needs.
@@ -139,7 +144,8 @@ spec:
 
 Saving does not call AWS. The connection controller only checks that the Secret has an access key ID and a secret
 access key, then sets the `Ready` condition and `status.available`. The card and the table show **Ready** or
-**Pending** from that check. A wrong or revoked key looks **Ready** until something uses it.
+**Pending** from that check. A wrong or revoked key looks **Ready** until something uses it. (A connection with the purpose
+Compute is different: Geass asks AWS whether it accepts that key, as [Cloud connections for machines](/docs/guides/connectors/clouds/) says.)
 
 The first real AWS call happens when you deploy a bucket or turn on backups. If the key is wrong, the failure
 appears as the message on that bucket or database (for example `AWS S3 403 Forbidden` or `AWS IAM AccessDenied`).
@@ -170,7 +176,8 @@ For project backups:
 
 ## Rotate AWS credentials
 
-There is no rotate button. Replace the values in the connection's Secret:
+Under **Settings** → **Connectors** → **Cloud connections**, **Edit** on the connection replaces its credentials: type only the
+values that change. You can also replace the values in the connection's Secret yourself:
 
 ```bash title="Rotate the connection key"
 kubectl -n geass-system create secret generic prod-aws-credentials \
@@ -193,9 +200,12 @@ Or create a connection with a new name.
 
 ## Remove an AWS connection
 
-The dashboard and API have no delete for a single connection. Remove it with `kubectl`, after you delete the buckets
-and backups that use it. Deleting an AWS bucket needs the connection, so a connection you remove too early leaves
-the bucket stuck deleting with "AWS connection is unavailable".
+Remove it after you delete the buckets and backups that use it. Deleting an AWS bucket needs the connection, so a
+connection you remove too early leaves the bucket stuck deleting with "AWS connection is unavailable". **Remove** on the
+connection under **Settings** → **Connectors** → **Cloud connections** (or `DELETE /api/v1/connections/{name}`) refuses
+while a pool, a machine, an object store, a database, the backups of a deleted database, a project's backup bucket or the
+control plane firewall still uses it, and says which. `kubectl` does not check, so it will let you remove a connection that
+they still need:
 
 ```bash title="Remove a connection"
 kubectl -n geass-system delete geasscloudconnection prod-aws

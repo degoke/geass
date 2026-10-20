@@ -792,12 +792,12 @@ func TestHowManyToolsEachKindOfTokenSees(t *testing.T) {
 		options Options
 		count   int
 	}{
-		"a viewer":                          {me: viewer(), count: 14},
-		"an observer":                       {me: observer(), count: 17},
+		"a viewer":                          {me: viewer(), count: 18},
+		"an observer":                       {me: observer(), count: 21},
 		"a project token":                   {me: projectToken(), count: 19},
-		"an admin":                          {me: admin(), count: 30},
-		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 31},
-		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 18},
+		"an admin":                          {me: admin(), count: 38},
+		"an admin who allows deleting":      {me: admin(), options: Options{AllowDelete: true}, count: 40},
+		"an admin in read-only mode":        {me: admin(), options: Options{ReadOnly: true}, count: 23},
 		"a project token in read-only mode": {me: projectToken(), options: Options{ReadOnly: true}, count: 9},
 	} {
 		tt.options.Client = (&stub{me: tt.me}).serve(t)
@@ -808,13 +808,13 @@ func TestHowManyToolsEachKindOfTokenSees(t *testing.T) {
 	}
 }
 
-func TestAnAdminInReadOnlyModeSeesWhatAnObserverSeesAndTheConnection(t *testing.T) {
+func TestAnAdminInReadOnlyModeSeesWhatAnObserverSeesAndWhatOnlyAnAdminMayReadButChangesNothing(t *testing.T) {
 	observed, err := New(context.Background(), Options{Client: (&stub{me: observer()}).serve(t)})
 	require.NoError(t, err)
 	readOnly, err := New(context.Background(), Options{Client: (&stub{me: admin()}).serve(t), ReadOnly: true})
 	require.NoError(t, err)
 
-	want := append(observed.Tools(), "database_connection")
+	want := append(observed.Tools(), "database_connection", "cloud_sizes")
 	slices.Sort(want)
 	got := readOnly.Tools()
 	slices.Sort(got)

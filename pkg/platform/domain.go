@@ -271,6 +271,8 @@ func ProbeDashboardURL(ctx context.Context, httpClient *http.Client, dashboardUR
 }
 
 func ClusterExternalIP(ctx context.Context, nodes []corev1.Node, httpClient *http.Client) (string, error) {
+	// A node of a pool is created and removed under the cluster, so DNS must never point at one.
+	nodes = StableNodes(nodes)
 	if ip := NodeExternalIP(nodes); ip != "" {
 		return ip, nil
 	}

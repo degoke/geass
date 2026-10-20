@@ -481,6 +481,22 @@ replaces a node's region, zone and tags, so give every tag the node should keep.
 brings on standard error as `warning: ...`, such as work already on the node that does not belong there. See
 [Compliance tags](/docs/guides/compliance-tags/).
 
+## Clouds, pools and servers
+
+With an admin token, `geass` can connect a cloud, size a pool and add servers. These commands make Geass create machines at a cloud, which costs money, and the clouds behind them are experimental: see [Cloud connections for machines](/docs/guides/connectors/clouds/).
+
+```bash
+geass providers Hetzner                                              # what the cloud takes
+geass connections add hetzner --provider Hetzner --credential-file token=./hetzner-token.txt
+geass sizes --connection hetzner --region fsn1 --min-vcpus 2 --limit 5
+geass pools create burst --connection hetzner --region fsn1 --size cx23 --min 0 --max 5 --autoscale
+geass pools show burst
+geass servers add --connection hetzner --region fsn1 --size cx23     # one machine, until you remove the server
+geass nodes list                                                     # POOL and EPHEMERAL show what came from where
+```
+
+Give a secret from a file or the environment, never on the command line. A pool cannot be made without `--max`, the most machines it can ever have and the cap on what it costs. See [Node pools and autoscaling](/docs/guides/node-pools/) and the [reference](/docs/reference/cli/#clouds-and-machines).
+
 ## Anything else: the raw API
 
 `geass api` calls any `/api/v1` endpoint and prints the JSON it answers. It covers whatever has no command of its own,

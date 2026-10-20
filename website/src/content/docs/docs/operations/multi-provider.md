@@ -7,6 +7,8 @@ By default, the nodes of a Geass cluster share a private network. Multi-provider
 
 :::caution
 Multi-provider mode is **experimental**. It has run on real servers: a four-node cluster at one provider, in several availability zones, joined over their public addresses, with traffic carried by the encrypted overlay. It has **not** been run across two different providers, and public traffic arriving from the internet has not been tested on such a cluster. Its control plane stays at one site and is a single point of failure. Do not move production workloads onto it until you have tested it on your own servers.
+
+Creating the machines of such a cluster through Geass, with [node pools](/docs/guides/node-pools/), is experimental too, and for a separate reason: only the Amazon EC2 driver has run against a live account (in one region, in this mode), and the other eleven have not. A pool at a second provider is both experiments at once.
 :::
 
 ## What changes
@@ -73,7 +75,7 @@ Expect the node's `EXTERNAL-IP` to be the public address, `{"multiSite":true}` a
 
 ## Add workers
 
-For each worker, create an SSH key Secret and a `GeassNode`. Declare the node's region and site in the same manifest so it carries them from its first moment. The full procedure is in [Add servers](/docs/getting-started/add-servers/).
+For each worker you already have, add it from the dashboard or `geass servers add`, or create an SSH key Secret and a `GeassNode` as below. Declare the node's region and site so it carries them from its first moment. The full procedure is in [Add servers](/docs/getting-started/add-servers/). To have Geass create the workers at the providers instead, see [Pools at several providers](#pools-at-several-providers).
 
 ```bash
 kubectl -n geass-system create secret generic worker-ssh-key \
@@ -109,6 +111,21 @@ The node moves from `Pending` to `Joining` to `Ready`. Before it installs K3s, G
 :::caution
 Geass does not verify the worker's SSH host key unless you pin it. Over the public internet, put the worker's host key in the SSH key Secret under `known_hosts` (see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)), so that nothing but the machine you mean can receive the join token, and restrict port 22 on the worker to the control plane's address.
 :::
+
+## Pools at several providers
+
+A [node pool](/docs/guides/node-pools/) creates machines at a cloud through a [connection for machines](/docs/guides/connectors/clouds/), so a cluster can grow at more than one provider: one pool for each, each with its own region and placement. A cluster that spans providers has to be installed in multi-site mode, as above. In a default (single-network) cluster the overlay is VXLAN, on 8472/udp between nodes, and no driver opens that port. A pool there needs a firewall of yours that allows it, and suits machines on the same private network as the control plane, with `addressType: Private`.
+
+What Geass does for each machine it creates, and what it leaves to you:
+
+| Path | Who opens it |
+| --- | --- |
+| **TCP 22** from the control plane to the machine | Geass, in the firewall it makes at the provider (a security group, a firewall, firewall rules), for the addresses Kubernetes lists for the control plane's nodes. Not at Oracle Cloud or OVHcloud, where it makes none |
+| **TCP 10250** from the control plane to the machine | The same firewall. It lets the kubelet port in from the control plane's addresses only: if Prometheus runs on another node than the control plane, add that node's address to a firewall of your own for the pool |
+| **UDP 51820** between every pair of nodes | The same firewall, from anywhere, because the overlay authenticates every packet |
+| **TCP 6443** from the machine to the control plane (and UDP 51820 in multi-site mode) | **You**, unless you set [`spec.network.controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) on the cluster. Then Geass adds the machine's address to the control plane's security group or Hetzner firewall before the machine joins, and takes it out when the machine goes. For a control plane at any other provider, open the port yourself |
+
+Geass never opens a port on a machine you brought, and never changes a firewall you name yourself in a pool's `settings`. Machines at different providers cost money at each, and the bill of each is the bill of its connection's account. Give each pool the region and tags of the projects that should use it: a project in the region `eu` runs only on nodes in `eu`, so a pool whose nodes carry no region does not help it. See [Node pools](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
 
 ## Choose regions
 
@@ -200,11 +217,16 @@ Prometheus cannot reach that worker's kubelet. Open TCP 10250 between the nodes.
 **Node charts show only one machine.**
 Expected. See [What is different in this mode](#what-is-different-in-this-mode).
 
+**A machine made by a pool stays `Creating` or `Joining`, or fails.**
+The new machine cannot reach the control plane's 6443/tcp, or UDP 51820 is closed between it and the other nodes. Open them at the control plane's provider, or use `controlPlaneFirewall`. See [Node pools](/docs/guides/node-pools/#troubleshooting).
+
 **A failed `GeassNode` does not retry after I fix the cause.**
 Fixing the cause does not restart provisioning of a node that already failed by itself. Add the retry annotation: `kubectl -n geass-system annotate geassnode <name> geass.dev/retry=true`. Geass sets the node back to `Pending` and provisions it again. You can also delete the `GeassNode` and apply it again. Deleting also removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH, on `spec.sshPort`.
 
 ## Related
 
+- [Node pools and autoscaling](/docs/guides/node-pools/)
+- [Cloud connections for machines](/docs/guides/connectors/clouds/)
 - [Add servers](/docs/getting-started/add-servers/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
 - [High availability](/docs/operations/high-availability/)

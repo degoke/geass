@@ -557,12 +557,9 @@ func (r *GeassK3sUpgradeReconciler) upgradeOverSSH(
 	node *geassv1alpha1.GeassNode,
 	target string,
 ) error {
-	if node.Spec.SSHKeySecretRef == nil || node.Spec.SSHKeySecretRef.Name == "" {
-		return fmt.Errorf("the node has no SSH key (spec.sshKeySecretRef), so Geass cannot reach it")
-	}
-	creds, err := loadSSHCredentials(ctx, r.Client, *node.Spec.SSHKeySecretRef, node.Namespace)
+	creds, err := nodeSSHCredentials(ctx, r.Client, node)
 	if err != nil {
-		return fmt.Errorf("ssh key: %w", err)
+		return err
 	}
 	token, err := loadJoinToken(ctx, r.Client, cluster.Spec.TokenSecretRef, cluster.Namespace)
 	if err != nil {
@@ -590,13 +587,13 @@ func (r *GeassK3sUpgradeReconciler) cordon(ctx context.Context, node *corev1.Nod
 	if node.Annotations == nil {
 		node.Annotations = map[string]string{}
 	}
-	node.Annotations[k3sUpgradeCordonAnnotation] = "true"
+	node.Annotations[k3sUpgradeCordonAnnotation] = valueTrue
 	return client.IgnoreNotFound(r.Patch(ctx, node, client.MergeFrom(base)))
 }
 
 // uncordon undoes cordon, and only if the upgrade is what cordoned the node.
 func (r *GeassK3sUpgradeReconciler) uncordon(ctx context.Context, node *corev1.Node) error {
-	if node.Annotations[k3sUpgradeCordonAnnotation] != "true" {
+	if node.Annotations[k3sUpgradeCordonAnnotation] != valueTrue {
 		return nil
 	}
 	base := node.DeepCopy()

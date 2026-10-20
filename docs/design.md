@@ -283,7 +283,7 @@ Every resource overview follows this order:
 The shell has four parts, and every authenticated screen uses them:
 
 1. **Top bar** (full width, 54px). Left to right: the `geass▮` wordmark; inside a project, the project name (a switcher) and **environment tabs** (`production`, `pr-482 PR #482`, `+ Environment`); at the far right, `N pending` and the green **Deploy changes** button (admins only, only inside a project), and the account menu. Cells are divided by 1px rules, never by gaps.
-2. **Account rail** (200px, collapsible). Always the account level: Projects, Templates, Usage, Settings. The active item has a 2px green inset bar. The footer shows **cluster health**: one bar per node (green ready, red under pressure, amber unschedulable) and the worst problem in words (`node-3 memory high`), then Docs, Support and Collapse.
+2. **Account rail** (200px, collapsible). Always the account level: Projects, Templates, Usage, Pools, Settings. The active item has a 2px green inset bar. The footer shows **cluster health**: one bar per node (green ready, red under pressure, amber unschedulable) and the worst problem in words (`node-3 memory high`), then Docs, Support and Collapse.
 3. **Project tabs** (inside a project only): Resources, Metrics, Logs, Settings, with the underline in green. On Resources the right side holds `From template` (ghost) and `+ Add resource` (white), which keeps green reserved for Deploy.
 4. **Docked drawer.** Selecting a resource opens a panel to the right of the canvas instead of an overlay, so the canvas stays visible. The canvas pans to keep the selected card in view.
 
@@ -356,7 +356,7 @@ Header:
 
 Body:
 
-- nodes and workloads table;
+- nodes and workloads table, with each node's pool and an **Ephemeral** badge on a node that keeps data off itself, and an **Add server** action for an admin;
 - CPU, memory, disk, and pod capacity;
 - recent events and deployments;
 - networking and storage summaries.

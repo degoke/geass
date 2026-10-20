@@ -67,6 +67,7 @@ export default defineConfig({
           label: "Cloud connectors",
           items: [
             "docs/guides/connectors",
+            "docs/guides/connectors/clouds",
             "docs/guides/connectors/aws",
             "docs/guides/connectors/planetscale",
             "docs/guides/connectors/cloudflare",
@@ -100,6 +101,7 @@ export default defineConfig({
           label: "Run and scale",
           items: [
             "docs/guides/scaling-and-placement",
+            "docs/guides/node-pools",
             "docs/guides/scale-to-zero",
             "docs/guides/compliance-tags",
             "docs/guides/network-isolation",

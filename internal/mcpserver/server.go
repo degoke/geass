@@ -89,6 +89,9 @@ func instructions(me client.Identity, opts Options) string {
 	} else {
 		b.WriteString("Changing a variable does not apply it: call deploy_app afterwards (or pass deploy=true). To deploy and know whether it worked, call deploy_app with wait=true: it returns the outcome, and says why if the build failed. To build a service from its repository again without a push, call rebuild_app (also with wait=true). ")
 	}
+	if canWrite(me, opts) && me.Scope != "project" {
+		b.WriteString("Node pools create machines at a cloud, and every machine costs money until it is removed: create_node_pool needs max_nodes, the most it can ever have, which caps what it can cost. Connections to clouds hold credentials and single servers are billed until removed, so people make those, and no tool here does. ")
+	}
 	b.WriteString("Secret values are never returned by any tool. Plain configuration is not secret and is returned as it is, so keep anything sensitive in a secret.")
 	return b.String()
 }

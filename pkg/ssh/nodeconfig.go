@@ -37,12 +37,25 @@ type AgentOptions struct {
 	// MultiSite and ExternalIP are set for a cluster whose nodes reach each other over the internet.
 	MultiSite  bool
 	ExternalIP string
+	// Labels and Taints are what a node of a pool registers with beyond its placement.
+	Labels map[string]string
+	Taints []corev1.Taint
 }
 
 // NewAgentConfig builds a worker's join-time configuration: its placement, how long its container logs
 // are kept, and, in a multi-site cluster, the public address it advertises.
 func NewAgentConfig(options AgentOptions) AgentConfig {
 	config := AgentConfigFor(options.Placement)
+	for key, value := range options.Labels {
+		config.NodeLabels = append(config.NodeLabels, key+"="+value)
+	}
+	for _, taint := range options.Taints {
+		config.NodeTaints = append(config.NodeTaints, taint.Key+"="+taint.Value+":"+string(taint.Effect))
+	}
+	slices.Sort(config.NodeLabels)
+	slices.Sort(config.NodeTaints)
+	config.NodeLabels = slices.Compact(config.NodeLabels)
+	config.NodeTaints = slices.Compact(config.NodeTaints)
 	config.KubeletArgs = slices.Clone(platform.KubeletLogArgs)
 	if options.MultiSite && options.ExternalIP != "" {
 		config.NodeExternalIP = options.ExternalIP

@@ -20,7 +20,9 @@ const helmReleaseSecretType = "helm.sh/release.v1"
 //   - Secrets that hold a Helm release are not cached.
 //   - Finished pods are not cached: every reader already skips them, and Kaniko and backup jobs leave a
 //     pod behind for each run.
-//   - Pods are cached without what they run (commands, environment, volumes), which only the kubelet needs.
+//   - Pods are cached without what they run (commands, environment, most volumes), which only the kubelet needs.
+//     A volume that keeps data on the node (a claim, a host path, an emptyDir on disk) is kept, because the node
+//     autoscaler must know that a pod holds one before it removes the node the pod runs on.
 //
 // Deployments and ConfigMaps are left whole. Controllers create or update them from a Get, so a cache
 // that hid part of an object would make every reconcile think it had changed, or a label selector would
@@ -48,7 +50,7 @@ func slimPod(obj any) (any, error) {
 		return obj, nil
 	}
 	pod.ManagedFields = nil
-	pod.Spec.Volumes = nil
+	pod.Spec.Volumes = stateVolumes(pod.Spec.Volumes)
 	for i := range pod.Spec.Containers {
 		slimContainer(&pod.Spec.Containers[i])
 	}
@@ -56,6 +58,24 @@ func slimPod(obj any) (any, error) {
 		slimContainer(&pod.Spec.InitContainers[i])
 	}
 	return pod, nil
+}
+
+// stateVolumes keeps, without anything else about them, the volumes that hold data on the node a pod runs on.
+func stateVolumes(volumes []corev1.Volume) []corev1.Volume {
+	var kept []corev1.Volume
+	for _, volume := range volumes {
+		switch {
+		case volume.PersistentVolumeClaim != nil:
+			kept = append(kept, corev1.Volume{Name: volume.Name, VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.PersistentVolumeClaim.ClaimName}}})
+		case volume.HostPath != nil:
+			kept = append(kept, corev1.Volume{Name: volume.Name, VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: volume.HostPath.Path}}})
+		case volume.EmptyDir != nil && volume.EmptyDir.Medium != corev1.StorageMediumMemory:
+			kept = append(kept, corev1.Volume{Name: volume.Name, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+		}
+	}
+	return kept
 }
 
 func slimContainer(container *corev1.Container) {

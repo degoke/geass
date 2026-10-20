@@ -500,6 +500,8 @@ func (s *Server) register() {
 			return out, nil
 		})
 
+	s.registerCompute()
+
 	if s.opts.AllowDelete {
 		add(s, toolSpec{name: "delete_resource", description: "Permanently delete a service, database, bucket or logical database. This cannot be undone and deletes data: confirm must repeat the name.", level: workspaceAdmin, workspaceOnly: true, destructive: true},
 			func(ctx context.Context, _ *mcp.CallToolRequest, in deleteInput) (any, error) {

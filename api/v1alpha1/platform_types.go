@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -690,11 +692,37 @@ type GeassCloudProvider string
 const (
 	CloudProviderAWS         GeassCloudProvider = "AWS"
 	CloudProviderPlanetScale GeassCloudProvider = "PlanetScale"
+	// The providers below create machines. They are the compute providers of pkg/compute.
+	CloudProviderGCP          GeassCloudProvider = "GCP"
+	CloudProviderDigitalOcean GeassCloudProvider = "DigitalOcean"
+	CloudProviderHetzner      GeassCloudProvider = "Hetzner"
+	CloudProviderOVHcloud     GeassCloudProvider = "OVHcloud"
+	CloudProviderVultr        GeassCloudProvider = "Vultr"
+	CloudProviderLinode       GeassCloudProvider = "Linode"
+	CloudProviderScaleway     GeassCloudProvider = "Scaleway"
+	CloudProviderAzure        GeassCloudProvider = "Azure"
+	CloudProviderOCI          GeassCloudProvider = "OCI"
+	CloudProviderUpCloud      GeassCloudProvider = "UpCloud"
+	// CloudProviderWebhook creates machines through HTTP endpoints the user runs, for a provider Geass has no
+	// driver for.
+	CloudProviderWebhook GeassCloudProvider = "Webhook"
+)
+
+// GeassCloudPurpose is what a connection is used for.
+// +kubebuilder:validation:Enum=Storage;Database;Compute
+type GeassCloudPurpose string
+
+const (
+	CloudPurposeStorage  GeassCloudPurpose = "Storage"
+	CloudPurposeDatabase GeassCloudPurpose = "Database"
+	// CloudPurposeCompute lets node pools create machines with the connection. A connection for compute belongs to
+	// the cluster, not to a project, and only an admin can use it.
+	CloudPurposeCompute GeassCloudPurpose = "Compute"
 )
 
 type GeassCloudConnectionSpec struct {
 	// Provider is the external cloud or database vendor.
-	// +kubebuilder:validation:Enum=AWS;PlanetScale
+	// +kubebuilder:validation:Enum=AWS;PlanetScale;GCP;DigitalOcean;Hetzner;OVHcloud;Vultr;Linode;Scaleway;Azure;OCI;UpCloud;Webhook
 	Provider GeassCloudProvider `json:"provider"`
 	// SecretRef stores provider credentials. Secret values are never copied into status.
 	SecretRef corev1.LocalObjectReference `json:"secretRef"`
@@ -707,10 +735,49 @@ type GeassCloudConnectionSpec struct {
 	// Organization is the PlanetScale organization slug.
 	// +optional
 	Organization string `json:"organization,omitempty"`
+	// Purposes say what the connection is for. Left out, a connection is for what its provider did before
+	// purposes existed: storage and databases for AWS, databases for PlanetScale. A connection for Compute must
+	// not be scoped to a project.
+	// +kubebuilder:validation:MaxItems=3
+	// +listType=set
+	// +optional
+	Purposes []GeassCloudPurpose `json:"purposes,omitempty"`
 }
 type GeassCloudConnectionStatus struct {
 	Available  bool               `json:"available"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Account names the account, project or tenant the credentials act on, as the provider reports it.
+	// +optional
+	Account string `json:"account,omitempty"`
+	// Message says what the last check found, or why it could not tell.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// VerifiedAt is when the credentials were last checked with the provider.
+	// +optional
+	VerifiedAt *metav1.Time `json:"verifiedAt,omitempty"`
+	// ExpiresAt is when the credentials stop working, when the provider says so.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	// Warnings are things that work now and are likely to fail later.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// HasPurpose reports whether the connection is for the purpose. A connection that lists none is for what its
+// provider was for before purposes existed.
+func (c *GeassCloudConnection) HasPurpose(purpose GeassCloudPurpose) bool {
+	if len(c.Spec.Purposes) == 0 {
+		switch c.Spec.Provider {
+		case CloudProviderAWS:
+			return purpose == CloudPurposeStorage || purpose == CloudPurposeDatabase
+		case CloudProviderPlanetScale:
+			return purpose == CloudPurposeDatabase
+		default:
+			return purpose == CloudPurposeCompute
+		}
+	}
+	return slices.Contains(c.Spec.Purposes, purpose)
 }
 
 // +kubebuilder:object:root=true

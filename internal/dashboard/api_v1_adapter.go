@@ -27,7 +27,7 @@ const (
 )
 
 // v1Collections are the resources that can be created, changed and deleted with REST verbs.
-var v1Collections = []string{kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases, kindProjects, tagTemplates}
+var v1Collections = []string{kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases, kindProjects, tagTemplates, kindPools, kindConnections, kindServers}
 
 // v1Adapter sits in front of authentication, so the access rules that apply to the dashboard's routes (who may
 // call which, what a project token may touch) apply unchanged to the v1 requests that map onto them.
@@ -129,7 +129,7 @@ func v1LegacyPath(method string, parts []string) (string, map[string]string, boo
 		}
 	case collection && len(parts) == 2 && (method == http.MethodPut || method == http.MethodPatch):
 		switch kind {
-		case kindApps, kindDatabases, kindObjectStores:
+		case kindApps, kindDatabases, kindObjectStores, kindPools, kindConnections:
 			return "/api/" + kind + "/" + parts[1] + "/update", nil, true
 		case kindProjects:
 			return "/api/projects/" + parts[1] + "/settings/save", nil, true
@@ -184,7 +184,7 @@ func v1BodyToForm(contentType string, body []byte) (url.Values, error) {
 }
 
 // v1ExplicitBooleans are the fields whose false means something that leaving them out does not.
-var v1ExplicitBooleans = map[string]bool{formBlockNodeAddresses: true}
+var v1ExplicitBooleans = map[string]bool{formBlockNodeAddresses: true, formPoolAutoscaling: true, formPoolSuspend: true, formPoolSpot: true}
 
 func v1FieldValues(value any) ([]string, error) {
 	switch typed := value.(type) {

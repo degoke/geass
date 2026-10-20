@@ -8,6 +8,7 @@ export const docsUrl = withBase("docs/");
 export const installDocsUrl = withBase("docs/getting-started/install/");
 export const connectorsDocsUrl = withBase("docs/guides/connectors/");
 export const addServersDocsUrl = withBase("docs/getting-started/add-servers/");
+export const nodePoolsDocsUrl = withBase("docs/guides/node-pools/");
 
 export const siteName = "Geass";
 export const githubUrl = "https://github.com/degoke/geass";

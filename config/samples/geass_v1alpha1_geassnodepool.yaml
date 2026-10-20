@@ -1,0 +1,46 @@
+# A pool of machines that Geass creates at Hetzner when pods cannot start, and removes when they are not needed.
+# The connection is made in the dashboard (Settings > Connectors > Cloud connections), with `geass connections add`,
+# or with a GeassCloudConnection of purpose Compute. maxNodes is required: it is the most machines the pool can ever
+# have, and so the most it can ever cost.
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassNodePool
+metadata:
+  name: burst
+  namespace: geass-system
+spec:
+  connectionRef: hetzner
+  region: fsn1
+  size: cx23
+  fallbackSizes: [cx33]
+  placement:
+    region: eu
+    zone: hetzner-fsn1
+  storage: None          # no databases or volumes on these nodes; services only
+  minNodes: 0
+  maxNodes: 4
+  autoscaling:
+    enabled: true
+    scaleDownAfterMinutes: 10
+    minNodeLifetimeMinutes: 55   # Hetzner bills each started hour
+---
+# A pool of servers you already own: Geass joins one when pods need room and gives it back when it is idle.
+# apiVersion: geass.geass.dev/v1alpha1
+# kind: GeassNodePool
+# metadata:
+#   name: spares
+#   namespace: geass-system
+# spec:
+#   minNodes: 0
+#   maxNodes: 2
+#   autoscaling:
+#     enabled: true
+#   inventory:
+#     hosts:
+#       - name: spare-1
+#         address: 198.51.100.11
+#         sshUser: root
+#         sshKeySecretRef: {name: spares-ssh, namespace: geass-system}
+#       - name: spare-2
+#         address: 198.51.100.12
+#         sshUser: root
+#         sshKeySecretRef: {name: spares-ssh, namespace: geass-system}

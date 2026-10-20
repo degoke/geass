@@ -10,7 +10,7 @@ The **Usage** page answers two questions: how much of your servers is already sp
 
 ## Before you start
 
-- Every signed-in user can read the page. Only admins see the **Edit** button on a node (see [Scaling and placement](/docs/guides/scaling-and-placement/)).
+- Every signed-in user can read the page. Only admins see the **Edit** button on a node (see [Scaling and placement](/docs/guides/scaling-and-placement/)), **Add server** above the table, and **Remove** on a server that was added on its own.
 - The numbers describe what services reserve, not what they use at this moment. Live use needs the monitoring add-on, which the installer turns on (see [Logs, metrics and terminal](/docs/guides/observability/)).
 
 ## Open the page
@@ -25,7 +25,7 @@ From top to bottom the page shows:
 | **Capacity and node pressure** | One line for each node problem and each shortage. Only present when there is something to report. |
 | **Network isolation** | Whether the cluster's network plugin acts on network policies, which project isolation depends on. Present once the first check has run (see [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies)). |
 | **Version** | Which Geass release and which K3s the cluster runs, and how an upgrade of the workers' K3s is going while one is asked for. |
-| **Nodes** | One row per node, with its role, the K3s version it runs, region, tags, size, pressure and status. |
+| **Nodes** | One row per node, with its role, the pool it belongs to, the K3s version it runs, region, tags, size, pressure and status. **Add server** is above it. |
 | **Usage by project** | What each project reserves, what it uses, and its share of the capacity it runs on. |
 | **Cluster metrics** | Charts of what services use across the cluster and what the machines are doing. |
 | **Geass health** | Charts of how the operator is doing: failed and slow reconciles, work waiting, how the Kubernetes API server answers it, and its memory. |
@@ -64,7 +64,7 @@ The **Load** bar on the first two rows is requested divided by allocatable. It t
 
 What counts toward the totals:
 
-- Only nodes that can take general work: ready, not cordoned, and without a reservation. A node reserved for a tag, or for a compliance tag (see [Scaling and placement](/docs/guides/scaling-and-placement/)), is left out, and so are the pods that run on it.
+- Only nodes that can take general work: ready, not cordoned, and without a reservation. A node reserved for a tag, or for a compliance tag (see [Scaling and placement](/docs/guides/scaling-and-placement/)), is left out, and so are the pods that run on it. So is an **ephemeral** node, a node of a [pool](/docs/guides/node-pools/#what-runs-on-a-pools-nodes) that keeps data off itself: it takes services only, and the totals are the room every kind of workload may use. The capacity check for a service does count it.
 - All of Geass's own pods and the system pods, because they reserve room too.
 - Pods that have no node yet but could run on one of the counted nodes. A pod waiting to be placed reserves capacity before it starts.
 - Init containers count in full, so a pod whose init container has finished is slightly overstated.
@@ -91,6 +91,7 @@ Each row of the **Nodes** table is a Kubernetes node.
 | --- | --- |
 | **Node** | The node's name. |
 | **Role** | `control-plane` for the server, `worker` for every other node. |
+| **Pool** | The [pool](/docs/guides/node-pools/) the node belongs to, as a link, and an **Ephemeral** badge when the node keeps data off itself: databases, buckets and volumes never run there, and it may be removed when the load goes. A dash for a node that is in no pool. `geass nodes list` shows the same as `POOL` and `EPHEMERAL`. |
 | **K3s** | The K3s release the node runs, as its kubelet reports it. Worker nodes can differ from the control plane while an upgrade is going on. |
 | **Region** | The region, and the site after a dot, such as `eu · hetzner-fsn1`. A dash when none is set. |
 | **Tags** | The node's tags. A tag followed by "(reserved)" keeps other workloads off the node. A tag followed by "(compliance)" is reserved for the projects that require it ([Compliance node tags](/docs/guides/compliance-tags/)). |
@@ -98,7 +99,9 @@ Each row of the **Nodes** table is a Kubernetes node.
 | **Pressure** | The conditions the node reports, comma separated. A dash when there are none. |
 | **Status** | **Ready**, **Not ready** or **Unschedulable**. |
 
-**Unschedulable** means the node is cordoned: Kubernetes will not start new pods on it, though pods already there keep running. Geass has no cordon button; someone ran `kubectl cordon` (see below), or Geass is upgrading K3s on the node, in which case the **Version** section says so (see [Upgrade Geass](/docs/operations/upgrading/#workers)).
+**Unschedulable** means the node is cordoned: Kubernetes will not start new pods on it, though pods already there keep running. Geass has no cordon button; someone ran `kubectl cordon` (see below), or Geass is upgrading K3s on the node, in which case the **Version** section says so (see [Upgrade Geass](/docs/operations/upgrading/#workers)). A node of an autoscaling pool is also cordoned for the time it takes to empty it before it is removed, and a server that is being removed shows it too.
+
+**Add server** opens a form to add one server, a machine Geass creates at a cloud or one you have: see [Add servers](/docs/getting-started/add-servers/#add-a-server-from-the-dashboard-or-the-command-line). **Remove** on a server that was added that way asks you to type its name, then moves its services elsewhere and, for a machine Geass created, deletes the machine. The control plane and the nodes of a pool have no **Remove**: change the pool instead.
 
 ## Node health in the rail
 
@@ -145,7 +148,7 @@ This section lists problems that need action before you scale up.
 - "Available memory is too low for a new service. Scale up the cluster before creating in-cluster resources" when less than 128 MB is free.
 - "Services may use up to … of memory between them and the servers have …. If they all do at once, those using more than they reserved restart first" when the running services are allowed more memory, added up, than the servers have. It is a warning and nothing is refused: services reserve what they need and may use more only while there is room. See [Scale](/docs/guides/apps/#scale). It is not shown for a region or tag view of the cluster.
 
-Free more room or add a node (see [Add servers](/docs/getting-started/add-servers/)). Geass refuses to start a new workload that does not fit; see the capacity check in [Scaling and placement](/docs/guides/scaling-and-placement/).
+Free more room or add a node (see [Add servers](/docs/getting-started/add-servers/), or let a [node pool](/docs/guides/node-pools/) add them). Geass refuses to start a new workload that does not fit; see the capacity check in [Scaling and placement](/docs/guides/scaling-and-placement/).
 
 ## Usage by project
 
@@ -244,6 +247,7 @@ Prometheus is not installed, or the dashboard cannot reach it. See [Logs, metric
 ## Related
 
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
+- [Node pools and autoscaling](/docs/guides/node-pools/)
 - [Project limits](/docs/guides/project-limits/)
 - [Cluster size](/docs/operations/sizing/)
 - [Logs, metrics and terminal](/docs/guides/observability/)
