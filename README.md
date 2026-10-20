@@ -17,10 +17,10 @@ The managed cloud experience on your own VPS or bare metal, powered by K3s.</p>
 <p align="center">
   <a href="https://github.com/degoke/geass/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/degoke/geass/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/degoke/geass/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/degoke/geass"></a>
-  <a href="LICENSE"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/License-FSL--1.1--ALv2-blue.svg"></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
 </p>
 
-Geass is a source-available platform that gives a VPS, a bare-metal machine, or a handful of both the workflow of a
+Geass is an open-source platform that gives a VPS, a bare-metal machine, or a handful of both the workflow of a
 managed cloud. Install it with one command and you get projects, deploys from an image, a GitHub repository or a
 function, databases with backups, buckets, domains with HTTPS, metrics and logs, in a dashboard, a command line and an
 MCP server for AI agents. The servers, the data and the bill stay yours.
@@ -124,10 +124,6 @@ Please report security problems privately, as [SECURITY.md](SECURITY.md) describ
 
 Copyright 2026 Adegoke Adewoye.
 
-Geass is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE) (FSL-1.1-ALv2). You
-may use, copy, modify and redistribute Geass for any purpose other than a competing use: you may not make it available
-to others in a commercial product or service that substitutes for Geass or offers substantially similar functionality,
-such as a hosted Geass. Running it for your own organization, for non-commercial education or research, and providing
-professional services to someone who runs it are all permitted. Two years after each release is published, that release
-is also available under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). Until then Geass is
-source-available, not open source as the Open Source Initiative defines it. See [LICENSE](LICENSE) for the full terms.
+Geass is open source under the [Apache License 2.0](LICENSE). You may use, copy, modify and redistribute it for any
+purpose, including commercially and as a hosted service, as long as you keep the copyright and license notices and
+state your changes. See [LICENSE](LICENSE) for the full terms.

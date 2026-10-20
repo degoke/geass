@@ -81,18 +81,9 @@ as `/docs/guides/functions/`; `pnpm links` fails on a broken link or heading anc
 
 ## Licensing of contributions
 
-Geass is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE). Before a pull
-request from you can be merged, you sign the [Contributor License Agreement](CLA.md) once, by commenting on the pull
-request:
-
-```text
-I have read the Geass CLA and I agree to its terms.
-```
-
-The agreement lets the maintainer distribute your contribution under the project's license, under the Apache License 2.0
-that each release becomes, and in any other way, including a hosted Geass. You keep the copyright in what you wrote, and
-you can still use it however you like. If your employer has rights to what you write, make sure they agree before you
-sign.
+Geass is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution you confirm that you wrote it
+or have the right to submit it, and, as section 5 of the license says, you license it under the Apache License 2.0
+too. If your employer has rights to what you write, make sure they agree.
 
 ## Review
 

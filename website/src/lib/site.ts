@@ -12,7 +12,7 @@ export const nodePoolsDocsUrl = withBase("docs/guides/node-pools/");
 
 export const siteName = "Geass";
 export const githubUrl = "https://github.com/degoke/geass";
-export const licenseUrl = "https://fsl.software/";
+export const licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0";
 
 /** The link-preview card (src/assets/og.png). It is the same image on every page. */
 export const socialCard = {

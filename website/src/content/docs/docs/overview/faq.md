@@ -9,7 +9,7 @@ Each answer here is checked against what Geass does today. Where a question has 
 
 ### Is Geass a managed service?
 
-No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. The license forbids others from offering Geass as a commercial hosted or managed service. See [What is Geass](/docs/overview/introduction/#license).
+No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. See [What is Geass](/docs/overview/introduction/#license).
 
 ### Do I need to know Kubernetes?
 
@@ -33,7 +33,7 @@ No. The repository contains no telemetry or analytics code. Geass does make outb
 
 ### Which license does Geass use, and can I use it at work?
 
-The [Functional Source License, Version 1.1, ALv2 Future License](https://fsl.software/) (FSL-1.1-ALv2), in the `LICENSE` file. You may use, copy, modify and redistribute Geass for any purpose except a competing use: making it available to others in a commercial product or service that substitutes for Geass or offers substantially similar functionality, such as a hosted Geass. Running it for your own organization is permitted, and so are non-commercial education and research and professional services for someone who runs it. You must keep its notices and pass the license on with any copy. Two years after each release is published, that release is also available under the Apache License 2.0. Until then it is source-available, not open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
+The [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), in the `LICENSE` file. Yes: you may use, copy, modify and redistribute Geass for any purpose, at work, commercially or as a service you offer to others. You must keep its copyright and license notices, include the license with any copy you redistribute, and say which files you changed. The license also grants you the contributors' patent rights for their contributions. It is open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
 
 ## Servers
 

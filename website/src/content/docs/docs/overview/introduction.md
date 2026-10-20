@@ -1,11 +1,11 @@
 ---
 title: "What is Geass"
-description: "Geass is a source-available platform that gives servers you own the workflow of a managed cloud: projects, deploys, databases, buckets, backups and logs."
+description: "Geass is an open-source platform that gives servers you own the workflow of a managed cloud: projects, deploys, databases, buckets, backups and logs."
 ---
 
 Geass gives a VPS, a bare-metal machine, or a handful of both the workflow of a managed cloud. You install it on a Linux server with one command. It sets up K3s (a lightweight Kubernetes), a Kubernetes operator and a web dashboard that is built into the operator. You then create projects, add services, databases and buckets in the dashboard, review what you changed, and choose **Deploy changes**. The same work can be done from a terminal with the `geass` command line, or by an AI agent through its MCP server. The servers, the data and the bill stay yours.
 
-Geass is source-available under the Functional Source License (FSL-1.1-ALv2). It is not a hosted service: you operate the servers it runs on. This page says who it suits, what you can do with it, and where it does not fit.
+Geass is open source under the Apache License 2.0. It is not a hosted service: you operate the servers it runs on. This page says who it suits, what you can do with it, and where it does not fit.
 
 ## Who it is for
 
@@ -68,7 +68,7 @@ The workflow is the same in spirit: you describe what you want, review it, deplo
 
 ## License
 
-Geass is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](https://fsl.software/) (FSL-1.1-ALv2); the full text is the `LICENSE` file in the repository. In short, you may use, copy, modify and redistribute Geass for any purpose except a competing use: making it available to others in a commercial product or service that substitutes for Geass or offers substantially similar functionality, such as a hosted Geass. Running it for yourself or your organization, non-commercial education and research, and professional services for someone who runs Geass are all permitted. You must keep the copyright notices and include the license with any copy you redistribute. Two years after each release is published, that release is also available under the Apache License 2.0. Until then Geass is source-available, not open source in the sense the Open Source Initiative defines. If you are unsure whether your use is covered, read the license or ask a lawyer: this page is not legal advice.
+Geass is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0); the full text is the `LICENSE` file in the repository. In short, you may use, copy, modify and redistribute Geass for any purpose, including commercially and as a hosted service. You must keep the copyright and license notices, include the license with any copy you redistribute, and mark the files you changed. It is open source in the sense the Open Source Initiative defines. If you are unsure whether your use is covered, read the license or ask a lawyer: this page is not legal advice.
 
 ## Where to start
 

@@ -13,8 +13,7 @@ new version.
 
 ## [Unreleased]
 
-The first public release, under the Functional Source License (FSL-1.1-ALv2): each release also becomes available
-under the Apache License 2.0 two years after it is published. Contributions need a signed [CLA](CLA.md).
+The first public release, open source under the Apache License 2.0.
 
 ### Added
 
