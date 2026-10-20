@@ -23,6 +23,12 @@ The first public release, open source under the Apache License 2.0.
   moves) unless the cluster's data is at the schema level it reads. `config/dashboard-only` is the ClusterRole it
   needs, and `GEASS_PROMETHEUS_URL`, `GEASS_ALERTMANAGER_URL` and `GEASS_LOGS_URL` point it at the add-ons when it runs
   outside the cluster. The operator's `--kubeconfig` flag is now read, as it was parsed after the client configuration.
+- **Hosted control plane.** A cluster whose K3s server runs outside its nodes (with `--disable-agent`, as rungeass
+  runs it) has no control plane node, and Geass now works there: workers install the release the API server's
+  `/version` reports, machines from node pools let the operator's SSH in from the nodes and its outbound address,
+  the K3s upgrade waits for the hosted server and says who upgrades it, the network policy check runs on any node,
+  and `config/external-control-plane` runs the operator on any node from `ghcr.io/degoke/geass`, which each release
+  now publishes.
 - **Installer.** One command installs K3s, the Geass operator and the dashboard on a fresh Linux server (amd64 or
   arm64), and running a newer installer updates the cluster in place: it keeps the data, takes an etcd snapshot first,
   checks that the custom resource definitions stay compatible with what is stored, runs data migrations, refuses a

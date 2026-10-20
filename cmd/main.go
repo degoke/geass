@@ -335,10 +335,21 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
 		os.Exit(1)
 	}
+	// What the API server says it runs. A cluster whose control plane is hosted outside its nodes has no node that
+	// reports the K3s version, so its workers follow this instead.
+	discovery := kubernetes.NewForConfigOrDie(restConfig).Discovery()
+	serverVersion := func(context.Context) (string, error) {
+		info, err := discovery.ServerVersion()
+		if err != nil {
+			return "", err
+		}
+		return info.GitVersion, nil
+	}
 	if err := (&controller.GeassK3sUpgradeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		SSH:    ssh.New(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		SSH:           ssh.New(),
+		ServerVersion: serverVersion,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassk3supgrade")
 		os.Exit(1)
@@ -354,10 +365,16 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 	// pkg/compute/all.
 	computeFactory := &controller.ConnectionComputeFactory{Reader: mgr.GetClient()}
 	if err := (&controller.GeassNodeReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		SSH:     ssh.New(),
-		Compute: computeFactory,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		SSH:           ssh.New(),
+		Compute:       computeFactory,
+		ServerVersion: serverVersion,
+		// Asked only in a cluster whose control plane is hosted outside its nodes, when it creates a machine, and
+		// at most every 15 minutes.
+		OutboundIP: controller.CachedOutboundIP(func(ctx context.Context) (string, error) {
+			return platform.DetectOutboundPublicIP(ctx, nil)
+		}, 15*time.Minute, nil),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnode")
 		os.Exit(1)

@@ -1,0 +1,33 @@
+# The operator for a cluster whose control plane is hosted outside its nodes: a K3s server run with --disable-agent
+# somewhere else (rungeass runs it this way), and every node a worker. See the "Hosted control plane" page of the docs.
+#
+# It differs from config/default in two ways:
+#   - The image comes from a registry. The installer puts the operator's image on the control plane's disk, and a
+#     cluster with no control plane node has no such disk, so every node pulls it from ghcr.io instead.
+#   - The operator may run on any node. config/default requires a control plane node, which this cluster does not
+#     have, so it would never start.
+#
+# Set the release before building, and apply it to the cluster:
+#
+#   cd config/external-control-plane && kustomize edit set image controller=ghcr.io/degoke/geass:vX.Y.Z
+#   kustomize build config/external-control-plane | kubectl apply --server-side -f -
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../default
+images:
+- name: controller
+  newName: ghcr.io/degoke/geass
+patches:
+- target:
+    kind: Deployment
+    name: geass-controller-manager
+  # The test operations make the build fail, rather than remove the wrong toleration, if manager.yaml is reordered.
+  patch: |-
+    - op: remove
+      path: /spec/template/spec/affinity
+    - op: test
+      path: /spec/template/spec/tolerations/0/key
+      value: node-role.kubernetes.io/control-plane
+    - op: remove
+      path: /spec/template/spec/tolerations/0
