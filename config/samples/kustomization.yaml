@@ -5,4 +5,5 @@ resources:
 - geass_v1alpha1_geassapp.yaml
 - geass_v1alpha1_geassdatabase.yaml
 - geass_v1alpha1_geassobjectstore.yaml
+- geass_v1alpha1_geassorganization.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

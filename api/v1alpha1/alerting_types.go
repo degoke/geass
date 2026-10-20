@@ -32,7 +32,7 @@ type GeassAlertingSpec struct {
 	SMTP *GeassAlertSMTP `json:"smtp,omitempty"`
 	// Channels are the places alerts are sent to. The URL of a Slack channel is a secret: it is kept in the
 	// Secret geass-alert-channels under the channel's id, never in this spec.
-	// +kubebuilder:validation:MaxItems=20
+	// +kubebuilder:validation:MaxItems=200
 	// +optional
 	Channels []GeassAlertChannel `json:"channels,omitempty"`
 }
@@ -107,4 +107,10 @@ type GeassAlertChannel struct {
 	// Disabled pauses the channel without deleting it.
 	// +optional
 	Disabled bool `json:"disabled,omitempty"`
+	// Org makes the channel an organization's: the GeassOrganization whose people set it up and can see it. It hears
+	// only about that organization's projects (the ones in Projects, when it names some), never about the cluster, and
+	// never about another organization's. Without it the channel is the platform's.
+	// +kubebuilder:validation:Pattern=`^org-[a-f0-9]{8}$`
+	// +optional
+	Org string `json:"org,omitempty"`
 }

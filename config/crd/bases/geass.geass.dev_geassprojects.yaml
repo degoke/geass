@@ -198,6 +198,13 @@ spec:
                     - None
                     type: string
                 type: object
+              org:
+                description: |-
+                  Org is the organization that owns this project: the name of a GeassOrganization. Empty means the project is
+                  not assigned to one, which only the platform's administrators can see once organizations are turned on.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               prEnvironments:
                 description: PREnvironments creates a temporary copy of an environment
                   for every pull request.
@@ -367,6 +374,12 @@ spec:
                   type: object
                 maxItems: 20
                 type: array
+              workspace:
+                description: |-
+                  Workspace is the id of the workspace of the organization this project is in. Empty means the project belongs
+                  to the organization as a whole, which only its administrators can see.
+                pattern: ^ws-[a-f0-9]{6}$
+                type: string
             required:
             - clusterRef
             - environments

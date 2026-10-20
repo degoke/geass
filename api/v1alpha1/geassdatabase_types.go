@@ -60,6 +60,13 @@ type GeassDatabaseSpec struct {
 	// that projects share, each taking logical databases of its own on it (see GeassLogicalDatabase).
 	// +optional
 	Project string `json:"project,omitempty"`
+	// Org makes a shared server an organization's: the name of a GeassOrganization. Only that organization's projects
+	// may take logical databases on it, and only its people see it. It is for a server with no project; one that has a
+	// project belongs to the project, and this is ignored. Empty is the platform's, which every project may use.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Org string `json:"org,omitempty"`
 	// Environment is the project environment. Empty for the cluster-wide server.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63

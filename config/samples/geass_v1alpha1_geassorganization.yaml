@@ -1,0 +1,33 @@
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassOrganization
+metadata:
+  labels:
+    app.kubernetes.io/name: geass
+    app.kubernetes.io/managed-by: kustomize
+  name: org-1a2b3c4d
+spec:
+  displayName: Acme
+  # The organization's id in the sign-in token of the identity provider.
+  idpID: org_acme
+  workspaces:
+    - id: ws-a1b2c3
+      displayName: Payments team
+      idpID: team_payments
+  # What every project of the organization gets. All of it is optional.
+  maxProjects: 20
+  quota:
+    cpu: "16"
+    memory: 32Gi
+    storage: 500Gi
+    pods: 200
+  region: eu
+  requiredTags:
+    - acme
+  allowedDomains:
+    - acme.com
+  # The organization's builds push here, with a login of its own (the Secret org-registry-org-1a2b3c4d), and run in a namespace
+  # that holds only that login.
+  registry:
+    repository: ghcr.io/acme/builds
+    credentialRef:
+      name: org-registry-org-1a2b3c4d

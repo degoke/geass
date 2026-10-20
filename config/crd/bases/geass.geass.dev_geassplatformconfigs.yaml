@@ -92,6 +92,13 @@ spec:
                           description: NotifyResolved sends a message when a problem
                             clears, not only when it starts. Unset means it does.
                           type: boolean
+                        org:
+                          description: |-
+                            Org makes the channel an organization's: the GeassOrganization whose people set it up and can see it. It hears
+                            only about that organization's projects (the ones in Projects, when it names some), never about the cluster, and
+                            never about another organization's. Without it the channel is the platform's.
+                          pattern: ^org-[a-f0-9]{8}$
+                          type: string
                         projects:
                           description: |-
                             Projects limits the channel to these projects. Empty means every project, and it is also what lets a
@@ -120,7 +127,7 @@ spec:
                       - name
                       - type
                       type: object
-                    maxItems: 20
+                    maxItems: 200
                     type: array
                   smtp:
                     description: SMTP is the mail server that email channels send
@@ -235,6 +242,17 @@ spec:
                           cannot be this machine or a link-local address.
                         maxLength: 2048
                         type: string
+                      refreshMinutes:
+                        description: |-
+                          RefreshMinutes makes Geass ask the provider again, this often, whether each person who signed in is still its own and
+                          what it now says of them, so that a role that changed, an organization they were taken out of, or a person who was
+                          removed is noticed within minutes and not when their session ends. It needs a provider that gives refresh tokens
+                          (Geass asks for the offline_access scope). A change ends the person's sessions, and they sign in again to get what is
+                          now true. Zero, the default, is off.
+                        format: int32
+                        maximum: 1440
+                        minimum: 0
+                        type: integer
                       requireClaim:
                         additionalProperties:
                           type: string
@@ -282,6 +300,83 @@ spec:
                         maximum: 720
                         minimum: 5
                         type: integer
+                      staleGraceMinutes:
+                        description: |-
+                          StaleGraceMinutes is how long the provider can be unreachable before the sessions that could not be checked are ended,
+                          when RefreshMinutes is on. Unset means 120. Until then a session whose check failed because the provider was down is
+                          kept, since it says nothing about the person.
+                        format: int32
+                        maximum: 1440
+                        minimum: 0
+                        type: integer
+                    type: object
+                  tenancy:
+                    description: |-
+                      Tenancy makes the people who sign in through the provider belong to organizations, each seeing only its own
+                      projects. It works only while Mode is external, because the provider is what says who is in which organization.
+                    properties:
+                      autoProvision:
+                        description: |-
+                          AutoProvision makes an organization of the provider that Geass does not know yet when one of its administrators
+                          signs in, instead of refusing them. Without it only the organizations a platform administrator set up can be
+                          signed in to.
+                        properties:
+                          allow:
+                            description: |-
+                              Allow limits which organizations may be made, by the provider's id for them: an id as it is, or the start of
+                              one followed by "*". Pending without it makes any that asks; Open needs it.
+                            items:
+                              maxLength: 253
+                              type: string
+                            maxItems: 50
+                            type: array
+                          max:
+                            description: |-
+                              Max is how many organizations can be made this way in all. Unset means 20. It is what keeps a flood of sign-ins
+                              from filling the cluster with organizations.
+                            format: int32
+                            maximum: 500
+                            minimum: 1
+                            type: integer
+                          mode:
+                            description: |-
+                              Mode is Pending, which makes the organization suspended until a platform administrator approves it (the person is
+                              told it is waiting), or Open, which makes it ready to use at once. Open needs Allow, so that it is never for every
+                              organization the provider has.
+                            enum:
+                            - Pending
+                            - Open
+                            type: string
+                        required:
+                        - mode
+                        type: object
+                      enabled:
+                        description: |-
+                          Enabled turns organizations on. While it is off, everyone who may sign in sees everything, as before. A
+                          project that is not assigned to an organization is then seen by the platform's administrators only.
+                        type: boolean
+                      orgsClaim:
+                        description: |-
+                          OrgsClaim is the claim of the ID token that lists the organizations a person is in: a name, or a dotted path
+                          into nested objects. It holds a list of objects, each with the organization's "id", the person's "role" in it
+                          (mapped to a Geass role by the provider's roleMap), and optionally the "workspaces" they are in, each with an "id"
+                          and optionally a "role".
+                        maxLength: 253
+                        type: string
+                      platformClaim:
+                        description: |-
+                          PlatformClaim is the claim of the ID token that makes someone an administrator of the whole platform (its
+                          nodes, add-ons, domain and organizations) when it holds any of PlatformValues. Without it only the password
+                          administrators are, and no one who signs in through the provider.
+                        maxLength: 253
+                        type: string
+                      platformValues:
+                        description: PlatformValues are the values of PlatformClaim
+                          that make someone a platform administrator.
+                        items:
+                          type: string
+                        maxItems: 20
+                        type: array
                     type: object
                 type: object
               cloudflareConnectionRef:
