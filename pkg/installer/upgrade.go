@@ -263,13 +263,19 @@ func (s *EtcdSnapshot) Run() error {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	args := []string{"etcd-snapshot", "save", "--name", name, "--dir", dir}
-	if _, err := sh.run(s.Name(), commandOptions{echoStdout: false, echoStderr: true}, "k3s", args...); err != nil {
+	_, err := sh.run(s.Name(), commandOptions{echoStdout: false, echoStderr: true}, "k3s", args...)
+	found := latestSnapshot(dir, name)
+	switch {
+	case err != nil && found == "":
 		return fmt.Errorf("could not take an etcd snapshot: %w. K3s only snapshots an embedded etcd datastore, which "+
 			"is what Geass installs; if this server was set up some other way and you accept that there is no way back, add --skip-snapshot", err)
+	case err != nil:
+		// A server that sends its snapshots to S3 sends this one too, and says so when it cannot: the way back is the file on
+		// this machine, which is there. An update is not held back by a bucket.
+		Warnf(s.Name(), "K3s wrote the snapshot on this machine but reported an error, most likely from sending it to its S3 bucket: %v", err)
 	}
 	plan.SnapshotDir, plan.SnapshotName = dir, name
 
-	found := latestSnapshot(dir, name)
 	if found == "" {
 		// A snapshot nobody can find is no way back, and the whole point of taking it was to have one.
 		plan.SnapshotDir, plan.SnapshotName = "", ""

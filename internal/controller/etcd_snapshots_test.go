@@ -124,7 +124,7 @@ func TestTheSettingsK3sReadsAreWrittenFromTheSpecAndTheKey(t *testing.T) {
 	require.Equal(t, "shh", string(secret.Data["etcd-s3-secret-key"]))
 	require.Equal(t, platform.ManagedByValue, secret.Labels[platform.LabelManagedBy])
 	require.Equal(t, "AKIA", f.bucket.access, "the bucket is read with the same key that K3s writes with")
-	require.Equal(t, []string{"acme-state/geass"}, f.bucket.asked)
+	require.Equal(t, []string{"acme-state/geass/"}, f.bucket.asked, "the folder with its slash: geass-eu is not a part of it")
 }
 
 func TestWithNoKeyInTheClusterTheStatusSaysSoAndNothingIsSentToK3s(t *testing.T) {
@@ -303,8 +303,10 @@ func TestOnlyAnAWSDestinationIsAddressedByRegion(t *testing.T) {
 }
 
 // The cluster is reconciled for every node and volume that changes, by one worker, and a look in the bucket is a call over the
-// network. It is not made again within a couple of minutes unless where the copies go has changed.
-func TestTheBucketIsNotLookedInAgainWithinTwoMinutesUnlessWhereItIsChanged(t *testing.T) {
+// network. It is not made again until the look said it is time (a quarter of an hour for copies that are arriving) unless where
+// the copies go has changed. A look writes when it was made, which wakes the reconciler once more at once: what it is told then
+// has to be the whole of the wait, or the bucket is looked in every couple of minutes for ever.
+func TestTheBucketIsNotLookedInAgainBeforeTheLookSaidUnlessWhereItIsChanged(t *testing.T) {
 	f := newSnapshotFixture(t, snapshotSpec(), snapshotCredentials("AKIA", "shh"))
 	f.bucket.objects = []cloud.S3Object{{Key: "geass/etcd-snapshot-cp1-100", LastModified: snapshotTestNow.Add(-1 * time.Hour)}}
 	f.reconcile()
@@ -315,9 +317,13 @@ func TestTheBucketIsNotLookedInAgainWithinTwoMinutesUnlessWhereItIsChanged(t *te
 	f.now = f.now.Add(30 * time.Second)
 	wait := f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
 	require.Len(t, f.bucket.asked, 1, "looked at 30 seconds ago, and nothing has changed")
-	require.InDelta(t, (etcdSnapshotsMinInterval - 30*time.Second).Seconds(), wait.Seconds(), 1, "it asks to be visited when the time is up")
+	require.InDelta(t, (platform.EtcdSnapshotsRecheck - 30*time.Second).Seconds(), wait.Seconds(), 1, "it asks to be visited when the time is up, not two minutes from now")
 
 	f.now = f.now.Add(2 * time.Minute)
+	f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
+	require.Len(t, f.bucket.asked, 1, "two minutes on, a copy that is arriving is still not looked for again")
+
+	f.now = f.now.Add(platform.EtcdSnapshotsRecheck)
 	f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
 	require.Len(t, f.bucket.asked, 2, "and again once it has been long enough")
 
@@ -327,5 +333,19 @@ func TestTheBucketIsNotLookedInAgainWithinTwoMinutesUnlessWhereItIsChanged(t *te
 	f.now = f.now.Add(time.Second)
 	f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
 	require.Len(t, f.bucket.asked, 3)
-	require.Equal(t, "another-bucket/geass", f.bucket.asked[2])
+	require.Equal(t, "another-bucket/geass/", f.bucket.asked[2])
+}
+
+// Until a first copy has arrived the look is repeated every few minutes, which is how a copy that has just been taken is seen.
+func TestWhileNoCopyHasArrivedTheBucketIsLookedInEveryFewMinutes(t *testing.T) {
+	f := newSnapshotFixture(t, snapshotSpec(), snapshotCredentials("AKIA", "shh"))
+	f.reconcile()
+	f.cluster = f.latest()
+	require.Len(t, f.bucket.asked, 1)
+
+	f.now = f.now.Add(time.Minute)
+	wait := f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
+
+	require.Len(t, f.bucket.asked, 1)
+	require.InDelta(t, (etcdSnapshotsRetryWaiting - time.Minute).Seconds(), wait.Seconds(), 1)
 }

@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -178,24 +177,38 @@ func (s *Server) recoverBackups(ctx context.Context, input recoveryInput) (*reco
 				environments = append(environments, string(c.manifest.Environment))
 			}
 		}
+		// What cannot be made again is said, and what can is: one folder's record that is no good must not keep the others from
+		// being found, after some of them were made.
+		skipAll := func(what string, err error) {
+			for _, c := range candidates {
+				report.Skipped = append(report.Skipped, skippedBackups{Folder: project + "/" + c.manifest.ServerName, Reason: what + ": " + summarizeRecoveryError(err)})
+			}
+		}
 		created, err := s.ensureRecoveredProject(ctx, project, displayName, environments)
 		if err != nil {
-			return nil, fmt.Errorf("make project %s again: %w", project, err)
+			skipAll("The project could not be made again", err)
+			continue
 		}
 		if created {
 			report.Projects = append(report.Projects, project)
 		}
 		connection, err := s.ensureRecoveredConnection(ctx, project, input)
 		if err != nil {
-			return nil, fmt.Errorf("make the connection for project %s: %w", project, err)
+			skipAll("The connection to the bucket could not be made", err)
+			continue
 		}
-		if err := s.useRecoveredBucketForNewBackups(ctx, project, connection, input); err != nil {
-			return nil, fmt.Errorf("point project %s at the bucket: %w", project, err)
+		// Only a project made here is pointed at the bucket: one that was here has its own say about where its backups go.
+		if created {
+			if err := s.useRecoveredBucketForNewBackups(ctx, project, connection, input); err != nil {
+				skipAll("The project could not be pointed at the bucket", err)
+				continue
+			}
 		}
 		for _, c := range candidates {
 			entry, err := s.ensureRecoveredArchive(ctx, c.manifest, c.points, c.newest, connection, input)
 			if err != nil {
-				return nil, fmt.Errorf("make the record of %s again: %w", c.manifest.Database, err)
+				report.Skipped = append(report.Skipped, skippedBackups{Folder: project + "/" + c.manifest.ServerName, Reason: "Its record could not be made again: " + summarizeRecoveryError(err)})
+				continue
 			}
 			entry.ProjectName = displayName
 			report.Databases = append(report.Databases, entry)

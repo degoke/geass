@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	utilptr "k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -41,6 +42,26 @@ func lostNodeClient(t *testing.T, calls *deletions, objects ...client.Object) cl
 	require.NoError(t, cnpgv1.AddToScheme(scheme))
 	calls.grace = map[string]*int64{}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+		// The operator reads pods from a cache that drops what they run (see slimPod), which a fake client does not do by
+		// itself: code that reads pod.Spec.Volumes works here and finds nothing on a real cluster.
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if err := c.List(ctx, list, opts...); err != nil {
+				return err
+			}
+			if pods, ok := list.(*corev1.PodList); ok {
+				for i := range pods.Items {
+					_, _ = slimPod(&pods.Items[i])
+				}
+			}
+			return nil
+		},
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			err := c.Get(ctx, key, obj, opts...)
+			if pod, ok := obj.(*corev1.Pod); ok && err == nil {
+				_, _ = slimPod(pod)
+			}
+			return err
+		},
 		Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
 			var options client.DeleteOptions
 			options.ApplyOptions(opts)
@@ -84,14 +105,19 @@ func claimOf(name, class string, labels map[string]string) *corev1.PersistentVol
 	}
 }
 
-// pgPod is a pod of a Postgres database, on a node. It has no volumes, as the pods in the operator's cache have none (see
-// slimPod): the volumes are found from their claims. A pod that Kubernetes has marked for deletion and cannot finish has a
-// deletion time and the finalizer that keeps it.
+// pgPod is an instance of a Postgres database, on a node, with a volume. The client these tests use drops the volume as the
+// operator's cache does (see slimPod), so the volumes are found from their claims. A pod that Kubernetes has marked for
+// deletion and cannot finish has a deletion time and the finalizer that keeps it.
 func pgPod(name, database, node string, terminating bool) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app-prod", UID: types.UID("uid-" + name), Labels: map[string]string{cnpgClusterLabel: database}},
-		Spec:       corev1.PodSpec{NodeName: node},
-		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+		Spec: corev1.PodSpec{NodeName: node, Volumes: []corev1.Volume{{
+			Name: "pgdata", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name}},
+		}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	if database != "" {
+		pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: database, UID: "uid-cluster", Controller: utilptr.To(true)}}
 	}
 	if terminating {
 		now := metav1.NewTime(lostNodeNow.Add(-20 * time.Minute))
@@ -451,4 +477,52 @@ func TestAnInstanceWhoseVolumeIsBeingRemovedIsWaitingForNothing(t *testing.T) {
 	lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
 
 	require.Equal(t, []string{"pod/pg-2"}, calls.removed, "a volume that is being removed is held by this very pod, which is what keeps it")
+}
+
+// CloudNativePG's initdb and join jobs make a pod that waits for an image or a volume for as long as that takes, and has no
+// volume under its own name. It is not an instance that lost its volume, whatever the minute it has been Pending.
+func TestAPendingPodOfACloudNativePGJobIsNotAnInstanceWaitingForAVolume(t *testing.T) {
+	calls := &deletions{}
+	job := pgPod("pg-2-join-x7k2p", "pg", "", false)
+	job.Status = corev1.PodStatus{Phase: corev1.PodPending}
+	job.OwnerReferences = []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: "pg-2-join", UID: "uid-job", Controller: utilptr.To(true)}}
+	job.Labels[cnpgJobRoleLabel] = "join"
+	c := lostNodeClient(t, calls, readyNode("a"), pgCluster("pg", 3, "pg-1"), pgPod("pg-1", "pg", "a", false), instanceClaim("pg", "pg-1", platform.StorageClassSingle), job)
+
+	lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Empty(t, calls.removed, "the job is building the instance whose volume it waits for: removing it only starts it again, and counts against its limit")
+}
+
+func TestTheLimitOfTheClusterSaysWhenANodeIsLost(t *testing.T) {
+	away := func(limit *time.Duration) []string {
+		calls := &deletions{}
+		c := lostNodeClient(t, calls, notReadyNode("b", time.Hour),
+			pgCluster("pg", 1, "pg-1"), pgPod("pg-1", "pg", "b", true), instanceClaim("pg", "pg-1", platform.StorageClassReplicated))
+		cluster := &geassv1alpha1.GeassCluster{}
+		if limit != nil {
+			cluster.Spec.LostNodeAfter = &metav1.Duration{Duration: *limit}
+		}
+		lostNodeReconciler(c).reconcileLostNodes(context.Background(), cluster)
+		return calls.removed
+	}
+	hours, minutes, off := 3*time.Hour, 30*time.Minute, time.Duration(0)
+
+	require.Equal(t, []string{"pod/pg-1"}, away(nil), "the operator's own limit, 15 minutes, when the cluster says none")
+	require.Empty(t, away(&hours), "a node that is away for an hour is not lost to a cluster that waits three")
+	require.Equal(t, []string{"pod/pg-1"}, away(&minutes), "and is, to one that waits half an hour")
+	require.Empty(t, away(&off), "0s turns it off, before a planned shutdown")
+}
+
+func TestAPassThatHadNothingToDoLooksAgainLaterThanOneThatDid(t *testing.T) {
+	// The one instance is on one node's own disk, which is lost: there is nothing to be done for it, and nothing to be done
+	// again in two minutes.
+	calls := &deletions{}
+	c := lostNodeClient(t, calls, notReadyNode("b", time.Hour),
+		pgCluster("pg", 1, "pg-1"), pgPod("pg-1", "pg", "b", true), instanceClaim("pg", "pg-1", platform.StorageClassSingle))
+
+	wait := lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Empty(t, calls.removed)
+	require.Equal(t, lostNodeIdleRecheck, wait, "a node that is never removed must not keep the cluster busy every two minutes")
 }

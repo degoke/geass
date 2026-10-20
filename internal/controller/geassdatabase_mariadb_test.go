@@ -1039,3 +1039,25 @@ func TestTheJobRestoringACopyIntoAReplicaIsRemovedWithTheVolumeItWasUsing(t *tes
 	require.False(t, gone("other-2-pb-init"), "another database's")
 	require.False(t, gone("orders-backup"), "and nothing that is not a restore into a replica")
 }
+
+// Longhorn's replicated class is made again whenever the number of nodes changes, and for a moment it is not there: the class a
+// copy belongs on is then the cluster's default, which is no reason to move a copy that is kept on the replicated one.
+func TestACopyKeptOnTheReplicatedClassIsNotMovedWhileThatClassIsBeingMadeAgain(t *testing.T) {
+	ctx := context.Background()
+	replicated := platform.StorageClassReplicated
+	template := &mariadbv1.PhysicalBackup{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-recovery", Namespace: testDevTargetNS},
+		Spec: mariadbv1.PhysicalBackupSpec{
+			MariaDBRef: mariadbv1.MariaDBRef{Name: "orders"},
+			Storage:    mariadbv1.PhysicalBackupStorage{PersistentVolumeClaim: &mariadbv1.PersistentVolumeClaimStorage{StorageClassName: &replicated}},
+		},
+	}
+	running := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: "orders-pb-recovery", Namespace: testDevTargetNS}}
+	e := newMariaDBEnv(t, 3, template, running) // no storage classes at all
+
+	_, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	require.Equal(t, platform.StorageClassReplicated, recoveryTemplateClass(recoveryTemplateOf(t, e)), "the template stays as it was")
+	require.NoError(t, e.client.Get(ctx, client.ObjectKeyFromObject(running), &mariadbv1.PhysicalBackup{}), "and a rebuild in progress is not interrupted")
+}

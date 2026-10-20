@@ -1364,7 +1364,8 @@ func spreadCopies(spec *corev1.PodSpec, selector map[string]string, bySite bool)
 // everyNodeHasASite says whether every node a service can run on has a site, which a node gets as the standard zone label.
 func (r *GeassAppReconciler) everyNodeHasASite(ctx context.Context) (bool, error) {
 	var nodes corev1.NodeList
-	if err := r.List(ctx, &nodes); err != nil {
+	// Only read, and for every service that runs more than one copy: not copied for each.
+	if err := r.List(ctx, &nodes, client.UnsafeDisableDeepCopy); err != nil {
 		return false, err
 	}
 	usable := 0

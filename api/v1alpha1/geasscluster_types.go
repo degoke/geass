@@ -234,6 +234,13 @@ type GeassClusterSpec struct {
 	// are none: the snapshots K3s takes stay on the disk they protect. It is opt-in.
 	// +optional
 	EtcdSnapshots *GeassClusterEtcdSnapshotsSpec `json:"etcdSnapshots,omitempty"`
+
+	// LostNodeAfter is how long a node may be not ready before it is taken to be lost, and the databases on it are made to start
+	// on another node or, for a highly available Postgres database whose volume was on it alone, replaced (which removes that
+	// instance's volume). It is 15 minutes when left out. 0s turns it off, which is what to set before a planned shutdown of
+	// longer than that.
+	// +optional
+	LostNodeAfter *metav1.Duration `json:"lostNodeAfter,omitempty"`
 }
 
 type ClusterPhase string

@@ -149,7 +149,14 @@ export function ClusterBackup({ mutable }) {
             <Input value={form.region} onChange={set("region")} aria-label="Region" placeholder="eu-north-1" spellCheck={false} />
           </Field>
           <Field label="Server (not AWS)" description="The address of an S3-compatible server, with no https:// in front. Leave empty for AWS S3.">
-            <Input value={form.endpoint} onChange={set("endpoint")} aria-label="Server" placeholder="minio.example.com:9000" spellCheck={false} />
+            <Input
+              value={form.endpoint}
+              // The switch below is only there while a server is named: with none the copies go to AWS, which is never plain HTTP.
+              onChange={(event) => setForm({ ...form, endpoint: event.currentTarget.value, insecure: event.currentTarget.value ? form.insecure : false })}
+              aria-label="Server"
+              placeholder="minio.example.com:9000"
+              spellCheck={false}
+            />
           </Field>
           {form.endpoint ? (
             <Switch

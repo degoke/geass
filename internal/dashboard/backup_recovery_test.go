@@ -343,3 +343,45 @@ type testError struct{ text string }
 func (e *testError) Error() string { return e.text }
 
 func jsonUnmarshal(raw []byte, into any) error { return json.Unmarshal(raw, into) }
+
+// A project here that chose no place for its backups is not given one: the bucket that was found is where its recovered
+// backups are read from, which is all it was asked for.
+func TestAProjectThatIsHereAndChoseNoBackupBucketIsNotGivenOne(t *testing.T) {
+	existing := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{DisplayName: "My shop", Environments: []string{"production"}},
+	}
+	srv, c := newRecoveryServer(ordersBucket(t), existing)
+
+	recover(srv, recoveryForm)
+
+	var project geassv1alpha1.GeassProject
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "shop", Namespace: platform.SystemNamespace}, &project))
+	require.Nil(t, project.Spec.BackupStorage, "its future backups do not start going to the bucket it was recovered from")
+	var archive geassv1alpha1.GeassBackupArchive
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "recovered-orders-1a2b3c4d", Namespace: platform.SystemNamespace}, &archive))
+}
+
+// One project whose record cannot be made again does not stop the others, which were not yet made when it was found, and what
+// was not made is said.
+func TestAProjectThatCannotBeMadeAgainIsSaidAndDoesNotStopTheOthers(t *testing.T) {
+	b := ordersBucket(t)
+	b.put("aaa-bad/x-12345678/geass-archive.json", `{"schema":1,"project":"aaa-bad","environment":"Not Valid!","database":"x","serverName":"x-12345678","retentionDays":7,"source":{"engine":"SQLite"}}`)
+	b.put("aaa-bad/x-12345678/dumps/20261012T020000Z.sql.gz", "x")
+	srv, c := newRecoveryServer(b)
+
+	var report recoveryReport
+	rec := recover(srv, recoveryForm)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, jsonUnmarshal(rec.Body.Bytes(), &report))
+	reasons := map[string]string{}
+	for _, skipped := range report.Skipped {
+		reasons[skipped.Folder] = skipped.Reason
+	}
+	require.Contains(t, reasons["aaa-bad/x-12345678"], "could not be made again", "said, with its folder")
+	require.Len(t, report.Databases, 2, "the project that sorts after it was recovered")
+	var projects geassv1alpha1.GeassProjectList
+	require.NoError(t, c.List(context.Background(), &projects))
+	require.Len(t, projects.Items, 1)
+}

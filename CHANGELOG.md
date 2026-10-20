@@ -106,7 +106,13 @@ The first public release.
   bucket and takes a copy. Testing it on real machines also found two faults that stopped Geass promoting a MariaDB
   replica when the primary's machine was lost, now fixed: a highly available database that already existed was held by
   the check for three healthy nodes (which a cluster of three fails the moment it loses one), and Longhorn's removal
-  of the lost primary's pod left it with no machine for the promotion to look at.
+  of the lost primary's pod left it with no machine for the promotion to look at. How long a node may be away before this
+  starts is `spec.lostNodeAfter` on the GeassCluster (15 minutes; `0s` turns it off). Updating to this release rolls each
+  service that runs more than one replica once, because its pods now carry the spread preference. An update is no longer
+  stopped by a snapshot that K3s wrote but could not send to its bucket, the snapshot bucket is looked in under its
+  folder with a slash (a folder called geass-eu is not a part of geass) and, with copies arriving, only every quarter of an
+  hour, and recovering databases from a bucket skips a folder it cannot make again instead of stopping, and no longer
+  gives a project that is already there a backup bucket.
 - **A MariaDB replica that has to be built again is built.** The copy the operator builds a replica from was kept on the
   servers' own storage class, one copy on one machine, and the job that restores it into a replica mounts that volume and
   the replica's own: with the two on different machines it was never scheduled, and the replica stayed down. The copy is

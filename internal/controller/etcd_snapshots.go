@@ -145,13 +145,16 @@ func (r *GeassClusterReconciler) reconcileEtcdSnapshots(ctx context.Context, clu
 		return etcdSnapshotsRetryFast
 	}
 
-	// Looked at a moment ago, and nothing about where or how has changed since: what was seen stands.
+	// Looked at a moment ago, and nothing about where or how has changed since: what was seen stands, for as long as that look
+	// said to wait. A look writes when it was made, which wakes the cluster's reconciler once more at once, so what this
+	// returns while it waits has to be the whole of the wait and not a short one that would look again every few minutes.
 	if last := cluster.Status.EtcdSnapshots; !changed && last != nil && last.CheckedAt != nil {
-		if wait := etcdSnapshotsMinInterval - r.snapshotClock().Sub(last.CheckedAt.Time); wait > 0 {
+		if wait := etcdSnapshotsLookInterval(cluster) - r.snapshotClock().Sub(last.CheckedAt.Time); wait > 0 {
 			return wait
 		}
 	}
-	objects, err := r.etcdSnapshotLister(spec, accessKey, secretKey).ListObjects(spec.Bucket, platform.EtcdSnapshotsFolder(spec))
+	// A prefix with its slash: without it a folder called geass-eu is a part of the folder called geass.
+	objects, err := r.etcdSnapshotLister(spec, accessKey, secretKey).ListObjects(spec.Bucket, platform.EtcdSnapshotsFolder(spec)+"/")
 	if err != nil {
 		r.recordEtcdSnapshots(ctx, key, platform.EtcdSnapshotsAssessment{
 			Status: metav1.ConditionFalse, Reason: platform.EtcdSnapshotsReasonUnreadable,
@@ -172,6 +175,22 @@ func (r *GeassClusterReconciler) reconcileEtcdSnapshots(ctx context.Context, clu
 		return etcdSnapshotsRetryWaiting
 	}
 	return platform.EtcdSnapshotsRecheck
+}
+
+// etcdSnapshotsLookInterval is how long after a look the next one is made when nothing has changed: as long as the look
+// said to wait, and never less than the least time between two looks.
+func etcdSnapshotsLookInterval(cluster *geassv1alpha1.GeassCluster) time.Duration {
+	condition := meta.FindStatusCondition(cluster.Status.Conditions, platform.ConditionEtcdSnapshotsCurrent)
+	if condition == nil {
+		return etcdSnapshotsMinInterval
+	}
+	switch condition.Reason {
+	case platform.EtcdSnapshotsReasonCurrent:
+		return platform.EtcdSnapshotsRecheck
+	case platform.EtcdSnapshotsReasonWaiting, platform.EtcdSnapshotsReasonNoCopy, platform.EtcdSnapshotsReasonStale:
+		return etcdSnapshotsRetryWaiting
+	}
+	return etcdSnapshotsMinInterval
 }
 
 // ensureEtcdSnapshotsSecret writes the Secret that K3s reads, and returns when this destination was first set: what the

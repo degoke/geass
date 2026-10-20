@@ -438,38 +438,49 @@ func (r *GeassDatabaseReconciler) ensureMariaDBRecoveryTemplate(ctx context.Cont
 	if err != nil || wait {
 		return wait, err
 	}
-	desired := mariadbRecoveryTemplate(db, wsNS, class, placement)
-	if err := r.retireStaleCopyVolumes(ctx, db, wsNS, class); err != nil {
-		return false, err
-	}
-	template := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: wsNS}}
+	template := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbRecoveryName(db), Namespace: wsNS}}
 	switch err := r.Get(ctx, client.ObjectKeyFromObject(template), template); {
 	case apierrors.IsNotFound(err):
 	case err != nil:
 		return false, err
-	case template.DeletionTimestamp.IsZero() && recoveryTemplateClass(template) != utilptr.Deref(desired.Spec.Storage.PersistentVolumeClaim.StorageClassName, ""):
-		if err := r.replaceMariaDBRecoveryTemplate(ctx, db, wsNS, template); err != nil {
-			return false, err
-		}
-		return false, nil
 	case !template.DeletionTimestamp.IsZero():
 		// Being replaced: it is made again once it is gone.
 		return false, nil
+	default:
+		// No class is also what is found while Longhorn's class is being made again, which is no reason to move a copy that
+		// is kept on one to the cluster's default, which cannot follow a replica either.
+		if class == "" {
+			class = recoveryTemplateClass(template)
+		}
+		if recoveryTemplateClass(template) != class {
+			return false, r.replaceMariaDBRecoveryTemplate(ctx, db, wsNS, template)
+		}
 	}
+	if err := r.retireStaleCopyVolumes(ctx, db, wsNS, class); err != nil {
+		return false, err
+	}
+	desired := mariadbRecoveryTemplate(db, wsNS, class, placement)
 	template = &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: wsNS}}
 	_, err = controllerutil.CreateOrPatch(ctx, r.Client, template, func() error {
 		applyGeassLabels(template, db, "GeassDatabase")
 		spec := desired.Spec
-		if template.ResourceVersion != "" && template.Spec.Storage.PersistentVolumeClaim != nil && spec.Storage.PersistentVolumeClaim != nil {
-			// Where a copy is kept is fixed once the template exists, as the claim of the database is.
-			spec.Storage.PersistentVolumeClaim.StorageClassName = template.Spec.Storage.PersistentVolumeClaim.StorageClassName
-		}
 		// What the operator fills in and Geass does not say is left as it is, so a pass with nothing to change sends nothing.
 		spec.Compression, spec.MaxRetention = template.Spec.Compression, template.Spec.MaxRetention
 		template.Spec = spec
 		return setSameNamespaceOwner(db, template, r.Scheme)
 	})
 	return false, err
+}
+
+// mariadbCopyNames are the names the operator gives the copies it makes from the recovery template, which are also the names of
+// their volumes.
+func mariadbCopyNames(db *geassv1alpha1.GeassDatabase) []string {
+	return []string{db.Name + mariadbRecoveryCopySuffix, db.Name + mariadbScaleOutCopySuffix}
+}
+
+// removeMariaDBCopy removes one of those copies, which the operator makes again when it needs one.
+func (r *GeassDatabaseReconciler) removeMariaDBCopy(ctx context.Context, wsNS, name string) error {
+	return client.IgnoreNotFound(r.Delete(ctx, &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}}))
 }
 
 // retireStaleCopyVolumes removes the volumes the operator kept its copies on from a time when they were on the database's
@@ -481,8 +492,8 @@ func (r *GeassDatabaseReconciler) retireStaleCopyVolumes(ctx context.Context, db
 		return nil
 	}
 	log := logf.FromContext(ctx)
-	for _, suffix := range []string{mariadbRecoveryCopySuffix, mariadbScaleOutCopySuffix} {
-		name := db.Name + suffix
+	retired := false
+	for _, name := range mariadbCopyNames(db) {
 		var claim corev1.PersistentVolumeClaim
 		if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: wsNS}, &claim); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -494,17 +505,18 @@ func (r *GeassDatabaseReconciler) retireStaleCopyVolumes(ctx context.Context, db
 			continue
 		}
 		// The copy that holds it first, or it is made again on the same volume.
-		if err := r.Delete(ctx, &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}}); client.IgnoreNotFound(err) != nil {
+		if err := r.removeMariaDBCopy(ctx, wsNS, name); err != nil {
 			return err
 		}
 		if err := r.Delete(ctx, &claim); client.IgnoreNotFound(err) != nil {
 			return err
 		}
+		retired = true
 		log.Info("Removed the volume MariaDB kept a copy on, which could not follow a replica to another machine",
 			"database", db.Name, "claim", name, "was", utilptr.Deref(claim.Spec.StorageClassName, ""), "now", class)
-		if err := r.removeUnfinishedInitJobs(ctx, db, wsNS); err != nil {
-			return err
-		}
+	}
+	if retired {
+		return r.removeUnfinishedInitJobs(ctx, db, wsNS)
 	}
 	return nil
 }
@@ -556,9 +568,8 @@ func recoveryTemplateClass(template *mariadbv1.PhysicalBackup) string {
 // built. The operator makes them again, from the template that takes its place, the next time a replica needs it.
 func (r *GeassDatabaseReconciler) replaceMariaDBRecoveryTemplate(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, template *mariadbv1.PhysicalBackup) error {
 	log := logf.FromContext(ctx)
-	for _, name := range []string{db.Name + mariadbRecoveryCopySuffix, db.Name + mariadbScaleOutCopySuffix} {
-		copied := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}}
-		if err := r.Delete(ctx, copied); client.IgnoreNotFound(err) != nil {
+	for _, name := range mariadbCopyNames(db) {
+		if err := r.removeMariaDBCopy(ctx, wsNS, name); err != nil {
 			return err
 		}
 	}
