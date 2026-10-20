@@ -10,13 +10,17 @@ export function projectResources(data, projectName, environment) {
   };
 }
 
+/** The connections a project may use: its own, and those of the organization it belongs to. */
 export function availableConnections(data, provider, project) {
   const projectName = String(project || "").trim();
+  const owner = list(data, "projects").find((item) => item.metadata?.name === projectName);
+  const org = String(owner?.spec?.org || "").trim();
   return list(data, "cloudConnections").filter((item) => {
     if (item.spec?.provider !== provider || !item.status?.available) {
       return false;
     }
     const scoped = String(item.spec?.project || "").trim();
-    return scoped !== "" && scoped === projectName;
+    if (scoped !== "") return scoped === projectName;
+    return org !== "" && String(item.spec?.org || "").trim() === org;
   });
 }

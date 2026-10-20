@@ -34,7 +34,9 @@ export const SETTINGS_PATHS = [
   "/settings/github",
   "/settings/tokens",
   "/settings/auth",
+  "/settings/organizations",
   "/settings/alerts",
+  "/settings/registry",
   "/object-storage",
   "/shared-databases",
   "/cluster",
@@ -50,12 +52,21 @@ export const SETTINGS_LINKS = [
   { id: "usage", label: "Usage", to: "/cluster", active: (path) => path === "/cluster" || path === "/ha-readiness" || path.startsWith("/cluster/") },
   { id: "domain", label: "Domain", to: "/settings/domain", active: (path) => path.startsWith("/settings/domain") },
   { id: "connectors", label: "Connectors", to: "/settings/connectors", active: (path) => path.startsWith("/settings/connectors") || path.startsWith("/settings/github") },
-  { id: "tokens", label: "Tokens", to: "/settings/tokens", active: (path) => path.startsWith("/settings/tokens") },
+  // `tenant` is what an organization's administrators are shown: the rest is the platform's.
+  { id: "tokens", label: "Tokens", to: "/settings/tokens", tenant: true, active: (path) => path.startsWith("/settings/tokens") },
   { id: "auth", label: "Sign-in", to: "/settings/auth", active: (path) => path.startsWith("/settings/auth") },
-  { id: "alerts", label: "Alerts", to: "/settings/alerts", active: (path) => path.startsWith("/settings/alerts") },
+  { id: "organizations", label: "Organizations", to: "/settings/organizations", active: (path) => path.startsWith("/settings/organizations") },
+  { id: "alerts", label: "Alerts", to: "/settings/alerts", tenant: true, active: (path) => path.startsWith("/settings/alerts") },
+  // `orgOnly` is shown to organizations and not to the platform, whose registry is set under Connectors.
+  { id: "registry", label: "Registry", to: "/settings/registry", tenant: true, orgOnly: true, active: (path) => path.startsWith("/settings/registry") },
   { id: "object", label: "Object storage", to: "/object-storage", active: (path) => path.startsWith("/object-storage") },
   { id: "databases", label: "Databases", to: "/shared-databases", active: (path) => path.startsWith("/shared-databases") },
 ];
+
+/** The settings links a session is shown: all of them for the platform, and only the organization's own for an organization. */
+export function settingsLinksFor(platform) {
+  return platform ? SETTINGS_LINKS.filter((item) => !item.orgOnly) : SETTINGS_LINKS.filter((item) => item.tenant);
+}
 
 /** @deprecated use SETTINGS_LINKS */
 export const SETTINGS_NAV = SETTINGS_LINKS;

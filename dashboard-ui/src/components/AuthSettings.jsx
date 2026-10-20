@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { action, api } from "@/lib/api";
 import { alertError, notify } from "@/lib/notify";
 import { ssoErrorMessage } from "@/lib/sso";
-import { Badge, Button, Field, Input, Muted, Switch, Textarea } from "@/components/geass-ui";
+import { Badge, Button, Field, Input, Muted, Select, Switch, Textarea } from "@/components/geass-ui";
 import { SettingsFormActions } from "@/layout/SettingsShell";
 
 const emptyForm = {
@@ -14,9 +14,12 @@ const emptyForm = {
   clientSecret: "",
   scopes: "",
   roleClaim: "",
+  orgsClaim: "",
   roleMap: "",
   requireClaim: "",
   sessionMinutes: "60",
+  refreshMinutes: "",
+  staleGraceMinutes: "",
 };
 
 const asLines = (map) => Object.entries(map || {}).map(([key, value]) => `${key}=${value}`).join("\n");
@@ -42,7 +45,7 @@ export function AuthSettings({ mutable }) {
   // The form is seeded from what is saved, and again only when what it shows has changed (after a save), not on every
   // refetch: flipping the logout-policy switch changes the saved data too, and must not wipe what is being typed.
   const formSource = saved
-    ? JSON.stringify([saved.displayName, saved.issuer, saved.clientID, saved.scopes, saved.roleClaim, saved.roleMap, saved.requireClaim, saved.sessionMinutes])
+    ? JSON.stringify([saved.displayName, saved.issuer, saved.clientID, saved.scopes, saved.roleClaim, saved.tenancy?.orgsClaim, saved.roleMap, saved.requireClaim, saved.sessionMinutes, saved.refreshMinutes, saved.staleGraceMinutes])
     : "";
   useEffect(() => {
     if (!saved) return;
@@ -53,9 +56,12 @@ export function AuthSettings({ mutable }) {
       clientSecret: "",
       scopes: (saved.scopes || []).join(" "),
       roleClaim: saved.roleClaim || "",
+      orgsClaim: saved.tenancy?.orgsClaim || "",
       roleMap: asLines(saved.roleMap),
       requireClaim: asLines(saved.requireClaim),
       sessionMinutes: String(saved.sessionMinutes || 60),
+      refreshMinutes: saved.refreshMinutes ? String(saved.refreshMinutes) : "",
+      staleGraceMinutes: saved.refreshMinutes && saved.staleGraceMinutes ? String(saved.staleGraceMinutes) : "",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formSource]);
@@ -116,7 +122,7 @@ export function AuthSettings({ mutable }) {
   const test = saved.test;
   // Without a required claim, anyone the provider signs in with a role that is mapped gets in. That is right for a provider
   // whose people are chosen (a company directory) and wrong for one anyone can sign up to.
-  const unrestricted = saved.configured && Object.keys(saved.requireClaim || {}).length === 0;
+  const unrestricted = saved.configured && Object.keys(saved.requireClaim || {}).length === 0 && !saved.tenancy?.orgsClaim;
 
   return (
     <div className="rw-tokens">
@@ -169,8 +175,11 @@ export function AuthSettings({ mutable }) {
               />
             </Field>
           </Group>
-          <Field label="Role claim" description="The claim of the ID token that holds the person's role, such as org_role. A dotted path reaches into nested claims.">
-            <Input required value={form.roleClaim} disabled={external} aria-label="Role claim" placeholder="org_role" onChange={set("roleClaim")} />
+          <Field label="Role claim" description="The claim of the ID token that holds the person's role, such as org_role. A dotted path reaches into nested claims. With organizations the role is read from each organization instead, and this can stay empty when the organizations claim below is set.">
+            <Input required={!form.orgsClaim.trim()} value={form.roleClaim} disabled={external} aria-label="Role claim" placeholder="org_role" onChange={set("roleClaim")} />
+          </Field>
+          <Field label="Organizations claim" description="Optional. For organizations and workspaces: the claim that lists them, one entry for each organization. It is saved with the provider so that no role claim is needed. Leave it empty for one organization, or to set it up later under Organizations.">
+            <Input value={form.orgsClaim} disabled={external || Boolean(saved.tenancy?.enabled)} aria-label="Organizations claim saved with the provider" placeholder="orgs" onChange={set("orgsClaim")} />
           </Field>
           <Field label="Roles" description="One per line: the provider's role, then =admin or =viewer. Someone whose roles are none of these cannot sign in.">
             <Textarea required rows={3} value={form.roleMap} disabled={external} aria-label="Role mapping" placeholder={"owner=admin\nadmin=admin\nmember=viewer"} onChange={set("roleMap")} />
@@ -184,6 +193,14 @@ export function AuthSettings({ mutable }) {
             </Field>
             <Field label="Session length (minutes)" description="Then the person goes back to the provider, which is how a changed role or a removed person is noticed.">
               <Input type="number" min={5} max={720} value={form.sessionMinutes} disabled={external} aria-label="Session length in minutes" onChange={set("sessionMinutes")} />
+            </Field>
+          </Group>
+          <Group grow align="flex-start">
+            <Field label="Check people again every (minutes)" description="Optional. Geass asks the provider again, this often, whether each person is still its own and what it says of them, so a changed role or a removed person is noticed in minutes, not when the session ends. Needs a provider that gives refresh tokens (offline_access). Empty is never.">
+              <Input type="number" min={5} max={1440} value={form.refreshMinutes} disabled={external} aria-label="Check people again every" placeholder="Never" onChange={set("refreshMinutes")} />
+            </Field>
+            <Field label="Keep a session when the provider is down for (minutes)" description="Sessions that could not be checked are ended after this. Empty means 120.">
+              <Input type="number" min={5} max={1440} value={form.staleGraceMinutes} disabled={external || !form.refreshMinutes} aria-label="Keep a session when the provider is down for" onChange={set("staleGraceMinutes")} />
             </Field>
           </Group>
           {unrestricted && !external ? (
@@ -231,6 +248,17 @@ export function AuthSettings({ mutable }) {
               {test.email ? <Text size="sm">{test.email}{test.role ? ` · ${test.role}` : ""}</Text> : null}
             </Group>
             {!test.ok && test.detail ? <Muted size="sm">{test.detail}</Muted> : null}
+            {test.platformAdmin ? <Muted size="sm">The token makes this person an administrator of the platform.</Muted> : null}
+            {(test.orgs || []).length ? (
+              <Stack gap={2}>
+                {test.orgs.map((org) => (
+                  <Text size="sm" key={org.idpID}>
+                    {org.idpID} · {org.role} · {org.workspaces} {org.workspaces === 1 ? "workspace" : "workspaces"} ·{" "}
+                    {org.name ? (org.suspended ? "set up, suspended" : "set up here") : "not set up here"}
+                  </Text>
+                ))}
+              </Stack>
+            ) : null}
           </Stack>
         ) : (
           <Muted size="sm">{saved.configured ? "Not tested yet." : "Save the settings first."}</Muted>
@@ -245,6 +273,8 @@ export function AuthSettings({ mutable }) {
           <Muted size="sm">Keep an admin who signs in with a password first: it is the way back in when the provider is down.</Muted>
         ) : null}
       </Stack>
+
+      <TenancySettings saved={saved} busy={busy} run={run} />
 
       <Modal opened={confirming === "enable"} onClose={() => { if (!busy) setConfirming(""); }} title={`Sign in through ${name}?`} centered>
         <Text size="sm" mb="md">
@@ -272,5 +302,116 @@ export function AuthSettings({ mutable }) {
         </Group>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Organizations: how the sign-in token lists a person's organizations, and whether people belong to them. The claims are saved
+ * on their own and can only change while organizations are off; turning them on needs a test sign-in that put someone in an
+ * organization that is set up, so that a wrong claim cannot send everyone nowhere.
+ */
+function TenancySettings({ saved, busy, run }) {
+  const tenancy = saved.tenancy || {};
+  const [form, setForm] = useState({ orgsClaim: "", platformClaim: "", platformValues: "" });
+  const [auto, setAuto] = useState({ mode: "off", allow: "", max: "" });
+  const source = JSON.stringify([tenancy.orgsClaim, tenancy.platformClaim, tenancy.platformValues]);
+  const autoSource = JSON.stringify([tenancy.autoProvision, tenancy.autoProvisionAllow, tenancy.autoProvisionMax]);
+  useEffect(() => {
+    setAuto({ mode: tenancy.autoProvision || "off", allow: (tenancy.autoProvisionAllow || []).join(" "), max: String(tenancy.autoProvisionMax || "") });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSource]);
+  useEffect(() => {
+    setForm({ orgsClaim: tenancy.orgsClaim || "", platformClaim: tenancy.platformClaim || "", platformValues: (tenancy.platformValues || []).join(" ") });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
+  if (!saved.configured) return null;
+  const on = Boolean(tenancy.enabled);
+  const set = (field) => (event) => setForm({ ...form, [field]: event.currentTarget.value });
+  const save = (event) => {
+    event.preventDefault();
+    return run("tenancy", "/settings/auth/tenancy", form, "Saved. Test the sign-in again before turning organizations on.");
+  };
+  const saveAuto = (event) => {
+    event.preventDefault();
+    return run("tenancy-auto", "/settings/auth/tenancy", { autoProvision: auto.mode, autoProvisionAllow: auto.allow, autoProvisionMax: auto.max }, "Saved.");
+  };
+
+  return (
+    <Stack gap="xs" mt="lg">
+      <Group gap="sm">
+        <Text fw={600} size="sm">Organizations</Text>
+        <Badge tone={on ? "success" : "neutral"}>{on ? "On" : "Off"}</Badge>
+      </Group>
+      <Muted size="sm">
+        Keep each organization's projects apart: the people the provider puts in an organization see only its projects, and only the
+        platform's administrators see the rest. Set the organizations up under Settings → Organizations, then say here which claim of the token
+        lists them, test the sign-in, and turn them on. Everyone signs in again when they are turned on or off.
+      </Muted>
+      <form onSubmit={save}>
+        <Stack gap="sm">
+          <Field label="Organizations claim" description="A list in the token, one entry for each organization: {id, role, workspaces}. A dotted path reaches into nested claims.">
+            <Input value={form.orgsClaim} disabled={on} aria-label="Organizations claim" placeholder="orgs" onChange={set("orgsClaim")} />
+          </Field>
+          <Group grow align="flex-start">
+            <Field label="Platform administrator claim" description="Optional. A claim whose value makes someone an administrator of the whole platform.">
+              <Input value={form.platformClaim} disabled={on} aria-label="Platform administrator claim" placeholder="geass_platform" onChange={set("platformClaim")} />
+            </Field>
+            <Field label="Values" description="Any of these, separated by spaces.">
+              <Input value={form.platformValues} disabled={on} aria-label="Platform administrator values" placeholder="operator" onChange={set("platformValues")} />
+            </Field>
+          </Group>
+          {!on ? (
+            <SettingsFormActions>
+              <Button type="submit" variant="outline" loading={busy === "tenancy"} disabled={Boolean(busy)}>Save how the token names them</Button>
+            </SettingsFormActions>
+          ) : null}
+        </Stack>
+      </form>
+      <Group gap="sm">
+        {on ? (
+          <Button type="button" variant="outline" loading={busy === "tenancy-off"} disabled={Boolean(busy)} onClick={() => run("tenancy-off", "/settings/auth/tenancy", { enabled: "off" }, "Organizations are off. Everyone signs in again.")}>
+            Turn organizations off
+          </Button>
+        ) : (
+          <Button type="button" loading={busy === "tenancy-on"} disabled={Boolean(busy) || Boolean(tenancy.enableProblem)} onClick={() => run("tenancy-on", "/settings/auth/tenancy", { enabled: "on" }, "Organizations are on. Everyone signs in again.")}>
+            Turn organizations on
+          </Button>
+        )}
+      </Group>
+      {!on && tenancy.enableProblem ? <Muted size="sm">{tenancy.enableProblem}</Muted> : null}
+      <form onSubmit={saveAuto}>
+        <Stack gap="sm" mt="md">
+          <Text fw={600} size="sm">Organizations made by sign-in</Text>
+          <Muted size="sm">
+            Let the first sign-in of an organization&apos;s administrator make the organization here, instead of refusing them. Use it only with a provider that
+            people you trust make organizations in. They have to administer the organization at the provider and have a verified address. Pending makes it
+            suspended until you approve it under Organizations; Open makes it ready at once, for the ids you list.
+          </Muted>
+          <Group grow align="flex-start">
+            <Field label="Make organizations">
+              <Select value={auto.mode} aria-label="Make organizations" onChange={(event) => setAuto({ ...auto, mode: event.currentTarget.value })}>
+                <option value="off">Never</option>
+                <option value="pending">Pending approval</option>
+                <option value="open">At once, for the ids listed</option>
+              </Select>
+            </Field>
+            <Field label="Most to make" description="In all. Empty means 20.">
+              <Input type="number" min="1" max="500" value={auto.max} aria-label="Most organizations to make" disabled={auto.mode === "off"} onChange={(event) => setAuto({ ...auto, max: event.currentTarget.value })} />
+            </Field>
+          </Group>
+          <Field label="Only these ids" description="The provider's ids, or the start of one followed by *, separated by spaces. Open needs it; pending without it makes any that asks.">
+            <Input value={auto.allow} aria-label="Ids that may be made" disabled={auto.mode === "off"} placeholder="org_partner_*" onChange={(event) => setAuto({ ...auto, allow: event.currentTarget.value })} />
+          </Field>
+          <SettingsFormActions>
+            <Button type="submit" variant="outline" loading={busy === "tenancy-auto"} disabled={Boolean(busy)}>Save</Button>
+          </SettingsFormActions>
+        </Stack>
+      </form>
+      {!on && !tenancy.enableProblem && tenancy.orgsClaim ? (
+        <Muted size="sm">
+          Projects that belong to no organization will be seen by the platform's administrators only. Give each to an organization in its settings first.
+        </Muted>
+      ) : null}
+    </Stack>
   );
 }

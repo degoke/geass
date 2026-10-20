@@ -3,6 +3,8 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Burger, Menu } from "@mantine/core";
 import {
   BarChart3,
+  Building2,
+  Check,
   ChevronDown,
   ExternalLink,
   FolderKanban,
@@ -15,7 +17,7 @@ import {
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
-import { canMutate, dashboardSession, useBootstrap } from "@/lib/dashboard";
+import { canMutate, currentScope, dashboardSession, isPlatformSession, scopeLabel, sessionScopes, useBootstrap } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import {
   ACCOUNT_PRIMARY,
@@ -66,6 +68,59 @@ function useAccountNavCollapsed() {
 
 function initial(username) {
   return (username || "?").slice(0, 1).toUpperCase();
+}
+
+/**
+ * Where the person works, once the platform has organizations on: an organization, and all of it or one workspace.
+ * What they see below is limited to it. Changing it makes the server issue the session again, so the page is loaded
+ * afresh to show what the new place holds.
+ */
+function ScopeSwitcher({ data }) {
+  const scopes = sessionScopes(data);
+  const [busy, setBusy] = useState(false);
+  if (!scopes.length) return null;
+  const current = currentScope(data);
+  const label = scopeLabel(current);
+  if (scopes.length === 1) {
+    return (
+      <span className="rw-top-project" title="Where you work">
+        <Building2 size={14} aria-hidden="true" />
+        {label}
+      </span>
+    );
+  }
+  const choose = (scope) => {
+    if (busy || scope === current) return;
+    setBusy(true);
+    action("/session/scope", { org: scope.org || "", workspace: scope.workspace || "" })
+      .then(() => window.location.assign("/projects"))
+      .catch((error) => {
+        setBusy(false);
+        alertUser(error.message);
+      });
+  };
+  return (
+    <Menu position="bottom-start" width={260}>
+      <Menu.Target>
+        <button type="button" className="rw-top-project" aria-label="Switch organization or workspace" disabled={busy}>
+          <Building2 size={14} aria-hidden="true" />
+          {label}
+          <ChevronDown size={14} aria-hidden="true" />
+        </button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {scopes.map((scope) => (
+          <Menu.Item
+            key={`${scope.org || ""}/${scope.workspace || ""}`}
+            leftSection={scope === current ? <Check size={14} /> : <span style={{ width: 14 }} />}
+            onClick={() => choose(scope)}
+          >
+            {scopeLabel(scope)}
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
+  );
 }
 
 export function AppLayout({ children }) {
@@ -150,7 +205,8 @@ export function AppLayout({ children }) {
             </>
           ) : (
             <div className="rw-account-pane">
-              <DomainSetupBanner />
+              {/* Setting the dashboard's domain is the platform's to do; an organization is not told about it. */}
+              {isPlatformSession(data) ? <DomainSetupBanner /> : null}
               <div className="rw-account-main">{children}</div>
             </div>
           )}
@@ -184,6 +240,8 @@ function TopBar({
       <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
         <img src="/geass-logo-dark.svg" alt="Geass" height={24} width={91} />
       </Link>
+
+      <ScopeSwitcher data={data} />
 
       {inProject ? (
         <>
@@ -289,6 +347,9 @@ function ProjectTabs({ projectSlug, envSearch, pathname, canAdd }) {
 }
 
 function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
+  // The cluster's usage and the platform's settings are for the platform's administrators. An organization is offered its
+  // own API tokens under Settings.
+  const platformSession = isPlatformSession(data);
   const usageActive = ACCOUNT_USAGE.active(pathname);
   const settingsOn = settingsActive(pathname) && !usageActive;
   const UsageIcon = NAV_ICONS.cluster;
@@ -314,12 +375,12 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
             const Icon = NAV_ICONS[item.icon] || FolderKanban;
             return sideLink(item.to, item.active(pathname), <Icon size={16} />, item.label);
           })}
-          {sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label)}
-          {sideLink("/settings", settingsOn, <Settings size={16} />, "Settings")}
+          {platformSession ? sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label) : null}
+          {sideLink(platformSession ? "/settings" : "/settings/tokens", settingsOn, <Settings size={16} />, "Settings")}
         </nav>
 
         <div className="rw-account-foot">
-          {!collapsed ? <ClusterHealth data={data} /> : null}
+          {!collapsed && platformSession ? <ClusterHealth data={data} /> : null}
           <div className="rw-nav-footer">
             {FOOTER_LINKS.map((item) => {
               const FooterIcon = FOOTER_ICONS[item.id] || ExternalLink;

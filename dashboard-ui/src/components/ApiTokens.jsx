@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Group, Menu, Modal, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { Copy, KeyRound, MoreVertical, Plus } from "lucide-react";
 import { action, api, resourceDisplayName, resourceName } from "@/lib/api";
+import { dashboardSession, isPlatformSession, sessionScopes } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Field, Input, Muted, Select } from "@/components/geass-ui";
@@ -22,7 +23,15 @@ const ROLE_OPTIONS = [
 
 const ROLE_LABELS = { admin: "Full access", observer: "Read only, with logs", viewer: "Read only" };
 
-function describeToken(token, projects) {
+/** Where a token acts, when the platform has organizations: its organization (and workspace), or the whole install. */
+function placeOf(token, names) {
+  if (!names) return "";
+  if (!token.org) return " · Whole platform";
+  const org = names.orgs[token.org] || token.org;
+  return ` · ${token.workspace ? `${org} / ${names.workspaces[token.workspace] || token.workspace}` : org}`;
+}
+
+function describeToken(token, projects, names) {
   if (token.scope === "service") {
     return `Deploy hook · ${token.app} · ${token.environment}`;
   }
@@ -30,7 +39,54 @@ function describeToken(token, projects) {
     const project = projects.find((item) => resourceName(item) === token.project);
     return `Project ${project ? project.spec?.displayName || resourceDisplayName(project) : token.project} · ${token.environment}`;
   }
-  return `Workspace · ${ROLE_LABELS[token.role] || "Read only"}`;
+  return `Workspace · ${ROLE_LABELS[token.role] || "Read only"}${placeOf(token, names)}`;
+}
+
+/**
+ * The places a new token may act in, with what each is called. A platform administrator may pick any organization, or the
+ * whole platform; a person who works in all of an organization may narrow a token to one of its workspaces; a person who
+ * works in one workspace has no choice, so there is nothing to pick.
+ */
+function usePlaces({ data, enabled }) {
+  const scopes = sessionScopes(data);
+  const platform = isPlatformSession(data);
+  const session = dashboardSession(data);
+  const orgs = useQuery({ queryKey: ["orgs"], queryFn: () => api("/api/orgs"), enabled: enabled && platform && scopes.length > 0 });
+  return useMemo(() => {
+    if (!scopes.length) return { names: null, options: [] };
+    const names = { orgs: {}, workspaces: {} };
+    const options = [];
+    if (platform) {
+      options.push({ value: "", label: "The whole platform" });
+      for (const org of orgs.data?.items || []) {
+        names.orgs[org.name] = org.displayName;
+        options.push({ value: `${org.name}|`, label: org.displayName });
+        for (const workspace of org.workspaces || []) {
+          names.workspaces[workspace.id] = workspace.displayName;
+          options.push({ value: `${org.name}|${workspace.id}`, label: `${org.displayName} / ${workspace.displayName}` });
+        }
+      }
+      return { names, options };
+    }
+    for (const scope of scopes) {
+      names.orgs[scope.org] = scope.orgName || scope.org;
+      if (scope.workspace) names.workspaces[scope.workspace] = scope.workspaceName || scope.workspace;
+    }
+    if (!session.workspace) {
+      options.push({ value: "", label: `All of ${names.orgs[session.org] || "your organization"}` });
+      for (const scope of scopes) {
+        if (scope.org === session.org && scope.workspace) options.push({ value: `${scope.org}|${scope.workspace}`, label: scope.workspaceName || scope.workspace });
+      }
+    }
+    return { names, options };
+  }, [scopes, platform, session.org, session.workspace, orgs.data]);
+}
+
+/** The form fields that say where a token acts, from a picked place "org|workspace". Empty is the maker's own. */
+function placeFields(place) {
+  if (!place) return {};
+  const [org, workspace] = place.split("|");
+  return { org, ...(workspace ? { workspace } : {}) };
 }
 
 function expiryLabel(token) {
@@ -44,7 +100,7 @@ function expiryLabel(token) {
  * scope "project" manages tokens limited to one environment of the project; scope "workspace" manages
  * tokens that act like a dashboard user and lists every token in the workspace.
  */
-export function ApiTokens({ scope, project, projects = [], mutable }) {
+export function ApiTokens({ scope, project, projects = [], mutable, data }) {
   const projectName = project ? resourceName(project) : "";
   const environments = project?.spec?.environments || [];
   const queryKey = ["api-tokens", projectName || "all"];
@@ -55,7 +111,8 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
     staleTime: 0,
     refetchOnMount: "always",
   });
-  const [editing, setEditing] = useState(null); // null | { name, environment, role, expires }
+  const places = usePlaces({ data, enabled: mutable && scope === "workspace" });
+  const [editing, setEditing] = useState(null); // null | { name, environment, role, expires, place }
   const [created, setCreated] = useState(null); // { token, item }
   const [revoking, setRevoking] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +127,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
         name: editing.name,
         scope,
         expiresInDays: editing.expires,
-        ...(scope === "project" ? { project: projectName, environment: editing.environment } : { role: editing.role }),
+        ...(scope === "project" ? { project: projectName, environment: editing.environment } : { role: editing.role, ...placeFields(editing.place) }),
       });
       setEditing(null);
       setCreated(result);
@@ -113,7 +170,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
       <p className="rw-rail-body">
         {scope === "project"
           ? "A project token can deploy, read logs, and edit variables in one environment of this project, and nothing else. Use it in CI."
-          : "A workspace token acts like a dashboard user across every project. Prefer a project token when a script only needs to deploy."}
+          : "A workspace token acts like a dashboard user across every project you can see. Prefer a project token when a script only needs to deploy."}
       </p>
 
       {!mutable ? (
@@ -133,7 +190,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
                   {token.expired ? <span className="rw-vars-kind">Expired</span> : null}
                 </div>
                 <div className="rw-webhook-meta">
-                  {describeToken(token, projects)} · Created {formatRelativeTime(token.createdAt)}
+                  {describeToken(token, projects, places.names)} · Created {formatRelativeTime(token.createdAt)}
                   {token.createdBy ? ` by ${token.createdBy}` : ""} ·{" "}
                   {token.lastUsedAt ? `Last used ${formatRelativeTime(token.lastUsedAt)}` : "Never used"} · {expiryLabel(token)}
                 </div>
@@ -159,7 +216,7 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
         <div className="rw-webhook-actions">
           <Button
             leftSection={<Plus size={14} />}
-            onClick={() => setEditing({ name: "", environment: environments[0] || "", role: "viewer", expires: "90" })}
+            onClick={() => setEditing({ name: "", environment: environments[0] || "", role: "viewer", expires: "90", place: "" })}
           >
             New token
           </Button>
@@ -201,6 +258,17 @@ export function ApiTokens({ scope, project, projects = [], mutable }) {
                   </Select>
                 </Field>
               )}
+              {scope === "workspace" && places.options.length > 1 ? (
+                <Field label="Acts in" description="Where the token works. It sees and changes what that place does, and nothing else.">
+                  <Select
+                    value={editing.place}
+                    aria-label="Token scope"
+                    onChange={(event) => setEditing({ ...editing, place: event.target.value })}
+                  >
+                    {places.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select>
+                </Field>
+              ) : null}
               <Field label="Expiration">
                 <Select
                   value={editing.expires}
