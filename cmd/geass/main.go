@@ -61,6 +61,8 @@ func run(args []string) int {
 		steps = installer.JoinServerSteps(opts)
 	case installer.ModeRefreshServer:
 		steps = installer.RefreshServerSteps()
+	case installer.ModeEtcdSnapshots:
+		steps = installer.EtcdSnapshotsSteps(opts)
 	case installer.ModeReinstall:
 		steps = append([]installer.Step{
 			&installer.ConfirmReinstall{Yes: opts.Yes, SkipSnapshot: opts.Upgrade.SkipSnapshot},
@@ -102,6 +104,11 @@ func upgradeSteps(opts installer.Options) []installer.Step {
 				"Change the cluster's settings on its GeassCluster object", name)
 		}
 	}
+	if opts.EtcdSnapshots.Enable || opts.EtcdSnapshots.Destination != nil {
+		installer.Warnf("installer", "--etcd-snapshots and GEASS_ETCD_SNAPSHOTS_* are ignored: they set up a new cluster, "+
+			"and this one is being updated. To keep copies of this cluster in S3, run the installer with "+
+			"`etcd-snapshots enable`")
+	}
 	if os.Getenv("GEASS_K3S_VERSION") != "" && opts.Upgrade.K3sVersion == "" {
 		installer.Warnf("installer", "GEASS_K3S_VERSION is ignored: it picks the K3s of a new cluster, "+
 			"and this one is being updated. To upgrade its K3s as well, pass --k3s-version")
@@ -122,6 +129,9 @@ func installSteps(opts installer.Options) []installer.Step {
 		Network: network, ACMEEmail: acmeEmail, K3sVersion: opts.K3sVersion, AllowUntestedK3s: opts.Upgrade.AllowUntestedK3s,
 	}
 	applyCluster := &installer.ClusterCRApply{Network: network, ACMEEmail: acmeEmail}
+	// Whether K3s sends copies of the cluster's state to an S3 bucket of the person's own. It is never on unless it was
+	// asked for or the person at the terminal says yes, and it is decided before K3s starts, which reads it at start.
+	snapshots := &installer.EtcdSnapshotsChoice{}
 
 	return []installer.Step{
 		// OS, memory, disk, arch, the ACME email, and WireGuard for multi-site.
@@ -133,10 +143,16 @@ func installSteps(opts installer.Options) []installer.Step {
 		&installer.FirewallSetup{Network: network},
 		// The iSCSI initiator, which Longhorn needs on every node.
 		&installer.NodePrerequisites{},
+		// Ask whether the cluster's state is kept off this machine, and if so tell K3s so before it starts.
+		&installer.AskEtcdSnapshots{Choice: snapshots, Flag: opts.EtcdSnapshots.Enable, K3sVersion: opts.K3sVersion},
+		&installer.WriteEtcdSnapshotsDropIn{Choice: snapshots},
 		// Download the get.k3s.io installer and run it in server mode.
 		&installer.K3sInstall{Network: network, Version: opts.K3sVersion},
 		// Poll until /etc/rancher/k3s/k3s.yaml exists.
 		&installer.WaitForK3s{},
+		// A copy of the cluster is only readable with this machine's server token, which the disk that the copies are
+		// meant to outlive holds.
+		&installer.EtcdSnapshotsToken{Choice: snapshots},
 		// Load the embedded operator image into k3s's containerd.
 		&installer.ImageImport{},
 		// Apply the embedded operator manifests.
@@ -147,5 +163,9 @@ func installSteps(opts installer.Options) []installer.Step {
 		&installer.JoinTokenSecret{},
 		// Apply the initial GeassCluster object.
 		applyCluster,
+		// Say where the copies go, when that was given.
+		&installer.SetEtcdSnapshotsDestination{Destination: opts.EtcdSnapshots.Destination, Choice: snapshots},
+		// And take the first copy at once, so that it is known whether they arrive before noon.
+		&installer.TakeFirstEtcdSnapshot{Destination: opts.EtcdSnapshots.Destination, Choice: snapshots},
 	}
 }

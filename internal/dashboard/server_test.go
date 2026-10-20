@@ -65,6 +65,7 @@ func newFakeClient(objects ...client.Object) client.Client {
 			&geassv1alpha1.GeassConsoleSession{},
 			&geassv1alpha1.GeassProject{},
 			&geassv1alpha1.GeassDeployment{},
+			&geassv1alpha1.GeassBackupArchive{},
 		).
 		Build()
 }

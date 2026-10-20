@@ -54,6 +54,9 @@ type fakeBackupStorage struct {
 	// deleted are the keys DeleteObject removed; they also leave allKeys.
 	deleted   []string
 	deleteErr error
+	// puts are the objects written, by key, and putErr makes writing fail.
+	puts   map[string][]byte
+	putErr error
 }
 
 type fakeUserRequest struct {
@@ -140,6 +143,19 @@ func (f *fakeBackupStorage) DeleteObject(bucket, key string) error {
 			break
 		}
 	}
+	return nil
+}
+
+func (f *fakeBackupStorage) PutObject(bucket, key string, body []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.putErr != nil {
+		return f.putErr
+	}
+	if f.puts == nil {
+		f.puts = map[string][]byte{}
+	}
+	f.puts[bucket+"/"+key] = append([]byte(nil), body...)
 	return nil
 }
 

@@ -1,9 +1,17 @@
 /*
 Copyright 2026 Adegoke Adewoye.
 
-Licensed under the Elastic License 2.0 (the "License"); you may not use this
-file except in compliance with the License. You may obtain a copy of the
-License at LICENSE or https://www.elastic.co/licensing/elastic-license.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
@@ -16,6 +24,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -46,6 +55,12 @@ const (
 	// mariadbRecoverySuffix names the copy of the database the operator takes from a ready replica to build another
 	// replica that cannot catch up. The copy is never taken on a schedule.
 	mariadbRecoverySuffix = "-recovery"
+	// What the operator names the copies it makes from the recovery template, to rebuild a replica and to add one. They
+	// are made when they are needed and removed when they are done.
+	mariadbRecoveryCopySuffix = "-pb-recovery"
+	mariadbScaleOutCopySuffix = "-pb-scaleout"
+	// The job that restores a copy into a replica's volume is named for the replica, as <replica>-pb-init.
+	mariadbInitJobSuffix = "-pb-init"
 
 	// mariadbNodeLossGrace is how long the machine of the primary has to be unresponsive before a replica is
 	// promoted. Kubernetes needs 40 seconds to call a machine that stopped reporting not ready, and a machine that
@@ -208,6 +223,12 @@ func mariadbSpec(db *geassv1alpha1.GeassDatabase, storageClass string, placement
 
 // mariadbRecoveryTemplate is the copy the operator takes from a ready replica to build another. It is kept on a
 // volume of its own, as large as the database, and is used only when a replica has to be built again.
+//
+// storageClass is not the database's. A server's volume is on the machine it runs on alone, and a copy kept the same way
+// is on the machine it was taken on, which is that of the replica it was taken from. The job that builds a replica from
+// it mounts the copy and the replica's own volume, and runs where the replica's volume is: with the two on different
+// machines it can never be scheduled, and the replica stays down. The copy is kept on a volume that has copies on other
+// machines, so that it can be mounted wherever the replica is.
 func mariadbRecoveryTemplate(db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) *mariadbv1.PhysicalBackup {
 	size := databaseStorageQuantity(db)
 	return &mariadbv1.PhysicalBackup{
@@ -264,8 +285,12 @@ func (r *GeassDatabaseReconciler) reconcileMariaDB(ctx context.Context, db *geas
 		return r.setNotReady(ctx, db, err.Error())
 	}
 	if instances > 1 {
-		if err := r.ensureMariaDBRecoveryTemplate(ctx, db, wsNS, storageClass, placement); err != nil {
+		wait, err := r.ensureMariaDBRecoveryTemplate(ctx, db, wsNS, placement)
+		if err != nil {
 			return r.setNotReady(ctx, db, err.Error())
+		}
+		if wait {
+			return r.setNotReady(ctx, db, messageStorageStarting)
 		}
 	}
 	bootstrap, err := r.mariadbRestoreBootstrap(ctx, db, wsNS, storageClass)
@@ -410,23 +435,161 @@ func (r *GeassDatabaseReconciler) mariadbOperatorReady(ctx context.Context) (boo
 }
 
 // ensureMariaDBRecoveryTemplate makes the copy the operator builds a replica from. Its volume is the size of the
-// database and is created when it is used, so a database that never needs a replica built again does not hold it.
-func (r *GeassDatabaseReconciler) ensureMariaDBRecoveryTemplate(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) error {
-	desired := mariadbRecoveryTemplate(db, wsNS, storageClass, placement)
-	template := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: wsNS}}
-	_, err := controllerutil.CreateOrPatch(ctx, r.Client, template, func() error {
+// database and is created when it is used, so a database that never needs a replica built again does not hold it. wait says
+// that the storage it belongs on is not known yet.
+//
+// The operator does not let where a copy is kept change, so a template made before this kept it on the database's own
+// class, which cannot follow a replica to another machine, is made again, together with the copies the operator made from
+// it that never finished.
+func (r *GeassDatabaseReconciler) ensureMariaDBRecoveryTemplate(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, placement platform.Placement) (wait bool, err error) {
+	class, wait, err := volumeClassFor(ctx, r.Client, platform.DatabaseStorageClassFor(db.Spec.Engine, false, placement))
+	if err != nil || wait {
+		return wait, err
+	}
+	template := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: mariadbRecoveryName(db), Namespace: wsNS}}
+	switch err := r.Get(ctx, client.ObjectKeyFromObject(template), template); {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return false, err
+	case !template.DeletionTimestamp.IsZero():
+		// Being replaced: it is made again once it is gone.
+		return false, nil
+	default:
+		// No class is also what is found while Longhorn's class is being made again, which is no reason to move a copy that
+		// is kept on one to the cluster's default, which cannot follow a replica either.
+		if class == "" {
+			class = recoveryTemplateClass(template)
+		}
+		if recoveryTemplateClass(template) != class {
+			return false, r.replaceMariaDBRecoveryTemplate(ctx, db, wsNS, template)
+		}
+	}
+	if err := r.retireStaleCopyVolumes(ctx, db, wsNS, class); err != nil {
+		return false, err
+	}
+	desired := mariadbRecoveryTemplate(db, wsNS, class, placement)
+	template = &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: wsNS}}
+	_, err = controllerutil.CreateOrPatch(ctx, r.Client, template, func() error {
 		applyGeassLabels(template, db, "GeassDatabase")
 		spec := desired.Spec
-		if template.ResourceVersion != "" && template.Spec.Storage.PersistentVolumeClaim != nil && spec.Storage.PersistentVolumeClaim != nil {
-			// Where a copy is kept is fixed once the template exists, as the claim of the database is.
-			spec.Storage.PersistentVolumeClaim.StorageClassName = template.Spec.Storage.PersistentVolumeClaim.StorageClassName
-		}
 		// What the operator fills in and Geass does not say is left as it is, so a pass with nothing to change sends nothing.
 		spec.Compression, spec.MaxRetention = template.Spec.Compression, template.Spec.MaxRetention
 		template.Spec = spec
 		return setSameNamespaceOwner(db, template, r.Scheme)
 	})
-	return err
+	return false, err
+}
+
+// mariadbCopyNames are the names the operator gives the copies it makes from the recovery template, which are also the names of
+// their volumes.
+func mariadbCopyNames(db *geassv1alpha1.GeassDatabase) []string {
+	return []string{db.Name + mariadbRecoveryCopySuffix, db.Name + mariadbScaleOutCopySuffix}
+}
+
+// removeMariaDBCopy removes one of those copies, which the operator makes again when it needs one.
+func (r *GeassDatabaseReconciler) removeMariaDBCopy(ctx context.Context, wsNS, name string) error {
+	return client.IgnoreNotFound(r.Delete(ctx, &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wsNS}}))
+}
+
+// retireStaleCopyVolumes removes the volumes the operator kept its copies on from a time when they were on the database's
+// own class. A volume outlives the copy and is used again for the next, so a template that is right is not enough: the
+// first replica to be rebuilt would be given the volume that cannot follow it. It only knows a class to compare when the
+// copies are kept on a class Geass chose: on the cluster's default the claim carries the name the default was given.
+func (r *GeassDatabaseReconciler) retireStaleCopyVolumes(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, class string) error {
+	if class == "" {
+		return nil
+	}
+	log := logf.FromContext(ctx)
+	retired := false
+	for _, name := range mariadbCopyNames(db) {
+		var claim corev1.PersistentVolumeClaim
+		if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: wsNS}, &claim); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return err
+		}
+		if !claim.DeletionTimestamp.IsZero() || utilptr.Deref(claim.Spec.StorageClassName, "") == class {
+			continue
+		}
+		// The copy that holds it first, or it is made again on the same volume.
+		if err := r.removeMariaDBCopy(ctx, wsNS, name); err != nil {
+			return err
+		}
+		if err := r.Delete(ctx, &claim); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		retired = true
+		log.Info("Removed the volume MariaDB kept a copy on, which could not follow a replica to another machine",
+			"database", db.Name, "claim", name, "was", utilptr.Deref(claim.Spec.StorageClassName, ""), "now", class)
+	}
+	if retired {
+		return r.removeUnfinishedInitJobs(ctx, db, wsNS)
+	}
+	return nil
+}
+
+// removeUnfinishedInitJobs removes the jobs that restore a copy into a replica that have not completed. One that was using
+// the volume of a copy that is gone fails, and the operator waits for a job that has failed for ever, without making
+// another: the replica stays as it is. With no job the operator makes one, from the copy it makes again.
+func (r *GeassDatabaseReconciler) removeUnfinishedInitJobs(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) error {
+	var jobs batchv1.JobList
+	if err := r.List(ctx, &jobs, client.InNamespace(wsNS)); err != nil {
+		return err
+	}
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		replica, ok := strings.CutSuffix(job.Name, mariadbInitJobSuffix)
+		if !ok {
+			continue
+		}
+		if _, ours := mariadbPodIndex(db, replica); !ours || !job.DeletionTimestamp.IsZero() || jobSucceeded(job) {
+			continue
+		}
+		if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		logf.FromContext(ctx).Info("Removed the job that was restoring a copy into a replica, which cannot finish", "database", db.Name, "job", job.Name)
+	}
+	return nil
+}
+
+func jobSucceeded(job *batchv1.Job) bool {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// recoveryTemplateClass is the class a recovery template keeps its copy on, "" for the cluster's default.
+func recoveryTemplateClass(template *mariadbv1.PhysicalBackup) string {
+	if template.Spec.Storage.PersistentVolumeClaim == nil {
+		return ""
+	}
+	return utilptr.Deref(template.Spec.Storage.PersistentVolumeClaim.StorageClassName, "")
+}
+
+// replaceMariaDBRecoveryTemplate removes a recovery template that keeps its copy where it cannot follow a replica, and the
+// copies the operator made from it that are still there: one that is, never finished, because its replica could not be
+// built. The operator makes them again, from the template that takes its place, the next time a replica needs it.
+func (r *GeassDatabaseReconciler) replaceMariaDBRecoveryTemplate(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, template *mariadbv1.PhysicalBackup) error {
+	log := logf.FromContext(ctx)
+	for _, name := range mariadbCopyNames(db) {
+		if err := r.removeMariaDBCopy(ctx, wsNS, name); err != nil {
+			return err
+		}
+	}
+	if err := r.Delete(ctx, template); client.IgnoreNotFound(err) != nil {
+		return err
+	}
+	if err := r.removeUnfinishedInitJobs(ctx, db, wsNS); err != nil {
+		return err
+	}
+	log.Info("Replaced the copy MariaDB builds replicas from, so that it can be mounted wherever a replica is",
+		"database", db.Name, "was", recoveryTemplateClass(template))
+	return nil
 }
 
 // ensureMariaDB creates or updates the database and returns it as the API server last saw it. What the operator
@@ -615,10 +778,17 @@ func mariadbFailoverTarget(db *geassv1alpha1.GeassDatabase, mdb *mariadbv1.Maria
 		nodeByName[nodes[i].Name] = &nodes[i]
 	}
 	primaryPod, ok := byName[primary]
-	if !ok || primaryPod.Spec.NodeName == "" {
+	if !ok {
 		return 0, false
 	}
-	if !nodeUnresponsive(nodeByName[primaryPod.Spec.NodeName], now) {
+	if primaryPod.Spec.NodeName == "" {
+		// A pod that was removed from a machine that is lost (Longhorn does it, to start the pods of a StatefulSet
+		// elsewhere) is made again with nowhere to go: its volume is on the lost machine alone. The machine it was
+		// on is no longer there to ask, so how long the pod has waited stands for how long the machine has been gone.
+		if primaryPod.Status.Phase != corev1.PodPending || now.Sub(primaryPod.CreationTimestamp.Time) < mariadbNodeLossGrace {
+			return 0, false
+		}
+	} else if !nodeUnresponsive(nodeByName[primaryPod.Spec.NodeName], now) {
 		return 0, false
 	}
 	best, bestSequence, found := 0, int64(-1), false

@@ -1,9 +1,17 @@
 /*
 Copyright 2026 Adegoke Adewoye.
 
-Licensed under the Elastic License 2.0 (the "License"); you may not use this
-file except in compliance with the License. You may obtain a copy of the
-License at LICENSE or https://www.elastic.co/licensing/elastic-license.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package main
@@ -106,6 +114,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var dashboardAddr string
+	var lostNodeAfter time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -129,6 +138,9 @@ func main() {
 	opts := zap.Options{
 		Development: true,
 	}
+	flag.DurationVar(&lostNodeAfter, "lost-node-after", controller.DefaultLostNodeAfter,
+		"How long a node is unreachable before the databases on it are made to start elsewhere, or replaced. "+
+			"A negative value turns this off.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -231,8 +243,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.GeassClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		LostNodeAfter: lostNodeAfter,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
 		os.Exit(1)

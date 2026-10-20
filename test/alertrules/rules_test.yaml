@@ -1,0 +1,108 @@
+# Unit tests of the Prometheus alert rules that Geass makes, run by `make test-alert-rules` with promtool, which is the
+# parser Prometheus itself uses. They feed the rules the series a cluster would give them and say which alerts come out:
+# the join that makes a volume a project's, and the names a node is given, are what a unit test of the Go that builds the
+# text cannot see.
+rule_files:
+  - /work/rules.yaml
+evaluation_interval: 1m
+tests:
+  # A volume of a project that lost a copy is the project's, named by its claim, once it has been so for 30 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'geass_project_namespace_info{namespace="shop-production",project="shop",project_name="Shop",environment="production"}'
+        values: '1x60'
+      - series: 'geass_project_namespace_info{namespace="shop-pr-7",project="shop",project_name="Shop",environment="pr-7",pull_request="true"}'
+        values: '1x60'
+      - series: 'geass_problems_evaluated_timestamp_seconds'
+        values: '1x60'
+      # Longhorn's own labels: the namespace is the scrape's, and the claim's is pvc_namespace.
+      - series: 'longhorn_volume_robustness{namespace="longhorn-system",pod="longhorn-manager-a",volume="pvc-111",node="n1",pvc="data-orders-0",pvc_namespace="shop-production"}'
+        values: '1x60'
+      - series: 'longhorn_volume_robustness{namespace="longhorn-system",pod="longhorn-manager-a",volume="pvc-222",node="n1",pvc="data-orders-0",pvc_namespace="shop-pr-7"}'
+        values: '2x60'
+      # The same volume as one of the platform's.
+      - series: 'longhorn_volume_robustness{namespace="longhorn-system",pod="longhorn-manager-b",volume="pvc-333",node="n2",pvc="prometheus-db",pvc_namespace="monitoring"}'
+        values: '3x60'
+      # A volume with no claim is nobody's to be told about.
+      - series: 'longhorn_volume_robustness{namespace="longhorn-system",pod="longhorn-manager-b",volume="pvc-444",node="n2",pvc="",pvc_namespace=""}'
+        values: '3x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GeassVolumeDegraded
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: GeassVolumeDegraded
+        exp_alerts: []   # shop-production's volume is healthy (1) and the pull request's is not announced
+      - eval_time: 10m
+        alertname: GeassSystemVolumeUnavailable
+        exp_alerts:
+          - exp_labels:
+              geass_kind: storage.failing
+              severity: critical
+              resource_kind: volume
+              namespace: monitoring
+              pvc: prometheus-db
+              resource: prometheus-db
+            exp_annotations:
+              title: Storage failing
+              summary: 'prometheus-db (monitoring)'
+              description: 'Every copy of this volume, which belongs to the platform, is lost or cannot be read.'
+  # And the other way round: a project's volume that has lost a copy.
+  - interval: 1m
+    input_series:
+      - series: 'geass_project_namespace_info{namespace="shop-production",project="shop",project_name="Shop",environment="production"}'
+        values: '1x60'
+      - series: 'longhorn_volume_robustness{namespace="longhorn-system",volume="pvc-111",node="n1",pvc="data-orders-0",pvc_namespace="shop-production"}'
+        values: '1x5 2x55'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GeassVolumeDegraded
+        exp_alerts: []       # lost a copy 15 minutes ago: not yet
+      - eval_time: 40m
+        alertname: GeassVolumeDegraded
+        exp_alerts:
+          - exp_labels:
+              geass_kind: storage.failing
+              severity: warning
+              resource_kind: volume
+              namespace: shop-production
+              pvc: data-orders-0
+              project: shop
+              project_name: Shop
+              environment: production
+              resource: data-orders-0
+              path: /projects/shop
+            exp_annotations:
+              title: Storage failing
+              summary: 'data-orders-0 (Shop / production)'
+              description: 'This volume has lost a copy of its data and has not got it back. It still works, but losing another copy loses the data. Bring the node that held the copy back, or add a node for it.'
+  # A node whose disk went read-only is named by its name, and a read-only boot partition is nothing.
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_readonly{instance="10.0.0.5:9100",fstype="ext4",mountpoint="/"}'
+        values: '0x3 1x20'
+      - series: 'node_filesystem_readonly{instance="10.0.0.5:9100",fstype="vfat",mountpoint="/boot/efi"}'
+        values: '1x23'
+      - series: 'node_filesystem_readonly{instance="10.0.0.5:9100",fstype="ext4",mountpoint="/boot"}'
+        values: '1x23'
+      - series: 'node_uname_info{instance="10.0.0.5:9100",nodename="worker-2"}'
+        values: '1x23'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: GeassNodeDiskReadOnly
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: GeassNodeDiskReadOnly
+        exp_alerts:
+          - exp_labels:
+              geass_kind: storage.failing
+              severity: critical
+              resource_kind: node
+              instance: '10.0.0.5:9100'
+              nodename: worker-2
+              resource: worker-2
+              path: /cluster
+            exp_annotations:
+              title: Storage failing
+              summary: 'worker-2'
+              description: 'A disk of this node has gone read-only, which is what the system does to a disk that is failing or a filesystem that is corrupted. What writes to it fails. Look at `dmesg` on the machine, and move what matters to another node.'

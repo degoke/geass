@@ -1,6 +1,6 @@
 # Third-party notices
 
-Geass is licensed under the [Elastic License 2.0](LICENSE). It is built from, and installs, other software that has its
+Geass is licensed under the [Apache License 2.0](LICENSE). It is built from, and installs, other software that has its
 own licenses. This page says what and where; it is not legal advice.
 
 ## Code in the Geass binaries

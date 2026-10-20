@@ -1,9 +1,17 @@
 /*
 Copyright 2026 Adegoke Adewoye.
 
-Licensed under the Elastic License 2.0 (the "License"); you may not use this
-file except in compliance with the License. You may obtain a copy of the
-License at LICENSE or https://www.elastic.co/licensing/elastic-license.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
@@ -27,6 +35,8 @@ import (
 )
 
 const (
+	// archiveManifestRetry is how soon to try again to write the record of what an archive's backups are of.
+	archiveManifestRetry = 15 * time.Minute
 	// archivePurgedCondition is False while backups past their deadline could not be removed.
 	archivePurgedCondition = "Purged"
 	// archivePurgeRetryInterval is how long to wait before trying to remove backups again.
@@ -56,19 +66,27 @@ func (r *GeassBackupArchiveReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// What the bucket cannot say about the backups it holds is written beside them, for a cluster that is lost to be rebuilt
+	// from. It is never a reason to leave the rest of this undone.
+	// Backups that are about to be deleted do not need one.
+	var manifestRetry time.Duration
+	if archive.Spec.DeleteAfter == nil || time.Until(archive.Spec.DeleteAfter.Time) > 0 {
+		manifestRetry = r.ensureManifest(ctx, &archive)
+	}
+
 	if archive.Spec.DeleteAfter == nil {
 		// The archive belongs to a running database. If that database is gone without the usual
 		// clean-up having run, give its backups the usual grace period instead of losing them.
 		orphaned, err := r.databaseIsGone(ctx, &archive)
 		if err != nil || !orphaned {
-			return ctrl.Result{}, err
+			return ctrl.Result{RequeueAfter: manifestRetry}, err
 		}
 		logf.FromContext(ctx).Info("Retired backups of a database that no longer exists", "archive", archive.Name, "database", archive.Spec.Database)
-		return ctrl.Result{}, retireArchive(ctx, r.Client, &archive, time.Now())
+		return ctrl.Result{RequeueAfter: manifestRetry}, retireArchive(ctx, r.Client, &archive, time.Now())
 	}
 
 	if remaining := time.Until(archive.Spec.DeleteAfter.Time); remaining > 0 {
-		return ctrl.Result{RequeueAfter: remaining}, nil
+		return ctrl.Result{RequeueAfter: shortestRequeue(remaining, manifestRetry)}, nil
 	}
 	return r.purge(ctx, &archive)
 }
@@ -90,6 +108,13 @@ func (r *GeassBackupArchiveReconciler) databaseIsGone(ctx context.Context, archi
 // purge deletes an archive's backups from storage and then the archive record. If anything stops
 // it, the record stays so the data is never forgotten while it still exists.
 func (r *GeassBackupArchiveReconciler) purge(ctx context.Context, archive *geassv1alpha1.GeassBackupArchive) (ctrl.Result, error) {
+	if archive.Labels[platform.LabelRecovered] == platform.RecoveredValue {
+		// This cluster did not take these backups: it found them. The cluster that did may be alive (a bucket is read by a new
+		// cluster before the old one is switched off), and its backups are not this one's to delete. The record goes, so
+		// that they are no longer offered; the data stays until its owner or the person who owns the bucket removes it.
+		logf.FromContext(ctx).Info("Stopped offering recovered backups, and left them in the bucket", "archive", archive.Name, "database", archive.Spec.Database)
+		return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, archive))
+	}
 	connection, err := resolveAWSConnection(ctx, r.Client, archive.Spec.Project, archive.Spec.Storage.ConnectionRef.Name, archive.Spec.Storage.Region)
 	if err != nil {
 		return r.purgeFailed(ctx, archive, "ConnectionUnavailable", summarizeStorageError(err))
@@ -146,4 +171,49 @@ func (r *GeassBackupArchiveReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Watches(&geassv1alpha1.GeassDatabase{}, handler.EnqueueRequestsFromMapFunc(r.archivesForDatabase), builder.WithPredicates(databaseGoneOrDeleting())).
 		Named("geassbackuparchive").
 		Complete(r)
+}
+
+// ensureManifest writes the record of what an archive's backups are of, beside them, when it is not there or has changed. It
+// returns how soon to try again after a failure, and zero otherwise. An archive that was recovered from a bucket does not write
+// one: the record there is the one that it was made from.
+func (r *GeassBackupArchiveReconciler) ensureManifest(ctx context.Context, archive *geassv1alpha1.GeassBackupArchive) time.Duration {
+	if archive.Labels[platform.LabelRecovered] == platform.RecoveredValue {
+		return 0
+	}
+	var projectName string
+	var project geassv1alpha1.GeassProject
+	if err := r.Get(ctx, client.ObjectKey{Name: archive.Spec.Project, Namespace: platform.SystemNamespace}, &project); err == nil {
+		projectName = project.Spec.DisplayName
+	}
+	manifest := platform.ManifestOf(archive, projectName)
+	hash := manifest.Hash()
+	if hash == "" || archive.Annotations[platform.AnnotationArchiveManifest] == hash {
+		return 0
+	}
+	raw, err := manifest.Encode()
+	if err != nil {
+		return 0
+	}
+	log := logf.FromContext(ctx)
+	connection, err := resolveAWSConnection(ctx, r.Client, archive.Spec.Project, archive.Spec.Storage.ConnectionRef.Name, archive.Spec.Storage.Region)
+	if err != nil {
+		log.Info("Could not write the record of an archive's backups", "archive", archive.Name, "reason", summarizeStorageError(err))
+		return archiveManifestRetry
+	}
+	storage := r.backupStorage(connection.accessKey, connection.secretKey, connection.region)
+	if err := storage.PutObject(archive.Spec.Storage.Bucket, platform.ArchiveManifestKey(archive.Spec.Project, archive.Spec.ServerName), raw); err != nil {
+		log.Info("Could not write the record of an archive's backups", "archive", archive.Name, "reason", summarizeStorageError(err))
+		return archiveManifestRetry
+	}
+	// Only the annotation changes, and it is changed with a patch so that a status write in between is not lost.
+	patch := client.MergeFrom(archive.DeepCopy())
+	if archive.Annotations == nil {
+		archive.Annotations = map[string]string{}
+	}
+	archive.Annotations[platform.AnnotationArchiveManifest] = hash
+	if err := r.Patch(ctx, archive, patch); err != nil {
+		log.Info("Could not note that an archive's record was written", "archive", archive.Name, "reason", err.Error())
+		return archiveManifestRetry
+	}
+	return 0
 }

@@ -127,6 +127,7 @@ export default defineConfig({
             "docs/operations/upgrading",
             "docs/operations/releases",
             "docs/operations/high-availability",
+            "docs/operations/disaster-recovery",
             "docs/operations/sizing",
             "docs/operations/multi-provider",
             "docs/operations/security",

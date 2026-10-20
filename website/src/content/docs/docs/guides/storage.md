@@ -22,7 +22,7 @@ The dashboard labels sizes such as 10 GiB as "10 GB" in the size list. The value
 | | Local storage | Longhorn add-on |
 | --- | --- | --- |
 | Where the data is | One copy on one node's disk | One, two or three copies on different nodes |
-| If the node is lost | The data is unavailable until the node returns, and gone if its disk is gone | The volume stays available from another copy when at least two copies exist |
+| If the node is lost | The data is unavailable until the node returns, and gone if its disk is gone | The volume stays available from another copy when at least two copies exist, and what used it starts on another node: see [When a node is lost](/docs/operations/high-availability/#when-a-node-is-lost) |
 | Resize a deployed database | No | Yes, larger only |
 | Storage class | The cluster default (`local-path` on K3s) | `geass-replicated` and `geass-single`, created by Geass |
 | When it is used | Longhorn is not installed, or the database was created before it was | Longhorn is installed when the database's volume is first created |

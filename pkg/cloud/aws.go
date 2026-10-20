@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -970,4 +971,136 @@ func awsSigningKey(secret, date, region, service string) []byte {
 	kRegion := hmacSHA256(kDate, region)
 	kService := hmacSHA256(kRegion, service)
 	return hmacSHA256(kService, "aws4_request")
+}
+
+// ErrObjectNotFound says that the bucket has no object under the key, which is not the same as the bucket being unreadable.
+var ErrObjectNotFound = errors.New("no such object")
+
+// GetObject reads one object, up to limit bytes. An object over the limit is an error and not a short read: it is for the small
+// files Geass writes itself, never for a backup.
+func (c *AWSClient) GetObject(bucket, key string, limit int64) ([]byte, error) {
+	if strings.TrimSpace(bucket) == "" || strings.Trim(key, "/") == "" {
+		return nil, fmt.Errorf("bucket and key are required to read an object")
+	}
+	req, err := http.NewRequest(http.MethodGet, c.objectURL(bucket, key), http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.sign(req, nil, "s3"); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, err := readHTTPBody(resp.Body, limit)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case resp.StatusCode == http.StatusNotFound && isS3ErrorCode(payload, "NoSuchKey"):
+		return nil, ErrObjectNotFound
+	case resp.StatusCode == http.StatusNotFound && isS3ErrorCode(payload, "NoSuchBucket"):
+		return nil, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+	case resp.StatusCode >= 300:
+		return nil, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	return payload, nil
+}
+
+// PutObject writes one small object, signed whole. It is for the files Geass writes itself, such as the record of what a
+// database's backups are of; a backup is uploaded by the tool that makes it.
+func (c *AWSClient) PutObject(bucket, key string, body []byte) error {
+	if strings.TrimSpace(bucket) == "" || strings.Trim(key, "/") == "" {
+		return fmt.Errorf("bucket and key are required to write an object")
+	}
+	req, err := http.NewRequest(http.MethodPut, c.objectURL(bucket, key), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.sign(req, body, "s3"); err != nil {
+		return err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, err := readHTTPBody(resp.Body, s3ListResponseLimit)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	return nil
+}
+
+// ListFolders names the folders directly under prefix, each with its trailing slash and the whole prefix in front: under
+// "shop/" it finds "shop/orders-1a2b3c4d/". An empty prefix is the top of the bucket. Objects that sit directly under the
+// prefix are not folders and are not listed.
+func (c *AWSClient) ListFolders(bucket, prefix string) ([]string, error) {
+	if strings.TrimSpace(bucket) == "" {
+		return nil, fmt.Errorf("bucket is required to list folders")
+	}
+	prefix = strings.TrimLeft(prefix, "/")
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	var folders []string
+	token := ""
+	for page := 0; page < s3EmptyMaxPages; page++ {
+		query := url.Values{"list-type": {"2"}, "delimiter": {"/"}}
+		if prefix != "" {
+			query.Set("prefix", prefix)
+		}
+		if token != "" {
+			query.Set("continuation-token", token)
+		}
+		req, err := http.NewRequest(http.MethodGet, c.bucketURL(bucket)+"?"+query.Encode(), http.NoBody)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.sign(req, nil, "s3"); err != nil {
+			return nil, err
+		}
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := readS3ListBody(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNotFound || isS3ErrorCode(payload, "NoSuchBucket") {
+			return nil, fmt.Errorf("AWS S3 NoSuchBucket: %s", strings.TrimSpace(string(payload)))
+		}
+		if resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("AWS S3 %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+		}
+		var parsed struct {
+			CommonPrefixes []struct {
+				Prefix string `xml:"Prefix"`
+			} `xml:"CommonPrefixes"`
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		if err := xml.Unmarshal(payload, &parsed); err != nil {
+			return nil, fmt.Errorf("S3 ListObjects: %w", err)
+		}
+		for _, folder := range parsed.CommonPrefixes {
+			folders = append(folders, folder.Prefix)
+		}
+		if !parsed.IsTruncated || parsed.NextContinuationToken == "" {
+			return folders, nil
+		}
+		if parsed.NextContinuationToken == token {
+			return nil, fmt.Errorf("bucket %s listing did not advance", bucket)
+		}
+		token = parsed.NextContinuationToken
+	}
+	return nil, fmt.Errorf("bucket %s listing exceeded %d pages", bucket, s3EmptyMaxPages)
 }

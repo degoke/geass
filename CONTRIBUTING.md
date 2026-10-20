@@ -81,9 +81,9 @@ as `/docs/guides/functions/`; `pnpm links` fails on a broken link or heading anc
 
 ## Licensing of contributions
 
-Geass is licensed under the [Elastic License 2.0](LICENSE). When you submit a contribution you confirm that you wrote it
-or have the right to submit it, and you license it under the same license as the rest of the project. If your employer
-has rights to what you write, make sure they agree.
+Geass is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution you confirm that you wrote it
+or have the right to submit it, and, as section 5 of the license says, you license it under the Apache License 2.0
+too. If your employer has rights to what you write, make sure they agree.
 
 ## Review
 

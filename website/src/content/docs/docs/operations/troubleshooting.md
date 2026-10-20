@@ -521,6 +521,24 @@ kubectl -n morning-beach-production get cronjob,job -l geass.dev/backup-for=orde
 
 Postgres backs up continuously. MySQL and SQLite take a copy daily, between 02:00 and 02:59 UTC at a minute that depends on the database. See [Backups and restore](/docs/guides/backups-and-restore/).
 
+## Copies of the cluster do not arrive
+
+Only for a cluster that has been asked to keep copies of its own state in a bucket ([Disaster recovery](/docs/operations/disaster-recovery/)). The Usage page's **Cluster backup** says what the operator found, and a copy that has stopped arriving is a **Cluster problem** alert. Read the same thing with `kubectl`, and look at what K3s itself says:
+
+```bash
+kubectl -n geass-system get geasscluster default -o jsonpath='{.status.conditions[?(@.type=="EtcdSnapshotsCurrent")].message}{"\n"}'
+sudo k3s etcd-snapshot ls
+sudo journalctl -u k3s | grep -i -E "s3|snapshot"
+```
+
+| Message | Cause and fix |
+| --- | --- |
+| "No copy has reached the bucket in 13 hours" | K3s on the control plane was never told to send copies. Run the installer there with `etcd-snapshots enable`. A cluster with three control plane servers needs it on each |
+| "The access key for the bucket is not in the Secret geass-system/geass-etcd-snapshot-credentials" | The key was removed or never stored. Set it again under **Cluster backup** |
+| "The bucket could not be read with this access key" | The key lacks a permission, or the bucket's name or region is wrong. It needs the policy on the [Disaster recovery](/docs/operations/disaster-recovery/#1-make-the-bucket-and-a-key-for-it) page |
+| "The newest copy in the bucket is … old" | K3s sent copies and stopped. `journalctl -u k3s` says why: usually the key, or the bucket, changed |
+| `Unable to initialize S3 client … etcd-s3-config-secret … not found` in the K3s log | K3s is told to send copies and the cluster has not told it where. Set the bucket, or run `etcd-snapshots disable` on that server |
+
 ## Volumes do not attach
 
 Database storage, and the object storage server's, use Longhorn, which needs the iSCSI initiator (`iscsid`) on every node. Signs of trouble: a database or the object storage server at "Storage is starting" or "Storage is unavailable", a pod `Pending` with a volume error, or the cluster not ready with `AddonsReady` false.

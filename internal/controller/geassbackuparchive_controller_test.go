@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -180,4 +182,79 @@ func findCondition(conditions []metav1.Condition, conditionType string) *metav1.
 		}
 	}
 	return nil
+}
+
+func TestAnArchiveWritesWhatItsBackupsAreOfBesideThemOnceAndAgainOnlyWhenItChanges(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+
+	reconcileArchive(t, r, archive)
+
+	key := testBackupBucket + "/" + platform.ArchiveManifestKey(archive.Spec.Project, archive.Spec.ServerName)
+	raw, written := env.storage.puts[key]
+	require.True(t, written, "the record is beside the backups, in their folder: %v", keysOf(env.storage.puts))
+	manifest, err := platform.ParseArchiveManifest(raw, archive.Spec.Project, archive.Spec.ServerName)
+	require.NoError(t, err)
+	require.Equal(t, archive.Spec.Database, manifest.Database)
+	require.Equal(t, archive.Spec.Source.Engine, manifest.Source.Engine)
+	require.NotEmpty(t, env.archive(archive.Name).Annotations[platform.AnnotationArchiveManifest], "and it is noted that it was written")
+
+	// Nothing changed: nothing is written, however many times the archive is looked at.
+	delete(env.storage.puts, key)
+	reconcileArchive(t, r, archive)
+	require.NotContains(t, env.storage.puts, key)
+
+	// A change to what the backups are of is written again.
+	live := env.archive(archive.Name)
+	live.Spec.RetentionDays = 30
+	require.NoError(t, env.client.Update(context.Background(), live))
+	reconcileArchive(t, r, archive)
+	changed, err := platform.ParseArchiveManifest(env.storage.puts[key], archive.Spec.Project, archive.Spec.ServerName)
+	require.NoError(t, err)
+	require.EqualValues(t, 30, changed.RetentionDays)
+}
+
+func TestAnArchiveThatCouldNotWriteItsRecordTriesAgainAndIsOtherwiseUntouched(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+	env.storage.putErr = errors.New("AccessDenied")
+
+	after := reconcileArchive(t, r, archive)
+
+	require.Equal(t, archiveManifestRetry, after, "it is asked for again, which is how a bucket that was unreachable for a while gets its record")
+	require.Empty(t, env.archive(archive.Name).Annotations[platform.AnnotationArchiveManifest], "and is not said to have been written")
+	require.Nil(t, env.archive(archive.Name).Spec.DeleteAfter, "a record that cannot be written is no reason to retire an archive")
+}
+
+func TestARetiredArchiveGetsItsRecordToo(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+	env.retire(archive, time.Now().Add(48*time.Hour))
+
+	reconcileArchive(t, r, archive)
+
+	require.Contains(t, env.storage.puts, testBackupBucket+"/"+platform.ArchiveManifestKey(archive.Spec.Project, archive.Spec.ServerName),
+		"a database that was deleted before this release is still one whose backups a new cluster should find")
+}
+
+// What a cluster finds in a bucket may be in use by the one that put it there: the old cluster is often still up while the new one
+// is built beside it, and a record that expires must not take the other's backups with it.
+func TestRecoveredBackupsAreNeverDeletedWhenTheirRecordExpires(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+	live := env.archive(archive.Name)
+	live.Labels = map[string]string{platform.LabelRecovered: platform.RecoveredValue}
+	live.Spec.DeleteAfter = timePtr(metav1.NewTime(time.Now().Add(-time.Hour)))
+	require.NoError(t, env.client.Update(context.Background(), live))
+
+	reconcileArchive(t, r, archive)
+
+	require.Empty(t, env.storage.purged, "the data was never this cluster's to delete")
+	require.Empty(t, env.storage.puts, "and it does not write a record over the one it was made from")
+	err := env.client.Get(context.Background(), client.ObjectKeyFromObject(archive), &geassv1alpha1.GeassBackupArchive{})
+	require.True(t, apierrors.IsNotFound(err), "the record is what goes: it is no longer offered")
+}
+
+func keysOf(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	return keys
 }

@@ -9,7 +9,7 @@ Each answer here is checked against what Geass does today. Where a question has 
 
 ### Is Geass a managed service?
 
-No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. The license forbids offering Geass to third parties as a hosted or managed service. See [What is Geass](/docs/overview/introduction/#license).
+No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. See [What is Geass](/docs/overview/introduction/#license).
 
 ### Do I need to know Kubernetes?
 
@@ -33,7 +33,7 @@ No. The repository contains no telemetry or analytics code. Geass does make outb
 
 ### Which license does Geass use, and can I use it at work?
 
-The [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license), in the `LICENSE` file. You may use, copy, modify and deploy Geass for yourself or your organization. You may not provide it to third parties as a hosted or managed service that gives them access to a substantial set of its features. You must keep its notices. It is source-available, not open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
+The [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), in the `LICENSE` file. Yes: you may use, copy, modify and redistribute Geass for any purpose, at work, commercially or as a service you offer to others. You must keep its copyright and license notices, include the license with any copy you redistribute, and say which files you changed. The license also grants you the contributors' patent rights for their contributions. It is open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
 
 ## Servers
 
@@ -140,11 +140,13 @@ Only if you turn backups on, and only for PostgreSQL, MySQL and SQLite databases
 
 ### Is Geass itself backed up?
 
-Only around an update. Geass makes no scheduled backup of the cluster's own state. K3s's embedded etcd takes its default snapshots (twice a day, five kept) in its data directory on the same disk, so they do not survive losing that disk. What Geass does is take an etcd snapshot of its own just before it updates the cluster, which is the way back from an update that goes wrong (see [Go back](/docs/operations/upgrading/#go-back)); it stays on the same disk too, and holds the cluster's objects, not your databases' contents. Keep your own record of your setup.
+Only if you ask. K3s's embedded etcd takes its own snapshots (twice a day) in its data directory on the same disk, so they do not survive losing that disk, and Geass takes one more before it updates the cluster, which is the way back from an update that goes wrong (see [Go back](/docs/operations/upgrading/#go-back)). Neither holds your databases' contents, and neither leaves the machine.
+
+You can have K3s send each of its snapshots to an S3 bucket of your own as well: the installer asks, and the answer is no unless you say yes, and **Cluster backup** on the Usage page sets or changes the bucket later. A cluster whose control plane disk is lost can then be rebuilt on a new machine from the newest copy. See [Disaster recovery](/docs/operations/disaster-recovery/).
 
 ### Can I restore my backups on a new cluster?
 
-Not from the dashboard. A restore starts from a backup record that lives in the cluster that made the backup. The objects stay in your S3 bucket, but a new cluster has no record of them. Dump the databases you cannot lose with their own tools before you retire a cluster. See [Upgrade Geass](/docs/operations/upgrading/).
+Yes, if the bucket is still there. A restore starts from a record of the backups, and the record used to live only in the cluster that made them. Now each database's backups have a small record of what they are beside them in the bucket, and **Recover databases from a bucket** on the Usage page reads them on a new cluster, makes the projects again under their old names, and offers each database to restore. Backups made before a cluster ran this release get their record a few minutes after it does; ones that never did cannot be found this way, so dump the databases you cannot lose with their own tools before you retire a cluster. See [Disaster recovery](/docs/operations/disaster-recovery/#recover-databases-from-a-bucket).
 
 ### What happens to my data when I uninstall?
 
