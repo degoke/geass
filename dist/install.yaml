@@ -2443,6 +2443,62 @@ spec:
                 maxLength: 40
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              etcdSnapshots:
+                description: |-
+                  EtcdSnapshots says where copies of the cluster's own state are kept off the control plane's disk. Left out, there
+                  are none: the snapshots K3s takes stay on the disk they protect. It is opt-in.
+                properties:
+                  bucket:
+                    description: Bucket is the S3 bucket the copies are sent to.
+                    maxLength: 63
+                    minLength: 3
+                    pattern: ^[a-z0-9][a-z0-9.-]*[a-z0-9]$
+                    type: string
+                  credentialsSecretRef:
+                    description: |-
+                      CredentialsSecretRef names a Secret in geass-system with the keys ACCESS_KEY_ID and ACCESS_SECRET_KEY: an access
+                      key that can list the bucket and read, write and delete objects in it, and can do nothing else. It is
+                      geass-etcd-snapshot-credentials when left empty.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  endpoint:
+                    description: |-
+                      Endpoint is the host (and port, if it is not the usual one) of an S3-compatible server, such as
+                      s3.eu-north-1.amazonaws.com or minio.example.com:9000, without a scheme. Left empty it is AWS S3.
+                    maxLength: 253
+                    pattern: ^([A-Za-z0-9.-]+(:[0-9]+)?)?$
+                    type: string
+                  folder:
+                    description: Folder is the prefix the copies are stored under
+                      in the bucket. It is geass when left empty.
+                    maxLength: 200
+                    pattern: ^[A-Za-z0-9._/-]*$
+                    type: string
+                  insecure:
+                    description: |-
+                      Insecure sends the copies over plain HTTP, for a server on a network that is closed to everyone else. It is never
+                      right for AWS.
+                    type: boolean
+                  region:
+                    description: |-
+                      Region is the bucket's region. Left empty it is us-east-1, which is what K3s assumes, and is right for any
+                      S3-compatible server that has no regions.
+                    maxLength: 40
+                    pattern: ^[a-z0-9-]*$
+                    type: string
+                required:
+                - bucket
+                type: object
               k3s:
                 description: K3s says which K3s release the nodes should run.
                 properties:
@@ -2459,6 +2515,13 @@ spec:
                     pattern: ^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$
                     type: string
                 type: object
+              lostNodeAfter:
+                description: |-
+                  LostNodeAfter is how long a node may be not ready before it is taken to be lost, and the databases on it are made to start
+                  on another node or, for a highly available Postgres database whose volume was on it alone, replaced (which removes that
+                  instance's volume). It is 15 minutes when left out. 0s turns it off, which is what to set before a planned shutdown of
+                  longer than that.
+                type: string
               network:
                 description: Network says how the nodes reach each other.
                 properties:
@@ -2586,6 +2649,29 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              etcdSnapshots:
+                description: EtcdSnapshots is what the operator found in the bucket
+                  that spec.etcdSnapshots names.
+                properties:
+                  checkedAt:
+                    description: CheckedAt is when the bucket was last looked at.
+                    format: date-time
+                    type: string
+                  copies:
+                    description: Copies is how many snapshots the bucket holds under
+                      the folder.
+                    format: int32
+                    type: integer
+                  lastCopyName:
+                    description: LastCopyName is the name of that snapshot, which
+                      is what k3s server --cluster-reset-restore-path is given.
+                    type: string
+                  lastCopyTime:
+                    description: LastCopyTime is when the newest snapshot in the bucket
+                      was written.
+                    format: date-time
+                    type: string
+                type: object
               k3s:
                 description: K3s is what the cluster's nodes run and how an upgrade
                   of the workers is going.
@@ -7225,6 +7311,7 @@ rules:
   - longhorn.io
   resources:
   - nodes
+  - settings
   - volumes
   verbs:
   - get

@@ -11,6 +11,7 @@ package controller
 import (
 	"context"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -119,6 +120,16 @@ type GeassClusterReconciler struct {
 	watchClusterIssuers func() error
 	issuerWatchMu       sync.Mutex
 	issuerWatchStarted  bool
+
+	// newEtcdSnapshotLister replaces the S3 client that looks in the snapshot bucket, and etcdSnapshotsNow the clock, in
+	// tests.
+	newEtcdSnapshotLister etcdSnapshotListerFactory
+	etcdSnapshotsNow      func() time.Time
+
+	// LostNodeAfter is how long a node is unreachable before the databases on it are looked after (see lost_node.go):
+	// DefaultLostNodeAfter when zero, and the step is off when it is negative. lostNodeClock replaces the clock in tests.
+	LostNodeAfter time.Duration
+	lostNodeClock func() time.Time
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch;create;update;patch;delete
@@ -168,15 +179,24 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornVolumeReplicas(ctx, &cluster))
 	// The same goes for keeping Longhorn's regions in step with the nodes' labels.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornRegions(ctx, &cluster))
+	// And telling Longhorn to replace the pods that were on a node that is down.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornNodeDownPolicy(ctx, &cluster))
 	// And closing the metrics and log stores to everything but the platform.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileTelemetryIsolation(ctx, &cluster))
 	// And measuring the ingress controller, which is where every service's request rate comes from.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileIngressMetrics(ctx, &cluster))
+	// And Longhorn, which says whether each volume has all of its copies.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLonghornMetrics(ctx, &cluster))
 	// And the operator's own monitor and alert rules, so its health is measured and noticed too.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileOperatorMonitoring(ctx, &cluster))
 	// And scale to zero, which is not needed to run workloads and comes up on the side, asking to be visited
 	// again until it has.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileServerless(ctx, &cluster))
+	// And the copies of the cluster's own state in an S3 bucket, when they were asked for: the settings K3s reads, and
+	// whether copies are arriving.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileEtcdSnapshots(ctx, &cluster))
+	// And the databases on a node that has been gone for a long while, which Kubernetes leaves as they are.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLostNodes(ctx, &cluster))
 	return result, nil
 }
 

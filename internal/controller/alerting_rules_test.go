@@ -372,3 +372,32 @@ func TestAHealthyClusterHasNothingToReport(t *testing.T) {
 	}
 	require.Empty(t, evaluateProblems(snapshotOf(func(s *alertSnapshot) { s.Clusters = []geassv1alpha1.GeassCluster{cluster} })))
 }
+
+func TestCopiesOfTheClusterThatStoppedArrivingAreAProblemAndWaitingForTheFirstIsNot(t *testing.T) {
+	cluster := func(reason string, status metav1.ConditionStatus) geassv1alpha1.GeassCluster {
+		return geassv1alpha1.GeassCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace},
+			Status: geassv1alpha1.GeassClusterStatus{Conditions: []metav1.Condition{
+				condition(platform.ConditionEtcdSnapshotsCurrent, status, reason, "", alertNow),
+			}},
+		}
+	}
+	problemsOf := func(c geassv1alpha1.GeassCluster) []problem {
+		return evaluateProblems(snapshotOf(func(s *alertSnapshot) { s.Clusters = []geassv1alpha1.GeassCluster{c} }))
+	}
+
+	for _, reason := range []string{
+		platform.EtcdSnapshotsReasonNoCopy, platform.EtcdSnapshotsReasonStale, platform.EtcdSnapshotsReasonUnreadable,
+		platform.EtcdSnapshotsReasonNoCredentials, platform.EtcdSnapshotsReasonSecretNotMade,
+	} {
+		problems := problemsOf(cluster(reason, metav1.ConditionFalse))
+		require.Equal(t, []string{"cluster.issue/snapshots/default"}, problemKeys(problems), reason)
+		require.Equal(t, alerts.SeverityWarning, problems[0].Severity, reason)
+		require.Equal(t, "/cluster", problems[0].Path)
+	}
+	// Setting a bucket up takes up to half a day before the first copy: that is not an emergency.
+	require.Empty(t, problemsOf(cluster(platform.EtcdSnapshotsReasonWaiting, metav1.ConditionFalse)))
+	require.Empty(t, problemsOf(cluster(platform.EtcdSnapshotsReasonCurrent, metav1.ConditionTrue)))
+	// A cluster that never asked for copies has no condition, and so no problem.
+	require.Empty(t, problemsOf(geassv1alpha1.GeassCluster{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: platform.SystemNamespace}}))
+}

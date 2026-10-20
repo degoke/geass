@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/degoke/geass/pkg/release"
@@ -27,6 +28,9 @@ const (
 	// ModeRefreshServer is what a server that joined a cluster is asked to do when the installer is run on it again:
 	// keep the operator's image current.
 	ModeRefreshServer Mode = "refresh-server"
+	// ModeEtcdSnapshots turns on, turns off or looks at the sending of the cluster's snapshots to S3, on a control plane
+	// server. It changes nothing else.
+	ModeEtcdSnapshots Mode = "etcd-snapshots"
 )
 
 // Options are what the installer was asked to do.
@@ -42,6 +46,8 @@ type Options struct {
 	// JoinServer and JoinToken make this machine an additional control plane server of the cluster at that
 	// address, with that server token.
 	JoinServer, JoinToken string
+	// EtcdSnapshots is what was asked about copies of the cluster's state in S3.
+	EtcdSnapshots EtcdSnapshotsOptions
 	// Version and Help ask the installer to print something and stop.
 	Version, Help bool
 }
@@ -67,9 +73,19 @@ updates the Geass that is already here, keeping everything it holds. It never re
                          (or --join-token, which other users of this machine can read in the process list). A server
                          has to run the cluster's K3s, which a machine that has not joined cannot ask it: say which with
                          --k3s-version (or GEASS_K3S_VERSION), as "k3s --version" on the first server prints it
+  --etcd-snapshots       a new cluster, or a server that joins one: also keep copies of the cluster's state in an S3 bucket of
+                         your own, so that it can be rebuilt if this machine's disk is lost. Without it a terminal is asked,
+                         and the answer is no unless it is yes. Where the copies go: GEASS_ETCD_SNAPSHOTS_BUCKET (and _REGION,
+                         _ENDPOINT, _FOLDER, _INSECURE), with an access key that can use only that bucket in _ACCESS_KEY and
+                         _SECRET_KEY; or set them later in the dashboard
   --yes                  do not ask for confirmation of --reinstall
   --version              print the release this installer is
   --help                 print this
+
+  etcd-snapshots enable    on a cluster that is here: make K3s on this server send its snapshots to S3, and say where (the
+                           variables above). K3s is restarted, which takes the API server away for a minute
+  etcd-snapshots disable   stop sending them. Copies already in the bucket stay
+  etcd-snapshots status    say whether this server sends them, where to, and whether the newest copy is recent
 
 Run on a server that joined a cluster, with no options, the installer only puts the operator's image on it, which is what
 lets the operator run there when the first server is gone. Run it on each of them after the first one is updated.
@@ -82,7 +98,7 @@ of a new cluster (GEASS_ACME_EMAIL, GEASS_MULTI_SITE, GEASS_NODE_EXTERNAL_IP) ap
 // ParseOptions reads the installer's arguments and the environment variables that stand for them.
 func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	var opts Options
-	var upgrade, reinstall bool
+	var upgrade, reinstall, etcdSnapshots bool
 
 	fs := flag.NewFlagSet("geass", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -97,13 +113,24 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	fs.StringVar(&opts.K3sVersion, "k3s-version", "", "")
 	fs.StringVar(&opts.JoinServer, "join-server", "", "")
 	fs.StringVar(&opts.JoinToken, "join-token", "", "")
+	fs.BoolVar(&etcdSnapshots, "etcd-snapshots", false, "")
 	fs.BoolVar(&opts.Version, "version", false, "")
 	fs.BoolVar(&opts.Help, "help", false, "")
 	fs.BoolVar(&opts.Help, "h", false, "")
 
 	// "geass upgrade" reads better than "geass --upgrade", and means the same.
 	var rest []string
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == etcdSnapshotsCommand {
+			// "etcd-snapshots enable" is a command of its own, with its own word after it.
+			if i+1 >= len(args) || !slices.Contains([]string{EtcdSnapshotsEnable, EtcdSnapshotsDisable, EtcdSnapshotsStatus}, args[i+1]) {
+				return Options{}, fmt.Errorf("etcd-snapshots needs one of enable, disable or status\n\n%s", usage)
+			}
+			opts.EtcdSnapshots.Action = args[i+1]
+			i++
+			continue
+		}
 		if a == "upgrade" || a == "install" {
 			upgrade = upgrade || a == "upgrade"
 			if a == "install" {
@@ -133,11 +160,23 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	if opts.JoinToken == "" {
 		opts.JoinToken = strings.TrimSpace(getenv("GEASS_JOIN_TOKEN"))
 	}
+	opts.EtcdSnapshots.Enable = etcdSnapshots || truthy(getenv("GEASS_ETCD_SNAPSHOTS"))
+	destination, err := parseEtcdSnapshotsDestination(getenv)
+	if err != nil {
+		return Options{}, err
+	}
+	opts.EtcdSnapshots.Destination = destination
+	// Naming a bucket is asking for copies: nothing else would make the name worth giving.
+	opts.EtcdSnapshots.Enable = opts.EtcdSnapshots.Enable || destination != nil
 	reinstall = reinstall || truthy(getenv("GEASS_REINSTALL"))
 	opts.Upgrade.NoRollback = opts.Upgrade.NoRollback || truthy(getenv("GEASS_NO_ROLLBACK"))
 	opts.Yes = opts.Yes || truthy(getenv("GEASS_YES"))
 
 	switch {
+	case opts.EtcdSnapshots.Action != "" && (reinstall || upgrade || opts.JoinServer != "" || opts.Upgrade.K3sVersion != ""):
+		return Options{}, errors.New("etcd-snapshots only changes how this server sends snapshots, and cannot be combined with --reinstall, --upgrade, --join-server or --k3s-version")
+	case opts.EtcdSnapshots.Action != "":
+		opts.Mode = ModeEtcdSnapshots
 	case reinstall && upgrade:
 		return Options{}, errors.New("--reinstall and --upgrade contradict each other: one deletes the cluster and the other keeps it")
 	case opts.JoinServer != "" && (reinstall || upgrade):
@@ -187,6 +226,15 @@ type Existing struct {
 // ChooseMode decides what to do from what was asked for and what is here. It is where the installer stops being
 // willing to delete a cluster on its own account: the only way to Reinstall is to ask for it.
 func ChooseMode(want Mode, here Existing) (Mode, error) {
+	if want == ModeEtcdSnapshots {
+		switch {
+		case !here.K3sPresent:
+			return "", errors.New("this machine has no K3s, so there is no cluster to send snapshots from. To build one that does, run the installer with --etcd-snapshots")
+		case here.Agent:
+			return "", errors.New("this machine is a worker, which has no database to snapshot. Run this on a control plane server")
+		}
+		return ModeEtcdSnapshots, nil
+	}
 	if want == ModeJoinServer {
 		if here.K3sPresent {
 			return "", errors.New("this machine already has K3s, and a machine can only join a cluster before it has one. The installer will not replace a K3s that is here: " +

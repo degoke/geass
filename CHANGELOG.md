@@ -88,6 +88,42 @@ The first public release.
   allows.
 - **JSON API** under `/api/v1`, described by an OpenAPI document, with full access, read-only, read-only with logs and
   per-environment project tokens.
+- **Disaster recovery.** Copies of the cluster's own state in an S3 bucket of your own, which you opt in to: the
+  installer asks on a terminal (the answer is no unless it is yes), takes `--etcd-snapshots`, or turns it on later with
+  `etcd-snapshots enable`, and the dashboard's **Cluster backup** sets or changes the bucket with no restart. K3s sends
+  each snapshot there, and the operator says whether they are arriving and raises a **Cluster problem** alert when they
+  stop. A cluster whose control plane disk is lost can be rebuilt on a new machine from the newest copy and the server
+  token, which the installer asks you to store; the steps are in the documentation and the restore is tested against a
+  real K3s (`make test-k3s-restore`). **Recover databases from a bucket** reads a record that each database's backups now
+  have beside them and offers them for restore again on a new cluster; it never deletes what it finds. New
+  **Storage failing** alerts for a disk that has gone read-only and for a volume that has lost a copy or cannot be read
+  (Longhorn is scraped when monitoring is on), checked with `make test-alert-rules`. A service set to run more than one
+  replica asks the scheduler to spread them over machines, and over sites when every node has one, as a preference. (Asking
+  for sites on nodes that have none cancelled the preference for machines too, and put both replicas on one machine in
+  eight cases of ten on three real machines; found by testing it, and fixed.) A database on a node that has been lost for 15 minutes is looked after: a database with
+  one instance, or whose volume has copies on other nodes, starts on another node (Postgres, Redis and MySQL servers),
+  and a lost instance of a highly available Postgres database, or one whose volume has lost its only copy, is replaced
+  by a new one built from the primary, never while the primary is down. Longhorn is set to replace pods that were on a
+  node that is down (only when it is still `do-nothing`). Rebuilding a control plane server is tested on real machines;
+  the documentation says to run the installer with `--force` when it refuses for volumes that are short of a copy, and
+  how to tell Longhorn about the new disk. `etcd-snapshots enable` on a rebuilt machine says the cluster already has its
+  bucket and takes a copy. Testing it on real machines also found two faults that stopped Geass promoting a MariaDB
+  replica when the primary's machine was lost, now fixed: a highly available database that already existed was held by
+  the check for three healthy nodes (which a cluster of three fails the moment it loses one), and Longhorn's removal
+  of the lost primary's pod left it with no machine for the promotion to look at. How long a node may be away before this
+  starts is `spec.lostNodeAfter` on the GeassCluster (15 minutes; `0s` turns it off). Updating to this release rolls each
+  service that runs more than one replica once, because its pods now carry the spread preference. An update is no longer
+  stopped by a snapshot that K3s wrote but could not send to its bucket, the snapshot bucket is looked in under its
+  folder with a slash (a folder called geass-eu is not a part of geass) and, with copies arriving, only every quarter of an
+  hour, and recovering databases from a bucket skips a folder it cannot make again instead of stopping, and no longer
+  gives a project that is already there a backup bucket.
+- **A MariaDB replica that has to be built again is built.** The copy the operator builds a replica from was kept on the
+  servers' own storage class, one copy on one machine, and the job that restores it into a replica mounts that volume and
+  the replica's own: with the two on different machines it was never scheduled, and the replica stayed down. The copy is
+  now kept on Longhorn's replicated class, in the database's region and tags, and a database made before has its volume,
+  template and stuck rebuild replaced when the operator first looks at it. Tested on four machines: the stuck rebuild
+  reproduced, and repaired by the update, with the data and replication intact. The check for three healthy nodes also
+  no longer stops a new highly available database being made on a cluster whose operator is not installed yet.
 - **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
   provenance that can be verified with `gh attestation verify`.
 

@@ -104,6 +104,19 @@ test-k3s-alerting: ## Run the alerting test (problems to Prometheus rules to Ale
 test-k3s-encryption: ## Run the secrets encryption test (a service reads its secret, and the value is not in k3s's datastore) against the k3s that k3s-up started (about 3 minutes, a little more the first time).
 	K3S_INTEGRATION=true go test -count=1 -tags=k3sintegration ./test/k3sintegration/ -run TestSecretsAreEncryptedAtRestOnK3s -v -timeout 25m
 
+.PHONY: test-alert-rules
+test-alert-rules: ## Check the Prometheus rules Geass makes with promtool, and run the unit tests of their logic (test/alertrules). Needs Docker.
+	@dir=$$(mktemp -d) && chmod 755 $$dir && \
+	GEASS_DUMP_RULES=$$dir/rules.yaml go test ./internal/controller/ -run TestDumpAlertRules -count=1 >/dev/null && \
+	cp test/alertrules/rules_test.yaml $$dir/rules_test.yaml && \
+	docker run --rm --entrypoint promtool -v $$dir:/work prom/prometheus:v2.55.1 check rules /work/rules.yaml && \
+	docker run --rm --entrypoint promtool -v $$dir:/work prom/prometheus:v2.55.1 test rules /work/rules_test.yaml; \
+	status=$$?; rm -rf $$dir; exit $$status
+
+.PHONY: test-k3s-restore
+test-k3s-restore: ## Lose a control plane's disk and rebuild the cluster from the copy in S3 that K3s sent before, with a stand-in bucket and the scoped key the documentation gives (about 15 minutes).
+	hack/k3s-restore-test.sh
+
 .PHONY: test-k3s-ha
 test-k3s-ha: ## Run a three-server K3s in Docker, run the operator on it, and take down the server it runs on (about 10 minutes).
 	hack/k3s-ha-test.sh

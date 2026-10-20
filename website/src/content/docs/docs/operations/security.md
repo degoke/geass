@@ -297,6 +297,9 @@ the Cloudflare token, the GitHub App key, app secrets and shared secrets, functi
   root on a control plane server. K3s keeps the key in `/var/lib/rancher/k3s/server/cred/` on that server's disk, so a copy of
   the whole disk gives up every Secret. A cluster the installer did not build, such as K3s you installed by hand, has no
   encryption unless you turned it on in K3s yourself.
+  The copies of the cluster that you can ask K3s to send to an S3 bucket ([Disaster recovery](/docs/operations/disaster-recovery/))
+  hold every Secret too, and the key that decrypts them, protected only by the cluster's server token: keep that bucket to
+  itself, with encryption on, public access blocked and a key that can use only it.
 - **In the API.** Secret values are never copied into a resource's `status`. The dashboard sends the names of secret keys,
   never their values, and viewers do not even get those. The exception is a service you wrote `spec.secretData` into by
   hand: that field is part of the resource, so admins get its values in `GET /api/bootstrap` (the values are blanked in the

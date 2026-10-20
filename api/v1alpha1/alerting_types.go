@@ -21,6 +21,9 @@ const (
 	AlertWorkloadCrashLooping = "workload.crashlooping"
 	// AlertStorageFilling is a volume or a node's disk that is nearly full.
 	AlertStorageFilling = "storage.filling"
+	// AlertStorageFailing is a node's disk that is failing (it has gone read-only), or a volume that has lost a copy of its
+	// data or cannot be read at all.
+	AlertStorageFailing = "storage.failing"
 )
 
 // GeassAlertingSpec says where Geass tells people that something went wrong. Geass turns it into an

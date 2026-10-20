@@ -83,7 +83,17 @@ func alertRules() *monitoringv1.PrometheusRule {
 	// node by its address, so its name is joined from node_uname_info, which is what the node's other alerts are named by.
 	nodeFree := `min by (instance) (node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs|zfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs|zfs"})`
 
-	const cluster = `{{ if eq $labels.detail "upgrade" }}The upgrade of the workers stopped{{ else if eq $labels.detail "issuer" }}Certificates cannot be issued{{ else if eq $labels.detail "netpol" }}Network policies are not enforced{{ else if eq $labels.detail "ready" }}Geass gave up getting the cluster ready{{ else }}{{ $labels.resource }}{{ end }}`
+	// A node's disk that has gone read-only, which is what the kernel does to a filesystem that has met errors it cannot go on
+	// past: a failing disk, or a corrupted filesystem. Only the places that hold the system and its data are looked at: a
+	// read-only mount of a file or a firmware partition is somebody's choice.
+	nodeReadOnly := `max by (instance) (node_filesystem_readonly{fstype=~"ext4|xfs|btrfs|zfs", mountpoint=~"/|/var|/var/lib|/var/lib/rancher|/var/lib/longhorn"}) == 1`
+	// A replicated volume's health, as Longhorn measures it: 2 has lost a copy, 3 has lost them all. Longhorn says which claim and
+	// namespace a volume belongs to in labels of its own, because the namespace label of what it exports is Longhorn's.
+	volumeIs := func(robustness int) string {
+		return fmt.Sprintf(`max by (namespace, pvc) (label_replace(longhorn_volume_robustness{pvc!=""}, "namespace", "$1", "pvc_namespace", "(.+)") == %d)`, robustness)
+	}
+
+	const cluster = `{{ if eq $labels.detail "upgrade" }}The upgrade of the workers stopped{{ else if eq $labels.detail "issuer" }}Certificates cannot be issued{{ else if eq $labels.detail "netpol" }}Network policies are not enforced{{ else if eq $labels.detail "snapshots" }}Copies of the cluster are not reaching their bucket{{ else if eq $labels.detail "ready" }}Geass gave up getting the cluster ready{{ else }}{{ $labels.resource }}{{ end }}`
 
 	return &monitoringv1.PrometheusRule{
 		ObjectMeta: metav1.ObjectMeta{
@@ -125,6 +135,17 @@ func alertRules() *monitoringv1.PrometheusRule {
 					kubernetes("GeassNodeDiskFilling", geassv1alpha1.AlertStorageFilling, "warning", "node", "15m",
 						`label_replace(label_replace((`+nodeFree+` < 0.10) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info), "resource", "$1", "nodename", "(.+)"), "path", "/cluster", "instance", ".*")`,
 						"Storage filling", `{{ $labels.resource }}`, "A disk of this node is more than 90% full. Free some space, or the node will start failing."),
+					kubernetes("GeassNodeDiskReadOnly", geassv1alpha1.AlertStorageFailing, "critical", "node", "2m",
+						`label_replace(label_replace((`+nodeReadOnly+`) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info), "resource", "$1", "nodename", "(.+)"), "path", "/cluster", "instance", ".*")`,
+						"Storage failing", `{{ $labels.resource }}`, "A disk of this node has gone read-only, which is what the system does to a disk that is failing or a filesystem that is corrupted. What writes to it fails. Look at `dmesg` on the machine, and move what matters to another node."),
+					kubernetes("GeassVolumeDegraded", geassv1alpha1.AlertStorageFailing, "warning", "volume", "30m",
+						inProject(volumeIs(2), "pvc"), "Storage failing", where, "This volume has lost a copy of its data and has not got it back. It still works, but losing another copy loses the data. Bring the node that held the copy back, or add a node for it."),
+					kubernetes("GeassVolumeUnavailable", geassv1alpha1.AlertStorageFailing, "critical", "volume", "5m",
+						inProject(volumeIs(3), "pvc"), "Storage failing", where, "Every copy of this volume is lost or cannot be read, so what uses it is down. Bring the node that holds a copy back, or restore the database from its backup."),
+					kubernetes("GeassSystemVolumeDegraded", geassv1alpha1.AlertStorageFailing, "warning", "volume", "30m",
+						elsewhere(volumeIs(2), "pvc"), "Storage failing", `{{ $labels.resource }} ({{ $labels.namespace }})`, "This volume, which belongs to the platform, has lost a copy of its data and has not got it back."),
+					kubernetes("GeassSystemVolumeUnavailable", geassv1alpha1.AlertStorageFailing, "critical", "volume", "5m",
+						elsewhere(volumeIs(3), "pvc"), "Storage failing", `{{ $labels.resource }} ({{ $labels.namespace }})`, "Every copy of this volume, which belongs to the platform, is lost or cannot be read."),
 				},
 			},
 		}},

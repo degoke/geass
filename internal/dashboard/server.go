@@ -65,6 +65,9 @@ type Server struct {
 	// reports counts the reports to GitHub that are being made in the background.
 	reports sync.WaitGroup
 
+	// newRecoveryStorage reads a bucket for backups to recover; nil reads it with the AWS client. Tests substitute it.
+	newRecoveryStorage func(accessKey, secretKey, region string) recoveryStorage
+
 	// consoleExec attaches interactive terminals; nil uses the Kubernetes exec API (tests replace it).
 	consoleExec consoleExecFunc
 

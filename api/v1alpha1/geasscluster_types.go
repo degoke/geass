@@ -157,6 +157,72 @@ type GeassClusterK3sSpec struct {
 	Version string `json:"version,omitempty"`
 }
 
+// GeassClusterEtcdSnapshotsSpec says where copies of the cluster's own state are kept off the control plane's disk. K3s
+// takes a snapshot of its database (etcd) twice a day and keeps five on the same disk as the database, so a disk that is
+// lost takes the cluster and every snapshot with it. With this set, K3s also sends each snapshot to this bucket.
+//
+// A snapshot holds everything the cluster stores, every Secret included, in plain text: give it a bucket of its own, that
+// nothing else can read, with encryption on, and credentials that can only use that bucket. Setting this does nothing
+// until K3s on the control plane has been told to send copies (the installer's etcd-snapshots command); it only says
+// where they go, and it can be changed without restarting K3s.
+type GeassClusterEtcdSnapshotsSpec struct {
+	// Bucket is the S3 bucket the copies are sent to.
+	// +kubebuilder:validation:MinLength=3
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`
+	Bucket string `json:"bucket"`
+
+	// Region is the bucket's region. Left empty it is us-east-1, which is what K3s assumes, and is right for any
+	// S3-compatible server that has no regions.
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9-]*$`
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// Endpoint is the host (and port, if it is not the usual one) of an S3-compatible server, such as
+	// s3.eu-north-1.amazonaws.com or minio.example.com:9000, without a scheme. Left empty it is AWS S3.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9.-]+(:[0-9]+)?)?$`
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Insecure sends the copies over plain HTTP, for a server on a network that is closed to everyone else. It is never
+	// right for AWS.
+	// +optional
+	Insecure bool `json:"insecure,omitempty"`
+
+	// Folder is the prefix the copies are stored under in the bucket. It is geass when left empty.
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._/-]*$`
+	// +optional
+	Folder string `json:"folder,omitempty"`
+
+	// CredentialsSecretRef names a Secret in geass-system with the keys ACCESS_KEY_ID and ACCESS_SECRET_KEY: an access
+	// key that can list the bucket and read, write and delete objects in it, and can do nothing else. It is
+	// geass-etcd-snapshot-credentials when left empty.
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+}
+
+// GeassClusterEtcdSnapshotsStatus is what the operator finds in the bucket.
+type GeassClusterEtcdSnapshotsStatus struct {
+	// LastCopyTime is when the newest snapshot in the bucket was written.
+	// +optional
+	LastCopyTime *metav1.Time `json:"lastCopyTime,omitempty"`
+
+	// LastCopyName is the name of that snapshot, which is what k3s server --cluster-reset-restore-path is given.
+	// +optional
+	LastCopyName string `json:"lastCopyName,omitempty"`
+
+	// Copies is how many snapshots the bucket holds under the folder.
+	// +optional
+	Copies int32 `json:"copies,omitempty"`
+
+	// CheckedAt is when the bucket was last looked at.
+	// +optional
+	CheckedAt *metav1.Time `json:"checkedAt,omitempty"`
+}
+
 // GeassClusterSpec defines the desired state of GeassCluster.
 type GeassClusterSpec struct {
 	// Version is the version of the GeassCluster.
@@ -186,6 +252,18 @@ type GeassClusterSpec struct {
 	// K3s says which K3s release the nodes should run.
 	// +optional
 	K3s GeassClusterK3sSpec `json:"k3s,omitempty"`
+
+	// EtcdSnapshots says where copies of the cluster's own state are kept off the control plane's disk. Left out, there
+	// are none: the snapshots K3s takes stay on the disk they protect. It is opt-in.
+	// +optional
+	EtcdSnapshots *GeassClusterEtcdSnapshotsSpec `json:"etcdSnapshots,omitempty"`
+
+	// LostNodeAfter is how long a node may be not ready before it is taken to be lost, and the databases on it are made to start
+	// on another node or, for a highly available Postgres database whose volume was on it alone, replaced (which removes that
+	// instance's volume). It is 15 minutes when left out. 0s turns it off, which is what to set before a planned shutdown of
+	// longer than that.
+	// +optional
+	LostNodeAfter *metav1.Duration `json:"lostNodeAfter,omitempty"`
 }
 
 type ClusterPhase string
@@ -290,6 +368,10 @@ type GeassClusterStatus struct {
 	// K3s is what the cluster's nodes run and how an upgrade of the workers is going.
 	// +optional
 	K3s GeassClusterK3sStatus `json:"k3s,omitempty"`
+
+	// EtcdSnapshots is what the operator found in the bucket that spec.etcdSnapshots names.
+	// +optional
+	EtcdSnapshots *GeassClusterEtcdSnapshotsStatus `json:"etcdSnapshots,omitempty"`
 }
 
 // +kubebuilder:object:root=true

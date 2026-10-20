@@ -374,6 +374,9 @@ func JoinServerSteps(opts Options) []Step {
 	// The version is asked for, from the option or from GEASS_K3S_VERSION: unlike a first server, which takes the current stable
 	// K3s when it is not told, a joining one has to run what the cluster runs, and cannot find out before it has joined.
 	plan := &JoinPlan{Join: JoinOptions{ServerURL: opts.JoinServer, Token: opts.JoinToken}, K3sVersion: opts.K3sVersion}
+	// The servers of a cluster each take snapshots, and each has to be told where to send them: a server that joins
+	// does what the others do when it is asked to, with --etcd-snapshots.
+	snapshots := &EtcdSnapshotsChoice{}
 	return []Step{
 		// The machine, the address and token, and the K3s version the cluster runs.
 		&JoinChecks{Plan: plan},
@@ -381,6 +384,8 @@ func JoinServerSteps(opts Options) []Step {
 		&FirewallSetup{Network: Network{}, ServerPeer: true},
 		// The iSCSI initiator, which Longhorn needs on every node.
 		&NodePrerequisites{},
+		&AskEtcdSnapshots{Choice: snapshots, Flag: opts.EtcdSnapshots.Enable, K3sVersion: opts.K3sVersion, NoPrompt: true},
+		&WriteEtcdSnapshotsDropIn{Choice: snapshots},
 		&K3sServerJoin{Plan: plan},
 		&WaitForK3s{},
 		&WaitForServerJoin{Version: strings.TrimSpace(plan.K3sVersion)},
