@@ -46,6 +46,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPICloudflareSettings(w, r)
 	case r.URL.Path == "/api/settings/registry":
 		s.handleAPIRegistrySettings(w, r)
+	case r.URL.Path == "/api/settings/etcd-snapshots":
+		s.handleAPIEtcdSnapshotSettings(w, r)
 	case r.URL.Path == "/api/settings/auth":
 		s.handleAPIAuthSettings(w, r)
 	case r.URL.Path == "/api/settings/alerts":

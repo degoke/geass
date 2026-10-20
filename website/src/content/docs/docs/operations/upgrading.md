@@ -61,6 +61,7 @@ Running the installer again for the release the cluster already runs is safe and
 | `--no-rollback` | If the new operator does not take over, leave it where it is instead of rolling the operator back, to look at what went wrong in the cluster it went wrong in. Also `GEASS_NO_ROLLBACK=1` |
 | `--upgrade` | Say that you mean to update. `geass upgrade` reads the same. The default when the machine has a cluster |
 | `--reinstall`, `--yes` | Delete the cluster and build a new one. See [Reinstall](#reinstall) |
+| `etcd-snapshots enable`, `disable`, `status` | Not an update: turn on, turn off or look at K3s on this server sending its snapshots to an S3 bucket of your own. See [Disaster recovery](/docs/operations/disaster-recovery/) |
 | `--join-server <url>` | Not an update: make a machine that has no K3s an additional control plane server of this cluster, at the K3s release you give with `--k3s-version`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `--version`, `--help` | Print the installer's release, or the options |
 

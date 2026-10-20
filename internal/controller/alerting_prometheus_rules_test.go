@@ -109,7 +109,7 @@ func TestTheClusterProblemsAreNamedInWords(t *testing.T) {
 			cluster = rule
 		}
 	}
-	for _, detail := range []string{detailUpgrade, detailReady, detailIssuer, detailNetpol} {
+	for _, detail := range []string{detailUpgrade, detailReady, detailIssuer, detailNetpol, detailSnapshots} {
 		require.Contains(t, cluster.Annotations["summary"], `"`+detail+`"`, "the alert rule has to say what %q means", detail)
 	}
 }
@@ -130,11 +130,11 @@ func TestInfrastructureAlertsAreSaidToBelongToAProjectOnlyWhenTheirNamespaceDoes
 	for _, rule := range allAlertRules() {
 		byName[rule.Alert] = rule.Expr.String()
 	}
-	for _, name := range []string{"GeassPodCrashLooping", "GeassVolumeFillingUp", "GeassVolumeAlmostFull"} {
+	for _, name := range []string{"GeassPodCrashLooping", "GeassVolumeFillingUp", "GeassVolumeAlmostFull", "GeassVolumeDegraded", "GeassVolumeUnavailable"} {
 		require.Contains(t, byName[name], "group_left (project, project_name, environment)", "%s is a project's", name)
 		require.Contains(t, byName[name], alerts.MetricProjectNamespace)
 	}
-	for _, name := range []string{"GeassSystemPodCrashLooping", "GeassSystemVolumeFillingUp"} {
+	for _, name := range []string{"GeassSystemPodCrashLooping", "GeassSystemVolumeFillingUp", "GeassSystemVolumeDegraded", "GeassSystemVolumeUnavailable"} {
 		require.Contains(t, byName[name], "unless on (namespace)", "%s is the platform's: what is a project's is not reported twice", name)
 	}
 }
@@ -146,16 +146,16 @@ func TestNothingInAPullRequestsNamespaceIsAnAlert(t *testing.T) {
 	for _, rule := range allAlertRules() {
 		expr := rule.Expr.String()
 		switch rule.Alert {
-		case "GeassPodCrashLooping", "GeassVolumeFillingUp", "GeassVolumeAlmostFull":
+		case "GeassPodCrashLooping", "GeassVolumeFillingUp", "GeassVolumeAlmostFull", "GeassVolumeDegraded", "GeassVolumeUnavailable":
 			seen++
 			require.Contains(t, expr, `pull_request!="true"`, "%s joins on the namespaces of projects, which are not the pull requests'", rule.Alert)
-		case "GeassSystemPodCrashLooping", "GeassSystemVolumeFillingUp":
+		case "GeassSystemPodCrashLooping", "GeassSystemVolumeFillingUp", "GeassSystemVolumeDegraded", "GeassSystemVolumeUnavailable":
 			seen++
 			require.Contains(t, expr, `unless on (namespace) max by (namespace) (`+alerts.MetricProjectNamespace+`)`,
 				"%s must not take a pull request's namespace for the platform's", rule.Alert)
 		}
 	}
-	require.Equal(t, 5, seen)
+	require.Equal(t, 9, seen)
 }
 
 // Without the operator's word for which namespaces are projects', all of them would be the platform's.
@@ -167,7 +167,7 @@ func TestWhatIsNotInAProjectIsThePlatformsOnlyWhileTheOperatorIsSaying(t *testin
 			require.Contains(t, rule.Expr.String(), `and on () `+alerts.MetricProblemsEvaluated, rule.Alert)
 		}
 	}
-	require.Equal(t, 2, seen)
+	require.Equal(t, 4, seen)
 }
 
 func TestTheDiskOfANodeIsNamedAsTheNodeIs(t *testing.T) {
@@ -193,4 +193,39 @@ func TestTheOperatorsMonitorKeepsTheNamespaceLabelItsMetricsCarry(t *testing.T) 
 	endpoints := operatorMetricsMonitor().Spec.Endpoints
 	require.Len(t, endpoints, 1)
 	require.True(t, endpoints[0].HonorLabels, "without it the join on namespace never matches and no pod is a project's")
+}
+
+func TestAFailingDiskAndALostCopyAreAlertsOfTheirOwn(t *testing.T) {
+	byName := map[string]monitoringv1.Rule{}
+	for _, rule := range allAlertRules() {
+		byName[rule.Alert] = rule
+	}
+	for alert, want := range map[string]struct{ severity, wait string }{
+		"GeassNodeDiskReadOnly": {"critical", "2m"}, "GeassVolumeDegraded": {"warning", "30m"}, "GeassVolumeUnavailable": {"critical", "5m"},
+		"GeassSystemVolumeDegraded": {"warning", "30m"}, "GeassSystemVolumeUnavailable": {"critical", "5m"},
+	} {
+		rule, ok := byName[alert]
+		require.True(t, ok, alert)
+		require.Equal(t, geassv1alpha1.AlertStorageFailing, rule.Labels[alerts.LabelKind], alert)
+		require.Equal(t, want.severity, rule.Labels[alerts.LabelSeverity], alert)
+		require.NotNil(t, rule.For, alert)
+		require.Equal(t, want.wait, string(*rule.For), alert)
+	}
+
+	expr := func(alert string) string {
+		rule := byName[alert]
+		return rule.Expr.String()
+	}
+	// A volume is Longhorn's claim and namespace in labels of their own, because the namespace label on what it exports is the
+	// one of the scrape, and what the rules join on is the namespace that the volume's claim is in.
+	for _, alert := range []string{"GeassVolumeDegraded", "GeassVolumeUnavailable", "GeassSystemVolumeDegraded", "GeassSystemVolumeUnavailable"} {
+		text := expr(alert)
+		require.Contains(t, text, `"namespace", "$1", "pvc_namespace"`, alert)
+		require.Contains(t, text, "longhorn_volume_robustness", alert)
+	}
+	require.Contains(t, expr("GeassVolumeDegraded"), "== 2")
+	require.Contains(t, expr("GeassVolumeUnavailable"), "== 3")
+	require.Contains(t, expr("GeassNodeDiskReadOnly"), "node_uname_info", "the node exporter says an address, and the node's other alerts say its name")
+	require.Contains(t, expr("GeassNodeDiskReadOnly"), "node_filesystem_readonly")
+	require.NotContains(t, expr("GeassNodeDiskReadOnly"), `/boot`, "a read-only boot partition is somebody's choice")
 }

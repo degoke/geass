@@ -65,6 +65,9 @@ func markLonghornInstalled(t *testing.T, c client.Client) {
 		addReadyManager(t, c, node.Name)
 	}
 	require.NoError(t, c.Create(ctx, &storagev1.CSIDriver{ObjectMeta: metav1.ObjectMeta{Name: platform.LonghornProvisioner}}))
+	// Longhorn makes its settings when its managers start. This one is already as Geass sets it, so a cluster that is
+	// settled asks for no follow-up and nothing is patched.
+	require.NoError(t, c.Create(ctx, longhornSetting(longhornNodeDownReplacePods)))
 }
 
 // addReadyManager adds a ready longhorn-manager pod, labelled the way the chart

@@ -1172,6 +1172,40 @@ func TestASnapshotThatCannotBeFoundIsNotAWayBackAndStopsTheUpdate(t *testing.T) 
 	}
 }
 
+// A server that sends its snapshots to a bucket sends the one before an update too. A bucket that was cleared, deleted or whose key
+// was revoked must not stop the update: the file on this machine is the way back.
+func TestASnapshotThatCouldNotBeSentToTheBucketButWasWrittenHereDoesNotStopTheUpdate(t *testing.T) {
+	host := setUpUpgrade(t, healthyCluster())
+	inner := host.answer
+	host.answer = func(c fakeCall) ([]byte, error) {
+		out, err := inner(c) // writes the file, as K3s does before it sends it
+		if len(c.Args) > 1 && c.Args[0] == "etcd-snapshot" && c.Args[1] == "save" {
+			return out, errors.New("failed to upload the snapshot to S3: the config secret was not found")
+		}
+		return out, err
+	}
+
+	stderr := captureStderr(t, func() { require.NoError(t, runSteps(NewUpgradePlan(UpgradeOptions{}))) })
+
+	require.Contains(t, stderr, "sending it to its S3 bucket")
+}
+
+func TestASnapshotThatFailedAndWroteNothingStillStopsTheUpdate(t *testing.T) {
+	host := setUpUpgrade(t, healthyCluster())
+	inner := host.answer
+	host.answer = func(c fakeCall) ([]byte, error) {
+		if len(c.Args) > 1 && c.Args[0] == "etcd-snapshot" && c.Args[1] == "save" {
+			return nil, errors.New("etcd is not running")
+		}
+		return inner(c)
+	}
+
+	err := runSteps(NewUpgradePlan(UpgradeOptions{}))
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "could not take an etcd snapshot")
+}
+
 func TestTheSnapshotAlwaysNamesItsDirectorySoAConfiguredOneCannotHideIt(t *testing.T) {
 	host := setUpUpgrade(t, healthyCluster())
 	require.NoError(t, runSteps(NewUpgradePlan(UpgradeOptions{})))

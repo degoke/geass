@@ -251,6 +251,7 @@ rules:
   - longhorn.io
   resources:
   - nodes
+  - settings
   - volumes
   verbs:
   - get
