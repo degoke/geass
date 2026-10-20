@@ -37,7 +37,7 @@ The app Geass asks GitHub for is private, with these permissions and the events 
 
 The write permissions are for reporting back to GitHub: see
 [Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github). The webhook URL is
-`<dashboard URL>/webhooks/github`, the callback and setup URLs are `<dashboard URL>/github/callback`.
+`<dashboard URL>/webhooks/github`, the callback URL is `<dashboard URL>/github/callback`. The app asks the person who installs it to authorize it as well (**Request user authorization (OAuth) during installation**), so that GitHub sends back a code that shows who came back: GitHub then redirects to the callback URL and no setup URL is used.
 
 If you already have a GitHub App, use **Manual credentials** instead: enter **App ID**, **Client ID**, **App slug**,
 **Client secret**, **Webhook secret** and **Private key (PEM)**, then choose **Save GitHub App**. The key must be an RSA
@@ -52,6 +52,10 @@ Geass creates the connection `<project id>-github` and the Secret `<project id>-
 token, the installation ID and the account. The token is short-lived: Geass asks GitHub for a fresh one with the app's
 private key when it needs one. **Disconnect** removes the project's link only; the connection object and Secret stay
 until you delete them.
+
+### Several organizations on one app
+
+With [organizations](/docs/guides/organizations-and-workspaces/#github) on, a person of an organization who connects a project has to show that GitHub lists the installation among the ones their own account can use, and an installation one organization's project uses cannot be connected to another's. For that the app has to ask for the person's authorization when it is installed. An app made by Geass does. For one you registered yourself, turn on **Request user authorization (OAuth) during installation** in its settings on GitHub, and keep the **Callback URL** as `<dashboard URL>/github/callback`; without it an organization's person is told that GitHub did not say who is connecting. A platform administrator is not asked, and nothing changes while organizations are off.
 
 ## Test, rotate and remove
 

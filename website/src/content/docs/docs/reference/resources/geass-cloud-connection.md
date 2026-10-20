@@ -83,17 +83,19 @@ spec:
 | `spec.provider` | string | none | Required. `AWS` or `PlanetScale` | The vendor. |
 | `spec.secretRef.name` | string | none | Required | A Secret in `geass-system` with the credentials. |
 | `spec.project` | string | none | none | The project ID that may use the connection. See the rule below. |
+| `spec.org` | string | none | `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, at most 63 characters | A [GeassOrganization](/docs/reference/resources/geass-organization/) that owns the connection, when it names no project: every project of that organization may use it, and no other. Ignored when `spec.project` is set. |
 | `spec.region` | string | none | none | The default AWS region. Used when a bucket or backup storage names none. AWS only. |
 | `spec.organization` | string | none | none | The PlanetScale organization. When empty, the Secret's `organization` key is used. PlanetScale only. |
 
 ### Scope
 
-Every use of a connection checks that `spec.project` names the project that is using it:
+Every use of a connection checks that it belongs to the project that is using it:
 
-- A connection with an empty `spec.project` cannot be used by anything. The error is `cloud connection "<name>" must be scoped to a project`, or `use a project-scoped cloud connection` in the dashboard.
-- A project that names another project's connection gets `cloud connection "<name>" is scoped to project "<project>"`.
+- A connection that names a project (`spec.project`) is that project's alone. A project that names another project's connection gets `cloud connection "<name>" is scoped to project "<project>"`.
+- A connection with no project that names an organization (`spec.org`) may be used by every project of that organization, and by no other. A project of another organization, or of none, gets `cloud connection "<name>" belongs to an organization that project "<project>" is not in`.
+- A connection with neither cannot be used by anything. The error is `cloud connection "<name>" must be scoped to a project or an organization`.
 
-So there is no platform-wide connection: create one per project. The dashboard also refuses to save a connection without a project.
+So there is no platform-wide connection: create one per project, or one per organization. The dashboard also refuses to save a connection without a project or an organization (`org`, by a platform administrator or an administrator of the whole organization for their own). Any project of the organization can use the credentials of an organization's connection, so keep them to what its projects may all touch.
 
 ### The Secret
 
@@ -104,7 +106,7 @@ So there is no platform-wide connection: create one per project. The dashboard a
 | PlanetScale | `token` | Yes |
 | PlanetScale | `organization` | Yes, unless `spec.organization` is set |
 
-The dashboard creates the Secret `<name>-credentials`. If a Secret with that name already exists, it keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials).
+The dashboard creates the Secret `<name>-credentials`, after the connection. If a Secret with that name already exists, it keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials). When [organizations are on](/docs/guides/organizations-and-workspaces/), a connection made by an organization is refused instead ("that name is already taken"), so that it cannot adopt a Secret that is not its own.
 
 ## Status
 

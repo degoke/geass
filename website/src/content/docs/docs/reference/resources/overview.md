@@ -59,7 +59,7 @@ While a deployed resource has pending changes, the operator keeps running the la
 
 ## The kinds
 
-There are 16 Geass kinds. Resources that the dashboard creates for you are marked with its screen.
+There are 17 Geass kinds. Resources that the dashboard creates for you are marked with its screen.
 
 | Kind | Represents | Created by |
 | --- | --- | --- |
@@ -72,6 +72,7 @@ There are 16 Geass kinds. Resources that the dashboard creates for you are marke
 | [GeassCluster](/docs/reference/resources/geass-cluster/) | The K3s cluster and its add-ons | The installer |
 | [GeassNode](/docs/reference/resources/geass-node/) | A server joined to the cluster over SSH | You, with `kubectl` |
 | [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/) | Domain, Cloudflare, GitHub App and other cluster-wide settings | The dashboard (**Settings**) |
+| [GeassOrganization](/docs/reference/resources/geass-organization/) | An organization of the identity provider, with its workspaces, whose people see only its projects | A platform administrator (the API, or `kubectl`) |
 | [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/) | An AWS or PlanetScale connection | The dashboard (**Connectors**) |
 | [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) | A project's link to GitHub | The dashboard (project **Integrations**) |
 | [GeassDeployment](/docs/reference/resources/geass-deployment/) | One recorded deploy of a service | Geass |
@@ -123,6 +124,7 @@ and the matching routes for the other kinds, which return a summary with the res
 | --- | --- |
 | GeassProject, GeassApp, GeassDatabase, GeassObjectStore, GeassLogicalDatabase | Safe to create and edit, with care (see below). The dashboard edits the same fields |
 | GeassPlatformConfig, GeassCluster | Safe. They are the only way to set some fields, such as the add-ons and `prometheusURL` |
+| GeassOrganization | Safe to create and edit. The dashboard's API refuses a second organization with the same `idpID` and to delete one that still has projects; `kubectl` does not |
 | GeassNode | Creating one is how you add a server. Edit `placement` through it |
 | GeassCloudConnection, GeassGitHubConnection | Possible, but they only point at Secrets; the dashboard also writes the Secret. Rotate by editing the Secret |
 | GeassHAReadiness | Safe to create |

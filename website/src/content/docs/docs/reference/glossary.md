@@ -138,6 +138,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Observer.** A workspace token role that reads everything a viewer can plus logs and variable names, and changes nothing. See [Users and API tokens](/docs/guides/users-and-tokens/#roles).
 
+**Organization.** A group of people, known to the identity provider and set up in Geass as a `GeassOrganization`, whose projects the other organizations do not see. Only when organizations are turned on. See [Organizations and workspaces](/docs/guides/organizations-and-workspaces/).
+
 **Operator.** The program, running in `geass-system`, that watches the Geass resources and makes the cluster match them. See [How it works](/docs/overview/how-it-works/).
 
 ## P
@@ -147,6 +149,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **Placement.** Where a workload runs: the project's region plus any node tags the workload asks for and the tags its project requires. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 
 **Platform configuration.** The single `GeassPlatformConfig`, named `platform`, that holds the domain, Cloudflare, GitHub and other cluster-wide settings. See [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/).
+
+**Platform administrator.** Someone who runs the whole installation (nodes, add-ons, domain, sign-in, organizations), as opposed to an organization's administrators. When organizations are on, the admins who sign in with a password, and anyone the identity provider's token names as one. See [Organizations and workspaces](/docs/guides/organizations-and-workspaces/).
 
 **Platform domain.** The apex domain you give Geass, under which it serves the dashboard and, once Cloudflare is connected, default service hostnames. See [Domains and TLS](/docs/guides/domains-and-tls/).
 
@@ -216,7 +220,9 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Webhook.** An outbound, signed notification about deployments in a project, sent to a URL you choose. See [GitHub and builds](/docs/guides/github-and-builds/#outgoing-webhooks).
 
-**Workspace token.** An API token (`gsw_`) that acts like a dashboard user across every project, as admin, observer or viewer. See [Users and API tokens](/docs/guides/users-and-tokens/#api-tokens).
+**Workspace (of an organization).** A group of projects inside an organization, such as a team's, that a member who is not an administrator of the organization works in. Not to be confused with a workspace token. See [Organizations and workspaces](/docs/guides/organizations-and-workspaces/).
+
+**Workspace token.** An API token (`gsw_`) that acts like a dashboard user across every project (of one organization, when an organization's admin made it), as admin, observer or viewer. See [Users and API tokens](/docs/guides/users-and-tokens/#api-tokens).
 
 ## Related
 

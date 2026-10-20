@@ -122,6 +122,56 @@ Setting it up and its limits are in [Sign in with an identity provider](/docs/gu
   deploy hooks that person made, unless an admin turned that off (`revokeTokensOnLogout`, on by default) because CI depends on tokens
   made from the accounts of people who sign out. Without it, or with it off, a token outlives their access until it expires or is revoked.
 
+### Organizations
+
+With `spec.auth.tenancy.enabled`, one Geass serves several organizations that must not see each other's work. The setup is in
+[Organizations and workspaces](/docs/guides/organizations-and-workspaces/). What protects it, and where it stops:
+
+- **One check, not many.** The dashboard reads and writes the cluster through a single client that limits every call to the
+  caller's organization (and workspace). A project, service, database, bucket, build, deployment, terminal session or connection of
+  another organization is answered as one that does not exist, so a name or a count never tells that it is there. A kind the client
+  has not been told about, a call that names no tenant, and a patch whose effect cannot be read from the object are refused,
+  not allowed: forgetting something fails closed. The platform's own objects (the cluster, nodes, settings and Secrets) are not
+  an organization's to read; the code that needs them for it asks for the dashboard's own access, after it has shown that what is
+  asked about is the caller's.
+- **Platform and organization routes are different.** A route nobody classified is the platform's alone. Settings, nodes, the
+  domain, the platform's registry, sign-in, the platform's alerts, the platform's shared servers and the cluster's object store are refused to an
+  organization's administrators with `403`. They are not an organization's even when they hold an admin role. What an organization has of
+  its own (alert channels, a registry, shared database servers and cloud connections made for it, and, if the platform gives it one, a
+  provider to sign in through) are organization routes, each checked against the organization that owns them.
+- **Where someone works is signed.** The organization, the workspace and what they may switch to are in the session cookie, signed
+  with the same key as before, so a member cannot edit their cookie into another organization or into an administrator. A switch
+  re-issues the cookie with the same end and start, so it neither extends a session nor lets it outlive a sign-out. The organization
+  is also looked up on every request: suspending or deleting it, or removing a workspace, stops open sessions at once.
+- **Streams end with the place.** The overview stream, log streams and terminals are told only what happens in the caller's projects
+  and are checked again every 15 seconds against where the person works.
+- **Tokens belong to where they were made.** A token an organization's administrator makes acts for that organization alone, and
+  organizations list and revoke only their own. A token made before organizations existed is install-wide. A project's token takes
+  its project's organization and reaches nothing while the project has none. An organization may hold 100 tokens, so one cannot use
+  up the rest.
+- **Policy the platform sets.** An organization may be limited in how many projects it has and how much they use together, kept to a region
+  and to nodes carrying tags, and kept to some domains for hostnames. A person cannot change any of it for their own organization.
+- **Builds are apart.** A project of an organization builds in a namespace of the organization's own, with copies of only the credentials that
+  build needs, no connection allowed to the build and no private address reachable from it, and removes them when the build ends.
+- **A person is checked again.** With the check on, the provider is asked every few minutes whether each signed-in person is still its own and
+  says the same of them; a refusal or a change ends their sessions. The refresh tokens it needs are kept sealed in a Secret, never shown.
+- **An organization's own provider cannot reach beyond the organization.** What it says makes a role in that organization and nothing else:
+  it cannot make anyone an administrator of the platform, give them another organization, or outlive a change to it.
+- **Nothing is created before the caller is shown to own it.** A request that names a project is checked against it first, and
+  an organization cannot take a Secret that already exists (a cloud connection's credentials, say).
+- **Outside the API.** Services cannot take a hostname another service serves, or the dashboard's. Geass does not overwrite a DNS record in
+  your Cloudflare zone that it did not create. With organizations on, a GitHub push or pull request event must name the installation of
+  the project it is for, and an installation another organization's project uses cannot be connected to a project of yours; a person also has to show
+  that GitHub lists the installation among the ones their own account can use.
+
+What it does **not** isolate, and why you should give organizations that you do not trust their own cluster: their pods share your
+machines and kernel (reserve nodes for an organization with required node tags to separate them); builds still run on those machines, and
+use the platform's registry login unless the organization has its own; shared database servers and the object store are cluster-wide
+(a login keeps each database apart); the operator and the dashboard hold cluster-wide access, so a flaw in either's code is a flaw in the
+separation; there is one GitHub App, which anyone who can install it on an account they own can connect; and a person removed from an
+organization at the provider keeps working in it until their session ends (an hour by default), unless the provider sends a back-channel
+logout or the platform checks people again.
+
 ### API tokens
 
 Tokens have a prefix (`gsw_` for a workspace token, `gsp_` for a project token, `gsh_` for a deploy hook), a public identifier and a 160-bit random
@@ -502,6 +552,8 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 12. Run `geass mcp --listen` only on `127.0.0.1`, or behind TLS and a firewall.
 13. Put sensitive values in secrets, not plain configuration, because observer tokens and agents can read plain configuration.
 14. Watch the operator log and your servers' logs.
+15. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
+    installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
 
 ## What stays your responsibility
 
@@ -527,6 +579,7 @@ Geass does not do these for you:
 ## Related
 
 - [Users and API tokens](/docs/guides/users-and-tokens/)
+- [Organizations and workspaces](/docs/guides/organizations-and-workspaces/)
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [REST API](/docs/reference/rest-api/)
 - [Cloud connectors](/docs/guides/connectors/)

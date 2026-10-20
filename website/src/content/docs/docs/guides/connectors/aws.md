@@ -93,9 +93,9 @@ so add one connection per project. There is no unscoped (platform-wide) connecti
 refused with "project scope is required for cloud connections", and a connection you create with `kubectl` without a
 `project` shows **Ready** but is refused by every bucket and database that names it ("must be scoped to a project").
 
-Geass writes the Secret `<name>-credentials` before it checks the project, so a save that fails with "project was not
-found" or "project scope is required" still leaves the Secret behind. See the caution under
-[Rotate AWS credentials](#rotate-aws-credentials) before you try again with different keys.
+Geass checks the project before it writes anything, so a save that fails with "project was not found" or "project
+scope is required" leaves nothing behind. (Before this was so, such a save left the Secret `<name>-credentials`; if
+one is still there from an earlier attempt, see the caution under [Rotate AWS credentials](#rotate-aws-credentials).)
 
 You can also create it with the API (an admin session or a workspace token with `admin` access) or with `kubectl`.
 
@@ -186,9 +186,10 @@ key works, deactivate the old one in IAM.
 
 :::caution
 Do not try to rotate by saving the connection again with the same name. If the Secret `<name>-credentials` already
-exists, Geass keeps it and ignores the new keys, so the old credentials stay in use. This also applies after a failed
-save, which leaves the Secret behind: fix a mistyped key by editing the Secret as shown above, not by saving again.
-Or create a connection with a new name.
+exists, Geass keeps it and ignores the new keys, so the old credentials stay in use. This also applies to a Secret an
+earlier failed save left behind: fix a mistyped key by editing the Secret as shown above, not by saving again. Or create
+a connection with a new name. (An organization, when [organizations are on](/docs/guides/organizations-and-workspaces/),
+is refused instead with "that name is already taken": it may not take a Secret that is not its own.)
 :::
 
 ## Remove an AWS connection

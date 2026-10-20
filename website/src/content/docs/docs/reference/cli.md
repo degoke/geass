@@ -196,7 +196,8 @@ The command also uses the global flags `--url`, `--token` and `--context`.
   A name that is pointed at another address starts with none, because a project ID from one Geass means nothing on
   another. When the token expires is saved with it.
 - **Output.** `Signed in to <url> as <user> (<access>)`, where access is `admin`, `read-only, with logs`, `read-only`
-  or `project token for <project>/<environment>`. With `--json`: `{"context", "url", "user", "role"}`, and
+  or `project token for <project>/<environment>`. When [organizations](/docs/guides/organizations-and-workspaces/) are on, the access
+  says where you work: `admin of Acme`, `read-only of Acme / Payments team`, or `admin of the platform`. With `--json`: `{"context", "url", "user", "role"}`, and
   `expiresAt` when the token expires.
 
 **API calls:** `POST /auth/device`, `POST /auth/token` (repeated), `GET /me`. The first two need no token.
@@ -241,8 +242,9 @@ The `expires` line says when the token stops working and how long is left (`in 3
 minute`, or `expired 2d ago`), or `never` for a token with no expiry.
 
 With `--json` it prints the identity returned by the API: `username`, `role`, `scope` (`workspace` or `project`),
-`project` and `environment` (project tokens only), `canMutate`, `canReadSensitive`, `authentication` (`token`) and
-`expiresAt` (absent for a token that never expires).
+`project` and `environment` (project tokens only), `canMutate`, `canReadSensitive`, `authentication` (`token`),
+`expiresAt` (absent for a token that never expires) and, when the platform has organizations on, `org`, `orgName`, `workspace`,
+`workspaceName` or `platformAdmin`. The `access` line then ends with where you work, for example `read-only of Acme / Payments team`.
 
 **API calls:** `GET /me`. **Needs:** any signed-in token.
 

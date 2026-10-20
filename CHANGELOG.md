@@ -77,6 +77,40 @@ The first public release.
   of the operator's own health.
 - **Dashboard sign-in.** Local admin and viewer users, or an external OpenID Connect provider with a role claim mapped to
   admin or viewer.
+- **Organizations and workspaces.** One cluster can serve several organizations that must not see each other's work.
+  They are read from the identity provider's sign-in token (a list of organizations, each with the person's role and the
+  teams they are in), so Geass keeps no list of people. A platform administrator sets each organization up
+  (`GeassOrganization`, `/api/orgs`, **Settings** → **Organizations**) and assigns projects to it and to a workspace of it.
+  A person works in one organization and workspace at a time, with a switcher, and sees and changes only what is theirs:
+  every read and write of the dashboard, the API, the command line and the MCP server goes through one check, another
+  organization's resource is answered as one that does not exist, and a route nobody classified is the platform's
+  alone. Tokens belong to where they were made (an installation holds at most 600, an organization 100). The platform's
+  own pages (nodes, add-ons, domain, registry, sign-in, alerts, shared servers) stay with the platform's administrators,
+  who are the admins with a password and anyone a `platformClaim` names. It is off by default and changes nothing while
+  off; turning it on needs a test sign-in that put someone in an organization that is set up, and ends everyone's
+  sessions once. It is for organizations that trust each other: they share machines. See
+  [Organizations and workspaces](website/src/content/docs/docs/guides/organizations-and-workspaces.md).
+- **What an organization has of its own.** A platform administrator can limit an organization (most projects, a quota for
+  all its projects together, a region, node tags every workload must run on, and the domains its services may take
+  hostnames under). An organization has its own Slack alert channels, which hear only about its projects; its own
+  registry, with builds that run in a namespace of the organization's own that holds only that build's credentials and
+  reaches no private address; shared database servers and cloud connections made for it, which only its projects use;
+  and, when the platform allows, its own identity provider to sign in through (a link that names the organization, a
+  claim mapped to a role, tested before it is turned on). A token is scoped by where it was made, and a platform
+  administrator can make one for a named organization (`org`, `workspace`); there is no organization header or flag.
+  Organizations' buckets are made on the platform's object storage server.
+- **Sign-in checks people again.** With `spec.auth.oidc.refreshMinutes` set, Geass asks the identity provider again, every
+  so often, whether each signed-in person is still its own and says the same of them (their role, organizations and
+  platform claim), and ends the sessions of one it does not, so a removal or a role change is noticed in minutes and not
+  when the session ends. Refresh tokens are kept sealed. A provider that cannot be reached does not end sessions until
+  `staleGraceMinutes` (120) have passed.
+- **Organizations made by sign-in.** With `spec.auth.tenancy.autoProvision`, the first sign-in of an organization's
+  administrator (with a verified address) makes the organization in Geass: suspended until approved, or ready at once
+  for the ids on a list, up to a limit.
+- **GitHub installations are proved.** With organizations on, a person who connects a project to a GitHub App
+  installation has to show that GitHub lists it among the ones their account can use. An app made by Geass asks for
+  that when it is installed; an app you registered yourself needs **Request user authorization (OAuth) during
+  installation** turned on.
 - **Command line** (`geass`), installed with `install-cli.sh` for Linux and macOS (and as a download for Windows):
   `geass login` signs in by approving a code in the dashboard, and commands print JSON with `--json` and exit with
   codes a script can act on.
@@ -90,5 +124,17 @@ The first public release.
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+- A project's environment namespace that already exists is used only if it is that project's: a project no longer takes
+  over another project's namespace, or one Geass did not create, and deleting a project or an environment deletes only
+  namespaces that are its own.
+- A service's hostname is lowercased and checked, and cannot be one another service serves or the dashboard's. Geass no
+  longer overwrites a CNAME record in your Cloudflare zone that it did not create. Moving a service to another project
+  or environment needs one that exists.
+- A cloud connection is saved after its project is checked, so a failed save no longer leaves its credentials Secret
+  behind.
+- The check that a hostname is free of another service's is made against every service, not only the caller's, so an
+  organization can no longer take a hostname another organization's service serves.
+- Builds no longer mount the operator's service account token, and an organization's builds run apart from the
+  platform's namespace and secrets (see above).
 
 [Unreleased]: https://github.com/degoke/geass/commits/main
