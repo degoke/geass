@@ -9,7 +9,7 @@ Each answer here is checked against what Geass does today. Where a question has 
 
 ### Is Geass a managed service?
 
-No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. The license forbids offering Geass to third parties as a hosted or managed service. See [What is Geass](/docs/overview/introduction/#license).
+No. Geass is software that runs on servers you own or rent. Nobody operates those servers for you, and the project does not host a service. See [What is Geass](/docs/overview/introduction/#license).
 
 ### Do I need to know Kubernetes?
 
@@ -33,7 +33,7 @@ No. The repository contains no telemetry or analytics code. Geass does make outb
 
 ### Which license does Geass use, and can I use it at work?
 
-The [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license), in the `LICENSE` file. You may use, copy, modify and deploy Geass for yourself or your organization. You may not provide it to third parties as a hosted or managed service that gives them access to a substantial set of its features. You must keep its notices. It is source-available, not open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
+The [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0), in the `LICENSE` file. Yes: you may use, copy, modify and redistribute Geass for any purpose, at work, commercially or as a service you offer to others. You must keep its copyright and license notices, include the license with any copy you redistribute, and say which files you changed. The license also grants you the contributors' patent rights for their contributions. It is open source in the Open Source Initiative's sense. For anything unclear, read the license or ask a lawyer.
 
 ## Servers
 

@@ -13,7 +13,7 @@ new version.
 
 ## [Unreleased]
 
-The first public release.
+The first public release, open source under the Apache License 2.0.
 
 ### Added
 
