@@ -107,6 +107,13 @@ The first public release.
   replica when the primary's machine was lost, now fixed: a highly available database that already existed was held by
   the check for three healthy nodes (which a cluster of three fails the moment it loses one), and Longhorn's removal
   of the lost primary's pod left it with no machine for the promotion to look at.
+- **A MariaDB replica that has to be built again is built.** The copy the operator builds a replica from was kept on the
+  servers' own storage class, one copy on one machine, and the job that restores it into a replica mounts that volume and
+  the replica's own: with the two on different machines it was never scheduled, and the replica stayed down. The copy is
+  now kept on Longhorn's replicated class, in the database's region and tags, and a database made before has its volume,
+  template and stuck rebuild replaced when the operator first looks at it. Tested on four machines: the stuck rebuild
+  reproduced, and repaired by the update, with the data and replication intact. The check for three healthy nodes also
+  no longer stops a new highly available database being made on a cluster whose operator is not installed yet.
 - **Release files** carry a `SHA256SUMS` file that the install scripts check what they download against, and build
   provenance that can be verified with `gh attestation verify`.
 

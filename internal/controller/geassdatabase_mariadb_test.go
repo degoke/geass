@@ -10,6 +10,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,6 +42,7 @@ func newMariaDBEnv(t *testing.T, instances int32, objects ...client.Object) *ser
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
+	require.NoError(t, storagev1.AddToScheme(scheme))
 	require.NoError(t, helmv1.AddToScheme(scheme))
 	require.NoError(t, mariadbv1.AddToScheme(scheme))
 	size := resource.MustParse("5Gi")
@@ -727,7 +730,9 @@ func TestOperatorObjectsArePatchedAndOnlyWithWhatChanged(t *testing.T) {
 		},
 	})
 
-	require.NoError(t, e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, "", platform.Placement{}))
+	wait, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
+	require.False(t, wait)
 
 	require.Len(t, patches, 1)
 	require.Contains(t, patches[0], "schedule", "what Geass says and the object lacks is sent")
@@ -735,7 +740,8 @@ func TestOperatorObjectsArePatchedAndOnlyWithWhatChanged(t *testing.T) {
 	require.NotContains(t, patches[0], "maxRetention")
 
 	patches = nil
-	require.NoError(t, e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, "", platform.Placement{}))
+	_, err = e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
 	require.Empty(t, patches, "nothing changed, so nothing is sent")
 }
 
@@ -855,4 +861,181 @@ func TestTheMOCOClusterIsPatchedAndOnlyWithWhatChanged(t *testing.T) {
 
 	require.Len(t, patches, 1, "the new number of servers is sent as a patch")
 	require.EqualValues(t, 5, e.mocoCluster().Spec.Replicas)
+}
+
+// --- the copy a replica is built from -----------------------------------------------------------
+
+func recoveryTemplateOf(t *testing.T, e *serverEnv) *mariadbv1.PhysicalBackup {
+	t.Helper()
+	var template mariadbv1.PhysicalBackup
+	require.NoError(t, e.client.Get(context.Background(), types.NamespacedName{Name: "orders-recovery", Namespace: testDevTargetNS}, &template))
+	return &template
+}
+
+// A server's volume is on the machine it runs on, and so is a copy kept the same way: the job that builds a replica from it
+// mounts the copy and the replica's volume, and with the two on different machines it is never scheduled.
+func TestTheCopyAReplicaIsBuiltFromIsKeptWhereAnyMachineCanMountIt(t *testing.T) {
+	e := newMariaDBEnv(t, 3, longhornClasses()...)
+
+	wait, err := e.r.ensureMariaDBRecoveryTemplate(context.Background(), e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	require.False(t, wait)
+	require.Equal(t, platform.StorageClassReplicated, recoveryTemplateClass(recoveryTemplateOf(t, e)),
+		"the servers are on %s, one copy each, and the copy they are rebuilt from is not", platform.StorageClassSingle)
+}
+
+func TestTheCopyFollowsTheRegionAndTheTagsTheDatabaseIsKeptIn(t *testing.T) {
+	regional := platform.RegionalReplicatedClass("eu")
+	e := newMariaDBEnv(t, 3, append(longhornClasses(),
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: regional}, Provisioner: platform.LonghornProvisioner})...)
+
+	_, err := e.r.ensureMariaDBRecoveryTemplate(context.Background(), e.db, testDevTargetNS, platform.NewPlacement("eu", nil))
+
+	require.NoError(t, err)
+	require.Equal(t, regional, recoveryTemplateClass(recoveryTemplateOf(t, e)), "a copy of the data must not leave the region the data is in")
+}
+
+func TestTheCopyWaitsForTheRegionsClassInsteadOfBeingKeptSomewhereElse(t *testing.T) {
+	e := newMariaDBEnv(t, 3, longhornClasses()...)
+
+	wait, err := e.r.ensureMariaDBRecoveryTemplate(context.Background(), e.db, testDevTargetNS, platform.NewPlacement("eu", nil))
+
+	require.NoError(t, err)
+	require.True(t, wait, "the class of the region is made a moment after the global one")
+	var template mariadbv1.PhysicalBackup
+	err = e.client.Get(context.Background(), types.NamespacedName{Name: "orders-recovery", Namespace: testDevTargetNS}, &template)
+	require.True(t, apierrors.IsNotFound(err), "nothing is made until the class is known")
+}
+
+func TestWithoutLonghornTheCopyIsKeptOnTheClusterDefault(t *testing.T) {
+	e := newMariaDBEnv(t, 3)
+
+	wait, err := e.r.ensureMariaDBRecoveryTemplate(context.Background(), e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	require.False(t, wait)
+	require.Empty(t, recoveryTemplateClass(recoveryTemplateOf(t, e)))
+}
+
+// A template made before kept its copy on the database's class. The operator does not let where a copy is kept change, so it
+// is made again, with the copies the operator made from it that were stuck.
+func TestATemplateThatKeepsItsCopyWhereItCannotFollowAReplicaIsMadeAgain(t *testing.T) {
+	ctx := context.Background()
+	single := platform.StorageClassSingle
+	size := resource.MustParse("5Gi")
+	stale := func(name string) client.Object {
+		return &mariadbv1.PhysicalBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testDevTargetNS},
+			Spec: mariadbv1.PhysicalBackupSpec{
+				MariaDBRef: mariadbv1.MariaDBRef{Name: "orders"},
+				Storage: mariadbv1.PhysicalBackupStorage{PersistentVolumeClaim: &mariadbv1.PersistentVolumeClaimStorage{
+					Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: size}},
+					StorageClassName: &single,
+				}},
+			},
+		}
+	}
+	e := newMariaDBEnv(t, 3, append(longhornClasses(), stale("orders-recovery"), stale("orders-pb-recovery"), stale("orders-pb-scaleout"))...)
+
+	wait, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
+	require.False(t, wait)
+	for _, name := range []string{"orders-recovery", "orders-pb-recovery", "orders-pb-scaleout"} {
+		err := e.client.Get(ctx, types.NamespacedName{Name: name, Namespace: testDevTargetNS}, &mariadbv1.PhysicalBackup{})
+		require.True(t, apierrors.IsNotFound(err), "%s was removed: it keeps its copy on one machine", name)
+	}
+
+	_, err = e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
+	require.Equal(t, platform.StorageClassReplicated, recoveryTemplateClass(recoveryTemplateOf(t, e)), "and made again where a replica can reach it")
+}
+
+func TestATemplateThatIsRightIsLeftAloneAndSoAreTheCopiesMadeFromIt(t *testing.T) {
+	ctx := context.Background()
+	e := newMariaDBEnv(t, 3, longhornClasses()...)
+	_, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+	require.NoError(t, err)
+	running := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: "orders-pb-recovery", Namespace: testDevTargetNS}}
+	require.NoError(t, e.client.Create(ctx, running))
+
+	_, err = e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	require.NoError(t, e.client.Get(ctx, client.ObjectKeyFromObject(running), &mariadbv1.PhysicalBackup{}), "a replica that is being built is not interrupted")
+}
+
+// A volume the operator kept a copy on outlives the copy and is used for the next one, so a template that is right does not
+// help a database that was made before, until its volume is replaced as well.
+func TestAVolumeTheCopyWasKeptOnBeforeIsReplacedWithTheCopyThatHeldIt(t *testing.T) {
+	ctx := context.Background()
+	single, replicated := platform.StorageClassSingle, platform.StorageClassReplicated
+	claim := func(name string, class *string) client.Object {
+		return &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testDevTargetNS},
+			Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: class},
+		}
+	}
+	copied := &mariadbv1.PhysicalBackup{ObjectMeta: metav1.ObjectMeta{Name: "orders-pb-recovery", Namespace: testDevTargetNS}}
+	e := newMariaDBEnv(t, 3, append(longhornClasses(), claim("orders-pb-recovery", &single), claim("orders-pb-scaleout", &replicated), copied)...)
+
+	_, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	err = e.client.Get(ctx, types.NamespacedName{Name: "orders-pb-recovery", Namespace: testDevTargetNS}, &corev1.PersistentVolumeClaim{})
+	require.True(t, apierrors.IsNotFound(err), "a volume that cannot follow a replica is removed")
+	err = e.client.Get(ctx, client.ObjectKeyFromObject(copied), &mariadbv1.PhysicalBackup{})
+	require.True(t, apierrors.IsNotFound(err), "with the copy that was on it, which the operator makes again")
+	require.NoError(t, e.client.Get(ctx, types.NamespacedName{Name: "orders-pb-scaleout", Namespace: testDevTargetNS}, &corev1.PersistentVolumeClaim{}),
+		"one that is on the right class is left")
+}
+
+// On the cluster's default class a claim has the name the default was given, so there is nothing to compare it with.
+func TestWithoutAClassOfItsOwnNoCopyVolumeIsEverRemoved(t *testing.T) {
+	ctx := context.Background()
+	local := "local-path"
+	kept := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-pb-recovery", Namespace: testDevTargetNS},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &local},
+	}
+	e := newMariaDBEnv(t, 3, kept)
+
+	for range 2 {
+		_, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, e.client.Get(ctx, client.ObjectKeyFromObject(kept), &corev1.PersistentVolumeClaim{}))
+}
+
+// A job that was restoring a copy into a replica fails when the copy's volume is removed under it, and the operator waits for a
+// failed job for ever. It is removed with the volume, so that the operator makes it again.
+func TestTheJobRestoringACopyIntoAReplicaIsRemovedWithTheVolumeItWasUsing(t *testing.T) {
+	ctx := context.Background()
+	single := platform.StorageClassSingle
+	job := func(name string, complete bool) client.Object {
+		j := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testDevTargetNS}}
+		if complete {
+			j.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		}
+		return j
+	}
+	stuck := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders-pb-recovery", Namespace: testDevTargetNS},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &single},
+	}
+	e := newMariaDBEnv(t, 3, append(longhornClasses(), stuck, job("orders-2-pb-init", false), job("orders-1-pb-init", true),
+		job("other-2-pb-init", false), job("orders-backup", false))...)
+
+	_, err := e.r.ensureMariaDBRecoveryTemplate(ctx, e.db, testDevTargetNS, platform.Placement{})
+
+	require.NoError(t, err)
+	gone := func(name string) bool {
+		err := e.client.Get(ctx, types.NamespacedName{Name: name, Namespace: testDevTargetNS}, &batchv1.Job{})
+		return apierrors.IsNotFound(err)
+	}
+	require.True(t, gone("orders-2-pb-init"), "an unfinished restore into a replica of this database")
+	require.False(t, gone("orders-1-pb-init"), "one that finished is the operator's to clean up")
+	require.False(t, gone("other-2-pb-init"), "another database's")
+	require.False(t, gone("orders-backup"), "and nothing that is not a restore into a replica")
 }

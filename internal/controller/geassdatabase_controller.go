@@ -20,6 +20,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -633,19 +634,24 @@ func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, project, 
 // MariaDB object that its engine's operator looks after.
 func (r *GeassDatabaseReconciler) haDatabaseExists(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (bool, error) {
 	var object client.Object
-	meta := metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}
+	named := metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}
 	switch db.Spec.Engine {
 	case geassv1alpha1.DatabaseEnginePostgres, "":
-		object = &cnpgv1.Cluster{ObjectMeta: meta}
+		object = &cnpgv1.Cluster{ObjectMeta: named}
 	case geassv1alpha1.DatabaseEngineMySQL:
-		object = &mocov1.MySQLCluster{ObjectMeta: meta}
+		object = &mocov1.MySQLCluster{ObjectMeta: named}
 	case geassv1alpha1.DatabaseEngineMariaDB:
-		object = &mariadbv1.MariaDB{ObjectMeta: meta}
+		object = &mariadbv1.MariaDB{ObjectMeta: named}
 	default:
 		return false, nil
 	}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
-		return false, client.IgnoreNotFound(err)
+		// The kind does not exist until its operator's chart of resource definitions is installed, which a database
+		// that asks for high availability on a new cluster does later in this very reconcile.
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }

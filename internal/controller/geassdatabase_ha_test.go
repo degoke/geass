@@ -6,13 +6,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
+	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -99,4 +104,30 @@ func TestAHighlyAvailableDatabaseThatExistsIsStillLookedAfterWhenTheClusterHasFe
 	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(database), &updated))
 	require.NotContains(t, conditionMessage(updated.Status.Conditions, platform.ConditionReady), "three healthy nodes",
 		"the check is for making a highly available database, not for keeping one")
+}
+
+// On a new cluster the operator's resource definitions are installed by the very reconcile that first asks whether the
+// database was made, so for every engine the kind is not there to ask about.
+func TestADatabaseWhoseOperatorIsNotInstalledYetHasNotBeenMade(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, cnpgv1.AddToScheme(scheme))
+	require.NoError(t, mocov1.AddToScheme(scheme))
+	require.NoError(t, mariadbv1.AddToScheme(scheme))
+	noKind := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "k8s.mariadb.com", Kind: "MariaDB"}, SearchedVersions: []string{"v1alpha1"}}
+	c := interceptor.NewClient(fake.NewClientBuilder().WithScheme(scheme).Build(), interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return noKind
+		},
+	})
+	r := &GeassDatabaseReconciler{Client: c, Scheme: scheme}
+
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEnginePostgres, geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB} {
+		made, err := r.haDatabaseExists(context.Background(), &geassv1alpha1.GeassDatabase{
+			ObjectMeta: metav1.ObjectMeta{Name: testDBName}, Spec: geassv1alpha1.GeassDatabaseSpec{Engine: engine},
+		}, testDevTargetNS)
+
+		require.NoError(t, err, "%s: this is where a database on a new cluster is made, so it cannot fail here", engine)
+		require.False(t, made, engine)
+	}
 }
