@@ -44,8 +44,8 @@ func ProjectRequiredTags(ctx context.Context, c client.Reader, project string) (
 	return required, err
 }
 
-// projectScope reads the region and required tags of a project with one lookup. A project that does
-// not exist has neither.
+// projectScope reads the region and required tags of a project with one lookup, and of its organization when it has one.
+// A project that does not exist has neither.
 func projectScope(ctx context.Context, c client.Reader, project string) (string, []string, error) {
 	if project == "" {
 		region, err := DefaultRegion(ctx, c, "")
@@ -58,9 +58,15 @@ func projectScope(ctx context.Context, c client.Reader, project string) (string,
 		}
 		return "", nil, err
 	}
-	required := NewPlacement("", p.Spec.RequiredTags).Tags
-	if p.Spec.Region != "" {
-		return p.Spec.Region, required, nil
+	// The organization sets what its projects inherit: its tags are added to the project's, and its region stands in for
+	// a project that names none.
+	org, err := OrganizationOf(ctx, c, &p)
+	if err != nil {
+		return "", nil, err
+	}
+	required := EffectiveRequiredTags(&p, org)
+	if region := EffectiveRegion(&p, org); region != "" {
+		return region, required, nil
 	}
 	region, err := DefaultRegion(ctx, c, p.Spec.ClusterRef.Name)
 	return region, required, err

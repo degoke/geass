@@ -344,7 +344,7 @@ func (r *GeassObjectStoreReconciler) validateObjectStoreCloudConnection(ctx cont
 		}
 		return fmt.Errorf("cloud connection %q is unavailable", store.Spec.ConnectionRef.Name)
 	}
-	return platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project)
+	return platform.ValidateCloudConnectionForProject(ctx, r.Client, *connection, store.Spec.Project)
 }
 
 func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, store *geassv1alpha1.GeassObjectStore) error {
@@ -355,7 +355,7 @@ func (r *GeassObjectStoreReconciler) deleteExternalStore(ctx context.Context, st
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return fmt.Errorf("AWS connection is unavailable: %w", err)
 	}
-	if err := platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project); err != nil {
+	if err := platform.ValidateCloudConnectionForProject(ctx, r.Client, *connection, store.Spec.Project); err != nil {
 		return err
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS || connection.Spec.SecretRef.Name == "" {
@@ -474,7 +474,7 @@ func (r *GeassObjectStoreReconciler) reconcileExternal(ctx context.Context, stor
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Spec.ConnectionRef.Name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return r.setNotReady(ctx, store, "AWS connection is unavailable")
 	}
-	if err := platform.ValidateCloudConnectionForProject(*connection, store.Spec.Project); err != nil {
+	if err := platform.ValidateCloudConnectionForProject(ctx, r.Client, *connection, store.Spec.Project); err != nil {
 		return r.setNotReady(ctx, store, err.Error())
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS {
@@ -594,19 +594,24 @@ func (r *GeassObjectStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return obj.GetNamespace() == platform.SystemNamespace && obj.GetName() == platform.ObjectStoreServerName
 		}))).
 		// A project changing its region or required tags changes which server it may use.
-		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, project client.Object) []ctrl.Request {
-			var list geassv1alpha1.GeassObjectStoreList
-			if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
-				return nil
-			}
-			var requests []ctrl.Request
-			for i := range list.Items {
-				if list.Items[i].Spec.Project == project.GetName() {
-					requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
-				}
-			}
-			return requests
-		}), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.storesForProject), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// An organization's region and required tags are its projects' too.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.storesForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("geassobjectstore").
 		Complete(r)
+}
+
+// storesForProject maps a project to its object stores.
+func (r *GeassObjectStoreReconciler) storesForProject(ctx context.Context, project client.Object) []ctrl.Request {
+	var list geassv1alpha1.GeassObjectStoreList
+	if err := r.List(ctx, &list, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for i := range list.Items {
+		if list.Items[i].Spec.Project == project.GetName() {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
+	}
+	return requests
 }

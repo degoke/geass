@@ -182,7 +182,11 @@ func (r *GeassClusterReconciler) complianceNamespaces(ctx context.Context) ([]st
 	var namespaces []string
 	for i := range projects.Items {
 		project := &projects.Items[i]
-		if len(project.Spec.RequiredTags) == 0 {
+		tags, err := platform.ProjectTags(ctx, r.Client, project)
+		if err != nil {
+			return nil, err
+		}
+		if len(tags) == 0 {
 			continue
 		}
 		for _, environment := range project.Spec.Environments {

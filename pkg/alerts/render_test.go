@@ -493,3 +493,70 @@ func TestKindsAreInTheOrderTheDashboardShowsThem(t *testing.T) {
 	require.True(t, slices.Contains(ids, geassv1alpha1.AlertStorageFilling))
 	require.Equal(t, geassv1alpha1.AlertBuildFailed, ids[0])
 }
+
+func orgProjectObject(name, org string) *geassv1alpha1.GeassProject {
+	return &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{Org: org},
+	}
+}
+
+func TestAnOrganizationsChannelHearsOnlyAboutItsOwnProjectsAndNeverTheClusterOrAnotherOrganization(t *testing.T) {
+	config := Config{Channels: []Channel{
+		slackChannel("aaaaaaa1"), // the platform's own: every project and the cluster
+		slackChannel("bbbbbbb2", func(c *Channel) { c.Org = "org-aaaaaaaa"; c.Scope = []string{"acme-web", "acme-api"} }),
+		slackChannel("ccccccc3", func(c *Channel) { c.Org = "org-bbbbbbbb"; c.Scope = []string{"beta-app"} }),
+		slackChannel("ddddddd4", func(c *Channel) { c.Org = "org-cccccccc"; c.Scope = nil }),
+	}}
+	rendered := Render(config)
+	require.NotNil(t, rendered)
+	live := func(id string) string { return receiverName(id) }
+
+	for name, tc := range map[string]struct {
+		labels map[string]string
+		want   []string
+	}{
+		"an alert about one of an organization's projects reaches it and the platform's":              {problemLabels("deploy.failed", "acme-web", "production"), []string{live("aaaaaaa1"), live("bbbbbbb2")}},
+		"another organization's project reaches that organization only, and the platform":             {problemLabels("deploy.failed", "beta-app", "production"), []string{live("aaaaaaa1"), live("ccccccc3")}},
+		"a project nobody's channel names reaches only the platform":                                  {problemLabels("deploy.failed", "orphan", "production"), []string{live("aaaaaaa1")}},
+		"an alert about the cluster reaches no organization":                                          {problemLabels("node.unhealthy", "", ""), []string{live("aaaaaaa1")}},
+		"a cluster alert with an environment still reaches no organization":                           {problemLabels("deploy.failed", "", "production"), []string{live("aaaaaaa1")}},
+		"an organization with no projects hears nothing, not everything (it is not in any list here)": {problemLabels("deploy.failed", "acme-web", ""), []string{live("aaaaaaa1"), live("bbbbbbb2")}},
+		"a project whose name only starts like one of the organization's is not its":                  {problemLabels("deploy.failed", "acme-web-2", "production"), []string{live("aaaaaaa1")}},
+		"a project name with regular expression characters matches only itself":                       {problemLabels("deploy.failed", "acme.web", "production"), []string{live("aaaaaaa1")}},
+	} {
+		require.Equal(t, tc.want, receiversFor(t, rendered, tc.labels), name)
+	}
+}
+
+func TestAnOrganizationsChannelCannotSendMailThroughThePlatform(t *testing.T) {
+	config := Config{SMTP: testSMTP(), Channels: []Channel{
+		{ID: "aaaaaaa1", Name: "mail", Type: TypeEmail, Recipients: []string{"a@example.com"}, Org: "org-aaaaaaaa", Scope: []string{"p"}, NotifyResolved: true},
+	}}
+	require.Nil(t, Render(config), "there is no receiver for it, so nothing is sent")
+	require.Contains(t, Untestable(config, "aaaaaaa1"), "Slack")
+}
+
+func TestLoadRoutesAnOrganizationsChannelOnTheProjectsItHasNow(t *testing.T) {
+	c := alertingClient(t,
+		platformWith(&geassv1alpha1.GeassAlertingSpec{Channels: []geassv1alpha1.GeassAlertChannel{
+			{ID: "aaaaaaa1", Name: "all of acme", Type: "slack", Org: "org-aaaaaaaa"},
+			{ID: "bbbbbbb2", Name: "acme web", Type: "slack", Org: "org-aaaaaaaa", Projects: []string{"acme-web", "moved-away", "beta-app"}},
+			{ID: "ccccccc3", Name: "platform", Type: "slack"},
+		}}),
+		secret(ChannelsSecretName, map[string]string{"aaaaaaa1": "https://hooks.slack.com/services/T/B/1", "bbbbbbb2": "https://hooks.slack.com/services/T/B/2", "ccccccc3": "https://hooks.slack.com/services/T/B/3"}),
+		orgProjectObject("acme-web", "org-aaaaaaaa"), orgProjectObject("acme-api", "org-aaaaaaaa"),
+		orgProjectObject("beta-app", "org-bbbbbbbb"), orgProjectObject("moved-away", "org-bbbbbbbb"), orgProjectObject("loner", ""),
+	)
+	config, err := Load(context.Background(), c, platform.SystemNamespace)
+	require.NoError(t, err)
+
+	byID := map[string]Channel{}
+	for _, channel := range config.Channels {
+		byID[channel.ID] = channel
+	}
+	require.ElementsMatch(t, []string{"acme-web", "acme-api"}, byID["aaaaaaa1"].Scope, "all the organization has, and not another's")
+	require.Equal(t, []string{"acme-web"}, byID["bbbbbbb2"].Scope, "the ones it names that are still the organization's: a project given to another organization is gone from it")
+	require.Empty(t, byID["ccccccc3"].Org, "the platform's channel is untouched")
+	require.Empty(t, byID["ccccccc3"].Scope)
+}

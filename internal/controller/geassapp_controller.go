@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	ctrlsource "sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -860,6 +861,20 @@ func (r *GeassAppReconciler) buildRegistry(ctx context.Context, app *geassv1alph
 	if registry != "" {
 		return registry, credentialRef, nil
 	}
+	// An organization that has a registry of its own builds and pushes there, with its own login, and not with the platform's.
+	var project geassv1alpha1.GeassProject
+	if err := r.Get(ctx, client.ObjectKey{Name: app.Spec.Project, Namespace: platform.SystemNamespace}, &project); err == nil {
+		org, err := platform.OrganizationOf(ctx, r.Client, &project)
+		if err != nil {
+			return "", nil, err
+		}
+		if org != nil && org.Spec.Registry != nil && org.Spec.Registry.Repository != "" {
+			if credentialRef == nil {
+				credentialRef = org.Spec.Registry.CredentialRef
+			}
+			return org.Spec.Registry.Repository, credentialRef, nil
+		}
+	}
 	config := &geassv1alpha1.GeassPlatformConfig{}
 	if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err != nil {
 		return "", nil, client.IgnoreNotFound(err)
@@ -1296,19 +1311,24 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A copy that is stopped for memory and started again leaves the Deployment as it was, so the service has
 		// to hear of it from the pod. The pod carries the same labels as the Deployment.
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(podOOMKilled())).
-		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
-			var apps geassv1alpha1.GeassAppList
-			if err := r.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)); err != nil {
-				return nil
-			}
-			requests := make([]ctrl.Request, 0)
-			for _, app := range apps.Items {
-				if app.Spec.Project == obj.GetName() {
-					requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&app)})
-				}
-			}
-			return requests
-		}), builder.WithPredicates(readyOrSpecChanged())).
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.appsForProject), builder.WithPredicates(readyOrSpecChanged())).
+		// Where an organization's services run follows its region and required node tags.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.appsForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("geassapp").
 		Complete(r)
+}
+
+// appsForProject maps a project to the services in it.
+func (r *GeassAppReconciler) appsForProject(ctx context.Context, project client.Object) []ctrl.Request {
+	var apps geassv1alpha1.GeassAppList
+	if err := r.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil
+	}
+	requests := make([]ctrl.Request, 0)
+	for _, app := range apps.Items {
+		if app.Spec.Project == project.GetName() {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&app)})
+		}
+	}
+	return requests
 }

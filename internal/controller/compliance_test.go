@@ -274,3 +274,36 @@ func TestASharedServerMustRunWhereTheProjectRequires(t *testing.T) {
 		require.NotNil(t, f.job(t, "orders-create"))
 	})
 }
+
+func TestTheTagsAnOrganizationRequiresAreOnItsProjectsNamespacesToo(t *testing.T) {
+	ctx := context.Background()
+	organization := &geassv1alpha1.GeassOrganization{
+		ObjectMeta: metav1.ObjectMeta{Name: "org-1", Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassOrganizationSpec{DisplayName: "Acme", IdPID: "acme", RequiredTags: []string{"pci"}},
+	}
+	c := complianceClient(t, complianceNamespace(), organization)
+	r := &GeassProjectReconciler{Client: c}
+	project := complianceProject("hipaa")
+	project.Spec.Org = "org-1"
+
+	require.NoError(t, r.reconcileProjectCompliance(ctx, project, "payments-production"))
+	value, ok := namespaceAnnotation(t, c)
+	require.True(t, ok)
+	require.Equal(t, "hipaa,pci", value, "the project's own tag and the organization's")
+	_, _, installed := policyInstalled(t, c)
+	require.True(t, installed, "so pods made outside Geass are held to them by the policy")
+
+	// A project with no tags of its own still takes the organization's.
+	bare := complianceProject()
+	bare.Spec.Org = "org-1"
+	require.NoError(t, r.reconcileProjectCompliance(ctx, bare, "payments-production"))
+	value, _ = namespaceAnnotation(t, c)
+	require.Equal(t, "pci", value)
+
+	// And when the organization stops requiring it the namespace follows.
+	organization.Spec.RequiredTags = nil
+	require.NoError(t, c.Update(ctx, organization))
+	require.NoError(t, r.reconcileProjectCompliance(ctx, bare, "payments-production"))
+	_, ok = namespaceAnnotation(t, c)
+	require.False(t, ok)
+}

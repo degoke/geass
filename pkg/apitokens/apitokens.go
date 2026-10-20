@@ -41,7 +41,9 @@ const (
 
 const (
 	// MaxTokens keeps the Secret that holds all records well below the Kubernetes size limit.
-	MaxTokens = 200
+	MaxTokens = 600
+	// MaxTokensPerOrg is how many of them one organization may hold, so that one cannot use up everyone's.
+	MaxTokensPerOrg = 100
 	// MaxExpiryDays is the longest lifetime a token can be created with.
 	MaxExpiryDays = 3650
 
@@ -61,7 +63,12 @@ type Record struct {
 	Project     string `json:"project,omitempty"`
 	Environment string `json:"environment,omitempty"`
 	// App is the service a deploy hook deploys. Only service tokens have one.
-	App       string `json:"app,omitempty"`
+	App string `json:"app,omitempty"`
+	// Org and Workspace are the organization (a GeassOrganization name) and the workspace of it the token was made
+	// for, which is where it acts. A token with no Org is install-wide: every token made before organizations
+	// existed is, and so is one a platform administrator makes for the platform.
+	Org       string `json:"org,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
 	Role      string `json:"role"`
 	Hash      string `json:"hash"`
 	CreatedBy string `json:"createdBy,omitempty"`
@@ -76,14 +83,17 @@ type Record struct {
 
 // Request describes a token to create.
 type Request struct {
-	Name          string
-	Scope         string
-	Project       string
-	Environment   string
-	App           string
-	Role          string
-	CreatedBy     string
-	CreatedByID   string
+	Name        string
+	Scope       string
+	Project     string
+	Environment string
+	App         string
+	Role        string
+	CreatedBy   string
+	CreatedByID string
+	// Org and Workspace are what the token is made for: the creator's own, never something they ask for.
+	Org           string
+	Workspace     string
 	ExpiresInDays int
 }
 
@@ -102,7 +112,7 @@ func New(request Request, now time.Time) (string, Record, error) {
 		return "", Record{}, fmt.Errorf("expiry must be between 0 (never) and %d days", MaxExpiryDays)
 	}
 
-	record := Record{Name: name, Scope: request.Scope, CreatedBy: request.CreatedBy, CreatedByID: request.CreatedByID, CreatedAt: now.UTC()}
+	record := Record{Name: name, Scope: request.Scope, CreatedBy: request.CreatedBy, CreatedByID: request.CreatedByID, Org: request.Org, Workspace: request.Workspace, CreatedAt: now.UTC()}
 	prefix := ""
 	switch request.Scope {
 	case ScopeWorkspace:

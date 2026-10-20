@@ -286,10 +286,7 @@ func (s *Server) validateCloudConnectionForProject(ctx context.Context, project,
 		}
 		return fmt.Errorf("cloud connection is unavailable")
 	}
-	if strings.TrimSpace(connection.Spec.Project) == "" {
-		return fmt.Errorf("use a project-scoped cloud connection")
-	}
-	return platform.ValidateCloudConnectionForProject(*connection, project)
+	return platform.ValidateCloudConnectionForProject(ctx, s.Client, *connection, project)
 }
 
 func hmacSHA256(secret string, body []byte) string {

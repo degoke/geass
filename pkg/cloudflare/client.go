@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -288,7 +289,18 @@ func (c *Client) PutIngressConfiguration(ctx context.Context, tunnelID string, r
 	return err
 }
 
-func ensureDNSRecord(ctx context.Context, c *Client, zoneID, recordType, recordName, content string, proxied bool) error {
+// recordComment marks a DNS record Geass created, so that a later pass can tell it from one a person made.
+const recordComment = "Managed by Geass"
+
+// ErrRecordNotOurs is returned when a hostname already has a DNS record that Geass did not create and that points
+// somewhere else. Writing over it would repoint a name somebody else set up, such as another service's or the
+// dashboard's, at a tunnel that serves whoever asked for the hostname.
+var ErrRecordNotOurs = errors.New("a DNS record with that name already exists and was not created by Geass")
+
+// ensureDNSRecord creates or updates a record. With guard, a record that already exists is only changed when it is
+// Geass's (it carries the comment), when it already says what is wanted, or when it points at a Cloudflare tunnel,
+// which is what Geass's records from before the comment existed look like.
+func ensureDNSRecord(ctx context.Context, c *Client, zoneID, recordType, recordName, content string, proxied, guard bool) error {
 	recordName = strings.TrimSuffix(strings.TrimSpace(recordName), ".")
 	content = strings.TrimSpace(content)
 	if zoneID == "" || recordName == "" || content == "" {
@@ -300,7 +312,9 @@ func ensureDNSRecord(ctx context.Context, c *Client, zoneID, recordType, recordN
 		return err
 	}
 	var records []struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		Content string `json:"content"`
+		Comment string `json:"comment"`
 	}
 	_ = json.Unmarshal(result, &records)
 	payload := map[string]any{
@@ -308,24 +322,31 @@ func ensureDNSRecord(ctx context.Context, c *Client, zoneID, recordType, recordN
 		"name":    recordName,
 		"content": content,
 		"proxied": proxied,
+		"comment": recordComment,
 	}
 	if len(records) > 0 {
-		_, err = c.request(ctx, http.MethodPut, "/zones/"+zoneID+"/dns_records/"+records[0].ID, payload)
+		existing := records[0]
+		if guard && existing.Comment != recordComment && !strings.EqualFold(strings.TrimSuffix(existing.Content, "."), content) &&
+			!strings.HasSuffix(strings.ToLower(strings.TrimSuffix(existing.Content, ".")), ".cfargotunnel.com") {
+			return fmt.Errorf("%w: %s", ErrRecordNotOurs, recordName)
+		}
+		_, err = c.request(ctx, http.MethodPut, "/zones/"+zoneID+"/dns_records/"+existing.ID, payload)
 		return err
 	}
 	_, err = c.request(ctx, http.MethodPost, "/zones/"+zoneID+"/dns_records", payload)
 	return err
 }
 
-// EnsureCNAMERecord creates or updates a proxied CNAME to the tunnel hostname.
+// EnsureCNAMERecord creates or updates a proxied CNAME to the tunnel hostname. It does not repoint a CNAME that is
+// someone else's (see ErrRecordNotOurs).
 func (c *Client) EnsureCNAMERecord(ctx context.Context, zoneID, recordName, tunnelCNAMETarget string) error {
 	tunnelCNAMETarget = strings.TrimSuffix(strings.TrimSpace(tunnelCNAMETarget), ".")
-	return ensureDNSRecord(ctx, c, zoneID, "CNAME", recordName, tunnelCNAMETarget, true)
+	return ensureDNSRecord(ctx, c, zoneID, "CNAME", recordName, tunnelCNAMETarget, true, true)
 }
 
 // EnsureARecord creates or updates an A record (optionally proxied through Cloudflare).
 func (c *Client) EnsureARecord(ctx context.Context, zoneID, recordName, ipv4 string, proxied bool) error {
-	return ensureDNSRecord(ctx, c, zoneID, "A", recordName, ipv4, proxied)
+	return ensureDNSRecord(ctx, c, zoneID, "A", recordName, ipv4, proxied, false)
 }
 
 func TunnelCNAMETarget(tunnelID string) string {

@@ -97,6 +97,9 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		return r.setNotReady(ctx, &logical, "database name must contain only letters, numbers, and underscores")
 	}
 	if shared {
+		if message := r.organizationMismatch(ctx, &logical, &server); message != "" {
+			return r.setNotReady(ctx, &logical, message)
+		}
 		if message := r.regionMismatch(ctx, &logical, &server); message != "" {
 			return r.setNotReady(ctx, &logical, message)
 		}
@@ -186,6 +189,22 @@ func (r *GeassLogicalDatabaseReconciler) regionMismatch(ctx context.Context, log
 		return ""
 	}
 	return fmt.Sprintf("This database server runs in the %s region, but the project runs in the %s region", serverRegion, projectRegion)
+}
+
+// organizationMismatch refuses a project that is not the organization's on a shared server the organization owns: only
+// the organization's projects take databases on it. A server that is the platform's is for any project.
+func (r *GeassLogicalDatabaseReconciler) organizationMismatch(ctx context.Context, logical *geassv1alpha1.GeassLogicalDatabase, server *geassv1alpha1.GeassDatabase) string {
+	if server.Spec.Org == "" {
+		return ""
+	}
+	var project geassv1alpha1.GeassProject
+	if err := r.Get(ctx, client.ObjectKey{Name: logical.Spec.Project, Namespace: platform.SystemNamespace}, &project); err != nil {
+		return "the project of this database could not be read"
+	}
+	if project.Spec.Org != server.Spec.Org {
+		return "This database server belongs to an organization that the project is not in"
+	}
+	return ""
 }
 
 // complianceMismatch refuses a project that requires node tags, such as a compliance tag, when the
@@ -503,6 +522,9 @@ func (r *GeassLogicalDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		For(&geassv1alpha1.GeassLogicalDatabase{}).
 		// A project changing its region or required tags changes which shared servers it may use.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.logicalDatabasesForProject),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// An organization's region and required tags are its projects' too.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.logicalDatabasesForProject)),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("geasslogicaldatabase").
 		Complete(r)

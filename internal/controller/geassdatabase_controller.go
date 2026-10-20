@@ -611,7 +611,7 @@ func (r *GeassDatabaseReconciler) validateDatabaseCloudConnection(ctx context.Co
 		}
 		return fmt.Errorf("cloud connection %q is unavailable", db.Spec.ConnectionRef.Name)
 	}
-	return platform.ValidateCloudConnectionForProject(*connection, db.Spec.Project)
+	return platform.ValidateCloudConnectionForProject(ctx, r.Client, *connection, db.Spec.Project)
 }
 
 func (r *GeassDatabaseReconciler) cloudConnection(ctx context.Context, project, name string) (*geassv1alpha1.GeassCloudConnection, *corev1.Secret, error) {
@@ -1007,6 +1007,8 @@ func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&geassv1alpha1.GeassDatabase{}).
 		// A project choosing or changing its backup storage must reach the databases waiting for it.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject), builder.WithPredicates(readyOrSpecChanged())).
+		// An organization's region and required node tags decide where its projects' databases may be placed.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.databasesForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// A database given its first logical database must start giving out its administrative login.
 		Watches(&geassv1alpha1.GeassLogicalDatabase{}, handler.EnqueueRequestsFromMapFunc(r.databasesForLogicalDatabase)).
 		// A restore or final backup finishing should be noticed at once, not at the next poll.

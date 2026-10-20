@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -53,6 +54,7 @@ func Load(ctx context.Context, reader client.Reader, namespace string) (Config, 
 			return Config{}, err
 		}
 	}
+	var projectsOf map[string][]string
 	for _, channel := range spec.Channels {
 		loaded.Channels = append(loaded.Channels, Channel{
 			ID: channel.ID, Name: channel.Name, Type: channel.Type,
@@ -60,9 +62,52 @@ func Load(ctx context.Context, reader client.Reader, namespace string) (Config, 
 			Recipients: channel.Recipients, Events: channel.Events, Projects: channel.Projects, Environments: channel.Environments,
 			NotifyResolved: channel.NotifyResolved == nil || *channel.NotifyResolved,
 			Disabled:       channel.Disabled,
+			Org:            channel.Org,
 		})
+		if channel.Org != "" && projectsOf == nil {
+			// An organization's channel is routed on the projects the organization has, so they are read once.
+			var err error
+			if projectsOf, err = projectsByOrganization(ctx, reader, namespace); err != nil {
+				return Config{}, err
+			}
+		}
+	}
+	for i := range loaded.Channels {
+		if channel := &loaded.Channels[i]; channel.Org != "" {
+			channel.Scope = scopeOf(projectsOf[channel.Org], channel.Projects)
+		}
 	}
 	return loaded, nil
+}
+
+// projectsByOrganization is the names of the projects each organization has.
+func projectsByOrganization(ctx context.Context, reader client.Reader, namespace string) (map[string][]string, error) {
+	var projects geassv1alpha1.GeassProjectList
+	if err := reader.List(ctx, &projects, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for i := range projects.Items {
+		if org := projects.Items[i].Spec.Org; org != "" && projects.Items[i].DeletionTimestamp.IsZero() {
+			out[org] = append(out[org], projects.Items[i].Name)
+		}
+	}
+	return out, nil
+}
+
+// scopeOf is the projects an organization's channel hears about: the ones the organization has, narrowed to those the
+// channel names when it names some. A project that moved to another organization is no longer in the first one's.
+func scopeOf(held, chosen []string) []string {
+	if len(chosen) == 0 {
+		return held
+	}
+	var scope []string
+	for _, name := range held {
+		if slices.Contains(chosen, name) {
+			scope = append(scope, name)
+		}
+	}
+	return scope
 }
 
 func smtpPort(port int32) int {
