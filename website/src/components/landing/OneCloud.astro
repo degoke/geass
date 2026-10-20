@@ -1,6 +1,6 @@
 ---
-import logo from "../../assets/geass-logo.svg";
-import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
+import Logo from "./Logo.astro";
+import { addServersDocsUrl, connectorsDocsUrl, nodePoolsDocsUrl } from "../../lib/site";
 ---
   <section class="sec sec-black" id="cloud" aria-labelledby="cloud-title">
     <div class="sec-inner">
@@ -21,7 +21,7 @@ import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
         </div>
         <div class="topo-link" aria-hidden="true"><span></span></div>
         <div class="topo-core">
-          <img src={logo.src} alt="" height="40" width="151" />
+          <Logo alt="" height="40" width="151" />
           <ul class="topo-runs mono">
             <li>Apps</li>
             <li>Databases</li>
@@ -35,8 +35,10 @@ import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
           <ul class="topo-list">
             <li>GitHub</li>
             <li>AWS</li>
+            <li>Hetzner</li>
             <li>PlanetScale</li>
             <li>Cloudflare</li>
+            <li>and more</li>
           </ul>
         </div>
       </div>
@@ -51,7 +53,7 @@ import { addServersDocsUrl, connectorsDocsUrl } from "../../lib/site";
           <li>MCP</li>
         </ul>
       </div>
-      <p class="topo-note mono">Servers at more than one provider in a single cluster is experimental.</p>
-      <p class="topo-docs mono">Docs: <a href={addServersDocsUrl}>Add servers</a> · <a href={connectorsDocsUrl}>Cloud connectors</a></p>
+      <p class="topo-note mono">Servers at more than one provider in a single cluster, and machines Geass creates at a cloud, are experimental.</p>
+      <p class="topo-docs mono">Docs: <a href={addServersDocsUrl}>Add servers</a> · <a href={nodePoolsDocsUrl}>Node pools</a> · <a href={connectorsDocsUrl}>Cloud connectors</a></p>
     </div>
   </section>

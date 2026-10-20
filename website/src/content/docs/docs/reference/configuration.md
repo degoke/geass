@@ -85,12 +85,13 @@ Files it writes on the server:
 
 | Path | Content |
 | --- | --- |
-| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below) and, for multi-site, the WireGuard backend, external IP and certificate name |
+| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below), secrets encryption (`secrets-encryption: true`) and, for multi-site, the WireGuard backend, external IP and certificate name |
 | `/etc/rancher/k3s/k3s.yaml` | The admin kubeconfig K3s writes |
 | `/var/lib/rancher/k3s/server/node-token` | The join token, also copied to the Secret `geass-token` |
 
 Geass sets `container-log-max-size=50Mi` and `container-log-max-files=5` on every node's kubelet, so a service's recent logs stay on
-the node. Workers get the same settings plus their labels and taints when they join.
+the node. Workers get the same kubelet settings plus their labels and taints when they join. Secrets encryption is a server
+setting, so workers do not get it, and a control plane server that you join with `--join-server` gets it from the installer too.
 
 ## Operator flags
 
@@ -298,6 +299,7 @@ The installer creates one, named `default`. See [GeassCluster](/docs/reference/r
 | `spec.addons.logging.retentionDays` | `7` (1 to 90) | How long stored logs are kept |
 | `spec.addons.serverless.enabled` | `false` (the installer does not set it) | Install the scale-to-zero add-on, so services can sleep when idle: KEDA and its HTTP add-on (charts `geass-keda` and `geass-keda-http`, namespace `keda`). It also creates a K3s `HelmChartConfig` named `traefik` that lets Traefik route to the add-on's proxy, unless Traefik already has one, which it leaves alone and logs what to add. Turning it off stops services from sleeping and wakes the ones that are asleep, but never uninstalls KEDA. See [Scale to zero](/docs/guides/scale-to-zero/) |
 | `spec.network.multiSite` | `false` | Nodes are at different providers. Set by the installer; changing it later does not rebuild nodes |
+| `spec.network.controlPlaneFirewall` | none | The cloud firewall in front of the control plane, so that Geass can let machines it creates reach it: `connectionRef`, `target` and `region`. AWS security groups and Hetzner firewalls only. See [Node pools](/docs/guides/node-pools/#let-geass-open-the-control-plane) |
 | `spec.defaultRegion` | empty | The region for projects that do not choose one. Edited in **Settings** → **Usage** (**Default region**) |
 | `spec.serverURL` | The control plane's own address on its default route, for a single-site install | The address workers join. The installer fills it in with the address its default route uses (a private address on most cloud servers), and a multi-site install writes the public address. A loopback address is never used: workers join on the control plane node's own address instead. Set it only to use a different address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join) |
 | `spec.tokenSecretRef`, `spec.version` | `geass-token` in `geass-system`, and `v1` | The Secret with the join token, and a label that is not a K3s version |

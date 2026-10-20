@@ -53,6 +53,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods/eviction
   - pods/exec
   verbs:
   - create
@@ -140,6 +141,7 @@ rules:
   - geassgithubconnections
   - geasshareadinesses
   - geasslogicaldatabases
+  - geassnodepools
   - geassnodes
   - geassobjectstores
   - geassorganizations
@@ -160,6 +162,7 @@ rules:
   - geassclusters/finalizers
   - geassdatabases/finalizers
   - geasslogicaldatabases/finalizers
+  - geassnodepools/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
   - geassorganizations/finalizers
@@ -180,6 +183,7 @@ rules:
   - geassgithubconnections/status
   - geasshareadinesses/status
   - geasslogicaldatabases/status
+  - geassnodepools/status
   - geassnodes/status
   - geassobjectstores/status
   - geassplatformconfigs/status
@@ -254,6 +258,14 @@ rules:
   - get
   - list
   - patch
+- apiGroups:
+  - longhorn.io
+  resources:
+  - replicas
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - moco.cybozu.com
   resources:

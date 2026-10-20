@@ -60,6 +60,9 @@ type capacityNode struct {
 	Region string                       `json:"region,omitempty"`
 	Zone   string                       `json:"zone,omitempty"`
 	Tags   []geassv1alpha1.GeassNodeTag `json:"tags,omitempty"`
+	// Pool is the pool the node belongs to; Ephemeral says it must not hold data.
+	Pool      string `json:"pool,omitempty"`
+	Ephemeral bool   `json:"ephemeral,omitempty"`
 }
 
 type capacityIssue struct {
@@ -160,6 +163,7 @@ func describeCapacityNode(node corev1.Node) capacityNode {
 	}
 	placement := platform.NodePlacementOf(&node)
 	entry.Region, entry.Zone, entry.Tags = placement.Region, placement.Zone, placement.Tags
+	entry.Pool, entry.Ephemeral = node.Labels[platform.LabelPool], platform.IsEphemeralNode(&node)
 	for _, condition := range node.Status.Conditions {
 		switch condition.Type {
 		case corev1.NodeReady:

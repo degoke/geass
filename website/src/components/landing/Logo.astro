@@ -1,0 +1,29 @@
+---
+import onDark from "../../assets/geass-logo.svg";
+import onLight from "../../assets/geass-logo-light.svg";
+
+interface Props {
+  height: number | string;
+  width: number | string;
+  /** Leave it out for the named logo; pass "" where the page already says "geass" beside it. */
+  alt?: string;
+}
+
+const { height, width, alt = "geass" } = Astro.props;
+---
+<!-- Both variants are in the page; landing.css shows the one that reads on the current theme. The branches are not
+     redundant: Astro renders a dynamic empty alt as a bare `alt`, which scripts/check-seo.mjs rejects, so the decorative
+     case has to be written as a literal alt="". -->
+{
+  alt ? (
+    <>
+      <img class="logo-on-light" src={onLight.src} alt={alt} height={height} width={width} />
+      <img class="logo-on-dark" src={onDark.src} alt={alt} height={height} width={width} />
+    </>
+  ) : (
+    <>
+      <img class="logo-on-light" src={onLight.src} alt="" height={height} width={width} />
+      <img class="logo-on-dark" src={onDark.src} alt="" height={height} width={width} />
+    </>
+  )
+}

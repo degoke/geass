@@ -345,7 +345,7 @@ func (s *Server) handleDashboardSession(w http.ResponseWriter, r *http.Request) 
 		// Only the configuration is read, not the client secret: this answer is public.
 		if config, err := s.platformConfig(r.Context()); err == nil {
 			if settings := ssoSettingsOf(config); settings.External() {
-				answer["sso"] = map[string]any{"name": settings.ssoName()}
+				answer["sso"] = map[string]any{pathNameParam: settings.ssoName()}
 			}
 		}
 		writeJSON(w, http.StatusOK, answer)

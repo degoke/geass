@@ -4,6 +4,7 @@
   "palette": {
     "signal": "#7CE0A0",
     "signalStrong": "#16935A",
+    "signalText": "#0F7A49",
     "signalHover": "#94E8B2",
     "void": "#0A0A0A",
     "black": "#000000",
@@ -26,11 +27,12 @@
   "border": {
     "subtle": { "dark": "#262626", "light": "#E3E2DE" },
     "default": { "dark": "#333333", "light": "#D5D4CF" },
-    "strong": { "dark": "#5A5A5A", "light": "#0A0A0A" }
+    "strong": { "dark": "#5A5A5A", "light": "#8A8A85" }
   },
   "usage": {
     "accentOnDark": "#7CE0A0",
     "accentOnLight": "#16935A",
+    "textOnLight": "#0F7A49",
     "textOnAccent": "#0A0A0A",
     "note": "Solid green blocks are actions. Small green dots and text are status. Never use green for decoration."
   },
@@ -43,7 +45,7 @@
       "#90e5b0",
       "#7ce0a0",
       "#5fc487",
-      "#46a46c",
+      "#16935a",
       "#2f8352",
       "#1d5f39"
     ]

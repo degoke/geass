@@ -5,6 +5,7 @@ import { useBootstrap } from "@/lib/dashboard";
 import { useDashboardLiveSync } from "@/lib/dashboard-events";
 import { AppLayout } from "@/layout/AppLayout";
 import { Empty } from "@/components/geass-ui";
+import { GeassLogo } from "@/components/GeassLogo";
 import { LoginPage } from "@/pages/LoginPage";
 import { DeviceApprovePage } from "@/pages/DeviceApprovePage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
@@ -14,6 +15,8 @@ import { ProjectSettingsPage } from "@/pages/ProjectSettingsPage";
 import { ProjectMonitorPage } from "@/pages/ProjectMonitorPage";
 import { ProjectLogsPage } from "@/pages/ProjectLogsPage";
 import { PlatformSettingsPage } from "@/pages/platform/PlatformSettingsPage";
+import { PoolsPage } from "@/pages/platform/PoolsPage";
+import { PoolDetailPage } from "@/pages/platform/PoolDetailPage";
 import { PlatformSettingsLayout } from "@/layout/PlatformSettingsLayout";
 
 export function DashboardScreen({ mode }) {
@@ -31,7 +34,7 @@ export function DashboardScreen({ mode }) {
     return (
       <Center mih="100vh" px="md">
         <Stack align="center" gap="sm" maw={520} ta="center">
-          <img src="/geass-symbol.svg" alt="" width={40} height={40} />
+          <GeassLogo symbol alt="" width={40} height={40} />
           <Title order={2}>Dashboard unavailable</Title>
           <Text size="sm">{error.message}</Text>
           {devHint && <Text c="dimmed" size="xs">{devHint}</Text>}
@@ -44,7 +47,7 @@ export function DashboardScreen({ mode }) {
     return (
       <Center mih="100vh">
         <Stack align="center" gap="sm">
-          <img src="/geass-symbol.svg" alt="" width={36} height={36} />
+          <GeassLogo symbol alt="" width={36} height={36} />
           <Loader color="signal" type="dots" />
           <Text c="dimmed" size="sm">Loading Geass…</Text>
         </Stack>
@@ -58,6 +61,8 @@ export function DashboardScreen({ mode }) {
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
   if (mode === "projects") { content = <ProjectsPage data={data} />; }
   else if (mode === "templates") { content = <TemplatesPage data={data} />; }
+  else if (mode === "pools") { content = <PoolsPage data={data} />; }
+  else if (mode === "pool") { content = <PoolDetailPage name={params.poolName} data={data} />; }
   else if (mode === "device") { content = <DeviceApprovePage data={data} code={search.code} />; }
   else if (mode === "workspace" && project) {
     content = (

@@ -27,6 +27,14 @@ export const ACCOUNT_USAGE = {
   active: (path) => path === "/cluster" || path.startsWith("/cluster/") || path === "/ha-readiness",
 };
 
+export const ACCOUNT_POOLS = {
+  id: "pools",
+  icon: "pools",
+  label: "Pools",
+  to: "/pools",
+  active: (path) => path === "/pools" || path.startsWith("/pools/"),
+};
+
 export const SETTINGS_PATHS = [
   "/settings",
   "/settings/domain",
@@ -100,6 +108,9 @@ export function breadcrumbItems(pathname, data) {
     return items;
   }
   if (parts[0] === "cluster") return [{ label: "Usage" }];
+  if (parts[0] === "pools") {
+    return parts[1] ? [{ label: "Pools", to: "/pools" }, { label: parts[1] }] : [{ label: "Pools" }];
+  }
   const settingsLink = SETTINGS_LINKS.find((item) => item.active(pathname));
   if (settingsLink) return [{ label: "Settings" }, { label: settingsLink.label }];
   return [{ label: "Geass" }];

@@ -39,7 +39,7 @@ Geass is:
 
 ## 2. Colour system
 
-Dark mode is the primary Geass experience. Light mode is supported for accessibility, documentation, and user preference.
+Dark and light are both first-class. The dashboard, the landing page and the docs follow the visitor's system setting, use light when the system gives none, and let the visitor choose. The dark palette below is the reference; the light palette follows it.
 
 ### Dark palette
 
@@ -283,7 +283,7 @@ Every resource overview follows this order:
 The shell has four parts, and every authenticated screen uses them:
 
 1. **Top bar** (full width, 54px). Left to right: the `geass▮` wordmark; inside a project, the project name (a switcher) and **environment tabs** (`production`, `pr-482 PR #482`, `+ Environment`); at the far right, `N pending` and the green **Deploy changes** button (admins only, only inside a project), and the account menu. Cells are divided by 1px rules, never by gaps.
-2. **Account rail** (200px, collapsible). Always the account level: Projects, Templates, Usage, Settings. The active item has a 2px green inset bar. The footer shows **cluster health**: one bar per node (green ready, red under pressure, amber unschedulable) and the worst problem in words (`node-3 memory high`), then Docs, Support and Collapse.
+2. **Account rail** (200px, collapsible). Always the account level: Projects, Templates, Usage, Pools, Settings. The active item has a 2px green inset bar. The footer shows **cluster health**: one bar per node (green ready, red under pressure, amber unschedulable) and the worst problem in words (`node-3 memory high`), then Docs, Support and Collapse.
 3. **Project tabs** (inside a project only): Resources, Metrics, Logs, Settings, with the underline in green. On Resources the right side holds `From template` (ghost) and `+ Add resource` (white), which keeps green reserved for Deploy.
 4. **Docked drawer.** Selecting a resource opens a panel to the right of the canvas instead of an overlay, so the canvas stays visible. The canvas pans to keep the selected card in view.
 
@@ -356,7 +356,7 @@ Header:
 
 Body:
 
-- nodes and workloads table;
+- nodes and workloads table, with each node's pool and an **Ephemeral** badge on a node that keeps data off itself, and an **Add server** action for an admin;
 - CPU, memory, disk, and pod capacity;
 - recent events and deployments;
 - networking and storage summaries.
@@ -403,7 +403,7 @@ Use minimal line illustration only when it improves comprehension. Avoid mascots
 
 ### Overall composition
 
-The website is editorial and product-led: large precise typography, abundant dark negative space, real interface imagery, short evidence-backed copy, and almost no decorative illustration.
+The website is editorial and product-led: large precise typography, abundant negative space, real interface imagery, short evidence-backed copy, and almost no decorative illustration.
 
 ### Homepage structure
 
@@ -436,7 +436,7 @@ Use actual or carefully maintained interface captures. Keep them straight-on and
 - Persistent code copy actions.
 - Clear version and edition labels.
 - Examples begin with the shortest successful path, followed by explanation and advanced options.
-- Built with Starlight in `website/` (theme in `website/src/styles/docs.css`); square corners, green only for links and actions, dark and light themes that follow the visitor's system setting (the landing page is always dark). Page structure and voice rules are in `website/README.md`.
+- Built with Starlight in `website/` (theme in `website/src/styles/docs.css`); square corners, green only for links and actions, dark and light themes that follow the visitor's system setting (the landing page does too, and reads the docs picker's saved choice). Page structure and voice rules are in `website/README.md`.
 
 ## 8. Iconography and imagery
 

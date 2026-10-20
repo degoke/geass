@@ -454,7 +454,7 @@ func (r *GeassObjectStoreReconciler) classAllowsExpansion(ctx context.Context, n
 	}
 	for i := range classes.Items {
 		for _, annotation := range []string{"storageclass.kubernetes.io/is-default-class", "storageclass.beta.kubernetes.io/is-default-class"} {
-			if classes.Items[i].Annotations[annotation] == "true" {
+			if classes.Items[i].Annotations[annotation] == valueTrue {
 				return utilptr.Deref(classes.Items[i].AllowVolumeExpansion, false), nil
 			}
 		}

@@ -70,10 +70,11 @@ There are 17 Geass kinds. Resources that the dashboard creates for you are marke
 | [GeassObjectStore](/docs/reference/resources/geass-object-store/) | A bucket, on the cluster's object storage server or in AWS S3, and that server (SeaweedFS or Garage) | The dashboard |
 | [GeassBackupArchive](/docs/reference/resources/geass-backup-archive/) | The backups of one database | Geass, when backups are on |
 | [GeassCluster](/docs/reference/resources/geass-cluster/) | The K3s cluster and its add-ons | The installer |
-| [GeassNode](/docs/reference/resources/geass-node/) | A server joined to the cluster over SSH | You, with `kubectl` |
+| [GeassNode](/docs/reference/resources/geass-node/) | A server joined to the cluster over SSH, or a machine Geass creates at a cloud | The dashboard (**Add server**), `geass servers add`, you with `kubectl`, or a pool |
+| [GeassNodePool](/docs/reference/resources/geass-node-pool/) | A group of nodes that Geass adds and removes with the load, made at a cloud or from servers you list | The dashboard (**Pools**), `geass pools create`, or you with `kubectl` |
 | [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/) | Domain, Cloudflare, GitHub App and other cluster-wide settings | The dashboard (**Settings**) |
 | [GeassOrganization](/docs/reference/resources/geass-organization/) | An organization of the identity provider, with its workspaces, whose people see only its projects | A platform administrator (the API, or `kubectl`) |
-| [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/) | An AWS or PlanetScale connection | The dashboard (**Connectors**) |
+| [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/) | A connection to AWS, PlanetScale, or a cloud that creates machines | The dashboard (**Connectors**), or `geass connections add` for machines |
 | [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) | A project's link to GitHub | The dashboard (project **Integrations**) |
 | [GeassDeployment](/docs/reference/resources/geass-deployment/) | One recorded deploy of a service | Geass |
 | [GeassBuild](/docs/reference/resources/geass-build/) | One repository build | Geass |
@@ -125,7 +126,8 @@ and the matching routes for the other kinds, which return a summary with the res
 | GeassProject, GeassApp, GeassDatabase, GeassObjectStore, GeassLogicalDatabase | Safe to create and edit, with care (see below). The dashboard edits the same fields |
 | GeassPlatformConfig, GeassCluster | Safe. They are the only way to set some fields, such as the add-ons and `prometheusURL` |
 | GeassOrganization | Safe to create and edit. The dashboard's API refuses a second organization with the same `idpID` and to delete one that still has projects; `kubectl` does not |
-| GeassNode | Creating one is how you add a server. Edit `placement` through it |
+| GeassNode | Creating one is how you add a server. Edit `placement` through it. A node of a pool belongs to the pool: change the pool |
+| GeassNodePool | Safe to create and edit. The size, region, image and settings apply to machines made from then on |
 | GeassCloudConnection, GeassGitHubConnection | Possible, but they only point at Secrets; the dashboard also writes the Secret. Rotate by editing the Secret |
 | GeassHAReadiness | Safe to create |
 | GeassBackupArchive, GeassDeployment, GeassBuild, GeassConsoleSession, GeassNetworkLog | Do not edit. Geass writes them, and an edit can break a restore or a rollback |

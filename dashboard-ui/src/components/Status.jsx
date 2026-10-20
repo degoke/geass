@@ -8,7 +8,14 @@ export function Status({ value }) {
   const deleting = value === "Deleting";
   const unavailable = value === "Unavailable";
   const settingUp = value === "Setting up" || value === "Pending";
-  const color = ready ? "#7ce0a0" : failed ? "#ff8a8a" : unavailable ? "#e8a84a" : deleting ? "#e8a84a" : "#a1a1a1";
+  const color = ready
+    ? "var(--geass-healthy)"
+    : failed
+      ? "var(--geass-critical)"
+      : unavailable || deleting
+        ? "var(--geass-warning)"
+        : "var(--geass-text-secondary)";
+  const textColor = ready ? "var(--geass-signal-text)" : color;
   const label = ready
     ? "Ready"
     : failed
@@ -35,7 +42,7 @@ export function Status({ value }) {
   return (
     <Group gap={8} wrap="nowrap">
       <span style={mark} aria-hidden="true" />
-      <Text size="sm" c={color} fw={500}>{label}</Text>
+      <Text size="sm" c={textColor} fw={500}>{label}</Text>
     </Group>
   );
 }

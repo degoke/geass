@@ -321,3 +321,48 @@ func TestARegionalDatabaseOnAClusterWithoutLonghornKeepsLocalStorage(t *testing.
 func fakeWithCalls(base client.WithWatch, calls *volumeCalls) client.Client {
 	return interceptor.NewClient(base, calls.funcs())
 }
+
+func longhornAllowsScheduling(t *testing.T, c client.Client, name string) (bool, map[string]string) {
+	t.Helper()
+	node := &unstructured.Unstructured{}
+	node.SetGroupVersionKind(testLonghornNodeGVK)
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: platform.LonghornTargetNS, Name: name}, node))
+	allow, _, err := unstructured.NestedBool(node.Object, "spec", "allowScheduling")
+	require.NoError(t, err)
+	return allow, node.GetAnnotations()
+}
+
+func TestNoVolumeReplicaIsPlacedOnANodeThatMustNotHoldData(t *testing.T) {
+	ephemeral := regionNodeObject("burst-1", "eu", func(n *corev1.Node) { n.Labels[platform.LabelNodeStorage] = "none" })
+	r, c := regionFixture(t, ephemeral, regionNodeObject("cp", "eu"))
+
+	r.reconcileLonghornRegions(context.Background(), replicaTestCluster(true))
+
+	allow, annotations := longhornAllowsScheduling(t, c, "burst-1")
+	require.False(t, allow)
+	require.Equal(t, "true", annotations[annotationSchedulingDisabled])
+	allow, _ = longhornAllowsScheduling(t, c, "cp")
+	require.True(t, allow, "an ordinary node keeps hosting replicas")
+}
+
+func TestSchedulingComesBackOnlyOnANodeGeassTurnedItOffOn(t *testing.T) {
+	scheme := longhornTestScheme(t)
+	byGeass := longhornNode("was-ephemeral")
+	_ = unstructured.SetNestedField(byGeass.Object, false, "spec", "allowScheduling")
+	byGeass.SetAnnotations(map[string]string{annotationSchedulingDisabled: "true"})
+	byAdmin := longhornNode("admin-disabled")
+	_ = unstructured.SetNestedField(byAdmin.Object, false, "spec", "allowScheduling")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&storagev1.CSIDriver{ObjectMeta: metav1.ObjectMeta{Name: platform.LonghornProvisioner}},
+		regionNodeObject("was-ephemeral", "eu"), byGeass, regionNodeObject("admin-disabled", "eu"), byAdmin,
+	).Build()
+	r := &GeassClusterReconciler{Client: c, Scheme: scheme}
+
+	r.reconcileLonghornRegions(context.Background(), replicaTestCluster(true))
+
+	allow, annotations := longhornAllowsScheduling(t, c, "was-ephemeral")
+	require.True(t, allow, "the node can hold data now, so it gets its disk back")
+	require.NotContains(t, annotations, annotationSchedulingDisabled)
+	allow, _ = longhornAllowsScheduling(t, c, "admin-disabled")
+	require.False(t, allow, "a disabled node that Geass did not disable is the administrator's")
+}

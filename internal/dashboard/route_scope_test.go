@@ -107,11 +107,40 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 		case "/api/v1/nodes", "/api/v1/cluster/metrics", "/api/v1/operator/metrics":
 			continue
 		}
+		if op.Tag == tagCompute {
+			// Machines and the clouds they come from belong to the cluster: see the test below.
+			continue
+		}
 		// Reads that are not native are rewritten to /api/<path>, which is what authentication sees.
 		if _, native := (&Server{}).v1Router().Handler(httptest.NewRequest(http.MethodGet, path, nil)); native == "" {
 			path = "/api" + op.Path
 		}
 		scope := routeScopeOf(http.MethodGet, path)
 		require.NotEqual(t, scopePlatform, scope, "GET %s is documented for callers of every organization but classified as the platform's", path)
+	}
+}
+
+// The clouds Geass creates machines at, the pools and the servers they make belong to the cluster, whoever may read them in
+// the API's documentation: an organization's people see none of it, and cannot change it.
+func TestMachinesAndTheCloudsTheyComeFromAreThePlatformsAlone(t *testing.T) {
+	seen := 0
+	for _, op := range v1Operations {
+		if op.Tag != tagCompute {
+			continue
+		}
+		seen++
+		path := "/api/v1" + op.Path
+		if _, native := (&Server{}).v1Router().Handler(httptest.NewRequest(op.Method, path, nil)); native == "" {
+			path = "/api" + op.Path
+		}
+		require.Equal(t, scopePlatform, routeScopeOf(op.Method, path), "%s %s", op.Method, path)
+	}
+	require.NotZero(t, seen, "there are operations for machines")
+	for _, path := range []string{
+		"/api/connections/create", "/api/connections/hetzner/update", "/api/connections/hetzner/delete", "/api/connections/hetzner/verify",
+		"/api/pools/create", "/api/pools/burst/update", "/api/pools/burst/delete", "/api/pools/burst/resume",
+		"/api/servers/create", "/api/servers/worker-1/delete", "/api/compute/providers", "/api/compute/sizes",
+	} {
+		require.Equal(t, scopePlatform, routeScopeOf(http.MethodPost, path), path)
 	}
 }

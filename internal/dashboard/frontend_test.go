@@ -172,7 +172,15 @@ func TestUnknownFilesAndDirectoriesAreNotServed(t *testing.T) {
 
 func TestOnlyReadingMethodsServeTheBundle(t *testing.T) {
 	mux := frontendMux()
-	reference := firstWithSuffix(t, indexReferences(t), ".js")
+	// The hashed bundle under /assets/. A script at the root, such as theme-init.js, is a public file like the logos.
+	var reference string
+	for _, candidate := range indexReferences(t) {
+		if strings.HasPrefix(candidate, "/assets/") && strings.HasSuffix(candidate, ".js") {
+			reference = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, reference, "index.html loads no script from /assets/")
 
 	head := httptest.NewRecorder()
 	mux.ServeHTTP(head, httptest.NewRequest(http.MethodHead, reference, nil))

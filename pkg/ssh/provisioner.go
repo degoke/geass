@@ -3,6 +3,7 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -52,7 +53,7 @@ func New() Provisioner {
 func (p *sshProvisioner) Provision(ctx context.Context, in ProvisionInput) error {
 	client, err := dial(ctx, in)
 	if err != nil {
-		return fmt.Errorf("ssh dial %s: %w", in.Host, err)
+		return newDialError(in.Host, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -177,7 +178,7 @@ exit 1`, q)
 func (p *sshProvisioner) Upgrade(ctx context.Context, in ProvisionInput) error {
 	client, err := dial(ctx, in)
 	if err != nil {
-		return fmt.Errorf("ssh dial %s: %w", in.Host, err)
+		return newDialError(in.Host, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -259,17 +260,48 @@ fi`
 func (p *sshProvisioner) Drain(ctx context.Context, in ProvisionInput) error {
 	client, err := dial(ctx, in)
 	if err != nil {
-		return err
+		return newDialError(in.Host, err)
 	}
 	defer func() { _ = client.Close() }()
 
 	return runStep(ctx, client, "uninstall-k3s", asRoot(in.User, "/usr/local/bin/k3s-agent-uninstall.sh || true"))
 }
 
+// DialError is a failure to open an SSH session: the machine is unreachable, is not listening yet, presents another
+// host key or refuses the key. A machine that was created a moment ago fails this way until its first boot is done,
+// which is why a caller that just made the machine may try again, and one that did not should not.
+type DialError struct {
+	Host string
+	Err  error
+	// Retryable is false for a failure that waiting cannot fix: the private key does not parse.
+	Retryable bool
+}
+
+func (e *DialError) Error() string { return fmt.Sprintf("ssh dial %s: %v", e.Host, e.Err) }
+
+func (e *DialError) Unwrap() error { return e.Err }
+
+// IsDialError reports whether err is a failure to open a session that may pass with time.
+func IsDialError(err error) bool {
+	var dialErr *DialError
+	return errors.As(err, &dialErr) && dialErr.Retryable
+}
+
+type badKeyError struct{ err error }
+
+func (e *badKeyError) Error() string { return "parse key: " + e.err.Error() }
+
+func (e *badKeyError) Unwrap() error { return e.err }
+
+func newDialError(host string, err error) error {
+	var bad *badKeyError
+	return &DialError{Host: host, Err: err, Retryable: !errors.As(err, &bad)}
+}
+
 func dial(_ context.Context, in ProvisionInput) (*gossh.Client, error) {
 	signer, err := gossh.ParsePrivateKey(in.PrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("parse key: %w", err)
+		return nil, &badKeyError{err: err}
 	}
 	hostKey, err := hostKeyCallback(in.KnownHosts)
 	if err != nil {

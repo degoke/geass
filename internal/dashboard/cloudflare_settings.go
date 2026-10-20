@@ -23,7 +23,7 @@ func (s *Server) handlePlatformCloudflareSettingsSave(w http.ResponseWriter, r *
 	accountID := strings.TrimSpace(r.FormValue("accountId"))
 	zoneID := strings.TrimSpace(r.FormValue("zoneId"))
 	zoneName := strings.TrimSpace(r.FormValue("zoneName"))
-	keepExisting := r.FormValue("keepExisting") == "on" || r.FormValue("keepExisting") == "true"
+	keepExisting := r.FormValue("keepExisting") == "on" || r.FormValue("keepExisting") == boolTrue
 
 	if accountID == "" || zoneID == "" {
 		redirectProbe(w, r, "/settings/connectors", dashboardLiteralError, "account ID and zone ID are required")

@@ -88,6 +88,12 @@ func (s *Server) v1Router() *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/version", s.v1Version)
 		mux.HandleFunc("GET /api/v1/me", s.v1Me)
 		mux.HandleFunc("GET /api/v1/nodes", s.v1Nodes)
+		mux.HandleFunc("GET /api/v1/compute/providers", s.v1ComputeProviders)
+		mux.HandleFunc("GET /api/v1/compute/sizes", s.v1ComputeSizes)
+		mux.HandleFunc("GET /api/v1/connections", s.v1Connections)
+		mux.HandleFunc("GET /api/v1/connections/{name}", s.v1ConnectionGet)
+		mux.HandleFunc("GET /api/v1/pools", s.v1Pools)
+		mux.HandleFunc("GET /api/v1/pools/{name}", s.v1PoolGet)
 		mux.HandleFunc("GET /api/v1/openapi.json", s.v1OpenAPIHandler)
 		mux.HandleFunc("GET /api/v1/auth/device/{code}", s.handleDeviceLookup)
 		for _, kind := range []string{kindProjects, kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases} {
@@ -644,6 +650,10 @@ type v1Node struct {
 	Tags         []v1NodeTag `json:"tags,omitempty"`
 	CPU          string      `json:"cpu,omitempty"`
 	Memory       string      `json:"memory,omitempty"`
+	// Pool is the pool the node belongs to, and Ephemeral says it must not hold data (databases and volumes stay off
+	// it, and it may be removed when the load goes).
+	Pool      string `json:"pool,omitempty"`
+	Ephemeral bool   `json:"ephemeral,omitempty"`
 }
 
 type v1NodeTag struct {
@@ -671,6 +681,7 @@ func (s *Server) v1Nodes(w http.ResponseWriter, r *http.Request) {
 			Region: placement.Region, Zone: placement.Zone,
 			CPU: node.Status.Allocatable.Cpu().String(), Memory: node.Status.Allocatable.Memory().String(),
 		}
+		view.Pool, view.Ephemeral = node.Labels[platform.LabelPool], platform.IsEphemeralNode(node)
 		_, view.ControlPlane = node.Labels["node-role.kubernetes.io/control-plane"]
 		for _, tag := range placement.Tags {
 			view.Tags = append(view.Tags, v1NodeTag{Name: tag.Name, Reserved: tag.Reserved, Compliance: tag.Compliance})

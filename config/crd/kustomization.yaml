@@ -20,6 +20,7 @@ resources:
 - bases/geass.geass.dev_geassbackuparchives.yaml
 - bases/geass.geass.dev_geassorganizations.yaml
 - external/helmcharts.helm.cattle.io.yaml
+- bases/geass.geass.dev_geassnodepools.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

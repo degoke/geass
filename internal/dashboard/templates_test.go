@@ -116,7 +116,7 @@ func TestDeployingATemplateCreatesWiredDrafts(t *testing.T) {
 	require.Len(t, body.Created, 3)
 }
 
-// The catalog sizes a service by what it runs on and what it starts on, and never lets a database burst.
+// A catalog service reserves what it was measured to need and may use more, and a database never bursts.
 func TestDeployingReFHIRReservesLessThanItMayUseAndKeepsItsDatabaseFixed(t *testing.T) {
 	srv, c := templateServer(t)
 
@@ -129,10 +129,10 @@ func TestDeployingReFHIRReservesLessThanItMayUseAndKeepsItsDatabaseFixed(t *test
 	app, db := apps[0], dbs[0]
 
 	resources := app.Spec.Resources
-	require.Equal(t, "2Gi", resources.Requests.Memory().String(), "what the capacity check counts")
-	require.Equal(t, "4Gi", resources.Limits.Memory().String(), "what the first start needs")
-	require.Equal(t, "500m", resources.Requests.Cpu().String())
-	require.Equal(t, "2", resources.Limits.Cpu().String())
+	require.Equal(t, "256Mi", resources.Requests.Memory().String(), "what the capacity check counts")
+	require.Equal(t, "1Gi", resources.Limits.Memory().String(), "room above what it was measured to use")
+	require.Equal(t, "250m", resources.Requests.Cpu().String())
+	require.Equal(t, "1", resources.Limits.Cpu().String())
 
 	require.Equal(t, db.Spec.Resources.Requests, db.Spec.Resources.Limits, "a database always uses what it reserves")
 

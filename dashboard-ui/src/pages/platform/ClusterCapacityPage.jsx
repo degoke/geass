@@ -1,11 +1,16 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
 import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, notify } from "@/lib/notify";
+import { useRefreshCompute } from "@/lib/compute";
 import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
 import { ClusterVersion } from "@/components/ClusterVersion";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
+import { AddServerSheet } from "@/components/compute/AddServerSheet";
+import { Callout, ConfirmDelete } from "@/components/compute/ComputeBits";
 import { UsagePanel } from "@/components/UsagePanel";
 import { CLUSTER_CHARTS, OPERATOR_CHARTS, ServiceMetrics } from "@/components/ServiceMetrics";
 import { Badge, Button, CapacityBar, DataTable, Field, Muted, PageSection, Select } from "@/components/geass-ui";
@@ -58,6 +63,11 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
   const capacity = data?.platform?.capacity || {};
   const mutable = canMutate(data);
   const [editing, setEditing] = useState(null);
+  const [addingServer, setAddingServer] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  const refreshCompute = useRefreshCompute();
   const cpuUsed = capacity.cpuAllocatableMillis ? Math.min(100, Math.round((capacity.cpuRequestedMillis / capacity.cpuAllocatableMillis) * 100)) : 0;
   const memUsed = capacity.memoryAllocatableBytes ? Math.min(100, Math.round((capacity.memoryRequestedBytes / capacity.memoryAllocatableBytes) * 100)) : 0;
   const summaryRows = capacity.known ? [
@@ -76,6 +86,10 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       k3s: node.k3sVersion || "—",
       region: node.region ? (node.zone ? `${node.region} · ${node.zone}` : node.region) : "—",
       tags: describeTags(node.tags) || "—",
+      pool: node.pool || "",
+      ephemeral: Boolean(node.ephemeral),
+      // A server that was added on its own can be removed again; the control plane and a pool's nodes cannot.
+      removable: node.role !== "control-plane" && !node.pool,
       raw: node,
       pressure: node.pressure?.length ? node.pressure.join(", ") : "—",
       load,
@@ -83,6 +97,26 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       tone: !node.ready ? "danger" : !node.schedulable ? "warning" : "success",
     };
   });
+
+  const removeServer = async () => {
+    setRemoveBusy(true);
+    setRemoveError("");
+    try {
+      await action(`/servers/${removing.name}/delete`, { confirmName: removing.name });
+      notify(`Removing the server ${removing.name}. Its services move elsewhere.`, "success");
+      setRemoving(null);
+      await Promise.all([reload?.(), refreshCompute()]);
+    } catch (error) {
+      setRemoveError(
+        error.status === 404
+          ? `Geass did not add ${removing.name} as a server, so it cannot remove it here. Remove it where it was set up.`
+          : error.message,
+      );
+    } finally {
+      setRemoveBusy(false);
+    }
+  };
+  const hasEphemeral = nodeRows.some((row) => row.ephemeral);
 
   const body = (
     <>
@@ -119,11 +153,27 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       )}
       <NetworkPolicySection data={data} />
       <ClusterVersion data={data} />
-      <PageSection title="Nodes" description="Per-node allocatable resources and pressure.">
+      <PageSection
+        title="Nodes"
+        description="Per-node allocatable resources and pressure."
+        actions={mutable ? (
+          <Button size="sm" variant="outline" leftSection={<Plus size={14} />} onClick={() => setAddingServer(true)}>Add server</Button>
+        ) : null}
+      >
+        <div className="cp-badge-fit">
         <DataTable
           columns={[
             { label: "Node", key: "name" },
             { label: "Role", key: "role" },
+            {
+              label: "Pool",
+              render: (row) => (row.pool ? (
+                <div className="cp-pool-cell">
+                  <Link to={`/pools/${row.pool}`} className="cp-name-link">{row.pool}</Link>
+                  {row.ephemeral ? <Badge>Ephemeral</Badge> : null}
+                </div>
+              ) : "—"),
+            },
             { label: "K3s", key: "k3s" },
             { label: "Region", key: "region" },
             { label: "Tags", key: "tags" },
@@ -139,7 +189,12 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
               label: "",
               align: "right",
               render: (row) => (mutable ? (
-                <Button size="xs" variant="outline" onClick={() => setEditing(row.raw)} aria-label={`Edit ${row.name}`}>Edit</Button>
+                <span className="cp-row-actions">
+                  <Button size="xs" variant="outline" onClick={() => setEditing(row.raw)} aria-label={`Edit ${row.name}`}>Edit</Button>
+                  {row.removable ? (
+                    <Button size="xs" variant="outline" onClick={() => { setRemoveError(""); setRemoving(row); }} aria-label={`Remove ${row.name}`}>Remove</Button>
+                  ) : null}
+                </span>
               ) : null),
             },
           ]}
@@ -147,6 +202,12 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
           getRowKey={(row) => row.name}
           empty="No Kubernetes nodes are visible yet."
         />
+        </div>
+        {hasEphemeral ? (
+          <Muted size="sm">
+            Ephemeral nodes belong to a pool that keeps databases and volumes off them, and they may be removed when the load goes.
+          </Muted>
+        ) : null}
       </PageSection>
       <UsagePanel />
       <PageSection title="Cluster metrics" description="What services use across the cluster, and what the machines are doing.">
@@ -158,6 +219,25 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       <DefaultRegionSection data={data} reload={reload} mutable={mutable} />
       <HAReadinessSection data={data} />
       <NodePlacementDialog node={editing} data={data} reload={reload} onClose={() => setEditing(null)} />
+      <AddServerSheet opened={addingServer} onClose={() => setAddingServer(false)} />
+      <ConfirmDelete
+        opened={Boolean(removing)}
+        title="Remove server?"
+        name={removing?.name || ""}
+        confirmLabel="Remove server"
+        busy={removeBusy}
+        error={removeError}
+        onClose={() => setRemoving(null)}
+        onConfirm={removeServer}
+      >
+        <p>
+          This removes the server <strong>{removing?.name}</strong> from the cluster. Its services move to other nodes, or wait for room.
+          A server that Geass created at a cloud has its machine deleted there. One you added yourself is not deleted, only taken out of the cluster.
+        </p>
+        <Callout tone="danger">
+          Nodes of a pool and the control plane cannot be removed here. Data on this server may be lost if it was the only place that held it.
+        </Callout>
+      </ConfirmDelete>
     </>
   );
 

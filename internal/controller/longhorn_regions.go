@@ -80,6 +80,10 @@ func (r *GeassClusterReconciler) reconcileLonghornRegions(ctx context.Context, c
 		log.Error(err, "Failed to tag Longhorn nodes with their regions")
 		return volumeReplicaRetryAfter
 	}
+	if err := r.syncLonghornEphemeral(ctx, nodes.Items); err != nil {
+		log.Error(err, "Failed to keep volume replicas off nodes that must not hold data")
+		return volumeReplicaRetryAfter
+	}
 	general, err := r.generalOnly(ctx)
 	if err != nil {
 		log.Error(err, "Failed to check which Longhorn nodes are open to every project")
@@ -178,6 +182,68 @@ func (r *GeassClusterReconciler) syncLonghornRegionTags(ctx context.Context, nod
 		changed = true
 	}
 	return changed, nil
+}
+
+// annotationSchedulingDisabled marks a Longhorn node whose scheduling Geass turned off, so that Geass turns it back on
+// only for a node it turned off, and never one an administrator disabled.
+const annotationSchedulingDisabled = "geass.dev/scheduling-disabled"
+
+// syncLonghornEphemeral keeps volume replicas off the nodes that must not hold data: a pool's nodes come and go, and a
+// replica on one would be lost with it. Such a node is tainted, which keeps Longhorn's manager off it in a plain
+// cluster, but once any node is reserved Longhorn is told to tolerate every taint and would otherwise put a disk
+// there, so scheduling on it is switched off at Longhorn too. A node that stops being ephemeral gets it back, if
+// Geass is what took it away.
+func (r *GeassClusterReconciler) syncLonghornEphemeral(ctx context.Context, nodes []corev1.Node) error {
+	ephemeral := map[string]bool{}
+	for i := range nodes {
+		if platform.IsEphemeralNode(&nodes[i]) {
+			ephemeral[nodes[i].Name] = true
+		}
+	}
+	var list unstructured.UnstructuredList
+	list.SetGroupVersionKind(longhornNodeListKind)
+	if err := r.List(ctx, &list, client.InNamespace(platform.LonghornTargetNS)); err != nil {
+		return err
+	}
+	for i := range list.Items {
+		node := &list.Items[i]
+		allow, found, err := unstructured.NestedBool(node.Object, "spec", "allowScheduling")
+		if err != nil {
+			return err
+		}
+		if !found {
+			allow = true
+		}
+		ours := node.GetAnnotations()[annotationSchedulingDisabled] == valueTrue
+		var want bool
+		switch {
+		case ephemeral[node.GetName()] && allow:
+			want = false
+		case !ephemeral[node.GetName()] && ours && !allow:
+			want = true
+		default:
+			continue
+		}
+		node.SetGroupVersionKind(longhornNodeKind)
+		base := node.DeepCopy()
+		if err := unstructured.SetNestedField(node.Object, want, "spec", "allowScheduling"); err != nil {
+			return err
+		}
+		annotations := node.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		if want {
+			delete(annotations, annotationSchedulingDisabled)
+		} else {
+			annotations[annotationSchedulingDisabled] = valueTrue
+		}
+		node.SetAnnotations(annotations)
+		if err := r.Patch(ctx, node, client.MergeFrom(base)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // withGeassTags returns the tags with every tag Geass owns replaced by the ones for the region and the

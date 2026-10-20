@@ -25,11 +25,12 @@ had no independent audit, and nothing here should be read as one.
 | Metrics and log stores | Network policies that admit only platform namespaces |
 | Object storage server | A network policy, `geass-s3`, that opens the S3 port to every namespace, opens Garage's admin port to the platform only, and closes every other port |
 | HTTPS certificates | cert-manager and a Let's Encrypt `ClusterIssuer` that Geass creates once you give it a contact email |
-| Secrets | Kubernetes Secrets, not encrypted by Geass |
+| Secrets | Kubernetes Secrets, encrypted at rest by K3s on clusters the installer builds |
 | Outbound webhooks | Signed with a per-webhook secret; private and loopback addresses refused |
 | GitHub webhooks into Geass | HMAC-SHA256 signature check |
 | Geass reporting to GitHub | The GitHub App's short-lived installation token, with write access only to commit statuses, deployments and pull requests; one switch per project turns it off |
-| Servers | Your OS, your firewall, SSH keys you supply |
+| Machines Geass creates at a cloud | A connection that belongs to the cluster and that only an admin can use, credentials limited to a project or account of their own, a cap on the nodes of each pool, an SSH key and a host key that Geass makes (the host key is checked before the join token is sent, and a node waits if it cannot be), a firewall it makes at the cloud that is never opened wider when the control plane's addresses are unknown, and a node's connection, region and pool that cannot be edited after it is made |
+| Servers you bring | Your OS, your firewall, SSH keys you supply |
 
 ## Authentication
 
@@ -191,8 +192,8 @@ proxy in front of it may not.
 
 ### Roles
 
-A viewer sees a redacted copy of the platform: no variable values, hostnames in the spec, repository names, connections, backup
-storage, project webhooks or database host details, and no logs, terminals or secrets. A viewer cannot change anything.
+A viewer sees a redacted copy of the platform: no variable values, hostnames in the spec, repository names, backup
+storage, project webhooks or database host details, and no logs, terminals or secrets. The one exception is the clouds that create machines: a viewer sees each connection's name, cloud and whether it works, and the pools and their nodes, but not the cloud account or what the cloud said (an admin reads that), and never a credential. A viewer cannot change anything.
 An observer, a role only a token can have, sees the same redacted copy and also reads logs, pods, deploy logs and variable names,
 and changes nothing. Everything else needs an admin. The detail is in [Users and API tokens](/docs/guides/users-and-tokens/#roles).
 
@@ -255,6 +256,14 @@ Nothing records which agent called which tool. The operator log shows each API r
 token's `Last used` time in **Settings** → **Tokens** is updated at most once every 10 minutes. Give each agent its own token so you can
 revoke one without the others.
 
+An agent with an admin token can also run [node pools](/docs/guides/node-pools/): it can read them and the clouds' connections, list a cloud's sizes,
+and create, change and resume a pool (and delete one with `--allow-delete`). A pool creates machines that cost money. So the tools stop short of the
+two decisions a person keeps: there is no tool that takes a credential, makes, changes, verifies or removes a connection, or adds or removes a
+single server, and a pool cannot be made without `max_nodes`, its cap. The tools also have ceilings of their own: an agent may set `max_nodes` to at most 10, and
+`min_nodes` (made at once) and `spare_nodes` to at most 3, where a person can set up to 200 in the dashboard or with `geass pools`. An agent cannot be
+handed a secret it could leak, and it cannot choose which of your accounts to spend. It can still spend up to the cap of every pool it makes, on a
+connection that already exists, so give an agent an admin token only when you accept that. See [MCP tools](/docs/reference/mcp-tools/#node-pools-and-clouds).
+
 ### Cross-site requests and headers
 
 A write that carries a cookie must also carry an `Origin` or `Referer` header whose host matches the dashboard's, which is
@@ -310,7 +319,7 @@ the public internet once you publish the dashboard.
 | 8472/udp | Overlay network (VXLAN) | Your other nodes |
 | 51820/udp | Overlay network (WireGuard, multi-provider clusters only) | Your other nodes |
 | 80/tcp, 443/tcp | Apps and the dashboard through Traefik. Let's Encrypt validates hostnames on 80 | The internet, if you publish services |
-| 22/tcp | SSH, used to join servers and for your own access | You, and the control plane toward workers |
+| 22/tcp | SSH, used to join servers and for your own access | You, and the control plane toward workers. On a machine Geass creates, only the control plane's addresses |
 
 The installer opens 6443, 10250, the overlay port, 80 and 443 in the host firewall of the control plane if it finds an
 active one (`ufw`, `firewalld` or `iptables`), without limiting the source address. An `iptables` rule goes behind your own
@@ -321,17 +330,23 @@ ClusterRoleBinding (`metrics-reader-prometheus` in `config/rbac`) that gives the
 (`geass-kube-prometheus-stac-prometheus` in `monitoring`) the `metrics-reader` role, which is what lets Prometheus scrape the operator's
 metrics. It binds nobody on a cluster without that add-on.
 
+For a machine Geass creates at a cloud, the firewall Geass makes there lets in SSH and the kubelet port (10250/tcp) only from the addresses of the control plane's nodes, and, in a multi-site cluster, the overlay's UDP port from anywhere (every packet is authenticated). With no control plane address known it lets SSH in from anywhere, which is safe only because the machine accepts nothing but the cluster's key. At Oracle Cloud and OVHcloud it makes no firewall, so those two are open as the project's network leaves them. See [Cloud connections for machines](/docs/guides/connectors/clouds/#what-geass-makes-at-the-cloud). The control plane's own 6443/tcp must be reachable from the new machines. With [`controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) Geass edits the control plane's AWS security group or Hetzner firewall to allow each machine's address, marks the rules it adds (`geass` on AWS, `geass-access` on Hetzner), never changes a rule it did not add, and removes its rules when the machine goes. The connection it uses for that needs the right to change that one firewall.
+
 ## Secrets
 
 ### Where they live
 
 Everything secret is a Kubernetes Secret: dashboard users and the session key, API token hashes, cloud connection keys,
 the Cloudflare token, the GitHub App key, app secrets and shared secrets, function schedule tokens, database passwords, the K3s join token
-(`geass-token`) and SSH keys. [Cloud connectors](/docs/guides/connectors/) lists the names.
+(`geass-token`), SSH keys, the credentials of the clouds that create machines, and the key and host keys of those machines
+(`geass-nodepool-ssh`, `<node>-hostkey`). [Cloud connectors](/docs/guides/connectors/) lists the names.
 
-- **At rest.** Geass does not encrypt Secrets, and the installer does not enable K3s secrets encryption, so they are stored
-  in the cluster datastore like any other Secret. Anyone who can read the datastore, an etcd snapshot or the server's disk
-  can read them. K3s offers secrets encryption at rest; if you want it, turn it on in K3s yourself.
+- **At rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`, AES-CBC) on the clusters it builds,
+  so Secrets are encrypted in K3s's datastore and in its etcd snapshots, including the one the installer takes before an
+  upgrade. It does not keep a Secret from anyone the API lets read it, because the API server decrypts it for them, or from
+  root on a control plane server. K3s keeps the key in `/var/lib/rancher/k3s/server/cred/` on that server's disk, so a copy of
+  the whole disk gives up every Secret. A cluster the installer did not build, such as K3s you installed by hand, has no
+  encryption unless you turned it on in K3s yourself.
 - **In the API.** Secret values are never copied into a resource's `status`. The dashboard sends the names of secret keys,
   never their values, and viewers do not even get those. The exception is a service you wrote `spec.secretData` into by
   hand: that field is part of the resource, so admins get its values in `GET /api/bootstrap` (the values are blanked in the
@@ -367,9 +382,10 @@ to the ClusterRole `geass-manager-role`, which allows:
 | Resources | Verbs |
 | --- | --- |
 | Secrets, ConfigMaps, Services, PersistentVolumeClaims, Namespaces | create, get, list, watch, update, patch, delete |
-| Nodes | get, list, watch, patch, delete |
+| Nodes | get, list, watch, patch, delete (a node is cordoned and removed when a pool or a server is removed) |
 | Pods, PersistentVolumes | get, list, watch |
 | `pods/exec` | create (used by the terminal and the SQL console) |
+| `pods/eviction` | create (used to empty a node before it is removed, so that disruption budgets are honoured) |
 | `pods/log` | get |
 | Deployments | create, get, list, watch, update, patch, delete |
 | StatefulSets | get, list, watch |
@@ -479,6 +495,7 @@ loopback and link-local addresses always, and private ranges (RFC 1918 and share
 | AWS | Create and delete S3 buckets, and create and delete IAM users named `geass-*` | Use the policy in [Connect AWS](/docs/guides/connectors/aws/#permissions-the-aws-key-needs); restrict S3 resources to a name prefix |
 | PlanetScale | Create databases, branch passwords and Postgres roles in the organization, delete the logins Geass made, and read cluster sizes | Use a token limited to what Geass needs |
 | Cloudflare | Edit DNS in the zone, edit tunnels in the account | Scope the token to one zone |
+| A cloud for machines | Create, list and delete machines in the project, resource group, compartment or account it is limited to, with the disks, addresses and firewalls they need, and so spend whatever those machines cost. Each cloud's permissions are on its page | Give it a project or account of its own, exactly the permissions on [its page](/docs/guides/connectors/clouds/), and a budget alert at the cloud. A pool's `maxNodes` caps how many machines Geass makes, not what your account may be charged otherwise |
 | GitHub App | Read contents, metadata and checks of the repositories where it is installed. Write commit statuses, deployments and pull requests (comments) there. It cannot push code or merge a pull request, which need Contents write | Install it only on the repositories you deploy, and turn **Report to GitHub** off for a project that should not be written to |
 
 **What Geass writes to GitHub.** Geass reports each build as a commit status (`geass/build/<service>`), each deploy as a GitHub
@@ -494,7 +511,21 @@ dropped, and the connection's `GitHubReporting` condition says so. See
 on the project, and viewers do not see it.
 
 AWS and PlanetScale connections belong to one project and are only usable by it. The Cloudflare and GitHub credentials belong
-to the whole cluster. Per-bucket AWS keys given to apps reach only their own bucket.
+to the whole cluster. A connection for machines belongs to the cluster too, but a project can never use it: Geass refuses a pool or
+a server that names a connection scoped to a project, and only an admin can make, change or use one. An AWS connection that holds
+buckets never creates machines, because it does not have the purpose Compute: make a separate connection with its own key. Per-bucket
+AWS keys given to apps reach only their own bucket.
+
+## Machines Geass creates
+
+For a machine it creates, Geass does not depend on a key you made, or on trusting an address:
+
+- **One SSH key for the cluster.** Geass makes it the first time it needs one, and keeps it in the Secret `geass-nodepool-ssh` in `geass-system`. Only the **public** half goes onto a machine, in its cloud-init. Anyone who can read Secrets in `geass-system` can read the private half and log in to every machine a pool made.
+- **A host key for each machine.** Geass makes it, puts it on the machine in the same cloud-init, and keeps it in the Secret `<node>-hostkey`. It checks the machine's host key against it before it sends anything, so the join token can reach nothing but that machine. This is the pinning that is optional for a server you bring, done for you. It is a key that identifies one machine, so its private half in the machine's user data is not a cluster secret.
+- **No join token in user data.** A machine's user data can be read from inside the machine and from the cloud's own API. Geass puts only the public key, the host key and the hostname there, and sends the join token over SSH when it installs K3s. As for any worker, the token is in the install command and visible to local users on the new machine while it runs.
+- **A login of its own.** The cloud-init creates the user `geass` with passwordless `sudo`, and turns password login off.
+- **Deleting is limited to what Geass can name.** It deletes a machine only by the ID the cloud gave it that it recorded for a node, and lists machines only by labels that carry this cluster's identity, so a second Geass cluster in the same account is never touched. Deleting a machine that no node owns is **opt-in**: a pool does it only when you set `orphanPolicy: Delete`, and then only for a machine unowned for 20 minutes. The default is to report it.
+- **Money is capped by the pool, and by you.** A pool cannot be made without `maxNodes`, and three machines in a row that fail to join pause it. These bound how much Geass can spend through a connection. They do not bound what the connection's credentials could be used for by someone who has them: that is what the project or account boundary is for.
 
 ## SSH and joining servers
 
@@ -503,7 +534,8 @@ verify the server's SSH host key unless you pin it, so by default it cannot tell
 machine. Put the machine's host key in the same Secret under `known_hosts` (see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)) and
 Geass refuses any other machine before it sends a command or the join token. Without it, join only servers whose network
 path you trust. Use a key made for this purpose, and prefer a private network. The K3s join token in `geass-token` lets
-any machine that can reach port 6443 join the cluster, so guard it like a password.
+any machine that can reach port 6443 join the cluster, so guard it like a password. A machine Geass creates is different: see
+[Machines Geass creates](#machines-geass-creates).
 
 ## Auditing
 
@@ -539,12 +571,17 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
    admin token unless the agent has to change things.
 5. Give AWS a dedicated IAM user with the policy from [Connect AWS](/docs/guides/connectors/aws/#permissions-the-aws-key-needs), and rotate the key.
    Scope the Cloudflare token to one zone and install the GitHub App on only the repositories you deploy.
+   Give a cloud that creates machines a project or account of its own, exactly the permissions on its page in
+   [Cloud connections for machines](/docs/guides/connectors/clouds/), and a budget alert at the cloud. Set a pool's `maxNodes` to a number you
+   could pay for, and leave `orphanPolicy` on `Report` until you have checked what it would delete.
 6. Restrict 6443, 10250 and the overlay port to your node addresses in your provider's firewall. Open 80 and 443 to the
    internet only if you publish services (certificates need 80), and limit 22 to the addresses you use.
 7. Keep project network isolation on (`Project`, the default), and open a project up only on purpose. In-cluster database passwords are predictable,
    so isolation is their main protection.
-8. Turn on K3s secrets encryption, and encrypt the control plane's disk and any etcd snapshots, because they contain every
-   Secret.
+8. Encrypt the control plane's disk, and keep the server token (`/var/lib/rancher/k3s/server/token`) and your etcd snapshots
+   somewhere outside the cluster and protected. The installer turns on K3s secrets encryption, but K3s keeps the key on the
+   server's disk, and a restore needs the token (see [Go back](/docs/operations/upgrading/#go-back)). If you run K3s you
+   installed by hand, turn on `secrets-encryption` in it.
 9. Only build repositories you trust, and join only servers you trust.
 10. Set up database backups (see [Backups and restore](/docs/guides/backups-and-restore/)) and test a restore.
 11. Approve a device code only when it matches the one on your own terminal, and choose the shortest expiry that works. Protect
@@ -568,7 +605,7 @@ Geass does not do these for you:
 - **Control plane backups.** Geass backs up databases to S3 when you configure it. It does not back up the K3s datastore, or the Secrets
   and resources in `geass-system` (users, tokens, connections, projects). Back up the datastore yourself, for example with K3s
   etcd snapshots, and keep the snapshots as protected as the Secrets they contain. See [High availability](/docs/operations/high-availability/).
-- **Your accounts.** Two-factor sign-in, key hygiene and audit logs on AWS, Cloudflare, PlanetScale and GitHub.
+- **Your accounts.** Two-factor sign-in, key hygiene and audit logs on AWS, Cloudflare, PlanetScale and GitHub, and on every cloud you let Geass create machines at, including its bill. Geass caps the machines of a pool, but cannot see what else your account is charged.
 - **Your apps.** The images you run, their dependencies and their own authentication.
 - **Detection and response.** Monitoring, alerting and incident handling. With the monitoring add-on on, Geass defines Prometheus alert
   rules for the operator's own health (rule `geass-operator` in `monitoring`: the operator down, failing or slow reconciles, a backed-up
@@ -583,6 +620,7 @@ Geass does not do these for you:
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [REST API](/docs/reference/rest-api/)
 - [Cloud connectors](/docs/guides/connectors/)
+- [Cloud connections for machines](/docs/guides/connectors/clouds/) and [Node pools](/docs/guides/node-pools/)
 - [Network isolation](/docs/guides/network-isolation/)
 - [Compliance tags](/docs/guides/compliance-tags/)
 - [Domains and TLS](/docs/guides/domains-and-tls/)

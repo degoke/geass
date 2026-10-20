@@ -12,7 +12,7 @@ This page is organised by what you see. Each entry says where to look in the das
 | What | Where |
 | --- | --- |
 | The operator and dashboard | Deployment `geass-controller-manager` in namespace `geass-system`. The dashboard is part of the operator and listens on port 8085 behind the service `geass-dashboard`. |
-| Geass resources (`GeassApp`, `GeassDatabase`, `GeassProject`, `GeassCluster`, `GeassNode`, `GeassBuild`, and others) | Namespace `geass-system` |
+| Geass resources (`GeassApp`, `GeassDatabase`, `GeassProject`, `GeassCluster`, `GeassNode`, `GeassNodePool`, `GeassBuild`, and others) | Namespace `geass-system` |
 | A project environment's pods, services and ingresses | Namespace `<project>-<environment>`, for example `morning-beach-production` |
 | Add-ons | `cert-manager`, `monitoring`, `longhorn-system`, `cnpg-system`, `moco-system`, `mariadb-system`, `geass-logging` and, when switched on, `keda` |
 | Helm installs of add-ons | `HelmChart` objects in `kube-system`, installed by `helm-install-<name>` jobs |
@@ -175,7 +175,7 @@ kubectl -n geass-system get geassnodes \
 kubectl get nodes -o wide
 ```
 
-A node moves through `Pending`, `Joining` and `Ready`. `Failed` carries the reason in its message.
+A node moves through `Pending`, `Joining` and `Ready`. A node whose machine Geass creates at a cloud has a `Creating` step before `Joining`. `Failed` carries the reason in its message. For nodes of a pool, and for machines at a cloud, see [Pools and machines at a cloud](#pools-and-machines-at-a-cloud) below.
 
 **A `GeassNode` is `Failed`.**
 
@@ -207,6 +207,48 @@ K3s installed but the node did not register under its name. On the worker run `j
 
 **A node is `NotReady`, or the rail shows it as down.**
 On the machine, check `systemctl status k3s` (the control plane) or `k3s-agent` (a worker). A worker that Geass joined and that stays not ready for five minutes is provisioned again over SSH. See [Usage and capacity](/docs/guides/usage-and-capacity/) for pressure states such as `memory high` and `disk full`.
+
+## Pools and machines at a cloud
+
+Start with the pool and its nodes. `geass pools show NAME` says what the pool is doing, what it last failed at, and what each node is saying. With `kubectl`:
+
+```bash
+kubectl -n geass-system get geassnodepools
+kubectl -n geass-system get geassnodepool burst -o jsonpath='{.status.phase}{"  "}{.status.message}{"\n"}'
+kubectl -n geass-system get geassnodes -l geass.dev/pool=burst \
+  -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,MACHINE:.status.cloud.instanceID,MESSAGE:.status.message'
+geass connections show hetzner
+```
+
+**A pool is `Paused`.** Three machines in a row failed to become nodes, so it stopped adding more for 30 minutes. Read `lastFailure` (`geass pools show NAME`), fix what it says (a firewall that blocks the control plane, a size the account may not use, a missing permission), then `geass pools resume NAME`, or annotate the pool `geass.dev/resume=true`. Each machine that fails costs at least the time it lived. See [Pause and resume](/docs/guides/node-pools/#pause-and-resume).
+
+**A pool is `Degraded`.** Its message says which of these it is: the settings are invalid (such as `maxNodes` below `minNodes`, or a size missing); the connection does not exist, is not for Compute, or belongs to a project; the cloud does not accept the connection's credentials; or the pool sets a setting the cloud does not read, or lacks one it needs (Azure and Oracle Cloud need `subnetId`). Fix that, and the pool carries on. See [Cloud connections for machines](/docs/guides/connectors/clouds/#troubleshooting).
+
+**A connection is not accepted.** `geass connections show NAME` has the cloud's own message. Check the credentials against the section for that cloud in [Cloud connections for machines](/docs/guides/connectors/clouds/), then ask again with `geass connections verify NAME`. Credentials expire: Azure's client secret and UpCloud's token do, and Geass cannot count the days.
+
+**A node stays `Creating`.** Read its message.
+
+| Message | Cause and fix |
+| --- | --- |
+| "waiting for the provider to start the machine (state ...)" | The cloud is slow, out of room or at a limit. A machine that is not running with an address 10 minutes after it was requested is deleted and the node fails. |
+| A message from the cloud with the problem `Capacity` or `Quota` | The cloud has no room for this size in this place, or the account is at a limit. The node waits (2 minutes between tries for capacity, 5 for a limit), and after 3 minutes the pool tries its fallback size and region. Add fallbacks, ask the cloud to raise the limit, or delete machines you do not use. |
+| "waiting for the machine to accept SSH while it finishes its first boot" | The machine is up and port 22 does not answer yet. It is waited for up to 18 minutes after the machine was requested. If it lasts, the firewall does not let the operator in: the firewall Geass makes allows only the addresses Kubernetes lists for the control plane's nodes. Check `kubectl get nodes -o wide`, and use `addressType: Private` in the same network, or a multi-site cluster. |
+| "the provider refused the credentials: ..." | The node fails. The cloud's own reason follows: a wrong key, a policy of the key, or a policy of the account's organization that denies the launch (a service control policy at Amazon, which the message names, and which only the organization's owner can change). Fix the cause and ask for another attempt. Three such failures in a row pause the pool. |
+| "opening the control plane's firewall for the machine: ..." | `spec.network.controlPlaneFirewall` is wrong: the connection, its permission on that firewall, or the target ID. Only an AWS security group and a Hetzner firewall can be changed. See [Let Geass open the control plane](/docs/guides/node-pools/#let-geass-open-the-control-plane). |
+| "the provider no longer has the machine it accepted ..." | The cloud refused the machine after it accepted the request (no room, or a limit), or someone deleted it. The node fails, and the pool makes another. |
+| "the node's name is longer than 55 characters ..." | A single server's name is too long. A pool's names are shorter, because a pool's name is at most 48 characters. |
+
+**A node stays `Joining`, then fails after 15 minutes.** K3s was installed and the node never registered. The machine cannot reach the control plane's 6443/tcp (or UDP 51820 in a multi-site cluster, or 8472/udp in a default one). Open it at the control plane's firewall, or set `controlPlaneFirewall`. The machine is deleted when the node fails, so its log is gone: check the ports first.
+
+**Machines are left at the cloud that no node owns.** They are orphans: a pool reports them in `status.orphans`, on its page and in its message, and deletes them only with `orphanPolicy: Delete`, and only after 20 minutes. Delete them in the cloud's console, or switch the policy once you have checked the list. See [Machines no node owns](/docs/guides/node-pools/#machines-no-node-owns).
+
+**A pool does not add a node although pods are waiting.** Walk the list in [Node pools](/docs/guides/node-pools/#troubleshooting): autoscaling on and the pool not suspended or paused, the pods unable to start for the delay, the pool's region and tags matching the pods', the pods small enough for one node, and the pool below `maxNodes`.
+
+**A pool does not remove an idle node.** [What keeps a node](/docs/guides/node-pools/#what-keeps-a-node) lists the reasons: a pod with no controller, a volume claim, a host path or an on-disk `emptyDir`, a node younger than `minNodeLifetimeMinutes`, a K3s upgrade, or the annotation `geass.dev/scale-down-disabled`. `geass pools show NAME` and the operator log name the reason.
+
+**A node will not go away when I delete it.** Deleting a node whose machine Geass created waits until the cloud has deleted the machine. If the connection is gone for good, annotate the node `geass.dev/abandon-instance=true`, which lets it go and leaves the machine at the cloud for you to delete.
+
+**The services restarted when I made my first pool.** Expected, once: see [What runs on a pool's nodes](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
 
 ## Services, databases and buckets that are stuck
 
@@ -260,7 +302,7 @@ kubectl -n longhorn-system get pods -o wide
 
 ### A resource says there is not enough capacity
 
-The message begins "This service needs about …" or "There is no ready node in …". Open **Usage** to see how full the nodes are, then add a node, lower the size, or free something. The messages and fixes are in [Scaling and placement](/docs/guides/scaling-and-placement/). If the resource is already **Failed**, choose **Retry** after the capacity exists.
+The message begins "This service needs about …" or "There is no ready node in …". Open **Usage** to see how full the nodes are, then add a node, lower the size, or free something. The messages and fixes are in [Scaling and placement](/docs/guides/scaling-and-placement/). If the resource is already **Failed**, choose **Retry** after the capacity exists. A [node pool](/docs/guides/node-pools/) can add the room itself: a service is let in when an autoscaling pool could make room, and refused when the pool is at its maximum.
 
 ### A MySQL or Redis database says "Could not pull the database image …"
 
@@ -507,6 +549,8 @@ See [Storage](/docs/guides/storage/).
 - [Sleep when idle](/docs/guides/scale-to-zero/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [High availability](/docs/operations/high-availability/)
+- [Node pools and autoscaling](/docs/guides/node-pools/)
+- [Cloud connections for machines](/docs/guides/connectors/clouds/)
 - [Nodes at more than one provider](/docs/operations/multi-provider/)
 - [Logs, metrics and terminal](/docs/guides/observability/)
 - [Domains and TLS](/docs/guides/domains-and-tls/)

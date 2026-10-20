@@ -9,11 +9,15 @@ make test-k3s-serverless      # scale to zero and function schedules, end to end
 make test-k3s-objectstorage   # the cluster's object storage, SeaweedFS and Garage (about 10 minutes the first time)
 make test-k3s-limits          # a project's node block and its quotas, per environment and for the whole project (about 4 minutes)
 make test-k3s-burst           # a service that reserves less than it may use, and a copy stopped for memory saying so (about 2 minutes, a little more the first time)
+make test-k3s-nodepool        # an autoscaling node pool adding a node for pods that do not fit, and removing it again, with a pod still on it (about 3 minutes)
 make test-k3s-alerting        # alerts from a failing build or crashing pod to Alertmanager and out to Slack and mail stand-ins (about 20 minutes, a little more the first time)
+make test-k3s-encryption      # a service reads its secret, and the value is not in k3s's datastore, which holds encrypted values (about 3 minutes, a little more the first time)
 make k3s-down                 # removes it
 ```
 
-`make k3s-up` does not touch your own kubeconfig; it writes its own under `/tmp/geass-k3s`. Ports 6444 (API)
+`make k3s-up` starts k3s with the configuration file the installer writes (`hack/k3sconfig` prints it from `pkg/installer`:
+secrets encryption and log rotation), so the tests run on a cluster set up the way a real one is. A k3s that is already running
+is reused as it is, so after a change to that file run `make k3s-down` first. It does not touch your own kubeconfig; it writes its own under `/tmp/geass-k3s`. Ports 6444 (API)
 and 18080 (ingress) are used and can be changed with `K3S_API_PORT` and `K3S_HTTP_PORT`.
 
 `TestServerlessFunctionsOnK3s` starts the cluster, project and app controllers in the test process, turns on the
@@ -53,6 +57,16 @@ small Python image that hold memory. One reserves 128 MB, may use 1 GB and holds
 a few seconds, and the test waits for its status to say it ran out of memory (the Ready message, and the `OutOfMemory`
 condition while a copy is ready between two stops), then raises what it may use and waits for it to be ready with the
 condition gone.
+
+`TestNodePoolAutoscalingOnK3s` runs the node and pool controllers against a real k3s and follows an autoscaling pool through
+its life. The cloud is a fake and the machines are containers: where Geass would log in over SSH and install the K3s agent,
+the test starts `rancher/k3s ... agent` as a container with exactly the name, labels, taints and server the join gave it,
+and deleting the machine removes the container. Everything else is real: the pool deciding to add a node for pods the
+scheduler cannot place, the node joining with its labels and the taint that keeps data off it, the scheduler placing the
+pods that tolerate the taint and holding back the one that does not, the capacity check, and, when the load goes, the pool
+cordoning the node, moving a pod off it through the eviction API and removing the node and its machine. The ten-minute
+waits are skipped by moving the pool's clock. The host's inotify limit (`fs.inotify.max_user_instances`) decides whether
+a second K3s node can start next to the server.
 
 `TestAlertingOnK3s` turns on the monitoring add-on and follows an alert from end to end. The test process stands in for
 Slack and for a mail server on the host, which the pods in Docker reach, and exposes the operator's problem metrics to

@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/compute"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -178,6 +182,39 @@ func (r *GeassPlatformConfigReconciler) configsForApp(ctx context.Context, _ cli
 type GeassCloudConnectionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Compute builds the provider of a connection for compute, so that its credentials can be checked with the
+	// provider. Without it such a connection is only checked for having its credentials.
+	Compute ComputeFactory
+	// Now is the clock. Nil means time.Now.
+	Now func() time.Time
+
+	mu       sync.Mutex
+	verified map[string]verifiedConnection
+}
+
+// verifiedConnection is what was last learned from a provider about a connection, and what it was learned from, so
+// that a connection is not asked about again until its credentials or its settings change or the answer is old.
+type verifiedConnection struct {
+	version string
+	at      time.Time
+	account compute.Account
+	err     error
+}
+
+const (
+	// connectionRecheck is how long the answer of a provider about a connection's credentials is trusted.
+	connectionRecheck = 15 * time.Minute
+	// connectionRetry is how soon a connection that does not work is checked again.
+	connectionRetry = 2 * time.Minute
+	// credentialExpiryWarning is how long before credentials expire the connection starts to say so.
+	credentialExpiryWarning = 14 * 24 * time.Hour
+)
+
+func (r *GeassCloudConnectionReconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geasscloudconnections,verbs=get;list;watch;create;update;patch;delete
@@ -190,15 +227,91 @@ func (r *GeassCloudConnectionReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	ready, status, reason, message := r.cloudConnectionState(ctx, &connection)
+	var account compute.Account
+	var after time.Duration
+	if ready && connection.HasPurpose(geassv1alpha1.CloudPurposeCompute) && r.Compute != nil {
+		var verifyErr error
+		account, after, verifyErr = r.verifyCompute(ctx, &connection)
+		if verifyErr != nil {
+			ready, status, reason, message = false, metav1.ConditionFalse, "VerificationFailed", verifyErr.Error()
+		} else {
+			message = "The provider accepted the credentials"
+		}
+	}
 	latest := &geassv1alpha1.GeassCloudConnection{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(&connection), latest); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	now := metav1.NewTime(r.now())
 	_, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		latest.Status.Available = ready
 		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, status, reason, message)
+		latest.Status.Message = message
+		if connection.HasPurpose(geassv1alpha1.CloudPurposeCompute) && r.Compute != nil {
+			latest.Status.Account = account.Name
+			latest.Status.Warnings = account.Warnings
+			latest.Status.ExpiresAt = nil
+			if !account.ExpiresAt.IsZero() {
+				expires := metav1.NewTime(account.ExpiresAt)
+				latest.Status.ExpiresAt = &expires
+			}
+			if ready {
+				latest.Status.VerifiedAt = &now
+			}
+		}
 	})
-	return ctrl.Result{}, err
+	return ctrl.Result{RequeueAfter: after}, err
+}
+
+// verifyCompute asks the provider whether a connection's credentials work, and returns what it said. The answer is
+// trusted for fifteen minutes unless the connection or its Secret changed, so a provider is not called for every
+// event on the connection.
+func (r *GeassCloudConnectionReconciler) verifyCompute(ctx context.Context, connection *geassv1alpha1.GeassCloudConnection) (compute.Account, time.Duration, error) {
+	var secret corev1.Secret
+	_ = r.Get(ctx, client.ObjectKey{Name: connection.Spec.SecretRef.Name, Namespace: connection.Namespace}, &secret)
+	version := fmt.Sprintf("%d/%s/%s", connection.Generation, secret.ResourceVersion, connection.Annotations[platform.AnnotationRecheckConnection])
+
+	r.mu.Lock()
+	last, ok := r.verified[connection.Name]
+	r.mu.Unlock()
+	wait := connectionRecheck
+	if ok && last.version == version && r.now().Sub(last.at) < connectionRecheck && last.err == nil {
+		return warnAboutExpiry(last.account, r.now()), connectionRecheck - r.now().Sub(last.at), nil
+	}
+	provider, _, err := r.Compute.Provider(ctx, connection.Name)
+	var account compute.Account
+	if err == nil {
+		verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		account, err = provider.Verify(verifyCtx)
+	}
+	if err != nil {
+		wait = connectionRetry
+		if errors.Is(err, compute.ErrAuth) {
+			err = fmt.Errorf("the provider refused the credentials: %w", err)
+		}
+	}
+	r.mu.Lock()
+	if r.verified == nil {
+		r.verified = map[string]verifiedConnection{}
+	}
+	r.verified[connection.Name] = verifiedConnection{version: version, at: r.now(), account: account, err: err}
+	r.mu.Unlock()
+	return warnAboutExpiry(account, r.now()), wait, err
+}
+
+// warnAboutExpiry adds a warning to credentials that stop working soon or already have.
+func warnAboutExpiry(account compute.Account, now time.Time) compute.Account {
+	if account.ExpiresAt.IsZero() {
+		return account
+	}
+	switch left := account.ExpiresAt.Sub(now); {
+	case left <= 0:
+		account.Warnings = append(account.Warnings, "the credentials have expired")
+	case left < credentialExpiryWarning:
+		account.Warnings = append(account.Warnings, fmt.Sprintf("the credentials expire in %d days: make new ones and update the connection", int(left.Hours()/24)+1))
+	}
+	return account
 }
 
 // cloudConnectionState works out whether a cloud connection's credentials are usable and says why not.
@@ -224,7 +337,16 @@ func (r *GeassCloudConnectionReconciler) cloudConnectionState(ctx context.Contex
 			reason, message = "CredentialsMissing", "PlanetScale token and organization are required"
 		}
 	default:
-		reason, message = "UnsupportedProvider", fmt.Sprintf("unsupported provider %q", connection.Spec.Provider)
+		descriptor, known := compute.Lookup(string(connection.Spec.Provider))
+		if !known {
+			reason, message = "UnsupportedProvider", fmt.Sprintf("unsupported provider %q", connection.Spec.Provider)
+			break
+		}
+		if missing := descriptor.MissingFields(CredentialsOf(secret)); len(missing) > 0 {
+			reason, message = "CredentialsMissing", fmt.Sprintf("%s needs %s", descriptor.Label, strings.Join(missing, ", "))
+			break
+		}
+		ready = true
 	}
 	status = metav1.ConditionFalse
 	if ready {

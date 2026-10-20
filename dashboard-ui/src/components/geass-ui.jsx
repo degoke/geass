@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "@tanstack/react-router";
 import { useSettingsRail } from "@/layout/SettingsShell";
 import { RailInput, RailSelect, RailTextarea } from "@/components/rail-controls";
+import { GeassLogo } from "@/components/GeassLogo";
 import {
   Alert,
   Badge as MantineBadge,
@@ -183,7 +184,7 @@ export function DataTable({ columns, rows, empty, getRowKey, onRowClick, rowClas
             <MantineTable.Tr
               key={getRowKey ? getRowKey(row, index) : index}
               onClick={onRowClick ? () => onRowClick(row, index) : undefined}
-              bg={String(mark).includes("selected") ? "rgba(124, 224, 160, 0.08)" : undefined}
+              bg={String(mark).includes("selected") ? "color-mix(in srgb, var(--geass-signal) 8%, transparent)" : undefined}
               style={{ cursor: onRowClick ? "pointer" : undefined, opacity: String(mark).includes("disabled") ? 0.45 : 1 }}
             >
               {columns.map((col) => (
@@ -591,7 +592,7 @@ export function LoginPanel({ children }) {
   return (
     <div className="rw-login">
       <div className="rw-login-card">
-        <img className="rw-login-logo" src="/geass-logo-dark.svg" alt="Geass" height={30} width={113} />
+        <GeassLogo className="rw-login-logo" height={30} width={113} />
         {children}
         <p className="rw-login-foot">Absolute command over servers you already own.</p>
       </div>

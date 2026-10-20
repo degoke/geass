@@ -102,6 +102,10 @@ spec:
 | `spec.addons.logging.retentionDays` | integer (int32) | CRD default `7` | Minimum 1, maximum 90 | How long stored logs are kept. |
 | `spec.addons.serverless.enabled` | boolean | CRD default `false` | None | Installs KEDA and its HTTP add-on, so that services can [sleep when idle](/docs/guides/scale-to-zero/). It is opt-in: the installer does not set it. It also lets the K3s Traefik route to a Service that is only a name (a `HelmChartConfig` named `traefik`, created only when none exists). Turning it off stops the operator managing it and never uninstalls KEDA. |
 | `spec.network.multiSite` | boolean | `false` | None | The nodes are at different providers and reach each other over the internet. See [Network mode](#network-mode). |
+| `spec.network.controlPlaneFirewall` | object | Optional | None | The cloud firewall in front of the control plane. When it is set, Geass lets each machine a pool creates through it (TCP 6443, and UDP 51820 in a multi-site cluster) before the machine joins, and takes the address out again when the machine is removed. See [Let Geass open the control plane](/docs/guides/node-pools/#let-geass-open-the-control-plane). |
+| `spec.network.controlPlaneFirewall.connectionRef` | string | Required with the object | Not empty | The [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/), for `Compute`, at the cloud where the control plane runs. It may be at another cloud than the one that creates the machines. Only an AWS or a Hetzner connection can change a firewall. |
+| `spec.network.controlPlaneFirewall.target` | string | Required with the object | Not empty | The cloud's ID for the firewall: a security group such as `sg-0abc123`, or a Hetzner firewall's ID. |
+| `spec.network.controlPlaneFirewall.region` | string | Optional | None | Where the firewall is, for a cloud that answers per region (AWS). |
 | `spec.k3s.version` | string | Optional. Empty by default. | Empty, or a K3s release such as `v1.36.5+k3s1`: `^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$`. At most 40 characters | The K3s release the **worker** nodes are brought to. When it is set and a worker runs an older one, the operator upgrades the workers one at a time over SSH: cordon, replace K3s, wait for the node to be ready on the new version, uncordon. It only moves workers to a version the control plane already runs, and it never touches the control plane, which the installer upgrades (`--k3s-version` sets this field for you). Empty means leave K3s alone. See [Upgrade Geass](/docs/operations/upgrading/#workers). |
 | `spec.defaultRegion` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 40 | The region of projects that do not choose one. Empty means such projects may run on any node. |
 
@@ -112,6 +116,13 @@ The Go types and the generated CRD agree for every field on this page.
 ### Network mode
 
 With `spec.network.multiSite: true` the overlay network between nodes is encrypted (the K3s WireGuard backend) and every node advertises its public address. Set it when you install, with the installer variables `GEASS_MULTI_SITE` and `GEASS_NODE_EXTERNAL_IP`. Changing it later means restarting every node, and Geass does not do that. The operator reads the field only in two places: when it joins a worker (the worker then installs WireGuard support, opens its ports if it can, and advertises its public address) and when it renders the monitoring chart (Prometheus then scrapes kubelets at their external addresses). Do not flip it on a running cluster.
+
+`spec.network.controlPlaneFirewall` is read only when a machine that Geass creates at a cloud is about to join. Without it, the control plane's TCP 6443 (and UDP 51820 in a multi-site cluster) must already accept the new machines. With it, Geass adds one rule for the machine's address through the connection, marks it as its own (the description `geass` on AWS, `geass-access` on Hetzner), never changes a rule it did not add, and removes its rules when the machine goes. A node whose connection cannot do this fails with a message that says so, and its machine is deleted.
+
+```bash
+kubectl -n geass-system patch geasscluster default --type merge \
+  -p '{"spec":{"network":{"controlPlaneFirewall":{"connectionRef":"aws-compute","target":"sg-0abc123","region":"eu-north-1"}}}}'
+```
 
 ## Status
 
