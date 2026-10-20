@@ -32,7 +32,13 @@ export default defineConfig({
       expressiveCode: { styleOverrides: { borderRadius: "0" } },
       routeMiddleware: "./src/route-middleware.ts",
       head: [
-        { tag: "meta", attrs: { name: "theme-color", content: "#0a0a0a" } },
+        { tag: "meta", attrs: { name: "theme-color", content: "#ffffff" } },
+        {
+          // Starlight's theme picker changes data-theme, so the browser bar colour follows it, not the system.
+          tag: "script",
+          content:
+            "(function(){var r=document.documentElement;function p(){var m=document.querySelector('meta[name=\"theme-color\"]');if(m)m.setAttribute('content',r.dataset.theme==='light'?'#ffffff':'#0a0a0a')}new MutationObserver(p).observe(r,{attributes:true,attributeFilter:['data-theme']});document.addEventListener('DOMContentLoaded',p)})()",
+        },
         { tag: "link", attrs: { rel: "icon", href: file("favicon.ico"), sizes: "48x48" } },
         { tag: "link", attrs: { rel: "apple-touch-icon", href: file("apple-touch-icon.png") } },
       ],
@@ -61,6 +67,7 @@ export default defineConfig({
           label: "Cloud connectors",
           items: [
             "docs/guides/connectors",
+            "docs/guides/connectors/clouds",
             "docs/guides/connectors/aws",
             "docs/guides/connectors/planetscale",
             "docs/guides/connectors/cloudflare",
@@ -94,6 +101,7 @@ export default defineConfig({
           label: "Run and scale",
           items: [
             "docs/guides/scaling-and-placement",
+            "docs/guides/node-pools",
             "docs/guides/scale-to-zero",
             "docs/guides/compliance-tags",
             "docs/guides/network-isolation",

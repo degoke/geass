@@ -1,6 +1,11 @@
 ---
 import dashboard from "../../assets/dashboard.webp";
+import dashboardLight from "../../assets/dashboard-light.webp";
 import { docsUrl } from "../../lib/site";
+
+// Both screenshots are in the page and the theme shows one. The head script in Landing.astro preloads the right one.
+const alt =
+  "The Geass dashboard: a project's canvas of apps, a function, databases and a bucket with their status, the environments across the top with a Deploy changes button, and the selected database's details on the right.";
 ---
   <section class="hero grid-bg" id="top">
     <div class="hero-inner">
@@ -19,12 +24,7 @@ import { docsUrl } from "../../lib/site";
     </div>
 
     <figure class="frame">
-      <img
-        src={dashboard.src}
-        width="1440"
-        height="900"
-        alt="The Geass dashboard: a project's canvas of apps, a function, databases and a bucket with their status, the environments across the top with a Deploy changes button, and the selected database's details on the right."
-        fetchpriority="high"
-      />
+      <img class="shot-on-light" src={dashboardLight.src} width="1440" height="900" alt={alt} loading="lazy" />
+      <img class="shot-on-dark" src={dashboard.src} width="1440" height="900" alt={alt} loading="lazy" />
     </figure>
   </section>

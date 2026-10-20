@@ -49,7 +49,33 @@ spec:
                 enum:
                 - AWS
                 - PlanetScale
+                - GCP
+                - DigitalOcean
+                - Hetzner
+                - OVHcloud
+                - Vultr
+                - Linode
+                - Scaleway
+                - Azure
+                - OCI
+                - UpCloud
+                - Webhook
                 type: string
+              purposes:
+                description: |-
+                  Purposes say what the connection is for. Left out, a connection is for what its provider did before
+                  purposes existed: storage and databases for AWS, databases for PlanetScale. A connection for Compute must
+                  not be scoped to a project.
+                items:
+                  description: GeassCloudPurpose is what a connection is used for.
+                  enum:
+                  - Storage
+                  - Database
+                  - Compute
+                  type: string
+                maxItems: 3
+                type: array
+                x-kubernetes-list-type: set
               region:
                 description: Region is the default AWS region for this connection.
                 type: string
@@ -74,6 +100,10 @@ spec:
             type: object
           status:
             properties:
+              account:
+                description: Account names the account, project or tenant the credentials
+                  act on, as the provider reports it.
+                type: string
               available:
                 type: boolean
               conditions:
@@ -131,6 +161,27 @@ spec:
                   - status
                   - type
                   type: object
+                type: array
+              expiresAt:
+                description: ExpiresAt is when the credentials stop working, when
+                  the provider says so.
+                format: date-time
+                type: string
+              message:
+                description: Message says what the last check found, or why it could
+                  not tell.
+                type: string
+              verifiedAt:
+                description: VerifiedAt is when the credentials were last checked
+                  with the provider.
+                format: date-time
+                type: string
+              warnings:
+                description: Warnings are things that work now and are likely to fail
+                  later.
+                items:
+                  type: string
+                maxItems: 10
                 type: array
             required:
             - available

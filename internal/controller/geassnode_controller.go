@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/compute"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
@@ -43,6 +44,18 @@ type GeassNodeReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	SSH    ssh.Provisioner
+	// Compute gives the cloud provider of a node whose machine Geass creates. Without it such a node cannot be
+	// created or removed, which is what a reconciler built for a test of something else has.
+	Compute ComputeFactory
+	// Now is the clock. Nil means time.Now.
+	Now func() time.Time
+}
+
+func (r *GeassNodeReconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassnodes,verbs=get;list;watch;create;update;patch;delete
@@ -198,6 +211,9 @@ func (r *GeassNodeReconciler) reconcileWorker(
 	node *geassv1alpha1.GeassNode,
 	cluster *geassv1alpha1.GeassCluster,
 ) (ctrl.Result, error) {
+	if node.Spec.Cloud != nil {
+		return r.reconcileCloudWorker(ctx, node, cluster)
+	}
 	if node.Spec.SSHKeySecretRef == nil || node.Spec.SSHKeySecretRef.Name == "" {
 		return r.setFailed(ctx, node, "ssh key secret ref is required for worker nodes")
 	}
@@ -310,6 +326,10 @@ func workerJoinInput(
 	if sshPort == 0 {
 		sshPort = 22
 	}
+	sshUser := node.Spec.SSHUser
+	if sshUser == "" && node.Spec.Cloud != nil {
+		sshUser = compute.DefaultUser
+	}
 
 	controlPlane, err := controlPlaneNodes(ctx, c)
 	if err != nil {
@@ -321,9 +341,9 @@ func workerJoinInput(
 			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
 	}
 	return ssh.ProvisionInput{
-		Host:       node.Spec.EIP,
+		Host:       node.Address(),
 		Port:       sshPort,
-		User:       node.Spec.SSHUser,
+		User:       sshUser,
 		PrivateKey: creds.privateKey,
 		KnownHosts: creds.knownHosts,
 		K3sVersion: workerK3sVersion(controlPlane, cluster),
@@ -333,7 +353,9 @@ func workerJoinInput(
 		Config: ssh.NewAgentConfig(ssh.AgentOptions{
 			Placement:  node.Spec.Placement,
 			MultiSite:  cluster.Spec.Network.MultiSite,
-			ExternalIP: node.Spec.EIP,
+			ExternalIP: node.Address(),
+			Labels:     poolNodeLabels(node),
+			Taints:     poolNodeTaints(node),
 		}),
 		MultiSite: cluster.Spec.Network.MultiSite,
 	}, nil
@@ -347,7 +369,7 @@ func (r *GeassNodeReconciler) provision(
 	token string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	log.Info("Provisioning worker node", "eip", node.Spec.EIP)
+	log.Info("Provisioning worker node", "eip", node.Address())
 
 	node.Status.Phase = geassv1alpha1.NodePhaseJoining
 	node.Status.Message = "installing k3s agent"
@@ -440,11 +462,15 @@ func (r *GeassNodeReconciler) handleDeletion(
 		return ctrl.Result{}, nil
 	}
 
+	if node.Spec.Cloud != nil && node.Spec.Role == geassv1alpha1.NodeRoleWorker {
+		return r.handleCloudDeletion(ctx, node)
+	}
+
 	if node.Spec.SSHKeySecretRef != nil && node.Spec.SSHKeySecretRef.Name != "" {
 		creds, err := r.resolveSSHCredentials(ctx, *node.Spec.SSHKeySecretRef, node.Namespace)
 		if err == nil {
 			drainErr := r.SSH.Drain(ctx, ssh.ProvisionInput{
-				Host:       node.Spec.EIP,
+				Host:       node.Address(),
 				Port:       node.Spec.SSHPort,
 				User:       node.Spec.SSHUser,
 				PrivateKey: creds.privateKey,

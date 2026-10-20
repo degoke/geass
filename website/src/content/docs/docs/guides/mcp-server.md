@@ -55,7 +55,7 @@ with Geass before it starts and tells you what it offers on standard error, beca
 protocol:
 
 ```text
-geass MCP server ready with 30 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, project_network, project_quota, set_project_quota, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app
+geass MCP server ready with 38 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, project_network, project_quota, set_project_quota, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app, compute_providers, cloud_connections, node_pools, node_pool, cloud_sizes, create_node_pool, update_node_pool, resume_node_pool
 ```
 
 The tools are decided once, when the server starts. To give the agent a different role, start a new server with
@@ -200,6 +200,7 @@ send your Geass API token as a Bearer token
 | Read logs and variable names | `get_logs`, `deployment_logs`, `list_variables` |
 | Databases, buckets, nodes, compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
 | Project limits and network | `project_quota`, `project_network`, and `set_project_quota` (an admin token, not read-only) |
+| Clouds and node pools | `compute_providers`, `cloud_connections`, `node_pools`, `node_pool` (any workspace token); `cloud_sizes` (an admin token); `create_node_pool`, `update_node_pool`, `resume_node_pool` (an admin token, not read-only); `delete_node_pool` (only with `--allow-delete`) |
 | Deploy and recover | `deploy_app`, `rebuild_app`, `rollback_app` |
 | Scale and configure | `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable` |
 | Functions | `set_function_trigger`, `remove_function_trigger`, `invoke_function` |
@@ -219,7 +220,9 @@ The server has only the tools above. There is no tool, so an agent cannot:
   variables and a function's schedules. It cannot edit a function's code or create a function.
 - Open a terminal in a pod, or read a pod's files.
 - Tag nodes, or change a project's compliance tags or who can reach its services. It can only read them. It can change a project's resource limits with `set_project_quota`, if the token is an admin's.
-- Create, list or revoke API tokens, or change users, connections or cluster settings.
+- Create, list or revoke API tokens, or change users or cluster settings.
+- Make, change, verify or remove a connection to a cloud, give a cloud a credential, or add or remove a single server. It can read the connections (never their credentials), and with an admin token it can run node pools on a connection that a person made. See [below](#node-pools-and-money).
+- Make a pool of servers you own.
 - Read a secret's value, a database password or a connection string. See below.
 
 The server also offers no MCP resources and no prompts. It offers tools only.
@@ -238,12 +241,12 @@ error that says `(this token is not allowed to do that; do not retry)`.
 | Project token | One environment | Yes | Yes, in that environment |
 
 **Flags narrow it.** `--read-only` removes every tool that changes anything, even for a **Full access** token. It
-keeps `database_connection` for that token, because reading how to reach a database changes nothing. Deleting is off unless you pass `--allow-delete`, and `delete_resource` then also needs the resource's name repeated in
+keeps `database_connection` and `cloud_sizes` for that token, because reading how to reach a database, or what sizes a cloud offers, changes nothing. Deleting is off unless you pass `--allow-delete`, and `delete_resource` and `delete_node_pool` then also need the resource's name repeated in
 `confirm`, so the agent cannot delete by accident from a vague request.
 
 **The agent host can ask you.** Every tool says whether it is read-only, idempotent or destructive, in the standard MCP
 annotations. A host that asks before running tools that are not read-only will ask before `deploy_app`, and a host that
-asks before destructive tools will ask before `delete_resource`. Keep that prompt on for any agent with write access.
+asks before destructive tools will ask before `delete_resource` and `delete_node_pool`. Keep that prompt on for any agent with write access.
 
 **Secrets stay hidden, with one exception you should know.**
 
@@ -253,6 +256,17 @@ asks before destructive tools will ask before `delete_resource`. Keep that promp
   and user, and never asks Geass for the password.
 - Plain configuration is not secret. `list_variables` returns the values of plain configuration, and `get_app` returns
   them to a **Full access** token. Put anything sensitive in a secret (`secret: true` in `set_variable`).
+
+### Node pools and money
+
+An admin token also offers `create_node_pool`, `update_node_pool` and `resume_node_pool`. A [node pool](/docs/guides/node-pools/) creates machines at a cloud, and the cloud bills the account of the connection until they are removed, so these tools stop where a person's decisions begin:
+
+- **No tool takes a credential.** There is no tool that makes, changes, verifies or removes a connection, and none that takes a token, a key or a password. A credential typed into an agent's conversation would be a secret it could leak, so a person adds connections in the dashboard or with `geass connections add`. The tools that read return the names of what a cloud takes, never a value.
+- **No tool adds a single server.** A single server is billed until someone removes it. The agent can only run a pool that a person's connection already pays for.
+- **A pool needs a most.** `create_node_pool` refuses to run without `max_nodes`, the most machines the pool can ever have, which is also the most it can cost. It also refuses to guess whether a pool that could grow autoscales: the agent must say. The instructions the server sends the agent say so.
+- **Deleting needs `--allow-delete`.** Without the flag `delete_node_pool` does not exist, and with it the agent must repeat the pool's name in `confirm`.
+
+What an agent can still do is spend up to the most of every pool it creates, on any connection for machines that exists, and change a pool's size or most. Give an agent an admin token only when you accept that, and set a budget alert at the cloud.
 
 **Changes are pending until a deploy.** `set_variable`, `unset_variable` and the schedule tools change the service's
 settings, but nothing reaches the running service until `deploy_app`, unless the agent passes `deploy` to
@@ -474,9 +488,10 @@ revoked. Both exit with code `4`.
 configuration.
 
 **The agent has fewer tools than expected.** Ask it to call `whoami`, or read the line `geass MCP server ready with N
-tools` on standard error. A **Read only** token sees 12, **Read only, with logs** 15, a project token 18 and **Full access**
-26. `--read-only` removes the tools that change anything, so **Full access** then sees the 15 of **Read only, with
-logs** and `database_connection` (16). `delete_resource` needs `--allow-delete`. See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
+tools` on standard error. A **Read only** token sees 18, **Read only, with logs** 21, a project token 19 and **Full access**
+38. `--read-only` removes the tools that change anything, so **Full access** then sees the 21 of **Read only, with
+logs** and `database_connection` and `cloud_sizes` (23). `delete_resource` and `delete_node_pool` need `--allow-delete`
+(40 in all). See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
 
 **I changed the token's role and the agent did not notice.** A session keeps the tools it started with. Restart the server,
 or reconnect the agent. Over HTTP, wait 5 minutes or restart the server too.

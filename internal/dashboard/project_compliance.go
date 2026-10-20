@@ -182,7 +182,7 @@ func (s *Server) handleAPIProjectCompliance(w http.ResponseWriter, r *http.Reque
 	}
 	slices.SortFunc(report, func(a, b complianceDatabase) int { return strings.Compare(a.Name, b.Name) })
 	writeJSON(w, http.StatusOK, map[string]any{
-		"requiredTags": required, "region": region, kindDatabases: report,
+		"requiredTags": required, formRegion: region, kindDatabases: report,
 		"openNodes": unreservedNodes(nodes, region, required),
 	})
 }

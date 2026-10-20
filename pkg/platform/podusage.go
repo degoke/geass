@@ -140,3 +140,14 @@ func (x *PodUsageIndex) Usage() PodUsage {
 	}
 	return usage
 }
+
+// UnplacedPods returns the pods that have no node yet. The pods are the cache's own and are not to be changed.
+func (x *PodUsageIndex) UnplacedPods() []*corev1.Pod {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	pods := make([]*corev1.Pod, 0, len(x.unplaced))
+	for _, pod := range x.unplaced {
+		pods = append(pods, pod)
+	}
+	return pods
+}

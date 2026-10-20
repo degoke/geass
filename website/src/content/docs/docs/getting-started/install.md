@@ -124,13 +124,16 @@ The installer runs these steps in order. The names are the ones it prints.
 | 10 | `store worker join token` | Reads K3s's node token and saves it as the Secret `geass-token` in `geass-system`, where the operator reads it when it joins workers. The token goes in on standard input, so the installer log does not contain it |
 | 11 | `apply GeassCluster CR` | Waits up to 60 seconds for the `geassclusters` definition, then applies the cluster object shown below, with this server's own address as `serverURL`. Without `GEASS_ACME_EMAIL` it prints the warning described under [HTTPS certificates](#https-certificates) |
 
-The `/etc/rancher/k3s/config.yaml` that step 5 writes (mode 0600) sets the kubelet's container log rotation to 50Mi per file and 5 files, so the dashboard has log history to read:
+The `/etc/rancher/k3s/config.yaml` that step 5 writes (mode 0600) sets the kubelet's container log rotation to 50Mi per file and 5 files, so the dashboard has log history to read, and turns on K3s secrets encryption, so every Secret in the cluster is encrypted in K3s's datastore and in its etcd snapshots (see [Security](/docs/operations/security/#secrets)):
 
 ```yaml title="/etc/rancher/k3s/config.yaml"
 kubelet-arg:
 - container-log-max-size=50Mi
 - container-log-max-files=5
+secrets-encryption: true
 ```
+
+The installer's update mode never rewrites `/etc/rancher/k3s/config.yaml`, so it does not switch encryption on in a cluster that was built without it. To turn it on in such a cluster, follow K3s's own documentation on secrets encryption.
 
 The cluster object from step 11:
 

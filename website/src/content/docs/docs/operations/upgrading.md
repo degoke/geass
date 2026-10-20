@@ -137,6 +137,8 @@ For each worker that runs an older K3s than the target, one at a time and in nam
 4. Waits until the node is ready and reports the new version.
 5. Uncordons the node, if the upgrade is what cordoned it.
 
+Machines that Geass created at a cloud, including the nodes of a [pool](/docs/guides/node-pools/), are upgraded the same way, with the SSH key Geass made for them. An autoscaling pool removes no node while the upgrade is going on, and a machine made after it installs the control plane's K3s version.
+
 The node is **cordoned, not drained**. The agent restarts without stopping the containers it runs, so services keep serving through it, and a drain would move a database's pod away from its local data. A node that you had cordoned yourself stays cordoned.
 
 It stops at the first node that does not come back ready on the new version within 15 minutes, leaves that node cordoned, and never starts the next one. Watch it:
@@ -222,6 +224,11 @@ sudo systemctl start k3s
 ```
 
 `--cluster-reset` ends with `restart without --cluster-reset flag now`: that is the normal end. Starting K3s again brings the cluster back as it was when the snapshot was taken, with the old operator and the old definitions. Everything that changed in the cluster since is lost: services and projects that were created, secrets, API tokens that were issued.
+
+The snapshot holds the Secrets encrypted, because the installer turns on K3s secrets encryption. On the machine the snapshot came from, the server token and the setting are already there. To restore on another machine you need two things the snapshot does not carry:
+
+- **The cluster's server token**, the one in `/var/lib/rancher/k3s/server/token`. K3s encrypts the snapshot's bootstrap data with it, and a different token stops the restore with `bootstrap data already found and encrypted with different token`. Keep a copy outside the cluster: the one in the Secret `geass-token` is inside the data you would be restoring.
+- **`secrets-encryption: true` in that machine's `/etc/rancher/k3s/config.yaml`**, which is what the installer writes. Without it the restore finishes, but reading an encrypted Secret fails with `identity transformer tried to read encrypted data`.
 
 The restore brings the cluster's data back and leaves K3s on the version it runs now, which is what you want when only Geass needs to go back: the older operator runs on the newer K3s, within the range its add-ons were tested on.
 

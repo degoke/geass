@@ -1,11 +1,47 @@
 ---
 title: "Add servers"
-description: "Join more servers over SSH, tag them with a region, site and tags, watch them come up and remove them. Covers credentials, node states and failures."
+description: "Add a server you have over SSH, or have Geass create one at a cloud. Tag it with a region, site and tags, watch it come up and remove it."
 ---
 
-A new install is a single server that runs everything. You add capacity by joining more servers as workers. (To add servers to the control plane itself, so that the cluster survives losing one, see [High availability](/docs/operations/high-availability/#run-three-control-plane-servers).) Geass connects to each new server over SSH, installs the K3s agent on it and waits for it to appear in the cluster. Neither the dashboard nor the `geass` command line can join a server today: you describe the worker in a `GeassNode` object with `kubectl` on the control plane, then watch it in the dashboard under **Usage** in the left rail.
+A new install is a single server that runs everything. You add capacity by adding more servers as workers. (To add servers to the control plane itself, so that the cluster survives losing one, see [High availability](/docs/operations/high-availability/#run-three-control-plane-servers).) Geass connects to each new server over SSH, installs the K3s agent on it and waits for it to appear in the cluster. The server can be one you already have, or a machine that Geass creates for you at a cloud. You add it from the dashboard (**Add server** on the **Usage** page in the left rail), from the `geass` command line (`geass servers add`), or by describing the worker in a `GeassNode` object with `kubectl` on the control plane.
+
+## Ways to add a server
+
+| You want | Do this | Needs |
+| --- | --- | --- |
+| A server you already have | **Add server** on the **Usage** page, then **A server I have**. Or `geass servers add NAME --address ... --ssh-user ... --ssh-key-file ...`. Or a `GeassNode` with `kubectl`, [below](#join-a-worker) | An admin, and SSH to the server |
+| A machine at a cloud, made for you | **Add server**, then **A cloud machine**. Or `geass servers add --connection NAME --size SIZE` | An admin, and a [connection for machines](/docs/guides/connectors/clouds/). It spends money until you remove the server |
+| Machines that come and go with the load | A [pool](/docs/guides/node-pools/) | An admin, and a connection, or servers of your own listed in the pool |
+
+### Add a server from the dashboard or the command line
+
+In the dashboard, open **Usage**, find **Nodes** and choose **Add server**. Choose **A server I have** or **A cloud machine**, fill in the form and choose **Add server**. Nothing is created until you do.
+
+For a server you have, give the **Address** Geass reaches it on over SSH, the **SSH user** (`root`, or a user with passwordless `sudo`), the **SSH port** if it is not 22, and the **SSH private key**, a key without a passphrase. Geass stores the key in a Secret named `<name>-ssh` in `geass-system` and never shows it again. Paste the server's host keys too if you can: they pin the machine, as [below](#pin-the-servers-host-key-recommended). The name is required and becomes the node's name.
+
+```bash
+geass servers add edge-1 --address 198.51.100.7 --ssh-user root \
+  --ssh-key-file ~/.ssh/geass_ed25519 --known-hosts-file ./known_hosts --tag edge
+```
+
+For a cloud machine, choose the **Cloud connection**, the **Region** and the **Machine size** (the form lists the cloud's sizes with their price for an hour where the cloud gives one), and optionally an image and the cloud's own settings. A name is made up for you when you leave it empty.
+
+```bash
+geass sizes --connection hetzner --region fsn1 --min-vcpus 2 --min-memory 4 --limit 10
+geass servers add --connection hetzner --region fsn1 --size cx23
+```
+
+:::caution
+A cloud machine is **billed to your account at the cloud until you remove the server**. Creating machines is experimental: see [Cloud connections for machines](/docs/guides/connectors/clouds/#how-far-to-trust-it).
+:::
+
+Both forms take a placement (region, site and tags) and **Data on this server**: `Allow`, the default for a single server, lets databases, buckets and volumes run on it, and `None` keeps them off it, so that only services run there. A server with `None` carries the taint `geass.dev/ephemeral`, which services tolerate only while a server or a [pool](/docs/guides/node-pools/#what-runs-on-a-pools-nodes) whose nodes hold no data exists. The first such server makes every service roll once to add the toleration, as the first pool does. Watch the server come up with `geass nodes list`, or in the **Nodes** table.
+
+Remove a server added this way with **Remove** in the **Nodes** table, or `geass servers remove NAME`: see [Remove a node](#remove-a-node). The control plane and the nodes of a pool cannot be removed there: change the pool instead.
 
 ## Before you start
+
+These are for a server you already have. A cloud machine needs an admin, a connection, and the network paths that [How a machine joins](/docs/guides/node-pools/#how-a-machine-joins) lists, some of which Geass opens for it.
 
 - The cluster is `Ready`: `sudo k3s kubectl -n geass-system get geasscluster`.
 - A new Linux server that meets the [requirements](/docs/getting-started/requirements/), reachable by SSH from the control plane.
@@ -92,7 +128,7 @@ With `known_hosts` present, a machine that presents any other key is refused bef
 
 ## Join a worker
 
-Save this as `worker-1.yaml`, then apply it:
+You can describe the worker yourself, with `kubectl`, instead of using the dashboard or `geass servers add`. Save this as `worker-1.yaml`, then apply it:
 
 ```yaml title="worker-1.yaml"
 apiVersion: geass.geass.dev/v1alpha1
@@ -125,7 +161,7 @@ sudo k3s kubectl -n geass-system get geassnode worker-1 \
 sudo k3s kubectl get nodes
 ```
 
-`get geassnode` lists only names and ages, so read `status.phase` and `status.message` as above. In the dashboard, the node appears in the **Nodes** table on the **Usage** page once Kubernetes registers it, and the left rail's footer shows one bar per node (`2 NODES`, then `all healthy` or the node with the worst problem). The same table is reachable as **Settings → Usage**. `geass nodes list` prints the nodes with their status, region, site, tags, CPU and memory, for a token that may read them.
+`get geassnode` lists only names and ages, so read `status.phase` and `status.message` as above. In the dashboard, the node appears in the **Nodes** table on the **Usage** page once Kubernetes registers it, and the left rail's footer shows one bar per node (`2 NODES`, then `all healthy` or the node with the worst problem). The same table is reachable as **Settings → Usage**. `geass nodes list` prints the nodes with their status, region, site, tags, CPU, memory, the pool each belongs to and whether it is ephemeral, for a token that may read them.
 
 ### States
 
@@ -135,6 +171,7 @@ sudo k3s kubectl get nodes
 | `Joining` | Geass is running the provisioning steps over SSH (the message is `installing k3s agent`), then waiting, checking every 15 to 20 seconds, for a Kubernetes node with the same name to report `Ready` |
 | `Ready` | The node is `Ready`. Geass looks at it again every 10 minutes, and at once when the Kubernetes node goes `NotReady` or comes back, or when its region, site, tag labels or taints change. It no longer records `lastHeartbeatTime`: the kubelet keeps its own heartbeat on the Kubernetes node (`sudo k3s kubectl get node worker-1`, and the node lease) |
 | `Failed` | A step failed. `status.message` has the step, the error, and the command's standard output and error |
+| `Creating` | A server whose machine Geass creates only. The machine is being made, or is running and waiting for SSH. See [Node pools](/docs/guides/node-pools/#pool-states) for the messages. It is followed by `Joining` and `Ready` |
 
 Geass sets no timeout on `Joining`. If provisioning finished but the node never becomes `Ready`, the object stays there until you fix the cause. A `Ready` worker is provisioned again from scratch when its Kubernetes node disappears, or when the node stays `NotReady` for more than five minutes (the message becomes `node NotReady, re-provisioning`). Geass asks to be woken when the five minutes are up, so it does not wait for the next 10-minute look. That needs the SSH key and access to still work.
 
@@ -182,21 +219,23 @@ Geass applies the declared placement to the node as labels and keeps it there: `
 
 ## Remove a node
 
-Delete the object:
+Remove a server you added from the dashboard or `geass servers add` with **Remove** in the **Nodes** table (you type its name to confirm), or `geass servers remove NAME`. Both delete its `GeassNode`. You can delete the object yourself:
 
 ```bash
 sudo k3s kubectl -n geass-system delete geassnode worker-1
 ```
 
-Geass then:
+For a server you have, Geass then:
 
 1. Connects over SSH, on `spec.sshPort`, and runs `/usr/local/bin/k3s-agent-uninstall.sh`. It checks the host key against `known_hosts` when the Secret has one. A failure is logged and does not stop the removal.
 2. Deletes the node from the cluster, so it does not stay listed as `NotReady`.
 3. Releases the object.
 
 :::caution
-Removal does not cordon or drain the node. Removing K3s stops its pods, and Kubernetes starts replacements elsewhere once the node object is gone. Data does not move with them. A volume whose only copy is on that node's disk, such as a local-path volume, goes when K3s is uninstalled. A replicated Longhorn volume keeps its replicas on other nodes. Move data off a node before you remove it.
+Removal of a server you have does not cordon or drain the node. Removing K3s stops its pods, and Kubernetes starts replacements elsewhere once the node object is gone. Data does not move with them. A volume whose only copy is on that node's disk, such as a local-path volume, goes when K3s is uninstalled. A replicated Longhorn volume keeps its replicas on other nodes. Move data off a node before you remove it.
 :::
+
+A machine that Geass created is treated differently, because it is deleted. Geass cordons the node and asks its pods to leave, through the eviction API so that disruption budgets are honoured, for up to five minutes. It then deletes the Kubernetes node and the machine at the cloud, and releases the object only once the cloud no longer lists the machine as alive. Data on the machine's disk goes with it. If the connection that made the machine has gone for good, annotate the node `geass.dev/abandon-instance=true`: Geass then releases it and leaves the machine at the cloud for you to delete.
 
 If the server was unreachable, the K3s agent keeps running there and can register again. Run `/usr/local/bin/k3s-agent-uninstall.sh` on the machine yourself.
 
@@ -235,6 +274,8 @@ The credentials involved:
 | `spec.clusterRef` | The `GeassCluster` to join (`name`, optional `namespace`) | required |
 | `spec.placement` | `region`, `zone` and `tags` (each with `name`, `reserved` and `compliance`) | none |
 | `spec.default` | Marks a control plane node that already exists and must not be provisioned | `false` |
+| `spec.cloud` | Makes Geass create the node's machine at a cloud, with `connectionRef`, `region`, `size`, `image`, `spot`, `addressType` and `settings`. Then leave out `eip`, `sshUser` and `sshKeySecretRef`: Geass logs in with a key of its own. See [GeassNode](/docs/reference/resources/geass-node/#a-machine-geass-creates) | none |
+| `spec.storage` | `None` or `Allow`: whether the node may hold data. For a node of a pool it comes from the pool | `Allow` for any other node |
 
 ## Troubleshooting
 

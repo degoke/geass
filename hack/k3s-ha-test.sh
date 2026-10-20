@@ -6,11 +6,15 @@
 #   - the API keeps answering from the servers that are left, and the cluster's data is still there;
 #   - the operator starts on another server, because its image is on all of them, and takes over;
 #   - the lost server comes back and rejoins;
+#   - a Secret written through the first server, which made the encryption key, is read by the servers that joined, by
+#     the servers that are left when the first is lost, and by a server that was restarted;
 #   - with two of three servers gone the cluster stops, which is what a majority means.
 #
-# It does not run the installer (a container has no systemd, and the installer is for a machine), so the second and
-# third servers are started with the configuration file the installer writes for them: `server` and `token`, and the
-# first server's other settings. What the installer does that this does not is covered by its own unit tests.
+# It does not run the installer (a container has no systemd, and the installer is for a machine), so the servers are
+# started with the configuration the installer writes: hack/k3sconfig prints the first server's file, and the second and
+# third servers get it with `server` and `token` added, as the installer's join does. That includes secrets encryption, so
+# the checks also cover what it adds to a cluster of three: the key reaching the servers that joined, and Secrets that stay
+# readable when the server that made it is lost. What else the installer does is covered by its own unit tests.
 #
 #   hack/k3s-ha-test.sh
 #
@@ -48,6 +52,13 @@ check() { # check "what" command...
 }
 name() { echo "${PREFIX}-$1"; }
 kc() { local n="$1"; shift; docker exec "$(name "$n")" kubectl "$@"; }
+
+# What K3s says about secrets encryption on a server. The output is read into a variable first: `grep -q` can end a pipe
+# early, which `pipefail` would then count as a failure.
+encryption_status() { docker exec "$(name "$1")" k3s secrets-encrypt status 2>&1; }
+encryption_on() { local out; out="$(encryption_status "$1")" || return 1; grep -q 'Encryption Status: Enabled' <<<"$out"; }
+encryption_agrees() { local out; out="$(encryption_status "$1")" || return 1; grep -q 'All hashes match' <<<"$out"; }
+secret_value() { kc "$1" get secret survives-secret -n default -o jsonpath='{.data.value}' | base64 -d; }
 
 cleanup() {
   local status=$?
@@ -128,26 +139,22 @@ mkdir -p "$WORK/img"
 printf 'FROM gcr.io/distroless/static:nonroot\nCOPY manager /manager\nUSER 65532:65532\nENTRYPOINT ["/manager"]\n' > "$WORK/img/Dockerfile"
 docker build -q -t "$OPERATOR_IMAGE" "$WORK/img" >/dev/null
 
-log "Starting the first server (K3s with embedded etcd, as the installer starts it)"
+log "Starting the first server (K3s with embedded etcd and the configuration file the installer writes)"
+SERVER_SETTINGS="$WORK/server-settings.yaml"
+(cd "$ROOT" && go run ./hack/k3sconfig) > "$SERVER_SETTINGS"
 docker network create --subnet "$SUBNET" "$NETWORK" >/dev/null
-start_server 1 -- server --cluster-init --tls-san "$(name 1)" --write-kubeconfig-mode 644
+start_server 1 -v "$SERVER_SETTINGS:/etc/rancher/k3s/config.yaml:ro" -- server --cluster-init --tls-san "$(name 1)" --write-kubeconfig-mode 644
 wait_for "the first server" 180 nodes_ready 1 1
 TOKEN="$(docker exec "$(name 1)" cat /var/lib/rancher/k3s/server/token)"
 
-log "Joining two more servers with the file the installer writes (server, token and the first server's settings)"
+log "Joining two more servers with the file the installer writes (the first server's settings, server and token)"
 for n in 2 3; do
   agent_args=()
   if [ "$n" = 3 ] && [ "$HA_THIRD_ETCD_ONLY" = 1 ]; then
     agent_args=(--disable-agent)
     echo "  server 3 runs without a kubelet: this host allows $INOTIFY inotify instances per user, too few for a third kubelet" >&2
   fi
-  cat > "$WORK/config-$n.yaml" <<EOF
-server: https://$(name 1):6443
-token: ${TOKEN}
-kubelet-arg:
-  - container-log-max-size=50Mi
-  - container-log-max-files=3
-EOF
+  { cat "$SERVER_SETTINGS"; printf 'server: https://%s:6443\ntoken: %s\n' "$(name 1)" "$TOKEN"; } > "$WORK/config-$n.yaml"
   chmod 600 "$WORK/config-$n.yaml"
   start_server "$n" -v "$WORK/config-$n.yaml:/etc/rancher/k3s/config.yaml:ro" -- server --write-kubeconfig-mode 644 "${agent_args[@]}"
   if [ "${#agent_args[@]}" -gt 0 ]; then
@@ -181,6 +188,13 @@ echo "  the operator runs on ${FIRST_NODE}" >&2
 
 # Data that has to survive: an object only the cluster's database holds.
 kc 1 create configmap survives -n default --from-literal=before=loss >/dev/null
+# A Secret written through server 1, which made the encryption key, for the servers that joined to read.
+kc 1 create secret generic survives-secret -n default --from-literal=value=encrypted-before-loss >/dev/null
+check "secrets encryption is on, on the first server" encryption_on 1
+check "and the servers agree on it" encryption_agrees 1
+for n in 2 3; do
+  check "server $n reads a Secret that server 1 wrote" test "$(secret_value "$n")" = encrypted-before-loss
+done
 
 log "A server that is away for a moment rejoins and catches up: server 3 is stopped, the cluster is written to, and it comes back"
 docker stop -t 0 "$(name 3)" >/dev/null
@@ -190,6 +204,7 @@ start_again 3
 check "server 3 rejoins and answers the API" wait_for "server 3" 180 docker exec "$(name 3)" kubectl get --raw /readyz
 check "it has what was written while it was away" \
   wait_for "the write that was made without it" 120 docker exec "$(name 3)" kubectl get configmap while-away -n default
+check "and it still reads the Secret, after the restart" test "$(secret_value 3)" = encrypted-before-loss
 
 log "Stopping ${FIRST_NODE}, the server the operator runs on"
 LOST="${FIRST_NODE#"${PREFIX}-"}"
@@ -199,6 +214,7 @@ STOPPED_AT=$SECONDS
 docker stop -t 0 "$(name "$LOST")" >/dev/null
 check "the API answers from a server that is left" wait_for "the API" 60 kc "$VIA" get nodes
 check "the cluster's data is still there" test "$(kc "$VIA" get configmap survives -n default -o jsonpath='{.data.before}')" = "loss"
+check "a Secret written before the loss is still readable from a server that is left" test "$(secret_value "$VIA")" = encrypted-before-loss
 check "a write is accepted by the two servers that are left" kc "$VIA" create configmap after-loss -n default --from-literal=during=outage
 echo "  the API answered ${SECONDS}s into the outage window (started at ${STOPPED_AT}s)" >&2
 

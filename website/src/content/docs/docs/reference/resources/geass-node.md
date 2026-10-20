@@ -1,13 +1,13 @@
 ---
 title: "GeassNode"
-description: "Reference for GeassNode: a server that joins your cluster as a worker over SSH, plus a node's region, zone and tags. Create it with kubectl."
+description: "Reference for GeassNode: a worker joined over SSH or a machine Geass creates at a cloud, plus a node's region, zone and tags."
 sidebar:
   order: 8
 ---
 
-A `GeassNode` describes one server in the cluster. For a worker, it is how you ask Geass to join an existing server: Geass connects over SSH, installs the K3s agent and waits for the node to become `Ready`. For any node it can also carry the node's placement: its region, zone and tags, which Geass writes onto the Kubernetes node as labels and taints. You create a `GeassNode` with `kubectl`. The dashboard has no form for adding a server. It shows nodes and edits their placement.
+A `GeassNode` describes one server in the cluster. For a worker, it is how you ask Geass to join a server: Geass connects over SSH, installs the K3s agent and waits for the node to become `Ready`. The server is one that already exists, or, when `spec.cloud` is set, a machine that Geass creates first at a cloud. For any node it can also carry the node's placement: its region, zone and tags, which Geass writes onto the Kubernetes node as labels and taints. You can create a `GeassNode` with `kubectl`, or from **Add server** on the **Usage** page, or with `geass servers add`. A pool creates its nodes itself: see [GeassNodePool](/docs/reference/resources/geass-node-pool/).
 
-A `GeassNode` never creates a server. It only joins one that already exists and that Geass can reach over SSH. Geass has no provider integration that creates virtual machines.
+A `GeassNode` without `spec.cloud` never creates a server. It only joins one that already exists and that Geass can reach over SSH. With `spec.cloud` (experimental) Geass creates the machine at a cloud through a [connection for machines](/docs/guides/connectors/clouds/), and deletes it when the node is removed.
 
 For the step-by-step procedure, see [Add servers](/docs/getting-started/add-servers/). For how placement is used, see [Scaling and placement](/docs/guides/scaling-and-placement/).
 
@@ -113,6 +113,28 @@ spec:
 
 A compliance tag is always reserved. Projects that require the tag run only on nodes that carry it, and nothing else runs on those nodes. See [Compliance node tags](/docs/guides/compliance-tags/).
 
+### A machine Geass creates
+
+```yaml title="cloud-server.yaml"
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassNode
+metadata:
+  name: edge-1
+  namespace: geass-system
+spec:
+  role: Worker
+  clusterRef:
+    name: default
+    namespace: geass-system
+  cloud:
+    connectionRef: hetzner
+    region: fsn1
+    size: cx23
+  storage: Allow
+```
+
+Leave out `eip`, `sshUser` and `sshKeySecretRef`: Geass logs in with a key of its own, and the operator refuses a node that sets them (`a node whose machine Geass creates takes no eip or sshKeySecretRef`). The machine costs money at the cloud until the node is removed. The node's name is at most 55 characters. A node that belongs to a pool gets all of this from the pool.
+
 ### The control plane, so you can set its placement
 
 ```yaml title="control-plane.yaml"
@@ -139,6 +161,16 @@ The name must match the control plane's Kubernetes node name (its hostname). The
 | --- | --- | --- | --- | --- |
 | `spec.role` | string | Required | Enum `ControlPlane`, `Worker` | `Worker` is joined over SSH. `ControlPlane` is never provisioned: Geass only waits for a Kubernetes node of that name to become `Ready`. |
 | `spec.default` | boolean | `false` | None | With `role: ControlPlane`, marks an existing control plane node that Geass must not provision. The object then has no finalizer and no cluster check. It has no effect on a worker. |
+| `spec.pool` | string | Optional | None | The [GeassNodePool](/docs/reference/resources/geass-node-pool/) the node belongs to. A node of a pool is labelled with it, and the pool is what adds and removes it. |
+| `spec.storage` | string | Optional. `Allow` when left out | Enum `None`, `Allow` | Whether the node may hold data. `None` labels the node `geass.dev/storage=none` and taints it `geass.dev/ephemeral=true:NoSchedule`, so that databases, buckets and volumes stay off it. For a node of a pool it comes from the pool. |
+| `spec.cloud` | object | Optional | None | Makes Geass create the node's machine at a cloud. Then leave out `eip`, `sshUser` and `sshKeySecretRef`. |
+| `spec.cloud.connectionRef` | string | Required with `cloud` | Not empty | The [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/) to create the machine with. It must have the purpose `Compute` and no `spec.project`. |
+| `spec.cloud.region` | string | Optional | None | The cloud's own place: a location, zone or region. The connection and the region cannot be changed once the node exists, because the machine is deleted through the connection that made it; make a new node instead. `spec.pool` cannot be changed either. |
+| `spec.cloud.size` | string | Required with `cloud` | Not empty | The cloud's name for a machine size. |
+| `spec.cloud.image` | string | The cloud's Ubuntu 24.04 | None | The operating system image. |
+| `spec.cloud.spot` | boolean | `false` | None | Ask for a cheaper machine that the cloud may take back. |
+| `spec.cloud.addressType` | string | `Public` | Enum `Public`, `Private` | Which address of the machine Geass reaches it on. |
+| `spec.cloud.settings` | map of strings | Optional | None | Values specific to the cloud. |
 | `spec.eip` | string | Optional. Required in practice for a worker. | None | The address Geass connects to over SSH: any address or host name the control plane can reach. In a multi-site cluster it is also the address the node advertises. |
 | `spec.sshPort` | integer | CRD default `22` | None | The SSH port used to provision the node and to remove it. |
 | `spec.sshUser` | string | Optional. Required in practice for a worker. | None | The SSH user: `root`, or a user with passwordless `sudo`. An empty user cannot sign in. |
@@ -177,6 +209,7 @@ Running workloads are not moved. A workload that restarts only returns to a node
 | `status.nodeName` | string | The Kubernetes node's name, set when the node is `Ready`. |
 | `status.lastHeartbeatTime` | date-time | No longer updated. A node created now has none, and an older node keeps the last value it had. Kubelet keeps a heartbeat on the Kubernetes node, in its `Ready` condition and its lease. Read the node's own conditions to see when it last reported. |
 | `status.conditions` | list | Never written. It stays empty. |
+| `status.cloud` | object | The machine Geass created for the node, when `spec.cloud` is set. See below. |
 
 The phases Geass sets:
 
@@ -186,8 +219,31 @@ The phases Geass sets:
 | `Joining` | For a worker, the message is `installing k3s agent` while the SSH steps run, then Geass waits for a Kubernetes node of the same name to report `Ready`. For a control plane entry, the message is `waiting for control plane node registration`. |
 | `Ready` | The Kubernetes node is `Ready`. Geass looks at it again whenever the Kubernetes node's health or placement changes, and every 10 minutes. |
 | `Failed` | A step failed. `status.message` says which. Add the `geass.dev/retry` annotation to try again (see [Editing by hand](#editing-by-hand)), or delete the object and create it again. |
+| `Creating` | Only for a node whose machine Geass creates. The machine is being made, or is running and waiting for SSH or for the control plane's firewall to let it in. It is followed by `Joining` (the message is `waiting for the node to register`) and `Ready`. |
 
-The type also defines the phases `Creating`, `Deleting`, `Deleted`, `Error` and `Unknown`. No code sets them.
+The type also defines the phases `Deleting`, `Deleted`, `Error` and `Unknown`. No code sets them. A node that is being removed keeps its phase and has a deletion time.
+
+For a cloud node, `Creating` gives up after 10 minutes without a running machine that has an address, and after 18 minutes without SSH, and `Joining` after 15 minutes without a ready node. Each failure deletes the machine at once, and the node stays `Failed` with its reason. A node of a pool is cleared away 30 minutes after it was made, and the pool makes a new one.
+
+### The machine
+
+`status.cloud` holds what Geass knows about a node's machine.
+
+| Field | Meaning |
+| --- | --- |
+| `status.cloud.instanceName` | The name the machine is created with, written before the cloud is called, so that a machine made just before a crash is found again by its name and not made twice. |
+| `status.cloud.instanceID` | The cloud's ID for the machine. The machine is deleted by this ID and no other. |
+| `status.cloud.attempt` | The number of machines made for the node before this one. It is part of the machine's name after the first, so that a machine still being removed never shares a name with its replacement. |
+| `status.cloud.size`, `status.cloud.region` | What the machine was created with, which differs from the spec when a pool used a fallback. |
+| `status.cloud.problem` | `Capacity` (the cloud has no room) or `Quota` (the account is at a limit) while the machine cannot be made. The node's pool reads it to try another size or place. |
+| `status.cloud.state` | The machine's state as the cloud last reported it. |
+| `status.cloud.publicIP`, `status.cloud.privateIP` | The machine's addresses. |
+| `status.cloud.createdAt` | When the cloud accepted the machine. |
+| `status.cloud.controlPlaneAccess` | The address opened for the machine in the control plane's firewall (`spec.network.controlPlaneFirewall` of the cluster), closed again when the machine is removed. |
+| `status.cloud.controlPlaneAccessFirewall` | The firewall that address was opened on, kept with it. The rule is closed on this firewall, even if the cluster's `controlPlaneFirewall` was changed or removed meanwhile. |
+| `status.cloud.joinAttempts`, `status.cloud.joinStartedAt` | How many times Geass set about installing K3s, and when it began. A node that is not ready 15 minutes after it began is given up on. |
+
+What the node does with a machine that is lost: if the cloud no longer has it (a spot machine taken back, or one someone deleted), the node removes the Kubernetes node and makes a new machine for the same node. A node with `storage: None` is also replaced when its machine is stopped, or when the node has been `NotReady` for 30 minutes while the machine runs, unless most of its pool is `NotReady` too (then the cause is the network or the control plane), or K3s is being upgraded on it.
 
 The messages Geass writes when it sets `Failed`:
 
@@ -204,15 +260,26 @@ The messages Geass writes when it sets `Failed`:
 | `step check-cluster-reachable failed: ... cannot reach the cluster API at <url> from this node: <why>` | The worker cannot reach the control plane. `<why>` names the cause: a refused connection, a timeout, a host name that does not resolve, an address that is not a K3s API server, or a loopback `spec.serverURL`. See [Troubleshooting](#failed-at-check-cluster-reachable). |
 | `step <name> failed: <error>` followed by `stdout:` and `stderr:` | An SSH step failed. |
 | `step <name> cancelled: <error>` | The operator stopped while the step ran. |
+| `the node's name is longer than 55 characters, which a machine name cannot be` | A node with `spec.cloud` has too long a name. |
+| `a node whose machine Geass creates takes no eip or sshKeySecretRef: Geass logs in with a key of its own` | `spec.cloud` is set together with `eip` or `sshKeySecretRef`. |
+| `this operator has no cloud provider configured` | The operator was built without the cloud drivers. |
+| `the provider refused the credentials: ... (the connection's key, or a policy of the account or its organization, may not allow this)` | The cloud refused the request. The text after the colon is the cloud's own reason: a wrong key, a policy of the key that does not allow the call, or a policy of the account's organization (at Amazon, a service control policy, which the message names). |
+| `the provider no longer has the machine it accepted: ...`, `the machine was not running with an address 10m0s after it was requested (state ...)`, `the provider is removing the machine (state ...)` | The cloud refused the machine after it accepted the request, or never started it, or is deleting it. |
+| `K3s was installed but the node was not ready 15m0s later: see journalctl -u k3s-agent on the machine` | The node never registered. |
+| `opening the control plane's firewall for the machine: ...` | `spec.network.controlPlaneFirewall` of the cluster names a connection that cannot change that firewall. Only AWS and Hetzner can. |
+
+While a cloud node waits (for the cloud, for capacity, for SSH, for its connection to be fixed), its phase stays and `status.message` says what it waits for. See [Node pools](/docs/guides/node-pools/#pool-states).
 | `unsupported node role "<role>"` | `spec.role` is not one Geass knows. |
 
 ## What the dashboard writes
 
-The dashboard cannot create, delete or provision a `GeassNode`.
+The dashboard creates a `GeassNode` from **Add server**, and deletes one it created with **Remove**. It edits a node's placement.
 
 | Where | What it does |
 | --- | --- |
 | **Settings** > **Usage** > **Nodes** | Lists every Kubernetes node: **Node**, **Role**, **Region**, **Tags**, **CPU**, **Memory**, **Pressure** and **Status** (`Ready`, `Not ready` or `Unschedulable`). It shows nodes whether or not a `GeassNode` exists. |
+| **Add server** | Opens a form that creates a `GeassNode`: for **A server I have** with `eip`, `sshUser`, the port and a Secret `<name>-ssh` it makes from the key you paste, for **A cloud machine** with `spec.cloud`. Names are lowercase letters, numbers and hyphens, at most 55 characters. |
+| **Remove** on a server | Deletes the `GeassNode`, after you type its name. Only for a worker that is not part of a pool and not the control plane. |
 | **Edit** on a node | Opens a dialog with **Region**, **Site**, **Tags**, one **Reserve this node for `<tag>`** switch per tag and, under **Compliance tags**, one `<tag> is a compliance tag` switch per tag. **Save** writes the labels and taints straight onto the Kubernetes node. If a `GeassNode` has the same name, or its `status.nodeName` matches, the dialog also writes `spec.placement` on it, so the operator does not undo the edit. **Site** is `spec.placement.zone`. |
 
 The dialog refuses an invalid name (for example `Region may only contain lowercase letters, numbers and hyphens, and must start and end with a letter or number`), more than 16 tags (`A node can have at most 16 tags`), a reservation for a tag the node does not have (`<tag> cannot be reserved because the node does not have that tag`), and a compliance tag the node does not have (`<tag> cannot be a compliance tag because the node does not have that tag`). A compliance tag is saved as reserved too. A tag that a project requires is saved as a compliance tag whatever the dialog sends. If the node changed while you were editing, it says `The node changed while you were editing it. Reload and try again`. After a save it warns about projects whose region no longer has a node, projects that lose the last node carrying a tag they require, and workloads that were already running on a node that has become a compliance node.
@@ -230,7 +297,7 @@ Creating a `GeassNode` with `kubectl` is the supported way to add a worker.
   ```
 
   The controller sets `status.phase` back to `Pending` through the status subresource, clears `status.message`, and removes the annotation, then provisions the node again from the first step. Any value works. On a node that is not `Failed` there is nothing to retry, so the annotation is removed without any action, and a later failure is not retried unless you annotate again. Deleting the object and creating it again from the same manifest also works, and clears the status completely.
-- A `Ready` worker is provisioned again from scratch when its Kubernetes node disappears, or when the node has been `NotReady` for more than 5 minutes (the message becomes `node NotReady, re-provisioning`). That needs the SSH key and the access to still work.
+- A `Ready` worker is provisioned again from scratch when its Kubernetes node disappears, or when the node has been `NotReady` for more than 5 minutes (the message becomes `node NotReady, re-provisioning`). That needs the SSH key and the access to still work. A node with `spec.cloud` is handled differently: if its Kubernetes node disappears while its machine is there, K3s is installed on the machine again. A node whose machine is gone at the cloud gets a new machine, and so does a `storage: None` node whose machine is stopped, or that stays `NotReady` for 30 minutes while its machine runs.
 - Geass joins one worker at a time, because the SSH steps run inside the reconcile.
 
 ### SSH and host keys
@@ -248,6 +315,8 @@ kubectl -n geass-system create secret generic worker-ssh-key \
 
 When the Secret has `known_hosts`, every connection to the node (provisioning and removal) checks the key against it, and a machine that presents another key is refused before any command or the join token is sent. The port is part of the address, as in OpenSSH: use `ssh-keyscan -p <port>` for a node whose `spec.sshPort` is not 22. One Secret can hold the keys of several machines, one line each. Hashed host names (`ssh-keyscan -H`), `@cert-authority` and `@revoked` lines are refused with an error, not skipped.
 
+A machine that Geass creates needs none of this: Geass makes the SSH key and a host key for each machine itself (the Secrets `geass-nodepool-ssh` and `<node>-hostkey` in `geass-system`), puts the public key and the host key in the machine's cloud-init, and pins the machine's address to that host key before it sends anything. See [Security](/docs/operations/security/#machines-geass-creates).
+
 Geass does not record a key the first time it connects and compare it afterwards (trust on first use). A rebuilt machine has a new host key, so a recorded key would make Geass fail to re-provision it, and the first connection, which carries the token, would still be unchecked. After a rebuild, update `known_hosts` in the Secret. The Secret is read each time the node is provisioned or removed.
 
 ### Removing a node
@@ -259,8 +328,10 @@ Delete the `GeassNode`. For a worker Geass then:
 3. Releases the object.
 
 :::caution
-Removal does not cordon or drain the node. Uninstalling K3s stops its pods. Move data off the node before you remove it.
+Removal of a node without `spec.cloud` does not cordon or drain the node. Uninstalling K3s stops its pods. Move data off the node before you remove it.
 :::
+
+A node with `spec.cloud` is removed differently, because its machine is deleted. Geass cordons the node and evicts its pods, through the eviction API so that disruption budgets are honoured, for up to five minutes. It then deletes the Kubernetes node, deletes the machine by its ID (or, if the ID was never written down, finds the machine by its name and labels), waits until the cloud no longer lists the machine as alive, takes the machine's address out of the control plane's firewall, and releases the object. If the connection is gone, the node waits and says so: annotate it `geass.dev/abandon-instance=true` to release it without deleting the machine, and delete the machine at the cloud yourself.
 
 A `GeassNode` with `default: true` has no finalizer: deleting it removes only the object. A non-default `ControlPlane` entry also removes only the object (and, if it names an SSH key, runs the uninstall script, which does not exist on a server).
 
@@ -332,6 +403,8 @@ Use **Edit** on it under **Settings** > **Usage** > **Nodes**. That works withou
 ## Related
 
 - [Add servers](/docs/getting-started/add-servers/)
+- [GeassNodePool](/docs/reference/resources/geass-node-pool/)
+- [Cloud connections for machines](/docs/guides/connectors/clouds/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
 - [Multi-provider clusters](/docs/operations/multi-provider/)
 - [High availability](/docs/operations/high-availability/)

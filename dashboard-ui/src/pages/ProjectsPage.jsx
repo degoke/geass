@@ -19,10 +19,10 @@ function resourceTotal(resources) {
 }
 
 const ICONS = [
-  { key: "apps", icon: Box, color: "#7ce0a0" },
-  { key: "databases", icon: Database, color: "#a1a1a1" },
-  { key: "logical", icon: Database, color: "#f2f2f2" },
-  { key: "stores", icon: HardDrive, color: "#bdf1d1" },
+  { key: "apps", icon: Box, color: "var(--geass-signal)" },
+  { key: "databases", icon: Database, color: "var(--geass-text-secondary)" },
+  { key: "logical", icon: Database, color: "var(--geass-text)" },
+  { key: "stores", icon: HardDrive, color: "color-mix(in srgb, var(--geass-signal) 55%, var(--geass-text))" },
 ];
 
 export function ProjectsPage({ data }) {
@@ -73,7 +73,7 @@ export function ProjectsPage({ data }) {
             placeholder="Search projects..."
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            leftSection={<Search size={14} color="#a1a1a1" />}
+            leftSection={<Search size={14} color="var(--geass-text-secondary)" />}
             rightSection={<Kbd size="xs">⌘K</Kbd>}
             rightSectionWidth={42}
             aria-label="Search projects"
@@ -112,7 +112,7 @@ export function ProjectsPage({ data }) {
             <Link key={name} to={`/projects/${name}`} className="rw-project-card">
               <div className="rw-project-name">{project.spec?.displayName || name}</div>
               <div className="rw-project-dots">
-                {(icons.length ? icons : [{ key: "empty", icon: Box, color: "#8f8f8f" }]).map((entry) => {
+                {(icons.length ? icons : [{ key: "empty", icon: Box, color: "var(--geass-text-muted)" }]).map((entry) => {
                   const Icon = entry.icon;
                   return (
                     <span key={entry.key} className="rw-mini">

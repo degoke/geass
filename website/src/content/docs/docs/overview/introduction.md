@@ -25,6 +25,7 @@ Geass is source-available under the Elastic License 2.0. It is not a hosted serv
 - **Resize database volumes** on Longhorn storage. See [Storage](/docs/guides/storage/).
 - **Publish on your domain.** Give a service a hostname, or connect Cloudflare and let Geass assign one, publish it through a Cloudflare Tunnel and create its DNS record. Certificates for HTTPS come from Let's Encrypt. See [Domains and TLS](/docs/guides/domains-and-tls/).
 - **Scale and place.** Set replicas and CPU autoscaling, and tag servers with a region, a site and tags to decide where workloads run. See [Scaling and placement](/docs/guides/scaling-and-placement/).
+- **Add servers, or let Geass add them.** Join a server you have over SSH, or connect a cloud and have Geass create machines there: one at a time, or in a [pool](/docs/guides/node-pools/) that adds nodes when pods cannot start and removes idle ones. This is experimental. See [Add servers](/docs/getting-started/add-servers/) and [Cloud connections for machines](/docs/guides/connectors/clouds/).
 - **Sleep when idle.** Stop a service after it has had no requests for a time you choose, and start it again on the next request, so a small cluster can hold many services that are used now and then. It is opt-in: it needs the serverless add-on, which Geass installs only when you turn it on for the cluster. See [Sleep when idle](/docs/guides/scale-to-zero/).
 - **Keep a project on chosen servers.** Mark a node tag as a compliance tag and require it on a project: everything the project runs stays on nodes with the tag, and those nodes take no other project's work. See [Compliance node tags](/docs/guides/compliance-tags/).
 - **Watch what runs.** Metrics, live logs with history, a terminal inside a service and a query box for databases, and charts of the operator's own health on the **Usage** page. See [Observability](/docs/guides/observability/) and [Usage and capacity](/docs/guides/usage-and-capacity/).
@@ -42,8 +43,8 @@ Geass is source-available under the Elastic License 2.0. It is not a hosted serv
 | --- | --- |
 | The servers, their operating system and security updates | Installs K3s, the operator and the dashboard |
 | The network: firewall, ports 80 and 443, DNS | Installs and wires the add-ons: certificate manager, metrics, storage, logs, and the serverless add-on when you turn it on |
-| Capacity: when to add a server | Creates and updates Kubernetes objects from what you deploy |
-| Your accounts at AWS, Cloudflare, GitHub or PlanetScale | Calls those accounts with the credentials you give it, only for the features you set up |
+| Capacity: when to add a server, unless you set up a node pool | Creates and updates Kubernetes objects from what you deploy. With a pool, creates and deletes machines at your cloud account within the maximum you set |
+| Your accounts at AWS, Cloudflare, GitHub, PlanetScale and the clouds that make machines | Calls those accounts with the credentials you give it, only for the features you set up |
 | Choosing when to move to a new release, and reading its notes | Updates in place when you run the installer: it keeps the cluster's data, takes an etcd snapshot first and refuses a downgrade. It also backs up databases to your S3 bucket when you turn backups on |
 
 ## When Geass fits, and when it does not
@@ -58,7 +59,7 @@ Be aware of these limits before you commit:
 - **HTTPS needs a step from you.** Geass creates the Let's Encrypt certificate issuer only when it has a contact email address: give the installer `GEASS_ACME_EMAIL`, or set the address on the cluster later. Without one, no HTTPS certificate is issued. Ports 80 and 443 must also be open. See [Install Geass](/docs/getting-started/install/#https-certificates) and [Domains and TLS](/docs/guides/domains-and-tls/).
 - **Two roles for people.** Dashboard users live in a Kubernetes Secret, or come from an identity provider you connect (invitations, organizations and teams stay there), and are either admins or viewers. API tokens add a third, read-only role that can also read logs. See [Sign in to the dashboard](/docs/getting-started/sign-in/) and [Users and API tokens](/docs/guides/users-and-tokens/).
 - **Servers at different providers are experimental.** See [Multi-provider clusters](/docs/operations/multi-provider/).
-- **Geass does not create servers.** It joins servers you already have, over SSH. It has no connector for creating machines at any provider, and no Google Cloud or Azure integration.
+- **Creating servers is experimental.** Geass can create machines at 11 clouds and through a webhook, alone or in an autoscaling pool, but only Amazon EC2 has run against a live account; the other drivers were written from the provider's documentation and tested against a simulation. Machines it creates cost money at your cloud until they are removed. You can still just bring servers you already have, which Geass joins over SSH. See [Cloud connections for machines](/docs/guides/connectors/clouds/#how-far-to-trust-it).
 - **It needs the internet.** The installer and the add-ons download from public hosts. There is no offline install.
 
 ## How it compares to a managed cloud

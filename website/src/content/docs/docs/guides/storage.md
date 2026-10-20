@@ -190,6 +190,16 @@ A storage class only applies to volumes created after it. Without further work, 
 
 Longhorn builds a new copy by copying the whole volume to another node. After you add a node, expect extra disk and network load until the copies finish. Geass requests the rebuilds but does not wait for them or check that each new copy found room.
 
+## Nodes that must not hold data
+
+The nodes of a [node pool](/docs/guides/node-pools/) come and go, so by default a pool keeps data off them (`storage: None`). A server you add one at a time can be set the same way (**Data on this server**: `None`). Such a node carries the label `geass.dev/storage=none` and the taint `geass.dev/ephemeral=true:NoSchedule`, and the dashboard calls it **Ephemeral**. Three things keep volumes off it:
+
+- **Nothing that keeps data tolerates the taint.** Databases and the object storage server stay off these nodes. Only services tolerate it, and a service has no volume.
+- **They are not counted for the number of copies.** The copy count follows the schedulable nodes, and a node with this taint is not one of them.
+- **Longhorn is told not to put a replica there.** In a plain cluster the taint alone keeps Longhorn's manager off the node. Once any node is reserved for a tag, Longhorn is told to tolerate every taint, and would then use the node's disk, so Geass also switches off scheduling for that node in Longhorn (`spec.allowScheduling: false`, with the annotation `geass.dev/scheduling-disabled` to remember that Geass did it). It switches scheduling back on only for a node it switched off, and only when the node stops being ephemeral, never for one an administrator disabled.
+
+A pool with `storage: Allow` has ordinary workers that may hold volumes. The autoscaler never removes such a node while it holds a replica of a volume, or runs a pod that uses a volume claim, so a scale-down cannot leave a volume one copy short.
+
 ## Limits
 
 - The class is chosen once per database and cannot be changed. There is no migration between classes.
@@ -246,6 +256,7 @@ Each node holds a copy of every replicated volume. Free space on the node, add a
 - [Backups and restore](/docs/guides/backups-and-restore/)
 - [Object storage](/docs/guides/object-storage/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
+- [Node pools and autoscaling](/docs/guides/node-pools/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Requirements](/docs/getting-started/requirements/)
 - [High availability](/docs/operations/high-availability/)

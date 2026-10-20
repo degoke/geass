@@ -196,6 +196,9 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 	if err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
+	if placement.Ephemeral, err = ephemeralNodesInUse(ctx, r.Client); err != nil {
+		return r.setNotReady(ctx, &app, err.Error())
+	}
 	if ok, msg := workloadFitsPlacementUnlessCreated(ctx, r.Client, r.PodUsage, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}}, est, placement); !ok {
 		return r.setNotReady(ctx, &app, msg)
 	}
@@ -541,6 +544,9 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 	options := newWorkloadOptions(opts)
 	placement, err := platform.ResolvePlacement(ctx, r.Client, app.Spec.Project, app.Spec.RunOn.Tags)
 	if err != nil {
+		return err
+	}
+	if placement.Ephemeral, err = ephemeralNodesInUse(ctx, r.Client); err != nil {
 		return err
 	}
 	replicas := int32(1)
@@ -1319,6 +1325,11 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return requests
 		}), builder.WithPredicates(readyOrSpecChanged())).
+		// A service tolerates the taint of nodes that must not hold data only while such nodes exist, so that a cluster
+		// without them never restarts a service for it. The first pool or server of that kind, and the last one going,
+		// reach every service so that it is rolled to match.
+		Watches(&geassv1alpha1.GeassNodePool{}, handler.EnqueueRequestsFromMapFunc(r.allApps), builder.WithPredicates(poolCreatedOrDeleted())).
+		Watches(&geassv1alpha1.GeassNode{}, handler.EnqueueRequestsFromMapFunc(r.allApps), builder.WithPredicates(ephemeralNodeChanged())).
 		Named("geassapp").
 		Complete(r)
 }
@@ -1379,4 +1390,17 @@ func (r *GeassAppReconciler) everyNodeHasASite(ctx context.Context) (bool, error
 		usable++
 	}
 	return usable > 0, nil
+}
+
+// allApps asks for every service to be reconciled, whatever object changed.
+func (r *GeassAppReconciler) allApps(ctx context.Context, _ client.Object) []ctrl.Request {
+	var apps geassv1alpha1.GeassAppList
+	if err := r.List(ctx, &apps, client.InNamespace(platform.SystemNamespace)); err != nil {
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(apps.Items))
+	for i := range apps.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&apps.Items[i])})
+	}
+	return requests
 }

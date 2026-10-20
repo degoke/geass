@@ -220,6 +220,33 @@ spec:
               network:
                 description: Network says how the nodes reach each other.
                 properties:
+                  controlPlaneFirewall:
+                    description: |-
+                      ControlPlaneFirewall names the cloud firewall in front of the control plane. When it is set, the address of each
+                      machine a pool creates is let through it (the API port and the overlay port) before the machine joins, and
+                      taken out again when the machine is removed, so the control plane need not be open to the internet. Without it
+                      the control plane's TCP 6443 and UDP 51820 must already accept the new machines.
+                    properties:
+                      connectionRef:
+                        description: |-
+                          ConnectionRef is the cloud connection (for Compute) at the provider where the control plane runs. It may be
+                          another provider than the one that creates the machines.
+                        minLength: 1
+                        type: string
+                      region:
+                        description: Region is where the firewall is, for a provider
+                          that answers per region.
+                        type: string
+                      target:
+                        description: Target is the provider's id for the firewall
+                          or security group, such as sg-0abc123 or a Hetzner firewall
+                          id.
+                        minLength: 1
+                        type: string
+                    required:
+                    - connectionRef
+                    - target
+                    type: object
                   multiSite:
                     description: |-
                       MultiSite means the nodes are at different providers and reach each other over the internet, so

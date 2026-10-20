@@ -63,6 +63,7 @@ The server needs to reach these hosts over HTTPS during and after installation. 
 | `kedacore.github.io` | The charts for the serverless add-on (KEDA and its HTTP add-on). Only if you turn it on, to let services sleep when idle |
 | Container registries that those charts, the MySQL and Redis servers and the in-cluster object storage server (which Geass runs from pinned images rather than charts, from Docker Hub) and your own images use. High availability MySQL pulls MOCO and its MySQL build from `ghcr.io` | Pulling images |
 | `api.github.com`, `api.cloudflare.com`, AWS (S3 and IAM), `api.planetscale.com` | Only for the connectors you set up |
+| The API of a cloud that creates machines for you (EC2, Azure Resource Manager and its sign-in, DigitalOcean, Compute Engine, Hetzner Cloud, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud, Vultr, or your own webhook) | Only for a [connection for machines](/docs/guides/connectors/clouds/) you set up. Azure's driver also reads its public price list |
 | `api.ipify.org`, then `ifconfig.me` | Only when Geass needs the server's public IP for dashboard DNS and no node reports one |
 
 New workers need to reach `get.k3s.io` and the control plane's API (port 6443) too.
@@ -73,7 +74,7 @@ Open these between the machines, in the provider's firewall or security group an
 
 | Port | Where | Purpose | Opened by the installer |
 | --- | --- | --- | --- |
-| 22/tcp | From you to every server, and from the control plane to each new worker | SSH. Geass joins workers over SSH | No |
+| 22/tcp | From you to every server, and from the control plane to each new worker | SSH. Geass joins workers over SSH | No. For a machine Geass creates at a cloud, the firewall Geass makes there allows it from the control plane's addresses |
 | 80/tcp and 443/tcp | From the internet to the nodes that serve web traffic | The ingress controller (Traefik, which K3s installs) for your services and the dashboard domain. Let's Encrypt also needs 80/tcp to validate a hostname before it issues a certificate | Yes, on the control plane |
 | 6443/tcp | To the control plane, from every worker. In a multi-site cluster, from every node including the control plane itself | Kubernetes API | Yes, on the control plane |
 | 10250/tcp | Between nodes | kubelet, used for container metrics | Yes, on the control plane |
@@ -120,9 +121,10 @@ See [Connect a domain](/docs/getting-started/connect-domain/) and [Domains and T
 | GitHub | Deploying a repository, push-to-deploy, pull request environments, and builds and deploys reported back to GitHub | A GitHub account or organization where Geass registers a GitHub App. The dashboard needs a public domain first, because GitHub calls back to it. Built images are pushed to a container registry that the cluster can reach |
 | AWS | S3 buckets for your services, backups of Postgres, MySQL and SQLite databases, and attaching AWS RDS databases | An access key. Geass creates and deletes S3 buckets and objects, and creates and deletes a scoped IAM user with an inline policy and access keys for each bucket |
 | PlanetScale | PlanetScale databases | A service token and the organization name |
+| Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or Vultr (or a webhook of your own) | Machines that Geass creates for [node pools](/docs/guides/node-pools/) and single servers (experimental) | Credentials that can create and delete machines, in a project or account of its own. They differ per cloud: see [Cloud connections for machines](/docs/guides/connectors/clouds/) |
 | Let's Encrypt (no account) | HTTPS certificates for the dashboard and your services | A real contact email address, passed to the installer as `GEASS_ACME_EMAIL` or set later on the cluster. Let's Encrypt refuses placeholder domains such as `example.com` |
 
-AWS and PlanetScale credentials are saved as connections that belong to one project. See [Cloud connectors](/docs/guides/connectors/).
+AWS and PlanetScale credentials are saved as connections that belong to one project. Credentials for machines belong to the cluster. See [Cloud connectors](/docs/guides/connectors/).
 
 ## Your own machine
 

@@ -28,7 +28,7 @@ The control plane is the Kubernetes API, the database that holds every object in
 
 ### Before you start
 
-- A cluster that the installer built. Its K3s runs with embedded etcd (`--cluster-init`), which is what lets a second server join. A K3s that was started another way, or one that uses an external database, cannot take a server this way.
+- A cluster that the installer built. Its K3s runs with embedded etcd (`--cluster-init`), which is what lets a second server join. A K3s that was started another way, or one that uses an external database, cannot take a server this way. The installer also starts the first server with K3s secrets encryption on, and K3s refuses a joining server whose setting differs. Joining a cluster that has it off fails on the new machine: its K3s writes `critical configuration mismatched: secrets-encryption` to `journalctl -u k3s` and starts again in a loop, and the installer gives up only after ten minutes, with "this server did not join".
 - Two more machines that meet the [requirements](/docs/getting-started/requirements/), on the **same private network** as the first, with fast links. Servers carry etcd's traffic to each other all the time, so keep them at one site and do not use [multi-site mode](/docs/operations/multi-provider/) for them. The installer refuses a join with `GEASS_MULTI_SITE` set.
 - **Three servers, not two.** A cluster needs a majority of its servers to answer. With three it tolerates one lost, with two it tolerates none: losing either stops it, and two servers fail more often than one. Use three, or five to tolerate two.
 - The ports in the next table open between the servers, in the host firewall and in the provider's security group. The installer opens them on the machine that joins, if it finds a host firewall, and checks that it can reach them on the server it joins before it changes anything. **It cannot open them on the first server**, so open them there yourself:
@@ -125,7 +125,7 @@ The report is a `GeassHAReadiness` object named `platform` in `geass-system`. It
 
 | Condition | True when |
 | --- | --- |
-| `NodesReady` | At least three nodes are ready and not cordoned. Every region and the control plane node count. |
+| `NodesReady` | At least three nodes are ready and not cordoned. Every region and the control plane node count. A node that must not hold data (an ephemeral node of a [pool](/docs/guides/node-pools/#what-runs-on-a-pools-nodes)) does not: it cannot host a database replica. |
 | `StorageReady` | The cluster has at least one storage class. |
 | `ClusterReady` | The cluster's `Ready` condition is true. |
 | `AddonsReady` | The cluster's add-ons are ready (cert-manager, monitoring, and Longhorn when it is on). |
@@ -193,6 +193,7 @@ The gate covers Postgres, MySQL and MariaDB. Redis is refused before it, because
 
 - **Postgres.** Geass creates a CloudNativePG cluster with three instances. It sets a node selector and tolerations only to keep the instances in the project's region and on the tags you chose. For spreading across nodes it leaves the Postgres operator's own default in place. Geass sets no rule that spreads instances across sites, and it does not check that a region has three nodes.
 - **MySQL.** Geass creates a MOCO cluster of three or five instances with the same node selector and tolerations. For spreading it asks that the instances prefer different nodes, which is a preference and not a rule, so a region with fewer nodes than instances still runs the database on the nodes it has.
+- **Ephemeral nodes.** The instances never run on a node that keeps data off itself, such as a node of a pool with `storage: None`, and the readiness report does not count one. A pool whose nodes may hold data (`storage: Allow`) counts like any other node, and the autoscaler never removes such a node while it holds a volume.
 - **Required tags.** A project that requires node tags ([Compliance node tags](/docs/guides/compliance-tags/)) keeps all three instances on nodes that carry them. The readiness report counts every node in the cluster, not the tagged ones, so give the tags at least three nodes yourself.
 - **Volumes.** With the Longhorn storage add-on, a highly available Postgres or MySQL uses the `geass-single` class. Each instance's volume has one copy, on the node where the instance runs, because the three instances already hold three copies of the data. See [Storage](/docs/guides/storage/).
 - **Sites.** A node's **Site** is written as the standard `topology.kubernetes.io/zone` label, so software that reads it can use it. Geass spreads a service's replicas by site as a preference, when every node has a Site (see [Services](#services)), and does not spread a database's instances by site.

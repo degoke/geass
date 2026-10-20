@@ -164,8 +164,10 @@ func (a *App) nodesCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List nodes with their region, zone and tags",
-		Args:    cobra.NoArgs,
+		Short:   "List nodes with their region, zone and tags, and the pool each belongs to",
+		Long: "List the cluster's nodes. POOL is the pool a node belongs to (see `geass pools`), and EPHEMERAL says the node must " +
+			"not hold data: databases and volumes stay off it, and it may be removed when the load goes.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			api, _, err := a.api()
 			if err != nil {
@@ -195,9 +197,13 @@ func (a *App) nodesCmd() *cobra.Command {
 						tags = append(tags, tag.Name)
 					}
 				}
-				rows = append(rows, []string{node.Name, status, dash(node.Region), dash(node.Zone), dash(strings.Join(tags, ", ")), dash(node.CPU), dash(node.Memory)})
+				ephemeral := "-"
+				if node.Ephemeral {
+					ephemeral = "yes"
+				}
+				rows = append(rows, []string{node.Name, status, dash(node.Region), dash(node.Zone), dash(strings.Join(tags, ", ")), dash(node.CPU), dash(node.Memory), dash(node.Pool), ephemeral})
 			}
-			a.printTable([]string{"NAME", "STATUS", "REGION", "ZONE", "TAGS", "CPU", "MEMORY"}, rows)
+			a.printTable([]string{"NAME", "STATUS", "REGION", "ZONE", "TAGS", "CPU", "MEMORY", "POOL", "EPHEMERAL"}, rows)
 			return nil
 		},
 	})

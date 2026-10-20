@@ -42,7 +42,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **CLI.** The `geass` command line, which deploys and runs services from a terminal by calling the `/api/v1` API. See [Command line](/docs/guides/command-line/) and the [CLI reference](/docs/reference/cli/).
 
-**Cloud connection.** A project's credentials for AWS or PlanetScale, kept as a `GeassCloudConnection`. See [Cloud connectors](/docs/guides/connectors/).
+**Cloud connection.** Credentials for a cloud, kept as a `GeassCloudConnection`: a project's AWS or PlanetScale, or, with the purpose `Compute`, a connection for machines that belongs to the cluster. See [Cloud connectors](/docs/guides/connectors/).
 
 **Cloudflare Tunnel.** An optional way to publish the dashboard and services through Cloudflare, using a `cloudflared` Deployment instead of open ports. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
 
@@ -57,6 +57,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **Can use up to.** The most CPU or memory a service may use while its server has room, set beside what it reserves. By default it is the same as what is reserved. See [Apps](/docs/guides/apps/#scale).
 
 **Compliance tag.** A node tag, such as `hipaa`, that is always reserved and that a project can require, so everything the project runs stays on those nodes. See [Compliance tags](/docs/guides/compliance-tags/).
+
+**Connection for machines.** A cloud connection with the purpose `Compute`: the credentials Geass uses to create and delete servers at Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or Vultr, or through a webhook. It belongs to the cluster, never to a project, only an admin can use it, and it is experimental. See [Cloud connections for machines](/docs/guides/connectors/clouds/).
 
 **Connector.** A card in **Settings** → **Connectors** (GitHub, Cloudflare, AWS or PlanetScale); the dashboard's word for a connection. See [Cloud connectors](/docs/guides/connectors/).
 
@@ -90,6 +92,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Environment variable.** A named value given to a service, as plain config, a secret, or a shared variable. See [Environment variables](/docs/guides/environment-variables/).
 
+**Ephemeral node.** A node that keeps data off itself, usually a node of a pool whose `storage` is `None`: services run there and databases, buckets and volumes never do, so it can be removed at any time. It carries the taint `geass.dev/ephemeral`. See [Node pools](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
+
 **Event function.** A function in event mode: you export a handler that is given an event for each request or schedule, and Geass serves HTTP for it. See [Functions](/docs/guides/functions/).
 
 ## F
@@ -107,6 +111,10 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **High availability.** A database topology with three instances, allowed only when enough healthy nodes exist. See [High availability](/docs/operations/high-availability/).
 
 **HA readiness.** The check (`GeassHAReadiness`) that reports whether the cluster has the nodes and storage for high availability. See [GeassHAReadiness](/docs/reference/resources/geass-ha-readiness/).
+
+## I
+
+**Inventory pool.** A node pool that draws on a list of servers you own, instead of a cloud: Geass joins one when the pool needs room, and takes K3s off it when it does not. See [Node pools](/docs/guides/node-pools/#pools-of-servers-you-own).
 
 ## J
 
@@ -130,7 +138,7 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **Network isolation.** The default rule that a project's services can be reached only by that project, the platform and the public internet. See [Network isolation](/docs/guides/network-isolation/).
 
-**Node.** A server in the cluster, added over SSH and described by a `GeassNode`. See [Add servers](/docs/getting-started/add-servers/).
+**Node.** A server in the cluster, joined over SSH or created by Geass at a cloud, and described by a `GeassNode`. See [Add servers](/docs/getting-started/add-servers/).
 
 ## O
 
@@ -139,6 +147,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **Observer.** A workspace token role that reads everything a viewer can plus logs and variable names, and changes nothing. See [Users and API tokens](/docs/guides/users-and-tokens/#roles).
 
 **Operator.** The program, running in `geass-system`, that watches the Geass resources and makes the cluster match them. See [How it works](/docs/overview/how-it-works/).
+
+**Orphan machine.** A machine at a cloud that carries a pool's labels and belongs to no node, so it may still be billing you. A pool reports it and deletes it only if its `orphanPolicy` is `Delete`. See [Node pools](/docs/guides/node-pools/#machines-no-node-owns).
 
 ## P
 
@@ -149,6 +159,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 **Platform configuration.** The single `GeassPlatformConfig`, named `platform`, that holds the domain, Cloudflare, GitHub and other cluster-wide settings. See [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/).
 
 **Platform domain.** The apex domain you give Geass, under which it serves the dashboard and, once Cloudflare is connected, default service hostnames. See [Domains and TLS](/docs/guides/domains-and-tls/).
+
+**Pool.** A `GeassNodePool`: a group of nodes that Geass adds and removes for you, made at a cloud or from servers you list, with a most it can ever have. It keeps a fixed number, or grows and shrinks with the load. See [Node pools and autoscaling](/docs/guides/node-pools/).
 
 **Project.** The top-level container for a team's services, databases and buckets, with its own environments, region and network rules. See [Projects and environments](/docs/guides/projects-and-environments/).
 

@@ -22,7 +22,9 @@ func (a *App) mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Run an MCP server, so AI agents can deploy and monitor services",
 		Long: "Run a Model Context Protocol server that lets an AI agent do what this command line does: see what is running,\n" +
-			"read logs, deploy and wait for the result, scale, roll back, and change variables.\n\n" +
+			"read logs, deploy and wait for the result, scale, roll back, and change variables. With an admin's token it can also " +
+			"look at the clouds Geass uses and run pools of nodes, which create machines that cost money: it is never given a tool " +
+			"that takes a cloud's credentials, makes a connection or adds a server, because people make those.\n\n" +
 			"The agent acts as the token you are signed in with, and is only shown the tools that token may use: with a\n" +
 			"read-only token it cannot even see a tool that deploys. For an agent that should only watch, sign in with a\n" +
 			"read-only token (\"with logs\") or pass --read-only. Deleting is off unless you pass --allow-delete. Secret\n" +

@@ -1,15 +1,15 @@
 ---
 title: "Scaling and placement"
-description: "Scale a service with replicas, sizes and autoscaling, and choose which servers it runs on with regions, sites and tags. Includes the capacity check."
+description: "Scale a service with replicas and autoscaling, grow the cluster with node pools, and place work with regions and tags. Includes the capacity check."
 ---
 
-Scaling decides how many copies of a service run and how much each one reserves. Placement decides which of your servers they run on. You scale with replicas, sizes, autoscaling, or by letting a service [sleep when idle](/docs/guides/scale-to-zero/). You place with regions, sites and tags that you attach to nodes, and, for data that must stay on certain machines, with [compliance tags](/docs/guides/compliance-tags/). Before anything new starts, Geass checks that the servers it may use have room for it.
+Scaling decides how many copies of a service run and how much each one reserves. Placement decides which of your servers they run on. You scale with replicas, sizes, autoscaling, or by letting a service [sleep when idle](/docs/guides/scale-to-zero/). When the servers themselves run out of room, a [node pool](/docs/guides/node-pools/) can add machines for you. You place with regions, sites and tags that you attach to nodes, and, for data that must stay on certain machines, with [compliance tags](/docs/guides/compliance-tags/). Before anything new starts, Geass checks that the servers it may use have room for it.
 
 ## Before you start
 
 - Changing a node's region, site and tags needs the admin role: a dashboard admin, or a workspace API token with the admin role. Project tokens cannot. Viewers and observers can read but change nothing.
 - Choosing which nodes a service or database runs on (**Run on**) needs a signed-in admin. API tokens of every kind are refused, so a script cannot send `runOnTags`.
-- Placement only matters with more than one node. To add servers, see [Add servers](/docs/getting-started/add-servers/).
+- Placement only matters with more than one node. To add servers, see [Add servers](/docs/getting-started/add-servers/), or let a [node pool](/docs/guides/node-pools/) add them.
 - To see how full your servers are, open the **Usage** page ([Usage and capacity](/docs/guides/usage-and-capacity/)).
 
 ## The words
@@ -116,6 +116,19 @@ spec:
 ```
 
 A manifest without `deploy.enabled: true` does not run: the operator holds the service with the message "Service is configured and waiting for deployment". A service that sets no requests reserves 0.1 CPU and 128 MB.
+
+## Scale the cluster
+
+Replicas and autoscaling change how many copies of a service run. They do not add servers: when the nodes are full, the new pods wait in `Pending`. A [node pool](/docs/guides/node-pools/) closes that gap. An autoscaling pool watches for pods that cannot start for lack of room, creates a machine at a cloud (or joins a server of yours), and takes it away again when it sits idle. The two autoscalers work at different levels and together:
+
+| | Service autoscaling | Node autoscaling (a pool) |
+| --- | --- | --- |
+| What it changes | The number of copies of one service | The number of nodes in the cluster |
+| What triggers it | Average CPU of the service above a target | Pods that cannot start because no node has room, for as long as the pool's delay (30 seconds by default) |
+| What limits it | **Scale up to** | The pool's **most nodes**, which is also the cap on what it can cost |
+| Who can set it up | Any admin, for a service | An admin, with a connection to a cloud. See [Node pools](/docs/guides/node-pools/) |
+
+A service that scales up to more copies than the nodes can hold leaves pods waiting. If an autoscaling pool can host them, it adds a node, and the pods start there. Nodes of a pool whose data setting is `None`, the default, run services only. A project with a region runs only on nodes of that region, so give the pool the region and tags of the projects it should help.
 
 ## Place databases
 
@@ -245,14 +258,14 @@ A workload may start on a node only when all of these hold:
 1. The node carries the project's region label, if the project has a region.
 2. The node carries every tag the workload asks for, and every tag its project requires.
 3. The node is ready and not cordoned.
-4. Every `NoSchedule` taint on the node is one the workload tolerates. A workload tolerates a reserved or compliance tag only if it asks for it or its project requires it.
+4. Every `NoSchedule` taint on the node is one the workload tolerates. A workload tolerates a reserved or compliance tag only if it asks for it or its project requires it. Only a service tolerates `geass.dev/ephemeral`, the taint of the nodes of a pool that hold no data.
 
 Geass turns these rules into a node selector and tolerations on the pods:
 
 | Workload | Region from | Tags | Notes |
 | --- | --- | --- | --- |
-| Services | The project, or the default region | **Run on**, applied on deploy, and the project's required tags | Pods get `topology.kubernetes.io/region` and `tag.geass.dev/<tag>` selectors. |
-| In-cluster databases | The project | **Run on**, before first deploy, and the project's required tags | Decided once and recorded in `geass.dev/node-placement`. |
+| Services | The project, or the default region | **Run on**, applied on deploy, and the project's required tags | Pods get `topology.kubernetes.io/region` and `tag.geass.dev/<tag>` selectors. While a [pool](/docs/guides/node-pools/#what-runs-on-a-pools-nodes) of nodes that hold no data exists they also tolerate the taint `geass.dev/ephemeral`, so they can run on those nodes. |
+| In-cluster databases | The project | **Run on**, before first deploy, and the project's required tags | Decided once and recorded in `geass.dev/node-placement`. Never on the nodes of a pool that holds no data. |
 | Database backups, restores and logical-database setup | The database's region | The project's required tags only, never the tags the database chose | Short jobs run near the database without using nodes reserved for it, but never leave the nodes a project requires. |
 | Builds from a Git repository | The project | The project's required tags only | The build job runs in the project's region. |
 | Schedules of a function | The project | The project's required tags only | The same as builds. |
@@ -287,6 +300,8 @@ Scaling replicas, autoscaling and draft services are not checked. A scale-up bey
 
 The pool is the nodes the workload may use: its region, its tags and its project's required tags. The check multiplies the size by the number of copies: **Replicas**, or **Scale up to** when that is larger (the dashboard uses the larger; the operator uses **Replicas**). A highly available database counts three instances (the dashboard counts them only when `highAvailability` is set, the operator also when `instances` is 3 or more). It then compares the total with the free CPU and memory on the nodes the workload may use, which is the part of the cluster in its region and with its tags. It also checks that a single copy fits the largest of those nodes.
 
+With an [autoscaling node pool](/docs/guides/node-pools/#the-capacity-check), the check asks one more question when the workload does not fit: would it fit if the pool grew to its maximum? If so, the workload is let in, and its pods wait for the nodes the pool adds. If the pool is already at its maximum, or no pool can host the workload, the workload is refused with the usual message. A pool of nodes that hold no data counts for services only.
+
 It is arithmetic over the whole pool, not a simulation of the scheduler. A workload can pass the check and still leave a pod in `Pending` if the free room is spread thinly over many nodes. In the other direction, the dashboard counts a redeploy of a running service as if it were new, so a redeploy can be refused on a nearly full cluster even though the operator would let it through. Free some room, or lower the size, and try again.
 
 ### The messages
@@ -313,7 +328,7 @@ If the shortage lasts through five passes in a row (about two minutes), the reso
 
 ## Add capacity
 
-1. Add a node ([Add servers](/docs/getting-started/add-servers/)). To fix "no schedulable node has enough", add a larger one. To fix a regional shortage, give it the region and tags the workload needs.
+1. Add a node ([Add servers](/docs/getting-started/add-servers/)), or let an autoscaling [node pool](/docs/guides/node-pools/) do it. To fix "no schedulable node has enough", add a larger one. To fix a regional shortage, give it the region and tags the workload needs.
 2. Or release capacity: lower a size, lower replicas, delete something you do not use, switch off a reservation, or uncordon a node.
 3. Check the **Usage** page: the new node appears in **Summary** once it is ready.
 
@@ -328,7 +343,7 @@ kubectl cordon node-2      # no new pods; running pods stay
 kubectl uncordon node-2
 ```
 
-A cordoned node shows **Unschedulable**. It is left out of the capacity totals, out of the [HA readiness](/docs/operations/high-availability/) count, and out of the number Geass uses to decide how many copies a Longhorn volume gets. To take a node out for good, delete its `GeassNode`: the operator removes the node from the cluster and, when it can reach the machine over SSH on port 22, uninstalls K3s from it. Data that lives only on that node goes with it.
+A cordoned node shows **Unschedulable**. It is left out of the capacity totals, out of the [HA readiness](/docs/operations/high-availability/) count, and out of the number Geass uses to decide how many copies a Longhorn volume gets. To take a node out for good, delete its `GeassNode`: the operator removes the node from the cluster and, when it can reach the machine over SSH on port 22, uninstalls K3s from it. Data that lives only on that node goes with it. A machine that Geass created is cordoned, emptied and then deleted at the cloud. The autoscaler of a [node pool](/docs/guides/node-pools/#how-a-pool-removes-nodes) cordons the nodes it is about to remove. It marks them (the annotation `geass.dev/pool-cordon`), and only a node it cordoned is ever uncordoned by it: a node you cordoned stays as you left it, and is never removed.
 
 ## What happens under the hood
 
@@ -380,11 +395,15 @@ No ready node in the region carries all the required tags, or none has room. See
 **Replicas return to my value after the autoscaler changed them.**
 Geass writes **Replicas** back when it reconciles the service. See the caution under [Scale a service](#scale-a-service).
 
+**Pods wait in `Pending` and no node is added.**
+Adding nodes is a pool's job, and a pool exists only if someone made one. If one exists, see [Node pools](/docs/guides/node-pools/#troubleshooting): its region and tags must match the project's, and it must be below its maximum.
+
 ## Related
 
 - [Sleep when idle](/docs/guides/scale-to-zero/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Usage and capacity](/docs/guides/usage-and-capacity/)
+- [Node pools and autoscaling](/docs/guides/node-pools/)
 - [Add servers](/docs/getting-started/add-servers/)
 - [High availability](/docs/operations/high-availability/)
 - [Storage](/docs/guides/storage/)

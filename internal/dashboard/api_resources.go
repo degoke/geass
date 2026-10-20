@@ -336,9 +336,9 @@ func (s *Server) handleAPIAppRuntime(w http.ResponseWriter, r *http.Request) {
 			container = pod.Spec.Containers[0].Name
 		}
 		items = append(items, map[string]string{
-			"name":      pod.Name,
-			"phase":     string(pod.Status.Phase),
-			"container": container,
+			pathNameParam: pod.Name,
+			"phase":       string(pod.Status.Phase),
+			"container":   container,
 		})
 	}
 	payload["pods"] = items
@@ -468,9 +468,9 @@ func (s *Server) handleAPIClusterObjectStoreRuntime(w http.ResponseWriter, r *ht
 			container = pod.Spec.Containers[0].Name
 		}
 		items = append(items, map[string]string{
-			"name":      pod.Name,
-			"phase":     string(pod.Status.Phase),
-			"container": container,
+			pathNameParam: pod.Name,
+			"phase":       string(pod.Status.Phase),
+			"container":   container,
 		})
 	}
 	payload["pods"] = items

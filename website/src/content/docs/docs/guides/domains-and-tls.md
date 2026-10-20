@@ -50,7 +50,7 @@ The **platform domain** (the **Root domain**) is your main domain, for example `
 
 Until the dashboard domain is set and verified, admins see a banner: "Dashboard domain. Set a public host so Geass can verify
 HTTPS and finish platform setup." with **Configure domain**. It shows above the pages outside a project (**Projects**,
-**Templates**, **Usage** and **Settings**, except **Settings** → **Domain**), not inside a project. It disappears once the
+**Templates**, **Usage**, **Pools** and **Settings**, except **Settings** → **Domain**), not inside a project. It disappears once the
 domain is verified.
 
 ### Without Cloudflare

@@ -47,7 +47,8 @@ func (r *GeassHAReadinessReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 	healthyNodes := int32(0)
 	for _, node := range nodes.Items {
-		if node.Spec.Unschedulable {
+		// A node that must not hold data cannot host a replica of a database, so it is no help to high availability.
+		if node.Spec.Unschedulable || platform.IsEphemeralNode(&node) {
 			continue
 		}
 		for _, condition := range node.Status.Conditions {

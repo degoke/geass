@@ -121,3 +121,34 @@ func deploymentScaleChanged() predicate.Predicate {
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 }
+
+// poolCreatedOrDeleted lets through a node pool appearing or going away, and one that changes whether its nodes may
+// hold data. Those are what decide whether services tolerate the taint of such nodes.
+func poolCreatedOrDeleted() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, okBefore := e.ObjectOld.(*geassv1alpha1.GeassNodePool)
+			after, okAfter := e.ObjectNew.(*geassv1alpha1.GeassNodePool)
+			return okBefore && okAfter && before.EffectiveStorage() != after.EffectiveStorage()
+		},
+	}
+}
+
+// ephemeralNodeChanged lets through a server added on its own that must not hold data, appearing, going away or
+// changing that. The servers of a pool are left out: the pool's own watch covers them, and a pool that scales would
+// otherwise have every service reconciled each time it adds or removes one.
+func ephemeralNodeChanged() predicate.Predicate {
+	ephemeral := func(o client.Object) bool {
+		node, ok := o.(*geassv1alpha1.GeassNode)
+		return ok && node.Spec.Pool == "" && node.Spec.Storage == geassv1alpha1.NodeStorageNone
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return ephemeral(e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return ephemeral(e.Object) },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return ephemeral(e.ObjectOld) != ephemeral(e.ObjectNew) },
+	}
+}

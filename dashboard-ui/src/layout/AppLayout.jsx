@@ -1,29 +1,36 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Burger, Menu } from "@mantine/core";
+import { Burger, Menu, useMantineColorScheme } from "@mantine/core";
 import {
   BarChart3,
+  Check,
   ChevronDown,
   ExternalLink,
   FolderKanban,
+  Layers,
   LayoutTemplate,
   LifeBuoy,
   LogOut,
+  Monitor,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Sun,
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
 import { canMutate, dashboardSession, useBootstrap } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import {
+  ACCOUNT_POOLS,
   ACCOUNT_PRIMARY,
   ACCOUNT_USAGE,
   FOOTER_LINKS,
   settingsActive,
 } from "@/lib/platform-nav";
 import { ClusterHealth } from "@/components/ClusterHealth";
+import { GeassLogo } from "@/components/GeassLogo";
 import { DeployControls } from "@/components/DeployControls";
 import { DomainSetupBanner } from "@/components/DomainSetupBanner";
 
@@ -31,6 +38,7 @@ const NAV_ICONS = {
   projects: FolderKanban,
   templates: LayoutTemplate,
   cluster: BarChart3,
+  pools: Layers,
   general: Settings,
 };
 
@@ -63,6 +71,13 @@ function useAccountNavCollapsed() {
   };
   return [collapsed, toggleCollapsed];
 }
+
+/** "auto" follows the system. The setting is kept by Mantine, in this browser. */
+const THEME_CHOICES = [
+  { value: "auto", label: "System", Icon: Monitor },
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+];
 
 function initial(username) {
   return (username || "?").slice(0, 1).toUpperCase();
@@ -175,6 +190,7 @@ function TopBar({
   navOpened,
   onToggleNav,
 }) {
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const inProject = Boolean(project && projectSlug);
   const environments = project?.spec?.environments || [];
   const pullRequests = project?.status?.pullRequests || [];
@@ -182,7 +198,7 @@ function TopBar({
     <header className="rw-top">
       <Burger className="rw-top-burger" opened={navOpened} onClick={onToggleNav} hiddenFrom="sm" size="sm" aria-label="Open navigation" />
       <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
-        <img src="/geass-logo-dark.svg" alt="Geass" height={24} width={91} />
+        <GeassLogo height={24} width={91} />
       </Link>
 
       {inProject ? (
@@ -246,6 +262,20 @@ function TopBar({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Label>{username}</Menu.Label>
+            <Menu.Divider />
+            <Menu.Label>Theme</Menu.Label>
+            {THEME_CHOICES.map(({ value, label, Icon }) => (
+              <Menu.Item
+                key={value}
+                aria-current={colorScheme === value ? "true" : undefined}
+                leftSection={<Icon size={14} />}
+                rightSection={colorScheme === value ? <Check size={14} /> : null}
+                onClick={() => setColorScheme(value)}
+              >
+                {label}
+              </Menu.Item>
+            ))}
+            <Menu.Divider />
             <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
           </Menu.Dropdown>
         </Menu>
@@ -292,6 +322,7 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
   const usageActive = ACCOUNT_USAGE.active(pathname);
   const settingsOn = settingsActive(pathname) && !usageActive;
   const UsageIcon = NAV_ICONS.cluster;
+  const PoolsIcon = NAV_ICONS.pools;
   const sideLink = (to, active, icon, label) => (
     <Link
       key={label}
@@ -315,6 +346,7 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
             return sideLink(item.to, item.active(pathname), <Icon size={16} />, item.label);
           })}
           {sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label)}
+          {sideLink(ACCOUNT_POOLS.to, ACCOUNT_POOLS.active(pathname), <PoolsIcon size={16} />, ACCOUNT_POOLS.label)}
           {sideLink("/settings", settingsOn, <Settings size={16} />, "Settings")}
         </nav>
 

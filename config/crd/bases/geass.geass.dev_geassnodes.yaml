@@ -39,6 +39,56 @@ spec:
           spec:
             description: spec defines the desired state of GeassNode
             properties:
+              cloud:
+                description: |-
+                  Cloud makes Geass create the node's machine at a cloud provider, instead of joining one that already exists.
+                  The machine's address is then in status.cloud, and eip, sshUser and sshKeySecretRef are left out: Geass
+                  logs in with a key of its own. The connection and the region cannot be changed once the machine exists: the machine
+                  is deleted through the connection that made it.
+                properties:
+                  addressType:
+                    description: AddressType says which address of the machine Geass
+                      reaches it on. It defaults to Public.
+                    enum:
+                    - Public
+                    - Private
+                    type: string
+                  connectionRef:
+                    description: ConnectionRef names the GeassCloudConnection to create
+                      the machine with.
+                    minLength: 1
+                    type: string
+                  image:
+                    description: Image is the operating system image. It defaults
+                      to the provider's Ubuntu 24.04.
+                    type: string
+                  region:
+                    description: 'Region is the provider''s own place: a location,
+                      zone or region.'
+                    type: string
+                  settings:
+                    additionalProperties:
+                      type: string
+                    description: Settings are values specific to the provider.
+                    type: object
+                  size:
+                    description: Size is the provider's name for a machine size.
+                    minLength: 1
+                    type: string
+                  spot:
+                    description: Spot asks for a cheaper machine that the provider
+                      may take back.
+                    type: boolean
+                required:
+                - connectionRef
+                - size
+                type: object
+                x-kubernetes-validations:
+                - message: 'a node''s cloud connection and region cannot be changed:
+                    make a new node'
+                  rule: 'self.connectionRef == oldSelf.connectionRef && (has(self.region)
+                    ? self.region : '''') == (has(oldSelf.region) ? oldSelf.region
+                    : '''')'
               clusterRef:
                 description: ClusterRef is the reference to the GeassCluster resource.
                 properties:
@@ -137,6 +187,14 @@ spec:
                     pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
                 type: object
+              pool:
+                description: |-
+                  Pool is the GeassNodePool the node belongs to. A node of a pool is labelled with it, and the pool is what
+                  adds and removes it.
+                type: string
+                x-kubernetes-validations:
+                - message: 'a node cannot move to another pool: make a new node'
+                  rule: self == oldSelf
               role:
                 description: Role is the role of the node in the cluster.
                 enum:
@@ -165,6 +223,14 @@ spec:
               sshUser:
                 description: SSHUser is the username for the SSH server.
                 type: string
+              storage:
+                description: |-
+                  Storage says whether the node may hold data. For a node of a pool it comes from the pool; for any other it
+                  is left out, which means Allow.
+                enum:
+                - None
+                - Allow
+                type: string
             required:
             - clusterRef
             - role
@@ -172,6 +238,97 @@ spec:
           status:
             description: status defines the observed state of GeassNode
             properties:
+              cloud:
+                description: Cloud is the machine Geass created for the node, when
+                  spec.cloud asks for one.
+                properties:
+                  attempt:
+                    description: |-
+                      Attempt counts the machines made for the node before this one. It is part of the machine's name after the
+                      first, so that a machine still being removed never shares a name with its replacement.
+                    format: int32
+                    type: integer
+                  controlPlaneAccess:
+                    description: |-
+                      ControlPlaneAccess is the address opened for the machine in the control plane's firewall, which is closed again
+                      when the machine is removed.
+                    type: string
+                  controlPlaneAccessFirewall:
+                    description: |-
+                      ControlPlaneAccessFirewall is the firewall that ControlPlaneAccess was opened on. The rule is closed on this one,
+                      even if the cluster's controlPlaneFirewall has since been changed or removed.
+                    properties:
+                      connectionRef:
+                        description: |-
+                          ConnectionRef is the cloud connection (for Compute) at the provider where the control plane runs. It may be
+                          another provider than the one that creates the machines.
+                        minLength: 1
+                        type: string
+                      region:
+                        description: Region is where the firewall is, for a provider
+                          that answers per region.
+                        type: string
+                      target:
+                        description: Target is the provider's id for the firewall
+                          or security group, such as sg-0abc123 or a Hetzner firewall
+                          id.
+                        minLength: 1
+                        type: string
+                    required:
+                    - connectionRef
+                    - target
+                    type: object
+                  createdAt:
+                    description: CreatedAt is when the provider accepted the machine.
+                    format: date-time
+                    type: string
+                  instanceID:
+                    description: InstanceID is the provider's id for the machine.
+                      The machine is deleted by this id and no other.
+                    type: string
+                  instanceName:
+                    description: |-
+                      InstanceName is the name the machine is created with. It is written before the provider is called, so that
+                      a machine made just before a crash is found again by its name and not made twice.
+                    type: string
+                  joinAttempts:
+                    description: |-
+                      JoinAttempts counts the times Geass set about installing K3s on the machine. Each one is written before the
+                      install starts, with a write that fails if another pass got there first, which is what keeps one node from being
+                      installed twice by two passes that read an old copy of it.
+                    format: int32
+                    type: integer
+                  joinStartedAt:
+                    description: |-
+                      JoinStartedAt is when Geass began to install K3s on the machine. A node that is not ready a quarter of an
+                      hour later is given up on.
+                    format: date-time
+                    type: string
+                  privateIP:
+                    type: string
+                  problem:
+                    description: |-
+                      Problem names what keeps the machine from being created: Capacity (the provider has no room for it) or Quota
+                      (the account is at a limit). The node's pool reads it to try another size or place.
+                    enum:
+                    - Capacity
+                    - Quota
+                    type: string
+                  publicIP:
+                    description: PublicIP and PrivateIP are the machine's addresses.
+                    type: string
+                  region:
+                    type: string
+                  size:
+                    description: |-
+                      Size and Region are what the machine was actually created with, which differs from the spec when a fallback
+                      was used.
+                    type: string
+                  state:
+                    description: State is the machine's state as the provider last
+                      reported it.
+                    type: string
+                type: object
               conditions:
                 description: |-
                   conditions represent the current state of the GeassNode resource.

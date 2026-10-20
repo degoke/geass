@@ -79,6 +79,10 @@ type Server struct {
 
 	planetScaleSizeCache planetScaleSizeCache
 
+	// Compute gives the provider of a cloud connection, to ask a cloud what sizes it has. Nil means the dashboard
+	// cannot list them.
+	Compute ComputeProviders
+
 	authMu    sync.Mutex
 	auth      *dashboardAuth
 	loginMu   sync.Mutex
@@ -1781,7 +1785,7 @@ func formDraftRequested(r *http.Request) bool { return formFlagSet(r, "draft") }
 // formFlagSet reports whether a yes-or-no field is set: a checked box ("on"), or true, 1 or yes.
 func formFlagSet(r *http.Request, key string) bool {
 	switch strings.ToLower(strings.TrimSpace(r.FormValue(key))) {
-	case "on", "true", "1", "yes":
+	case "on", boolTrue, "1", "yes":
 		return true
 	default:
 		return false

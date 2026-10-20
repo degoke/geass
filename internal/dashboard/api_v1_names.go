@@ -7,12 +7,16 @@ const (
 	kindDatabases        = "databases"
 	kindObjectStores     = "object-stores"
 	kindLogicalDatabases = "logical-databases"
+	kindPools            = "pools"
+	kindConnections      = "connections"
+	kindServers          = "servers"
 
 	// pathNameParam is the {name} of a v1 route, and pathEnvironments the segment that holds a project's environments.
 	pathNameParam    = "name"
 	pathEnvironments = "environments"
 
 	formProject     = "project"
+	formRegion      = "region"
 	formEnvironment = "environment"
 
 	stateReady    = "ready"
@@ -24,6 +28,7 @@ const (
 	sourceGit   = "git"
 	boolTrue    = "true"
 	jsonString  = "string"
+	jsonBoolean = "boolean"
 	jsonInteger = "integer"
 	jsonArray   = "array"
 	// jsonItems is the key a list is answered under.
@@ -46,6 +51,7 @@ const (
 	tagService   = "service"
 	tagAuth      = "auth"
 	tagNodes     = "nodes"
+	tagCompute   = "compute"
 	tagTemplates = "templates"
 	tagTokens    = "tokens"
 )
