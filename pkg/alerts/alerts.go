@@ -29,8 +29,16 @@ const (
 	// TypeEmail is a channel that writes to a list of addresses through the mail server.
 	TypeEmail = "email"
 
-	// MaxChannels is how many channels Geass keeps. It matches the limit on the API type.
+	// MaxChannels is how many channels the platform keeps for itself.
 	MaxChannels = 20
+	// MaxChannelsPerOrg is how many channels one organization may have.
+	MaxChannelsPerOrg = 10
+	// MaxChannelsTotal is how many channels there can be in all, the platform's and the organizations'. It matches the
+	// limit on the API type.
+	MaxChannelsTotal = 200
+	// NoProject is the project an organization's channel is routed on when the organization has none: not a name a
+	// project can have, so nothing carries it.
+	NoProject = "!none"
 	// MaxRecipients is how many addresses an email channel writes to.
 	MaxRecipients = 20
 	// DefaultSMTPPort is where STARTTLS is offered.
@@ -111,6 +119,11 @@ type Channel struct {
 	Environments   []string
 	NotifyResolved bool
 	Disabled       bool
+	// Org is the organization that owns the channel, or empty for the platform's. Projects is what its people chose;
+	// Scope is the projects the organization has now that it may hear about, which is what is routed on. It is empty
+	// for an organization that has none, and then the channel hears nothing.
+	Org   string
+	Scope []string
 }
 
 // Config is everything a configuration needs: the mail server, the channels, and the dashboard's address for links.
@@ -133,4 +146,21 @@ func (c Config) Channel(id string) (Channel, bool) {
 		}
 	}
 	return Channel{}, false
+}
+
+// PlatformKind is whether an alert is about the platform's own machines and services, which belong to no project and so
+// to no organization.
+func PlatformKind(id string) bool {
+	return id == geassv1alpha1.AlertNodeUnhealthy || id == geassv1alpha1.AlertClusterIssue
+}
+
+// OrgKinds are the kinds of alert an organization's channel can hear about: those about a project.
+func OrgKinds() []Kind {
+	var kinds []Kind
+	for _, kind := range Kinds {
+		if !PlatformKind(kind.ID) {
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds
 }

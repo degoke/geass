@@ -31,7 +31,9 @@ const (
 	alertSettingsPath = "/settings/alerts"
 	alertsWhat        = "Alert settings"
 	maxChannelName    = 60
-	maxFilterItems    = 100
+	// orgSlackHost is the one host an organization's channel may post to.
+	orgSlackHost   = "hooks.slack.com"
+	maxFilterItems = 100
 
 	// A test goes to Alertmanager, which has to have loaded the channel before it can send to it, and then sends in the
 	// background. These are how long the dashboard waits for each, so that the answer is the real one and not a guess.
@@ -75,6 +77,8 @@ type alertChannelView struct {
 	Target string `json:"target,omitempty"`
 	// HasSecret says a Slack channel has its address saved.
 	HasSecret bool `json:"hasSecret"`
+	// Org is the organization the channel belongs to, empty for the platform's.
+	Org string `json:"org,omitempty"`
 }
 
 // alertmanagerView says whether the dashboard can reach Alertmanager, which alerts go through.
@@ -122,7 +126,7 @@ func (s *Server) handleAPIAlertSettings(w http.ResponseWriter, r *http.Request) 
 	if !s.requireSessionAdmin(w, r, alertsWhat) {
 		return
 	}
-	config, err := alerts.Load(r.Context(), s.Client, systemNamespace)
+	config, err := alerts.Load(asSystem(r.Context()), s.Client, systemNamespace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load the alert settings"})
 		return
@@ -138,7 +142,7 @@ func (s *Server) handleAPIAlertSettings(w http.ResponseWriter, r *http.Request) 
 		item := alertChannelView{
 			ID: channel.ID, Name: channel.Name, Type: channel.Type, Recipients: nonNil(channel.Recipients), Events: nonNil(channel.Events),
 			Projects: nonNil(channel.Projects), Environments: nonNil(channel.Environments),
-			NotifyResolved: channel.NotifyResolved, Disabled: channel.Disabled,
+			NotifyResolved: channel.NotifyResolved, Disabled: channel.Disabled, Org: channel.Org,
 		}
 		if channel.Type == alerts.TypeSlack && channel.SlackURL != "" {
 			item.HasSecret = true
@@ -244,10 +248,12 @@ func (s *Server) mutateAlerting(ctx context.Context, mutate func(spec *geassv1al
 		if err := mutate(config.Spec.Alerting); err != nil {
 			return err
 		}
+		// The alerting settings are the platform's, and an organization changes only the channels that are its own: the
+		// handlers say which, so the write is the dashboard's own.
 		if !creating {
-			return s.Client.Update(ctx, &config)
+			return s.Client.Update(asSystem(ctx), &config)
 		}
-		err = s.Client.Create(ctx, &config)
+		err = s.Client.Create(asSystem(ctx), &config)
 		if apierrors.IsAlreadyExists(err) {
 			return apierrors.NewConflict(schema.GroupResource{Resource: "geassplatformconfigs"}, config.Name, err)
 		}
@@ -262,7 +268,7 @@ var errNoAlertmanager = alertInputError("Saved. Nothing can be sent until the mo
 // applyAlerting puts what was saved into the cluster's AlertmanagerConfig at once, instead of leaving it for the
 // operator's next look. What was saved stays saved if this fails, and the operator tries again.
 func (s *Server) applyAlerting(ctx context.Context) error {
-	err := alerts.Sync(ctx, s.Client, systemNamespace)
+	err := alerts.Sync(asSystem(ctx), s.Client, systemNamespace)
 	switch {
 	case err == nil:
 		return nil
@@ -306,6 +312,7 @@ func alertSaved(w http.ResponseWriter, r *http.Request, applyErr error, fields m
 
 // deleteSecretKey takes one key out of a Secret, and the Secret with it when nothing is left.
 func (s *Server) deleteSecretKey(ctx context.Context, key client.ObjectKey, dataKey string) {
+	ctx = asSystem(ctx)
 	_ = retry.RetryOnConflict(writeRetry, func() error {
 		secret := &corev1.Secret{}
 		if err := s.Client.Get(ctx, key, secret); err != nil {
@@ -487,8 +494,12 @@ func (s *Server) readAlertChannelInput(r *http.Request) (alertChannelInput, erro
 		NotifyResolved: r.FormValue("notifyResolved") == "on" || r.FormValue("notifyResolved") == boolTrue,
 		Disabled:       r.FormValue("disabled") == "on" || r.FormValue("disabled") == boolTrue,
 	}
+	scope := s.alertScopeOf(r.Context())
 	if input.Name == "" {
 		return input, errors.New("give the channel a name")
+	}
+	if scope.org != "" && input.Type != alerts.TypeSlack {
+		return input, errors.New("an organization's channel is Slack: mail goes out through the platform's mail server")
 	}
 	if len([]rune(input.Name)) > maxChannelName || strings.ContainsFunc(input.Name, unicode.IsControl) {
 		return input, fmt.Errorf("a channel's name can be at most %d characters", maxChannelName)
@@ -498,6 +509,12 @@ func (s *Server) readAlertChannelInput(r *http.Request) (alertChannelInput, erro
 		if input.SlackURL != "" {
 			if err := alerts.ValidateSlackURL(input.SlackURL); err != nil {
 				return input, err
+			}
+			// Alertmanager, which is inside the cluster, makes the connection, and a name that reaches a public address now
+			// can reach a private one later. The platform's administrators answer for the addresses they type; an organization's
+			// is held to Slack's own.
+			if scope.org != "" && alerts.SlackHost(input.SlackURL) != orgSlackHost {
+				return input, errors.New("an organization's Slack webhook URL starts with https://" + orgSlackHost + "/")
 			}
 			// Alertmanager makes the connection, so this is the check that it does not reach somewhere it should not.
 			if err := webhooks.CheckHost(r.Context(), alerts.SlackHost(input.SlackURL)); err != nil {
@@ -515,7 +532,7 @@ func (s *Server) readAlertChannelInput(r *http.Request) (alertChannelInput, erro
 	}
 
 	for _, event := range r.Form["event"] {
-		if !alerts.ValidKind(event) {
+		if !alerts.ValidKind(event) || (scope.org != "" && alerts.PlatformKind(event)) {
 			return input, errors.New("unknown alert " + event)
 		}
 		if !slices.Contains(input.Events, event) {
@@ -523,7 +540,7 @@ func (s *Server) readAlertChannelInput(r *http.Request) (alertChannelInput, erro
 		}
 	}
 	// Choosing every kind is stored as no limit, so that kinds added later reach the channel.
-	if len(input.Events) == len(alerts.Kinds) {
+	if len(input.Events) == len(alerts.Kinds) || (scope.org != "" && len(input.Events) == len(alerts.OrgKinds())) {
 		input.Events = nil
 	}
 
@@ -548,6 +565,11 @@ func (s *Server) readAlertChannelInput(r *http.Request) (alertChannelInput, erro
 				return input, errors.New("there is no project " + project)
 			}
 		}
+	}
+	// A person who works in one workspace hears about that workspace's projects, so they name which: a channel that names
+	// none hears about all of the organization's, which they cannot see.
+	if scope.org != "" && scope.workspace != "" && len(input.Projects) == 0 {
+		return input, errors.New("choose the projects the channel is for")
 	}
 	return input, nil
 }
@@ -606,11 +628,12 @@ func (s *Server) alertChannelSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	owner := s.alertScopeOf(r.Context()).org
 	err = s.mutateAlerting(r.Context(), func(spec *geassv1alpha1.GeassAlertingSpec) error {
-		if len(spec.Channels) >= alerts.MaxChannels {
-			return alertInputError(fmt.Sprintf("There can be at most %d channels.", alerts.MaxChannels))
+		if limit := channelLimit(spec.Channels, owner); limit != "" {
+			return alertInputError(limit)
 		}
-		channel := geassv1alpha1.GeassAlertChannel{ID: id}
+		channel := geassv1alpha1.GeassAlertChannel{ID: id, Org: owner}
 		apply(&channel)
 		spec.Channels = append(spec.Channels, channel)
 		return nil
@@ -628,9 +651,14 @@ func (s *Server) alertChannelSave(w http.ResponseWriter, r *http.Request) {
 func (s *Server) alertChannelUpdate(w http.ResponseWriter, r *http.Request, id string, input alertChannelInput, secrets client.ObjectKey, apply func(*geassv1alpha1.GeassAlertChannel)) {
 	notFound := alertInputError("That channel was not found.")
 	err := s.mutateAlerting(r.Context(), func(spec *geassv1alpha1.GeassAlertingSpec) error {
+		scope := s.alertScopeOf(r.Context())
 		for i := range spec.Channels {
 			if spec.Channels[i].ID != id {
 				continue
+			}
+			// Another organization's channel is one that is not there.
+			if !scope.owns(r.Context(), s, spec.Channels[i].Org, spec.Channels[i].Projects) {
+				return notFound
 			}
 			if spec.Channels[i].Type != input.Type {
 				return alertInputError("A channel's type cannot be changed. Make a new channel instead.")
@@ -656,9 +684,13 @@ func (s *Server) alertChannelUpdate(w http.ResponseWriter, r *http.Request, id s
 func (s *Server) alertChannelDelete(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.FormValue("id"))
 	notFound := alertInputError("That channel was not found.")
+	scope := s.alertScopeOf(r.Context())
 	err := s.mutateAlerting(r.Context(), func(spec *geassv1alpha1.GeassAlertingSpec) error {
 		for i := range spec.Channels {
 			if spec.Channels[i].ID == id {
+				if !scope.owns(r.Context(), s, spec.Channels[i].Org, spec.Channels[i].Projects) {
+					return notFound
+				}
 				spec.Channels = slices.Delete(spec.Channels, i, i+1)
 				return nil
 			}
@@ -684,14 +716,14 @@ func (s *Server) alertChannelTest(w http.ResponseWriter, r *http.Request) {
 	reply := func(ok bool, message string) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "error": message})
 	}
-	config, err := alerts.Load(r.Context(), s.Client, systemNamespace)
+	config, err := alerts.Load(asSystem(r.Context()), s.Client, systemNamespace)
 	if err != nil {
 		alertFail(w, r, "could not load the alert settings")
 		return
 	}
 	id := strings.TrimSpace(r.FormValue("id"))
 	channel, found := config.Channel(id)
-	if !found {
+	if !found || !s.alertScopeOf(r.Context()).owns(r.Context(), s, channel.Org, channel.Projects) {
 		alertFail(w, r, "That channel was not found.")
 		return
 	}
@@ -707,7 +739,18 @@ func (s *Server) alertChannelTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), alertTestConfigWait+alertTestDeliveryWait+alertTestMargin)
 	defer cancel()
 	manager := s.alertmanager()
+	// What went wrong inside the cluster is for the platform's administrators, not for an organization.
+	internal := func(err error) string {
+		if s.alertScopeOf(r.Context()).org != "" {
+			return "Alerts cannot be sent right now. Ask a platform administrator."
+		}
+		return err.Error()
+	}
 	if err := manager.Ready(ctx); err != nil {
+		if s.alertScopeOf(r.Context()).org != "" {
+			reply(false, internal(err))
+			return
+		}
 		reply(false, "Alertmanager could not be reached ("+err.Error()+"). It is part of the monitoring add-on, which has to be on for alerts to be sent.")
 		return
 	}
@@ -726,12 +769,12 @@ func (s *Server) alertChannelTest(w http.ResponseWriter, r *http.Request) {
 
 	before, err := manager.Counters(ctx)
 	if err != nil {
-		reply(false, err.Error())
+		reply(false, internal(err))
 		return
 	}
 	started := time.Now()
 	if err := manager.PostTest(ctx, id, channel.Name, started); err != nil {
-		reply(false, err.Error())
+		reply(false, internal(err))
 		return
 	}
 	// Alertmanager's counts are for every channel that sends through Slack or the mail server, so a message another channel

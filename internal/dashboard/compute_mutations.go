@@ -169,6 +169,9 @@ func (s *Server) connectionForCompute(ctx context.Context, name string) (*geassv
 	if connection.Spec.Project != "" {
 		return nil, compute.Descriptor{}, platform.UserError(fmt.Sprintf("The connection %q belongs to project %q, and a project's connection cannot create machines for the cluster", name, connection.Spec.Project))
 	}
+	if connection.Spec.Org != "" {
+		return nil, compute.Descriptor{}, platform.UserError(fmt.Sprintf("The connection %q belongs to an organization, and an organization's connection cannot create machines for the cluster", name))
+	}
 	descriptor, ok := compute.Lookup(string(connection.Spec.Provider))
 	if !ok {
 		return nil, compute.Descriptor{}, platform.UserError(fmt.Sprintf("Geass cannot create machines at %s", connection.Spec.Provider))

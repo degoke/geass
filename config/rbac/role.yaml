@@ -144,6 +144,7 @@ rules:
   - geassnodepools
   - geassnodes
   - geassobjectstores
+  - geassorganizations
   - geassplatformconfigs
   - geassprojects
   verbs:
@@ -164,6 +165,7 @@ rules:
   - geassnodepools/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
+  - geassorganizations/finalizers
   - geassprojects/finalizers
   verbs:
   - update

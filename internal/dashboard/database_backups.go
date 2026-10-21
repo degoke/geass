@@ -205,7 +205,7 @@ func (s *Server) handleDatabaseRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	environment := geassv1alpha1.GeassEnvironment(firstNonEmptyString(r.FormValue("environment"), string(archive.Spec.Environment)))
-	if err := platform.ValidateProjectPlacement(ctx, s.Client, archive.Spec.Project, environment); err != nil {
+	if err := platform.ValidateProjectPlacement(ctx, s.system(), archive.Spec.Project, environment); err != nil {
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}

@@ -209,7 +209,7 @@ func (s *Server) projectLogSources(ctx context.Context, projectName string, quer
 	known := map[string]bool{}
 	for _, namespace := range namespaces {
 		var pods corev1.PodList
-		if err := s.Client.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
+		if err := s.Client.List(asSystem(ctx), &pods, client.InNamespace(namespace)); err != nil {
 			return nil, nil, err
 		}
 		for i := range pods.Items {

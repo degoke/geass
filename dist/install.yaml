@@ -2082,6 +2082,11 @@ spec:
                   ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
                   it, and the digest recorded when that run ends is the one its own pod reports.
                 type: string
+              jobNamespace:
+                description: |-
+                  JobNamespace is the namespace the build's Job runs in, when it is not the build's own: the organization's build
+                  namespace, for a project that belongs to one. Empty means the build's own namespace.
+                type: string
               jobRef:
                 type: string
               lastLogLine:
@@ -2146,6 +2151,14 @@ spec:
             type: object
           spec:
             properties:
+              org:
+                description: |-
+                  Org makes a connection with no project an organization's: the name of a GeassOrganization. Every project of the
+                  organization may use it, and only the organization's people see it. One that names a project belongs to the
+                  project, and this is ignored.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               organization:
                 description: Organization is the PlanetScale organization slug.
                 type: string
@@ -2990,6 +3003,14 @@ spec:
                 enum:
                 - Create
                 - Connect
+                type: string
+              org:
+                description: |-
+                  Org makes a shared server an organization's: the name of a GeassOrganization. Only that organization's projects
+                  may take logical databases on it, and only its people see it. It is for a server with no project; one that has a
+                  project belongs to the project, and this is ignored. Empty is the platform's, which every project may use.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               passwordSecretRef:
                 description: PasswordSecretRef points at the Secret that stores the
@@ -5520,6 +5541,317 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
+  name: geassorganizations.geass.geass.dev
+spec:
+  group: geass.geass.dev
+  names:
+    kind: GeassOrganization
+    listKind: GeassOrganizationList
+    plural: geassorganizations
+    singular: geassorganization
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Name
+      type: string
+    - jsonPath: .spec.idpID
+      name: IdP ID
+      type: string
+    - jsonPath: .spec.suspended
+      name: Suspended
+      type: boolean
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GeassOrganization is the Schema for the geassorganizations API. It is created by a platform administrator, and only
+          when the platform's tenancy is turned on does anything look at it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GeassOrganizationSpec says which people of the identity provider's organization are Geass's organization, and what
+              it may use. It is the tenant boundary: a project belongs to one organization, and a person who signed in as a member
+              of one organization cannot see or change another's.
+            properties:
+              allowedDomains:
+                description: |-
+                  AllowedDomains are the domains the organization's services may claim a hostname under: a host is allowed when
+                  it is one of them or sits below one. The hostnames Geass itself gives a service are always allowed. Without a
+                  list, an organization may claim any hostname nobody else holds.
+                items:
+                  maxLength: 253
+                  pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                  type: string
+                maxItems: 50
+                type: array
+                x-kubernetes-list-type: set
+              clusterRef:
+                description: |-
+                  ClusterRef is the cluster the organization's new projects are made in. Without it they use the platform's
+                  default cluster. A project that already exists stays where it is.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              displayName:
+                description: DisplayName is what the dashboard calls the organization.
+                maxLength: 100
+                minLength: 1
+                type: string
+              idp:
+                description: |-
+                  IdP is an identity provider of the organization's own, which its people sign in through instead of the platform's.
+                  A person who signs in through it works in this organization, in all of it, as the role its claim maps to; it can never
+                  make anybody an administrator of the platform or put anybody in another organization.
+                properties:
+                  clientID:
+                    description: ClientID is the client the provider knows Geass as.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  credentialRef:
+                    description: CredentialRef names the Secret in the system namespace
+                      whose "clientSecret" key is the client secret.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  displayName:
+                    description: DisplayName is what the sign-in page calls the provider.
+                    maxLength: 60
+                    type: string
+                  enabled:
+                    description: |-
+                      Enabled lets people sign in through it. It is turned on only after a test sign-in of exactly these settings, so that a
+                      typo cannot shut the organization out. Changing anything turns it off.
+                    type: boolean
+                  issuer:
+                    description: Issuer is the provider's issuer URL, as its discovery
+                      document names it. It must be https.
+                    maxLength: 2048
+                    minLength: 1
+                    type: string
+                  requireClaim:
+                    additionalProperties:
+                      type: string
+                    description: RequireClaim limits sign-in to people whose ID token
+                      has each of these claims with the value given.
+                    maxProperties: 10
+                    type: object
+                  roleClaim:
+                    description: RoleClaim is the claim of the ID token that holds
+                      the person's role in the organization, mapped by RoleMap.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  roleMap:
+                    additionalProperties:
+                      type: string
+                    description: RoleMap says which Geass role (admin or viewer) each
+                      value of RoleClaim is. A value that is not here is not let in.
+                    maxProperties: 50
+                    type: object
+                  scopes:
+                    description: Scopes are asked for besides openid. Empty means
+                      email and profile.
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
+                required:
+                - clientID
+                - issuer
+                - roleClaim
+                - roleMap
+                type: object
+              idpID:
+                description: |-
+                  IdPID is the organization's identifier in the identity provider's sign-in token. A person whose token names it
+                  is a member of this organization; no two organizations may have the same one.
+                maxLength: 253
+                minLength: 1
+                type: string
+              maxProjects:
+                description: |-
+                  MaxProjects is how many projects the organization may have. Without it there is no limit; zero keeps it from
+                  making any. It is checked when a project is made or given to the organization, so projects that are already
+                  there are never removed by lowering it.
+                format: int32
+                minimum: 0
+                type: integer
+              quota:
+                description: |-
+                  Quota caps what all the organization's projects can ask for together, added up over every environment of
+                  every project. It is held the way a project's own quota is: through a ResourceQuota in each environment, kept
+                  in step with the total, so two environments starting at the same instant can briefly pass it. Nothing that is
+                  running is stopped when it is passed. A project's own quota still applies, and an environment is held to the
+                  lowest of them.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the most CPU the pods of the project may ask
+                      for in total, such as "8".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the most memory the pods of the project
+                      may ask for in total, such as "16Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  pods:
+                    description: Pods is the most pods the project may have running
+                      or waiting at once. Finished pods are not counted.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the most disk the volumes of the project
+                      may ask for in total, such as "200Gi".
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              region:
+                description: |-
+                  Region is where the organization's projects run when they name none of their own: only nodes in the region
+                  are used. Without it they use the cluster's default region.
+                maxLength: 40
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              registry:
+                description: |-
+                  Registry is where the organization's builds push their images, and the login they push with, in place of the
+                  platform's. It makes the organization's builds run with a credential of its own and not the platform's: the
+                  organization's builds run in a namespace of their own, which holds only this login (or, without it, a copy of the
+                  platform's). A service that names a registry of its own keeps it.
+                properties:
+                  credentialRef:
+                    description: |-
+                      LocalObjectReference contains enough information to let you locate the
+                      referenced object inside the same namespace.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  repository:
+                    type: string
+                type: object
+              requiredTags:
+                description: |-
+                  RequiredTags are node tags every workload of every project of the organization must run on, added to each
+                  project's own. Tagging nodes with the same tag keeps the organization's workloads to those nodes, and, with the
+                  compliance policy, keeps anything else from being scheduled there.
+                items:
+                  maxLength: 40
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: set
+              suspended:
+                description: Suspended keeps the organization's people from signing
+                  in while its projects keep running.
+                type: boolean
+              workspaces:
+                description: |-
+                  Workspaces are the groups of projects inside the organization. A person who is not an administrator of the
+                  organization works in one workspace at a time and sees only its projects.
+                items:
+                  description: |-
+                    GeassOrganizationWorkspace is a group of projects inside an organization, such as a team's. Who belongs to it is
+                    decided by the identity provider; Geass only holds the name it gives the group in its sign-in token.
+                  properties:
+                    displayName:
+                      description: DisplayName is what the dashboard calls the workspace.
+                      maxLength: 100
+                      minLength: 1
+                      type: string
+                    id:
+                      description: ID is what projects name in spec.workspace. It
+                        is made by Geass and does not change.
+                      pattern: ^ws-[a-f0-9]{6}$
+                      type: string
+                    idpID:
+                      description: IdPID is the workspace's identifier in the identity
+                        provider's sign-in token (a team id).
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                  required:
+                  - displayName
+                  - id
+                  - idpID
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
+            required:
+            - displayName
+            - idpID
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: geassplatformconfigs.geass.geass.dev
 spec:
   group: geass.geass.dev
@@ -5608,6 +5940,13 @@ spec:
                           description: NotifyResolved sends a message when a problem
                             clears, not only when it starts. Unset means it does.
                           type: boolean
+                        org:
+                          description: |-
+                            Org makes the channel an organization's: the GeassOrganization whose people set it up and can see it. It hears
+                            only about that organization's projects (the ones in Projects, when it names some), never about the cluster, and
+                            never about another organization's. Without it the channel is the platform's.
+                          pattern: ^org-[a-f0-9]{8}$
+                          type: string
                         projects:
                           description: |-
                             Projects limits the channel to these projects. Empty means every project, and it is also what lets a
@@ -5636,7 +5975,7 @@ spec:
                       - name
                       - type
                       type: object
-                    maxItems: 20
+                    maxItems: 200
                     type: array
                   smtp:
                     description: SMTP is the mail server that email channels send
@@ -5751,6 +6090,17 @@ spec:
                           cannot be this machine or a link-local address.
                         maxLength: 2048
                         type: string
+                      refreshMinutes:
+                        description: |-
+                          RefreshMinutes makes Geass ask the provider again, this often, whether each person who signed in is still its own and
+                          what it now says of them, so that a role that changed, an organization they were taken out of, or a person who was
+                          removed is noticed within minutes and not when their session ends. It needs a provider that gives refresh tokens
+                          (Geass asks for the offline_access scope). A change ends the person's sessions, and they sign in again to get what is
+                          now true. Zero, the default, is off.
+                        format: int32
+                        maximum: 1440
+                        minimum: 0
+                        type: integer
                       requireClaim:
                         additionalProperties:
                           type: string
@@ -5798,6 +6148,83 @@ spec:
                         maximum: 720
                         minimum: 5
                         type: integer
+                      staleGraceMinutes:
+                        description: |-
+                          StaleGraceMinutes is how long the provider can be unreachable before the sessions that could not be checked are ended,
+                          when RefreshMinutes is on. Unset means 120. Until then a session whose check failed because the provider was down is
+                          kept, since it says nothing about the person.
+                        format: int32
+                        maximum: 1440
+                        minimum: 0
+                        type: integer
+                    type: object
+                  tenancy:
+                    description: |-
+                      Tenancy makes the people who sign in through the provider belong to organizations, each seeing only its own
+                      projects. It works only while Mode is external, because the provider is what says who is in which organization.
+                    properties:
+                      autoProvision:
+                        description: |-
+                          AutoProvision makes an organization of the provider that Geass does not know yet when one of its administrators
+                          signs in, instead of refusing them. Without it only the organizations a platform administrator set up can be
+                          signed in to.
+                        properties:
+                          allow:
+                            description: |-
+                              Allow limits which organizations may be made, by the provider's id for them: an id as it is, or the start of
+                              one followed by "*". Pending without it makes any that asks; Open needs it.
+                            items:
+                              maxLength: 253
+                              type: string
+                            maxItems: 50
+                            type: array
+                          max:
+                            description: |-
+                              Max is how many organizations can be made this way in all. Unset means 20. It is what keeps a flood of sign-ins
+                              from filling the cluster with organizations.
+                            format: int32
+                            maximum: 500
+                            minimum: 1
+                            type: integer
+                          mode:
+                            description: |-
+                              Mode is Pending, which makes the organization suspended until a platform administrator approves it (the person is
+                              told it is waiting), or Open, which makes it ready to use at once. Open needs Allow, so that it is never for every
+                              organization the provider has.
+                            enum:
+                            - Pending
+                            - Open
+                            type: string
+                        required:
+                        - mode
+                        type: object
+                      enabled:
+                        description: |-
+                          Enabled turns organizations on. While it is off, everyone who may sign in sees everything, as before. A
+                          project that is not assigned to an organization is then seen by the platform's administrators only.
+                        type: boolean
+                      orgsClaim:
+                        description: |-
+                          OrgsClaim is the claim of the ID token that lists the organizations a person is in: a name, or a dotted path
+                          into nested objects. It holds a list of objects, each with the organization's "id", the person's "role" in it
+                          (mapped to a Geass role by the provider's roleMap), and optionally the "workspaces" they are in, each with an "id"
+                          and optionally a "role".
+                        maxLength: 253
+                        type: string
+                      platformClaim:
+                        description: |-
+                          PlatformClaim is the claim of the ID token that makes someone an administrator of the whole platform (its
+                          nodes, add-ons, domain and organizations) when it holds any of PlatformValues. Without it only the password
+                          administrators are, and no one who signs in through the provider.
+                        maxLength: 253
+                        type: string
+                      platformValues:
+                        description: PlatformValues are the values of PlatformClaim
+                          that make someone a platform administrator.
+                        items:
+                          type: string
+                        maxItems: 20
+                        type: array
                     type: object
                 type: object
               cloudflareConnectionRef:
@@ -6180,6 +6607,13 @@ spec:
                     - None
                     type: string
                 type: object
+              org:
+                description: |-
+                  Org is the organization that owns this project: the name of a GeassOrganization. Empty means the project is
+                  not assigned to one, which only the platform's administrators can see once organizations are turned on.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               prEnvironments:
                 description: PREnvironments creates a temporary copy of an environment
                   for every pull request.
@@ -6349,6 +6783,12 @@ spec:
                   type: object
                 maxItems: 20
                 type: array
+              workspace:
+                description: |-
+                  Workspace is the id of the workspace of the organization this project is in. Empty means the project belongs
+                  to the organization as a whole, which only its administrators can see.
+                pattern: ^ws-[a-f0-9]{6}$
+                type: string
             required:
             - clusterRef
             - environments
@@ -7204,6 +7644,7 @@ rules:
   - geassnodepools
   - geassnodes
   - geassobjectstores
+  - geassorganizations
   - geassplatformconfigs
   - geassprojects
   verbs:
@@ -7224,6 +7665,7 @@ rules:
   - geassnodepools/finalizers
   - geassnodes/finalizers
   - geassobjectstores/finalizers
+  - geassorganizations/finalizers
   - geassprojects/finalizers
   verbs:
   - update

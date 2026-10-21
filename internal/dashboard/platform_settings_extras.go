@@ -68,7 +68,7 @@ func (s *Server) withClusterIssuerProblem(ctx context.Context, message string) s
 	if s.Client == nil {
 		return message
 	}
-	if problem := platform.ClusterIssuerProblemFor(ctx, s.Client); problem != "" {
+	if problem := platform.ClusterIssuerProblemFor(ctx, s.system()); problem != "" {
 		return strings.TrimSuffix(message, ".") + " (" + problem + ")"
 	}
 	return message

@@ -189,6 +189,7 @@ Defaults marked "CRD default" are filled in by the API server. Defaults marked "
 | Field | Type | Required or default | Validation | Meaning |
 | --- | --- | --- | --- | --- |
 | `spec.project` | string | Optional | None | The owning project. Empty makes this the cluster-wide shared server, which runs in `geass-system`. |
+| `spec.org` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | Makes a shared server (one with no project) an [organization](/docs/reference/resources/geass-organization/)'s: only that organization's projects may take logical databases on it, and only its people see it. It runs where the organization requires its work to (its region and node tags). Ignored when `spec.project` is set. Empty is the platform's, which every project may use. |
 | `spec.environment` | string | Optional. Required in practice for a project database. | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | The project environment. It must be one of the project's `spec.environments`. Empty for a shared server. |
 | `spec.engine` | string | Required | Enum `Postgres`, `MySQL`, `SQLite`, `Redis`, `MariaDB` | The database engine. `MariaDB` runs the official image under the MariaDB operator. `SQLite` runs rqlite, which serves SQLite over HTTP on port 4001. `Redis` runs without a volume. A PlanetScale database can be `MySQL` or `Postgres`. |
 | `spec.placement` | string | CRD default `InCluster` | Enum `InCluster`, `External` | `InCluster` runs the database in the cluster. `External` connects to a database elsewhere. |

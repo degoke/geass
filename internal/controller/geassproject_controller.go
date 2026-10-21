@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
@@ -54,7 +56,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		for env := range environments {
 			if namespace, err := platform.ProjectNamespace(project.Name, env); err == nil {
-				_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{platform.LabelProject: project.Name}}}))
+				_ = deleteOwnedNamespace(ctx, r.Client, namespace, project.Name)
 			}
 		}
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: project.Name + "-shared-secrets", Namespace: platform.SystemNamespace}}))
@@ -89,6 +91,10 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	orgCaps, err := r.organizationQuota(ctx, &project)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	desired := make(map[string]string, len(project.Spec.Environments))
 	for _, env := range project.Spec.Environments {
@@ -106,12 +112,15 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			platform.LabelEnvironment: env,
 			platform.LabelCluster:     cluster.Name,
 		}); err != nil {
+			if errors.Is(err, errNamespaceNotOwned) {
+				return r.setProjectNotReady(ctx, &project, err.Error())
+			}
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileProjectNetwork(ctx, &project, namespace, nodes); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.reconcileProjectQuota(ctx, &project, namespace, quotaUsage); err != nil {
+		if err := r.reconcileProjectQuota(ctx, &project, namespace, quotaUsage, orgCaps); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileProjectCompliance(ctx, &project, namespace); err != nil {
@@ -128,7 +137,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		namespace, err := platform.ProjectNamespace(project.Name, current.Name)
 		if err == nil {
-			_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{platform.LabelProject: project.Name}}}))
+			_ = deleteOwnedNamespace(ctx, r.Client, namespace, project.Name)
 		}
 	}
 
@@ -234,6 +243,8 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return requests
 		}), builder.WithPredicates(readyOrSpecChanged())).
+		// What an organization requires of its projects (node tags, region, quota) is acted on in each of them.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, projectItself)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// A network policy that is edited or deleted by hand is put back.
 		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
 		// A project that blocks the cluster's machines names each one in its policy, so it follows the nodes.

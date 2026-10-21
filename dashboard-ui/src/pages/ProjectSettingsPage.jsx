@@ -23,7 +23,8 @@ import {
   Webhook,
 } from "lucide-react";
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
-import { canMutate } from "@/lib/dashboard";
+import { canMutate, sessionScopes } from "@/lib/dashboard";
+import { ProjectOrganization } from "@/components/ProjectOrganization";
 import { alertUser } from "@/lib/notify";
 import { normalizeProjectName } from "@/lib/project-names";
 import { projectResources } from "@/lib/project-resources";
@@ -277,12 +278,18 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
           </SettingsSection>
           <SettingsDivider />
           <SettingsSection title="Visibility" flat>
-            <p className="rw-rail-body">
-              This project is private. Only members of the Geass workspace can access it.
-            </p>
-            <SettingsFormActions>
-              <Button type="button" variant="outline" disabled>Change visibility</Button>
-            </SettingsFormActions>
+            {sessionScopes(data).length ? (
+              <ProjectOrganization project={project} data={data} reload={reload} />
+            ) : (
+              <>
+                <p className="rw-rail-body">
+                  This project is private. Only members of the Geass workspace can access it.
+                </p>
+                <SettingsFormActions>
+                  <Button type="button" variant="outline" disabled>Change visibility</Button>
+                </SettingsFormActions>
+              </>
+            )}
           </SettingsSection>
         </>
       )}

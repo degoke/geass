@@ -150,3 +150,19 @@ func ProjectLimitRange(project, namespace string, hard corev1.ResourceList) *cor
 		}}},
 	}
 }
+
+// LowerHard is the two caps taken together: for each resource either names, the lower of its limits, and for one only
+// one names, that one. It is how an environment is held to the lowest of its own, its project's and its organization's.
+func LowerHard(a, b corev1.ResourceList) corev1.ResourceList {
+	out := corev1.ResourceList{}
+	for name, limit := range a {
+		out[name] = limit.DeepCopy()
+	}
+	for name, limit := range b {
+		if existing, ok := out[name]; ok && existing.Cmp(limit) <= 0 {
+			continue
+		}
+		out[name] = limit.DeepCopy()
+	}
+	return out
+}

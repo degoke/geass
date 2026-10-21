@@ -95,11 +95,12 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		// Job of its own. One that exists is the last run's, and its result is not this run's, so it is removed
 		// here and not left to whoever reset the build: that may have failed to, or have had no way to.
 		stale := &batchv1.Job{}
-		err := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, stale)
+		err := r.Get(ctx, client.ObjectKey{Name: jobNameOf(build), Namespace: jobNamespaceOf(build)}, stale)
 		if err == nil {
 			if err := r.Delete(ctx, stale, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
 				return ctrl.Result{}, err
 			}
+			r.removeBuildSecrets(ctx, build)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		} else if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -119,13 +120,14 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
 		}
 	}
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: build.Name + "-kaniko", Namespace: build.Namespace}}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobNameOf(build), Namespace: jobNamespaceOf(build)}}
 	if build.Status.CancelRequested {
 		if err := r.Get(ctx, client.ObjectKeyFromObject(job), job); err == nil {
 			if err := r.Delete(ctx, job); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
 		}
+		r.removeBuildSecrets(ctx, build)
 		return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildCancelled, nil, nil)
 	}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(job), job); apierrors.IsNotFound(err) {
@@ -152,7 +154,19 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		jobPlacement.ApplyToPodSpec(&job.Spec.Template.Spec)
-		if err := controllerutil.SetControllerReference(build, job, r.Scheme); err != nil {
+		// A project of an organization builds in the organization's own namespace, with copies of what the build needs.
+		// Its Job is then in another namespace than the build, which cannot own it.
+		namespace, org, err := r.buildNamespaceFor(ctx, build)
+		if err != nil {
+			return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
+		}
+		build.Status.JobNamespace = ""
+		if org != nil {
+			if err := r.isolateJob(ctx, build, job, org, namespace); err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
+			}
+			build.Status.JobNamespace = namespace
+		} else if err := controllerutil.SetControllerReference(build, job, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, job); err != nil {
@@ -182,6 +196,10 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	}
 	if err := r.updateStatus(ctx, build, phase, nil, failure); err != nil {
 		return ctrl.Result{}, err
+	}
+	if completed != nil {
+		// The credentials copied for the run are not kept once it is over.
+		r.removeBuildSecrets(ctx, build)
 	}
 	log.Info("Reconciled GeassBuild", "job", job.Name, "phase", phase)
 	if completed != nil {
@@ -315,7 +333,7 @@ func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) (*batchv1
 		cloneCommand = "git -c http.extraheader=\"Authorization: Bearer $GITHUB_TOKEN\" clone --branch \"$BRANCH\" https://github.com/" + strings.TrimPrefix(build.Spec.Repository, "https://github.com/") + " " + kanikoWorkspace
 	}
 	cloneCommand += " && git -C " + kanikoWorkspace + " checkout --detach \"$REVISION\""
-	podSpec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, InitContainers: []corev1.Container{{Name: "git", Image: "alpine/git:latest", Command: []string{"sh", "-c", cloneCommand}, Env: []corev1.EnvVar{{Name: "BRANCH", Value: build.Spec.Branch}, {Name: "REVISION", Value: buildRevision(build)}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Containers: []corev1.Container{{Name: kanikoContainerName, Image: "gcr.io/kaniko-project/executor:v1.23.2", Args: args, TerminationMessagePath: kanikoDigestFile, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
+	podSpec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: pointerTo(false), InitContainers: []corev1.Container{{Name: "git", Image: "alpine/git:latest", Command: []string{"sh", "-c", cloneCommand}, Env: []corev1.EnvVar{{Name: "BRANCH", Value: build.Spec.Branch}, {Name: "REVISION", Value: buildRevision(build)}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Containers: []corev1.Container{{Name: kanikoContainerName, Image: "gcr.io/kaniko-project/executor:v1.23.2", Args: args, TerminationMessagePath: kanikoDigestFile, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: kanikoWorkspace}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if build.Spec.GitCredentialRef != nil {
 		podSpec.InitContainers[0].Env = append(podSpec.InitContainers[0].Env, corev1.EnvVar{Name: "GITHUB_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: *build.Spec.GitCredentialRef, Key: "token"}}})
 	}
@@ -328,6 +346,8 @@ func (r *GeassBuildReconciler) jobFor(build *geassv1alpha1.GeassBuild) (*batchv1
 
 func ptrInt32(v int32) *int32 { return &v }
 
+func pointerTo[T any](v T) *T { return &v }
+
 func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1alpha1.GeassBuild, phase geassv1alpha1.GeassBuildPhase, started *metav1.Time, failure error) error {
 	latest := &geassv1alpha1.GeassBuild{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(build), latest); err != nil {
@@ -337,7 +357,7 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 	retryCount := int32(-1)
 	imageDigest := ""
 	job := &batchv1.Job{}
-	jobFound := r.Get(ctx, client.ObjectKey{Name: build.Name + "-kaniko", Namespace: build.Namespace}, job) == nil
+	jobFound := r.Get(ctx, client.ObjectKey{Name: jobNameOf(build), Namespace: jobNamespaceOf(build)}, job) == nil
 	if jobFound {
 		retryCount = job.Status.Failed
 		if phase == geassv1alpha1.GeassBuildSucceeded {
@@ -358,7 +378,8 @@ func (r *GeassBuildReconciler) updateStatus(ctx context.Context, build *geassv1a
 	before := latest.Status.Phase
 	wrote, err := platform.PatchStatus(ctx, r.Client, latest, func() {
 		latest.Status.Phase = phase
-		latest.Status.JobRef = build.Name + "-kaniko"
+		latest.Status.JobRef = jobNameOf(build)
+		latest.Status.JobNamespace = build.Status.JobNamespace
 		latest.Status.LogRef = build.Status.LogRef
 		if latest.Status.LogRef == "" {
 			latest.Status.LogRef = "pod-log://" + build.Name + "-kaniko/" + kanikoContainerName
@@ -420,13 +441,13 @@ func (r *GeassBuildReconciler) archiveBuildLog(ctx context.Context, build *geass
 	if err := r.Get(ctx, client.ObjectKey{Name: store.Status.ConnectionSecret, Namespace: ns}, secret); err != nil {
 		return ""
 	}
-	pods, err := r.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + build.Name + "-kaniko"})
+	pods, err := r.Kube.CoreV1().Pods(jobNamespaceOf(build)).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + jobNameOf(build)})
 	if err != nil {
 		return ""
 	}
 	var logData []byte
 	for _, pod := range pods.Items {
-		logData, err = r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
+		logData, err = r.Kube.CoreV1().Pods(jobNamespaceOf(build)).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
 		if err == nil && len(logData) > 0 {
 			break
 		}
@@ -635,7 +656,7 @@ func (r *GeassBuildReconciler) digestFromBuildPod(ctx context.Context, build *ge
 	if r.Kube == nil {
 		return ""
 	}
-	pods, err := r.Kube.CoreV1().Pods(build.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	pods, err := r.Kube.CoreV1().Pods(jobNamespaceOf(build)).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
 	if err != nil {
 		return ""
 	}
@@ -652,7 +673,7 @@ func (r *GeassBuildReconciler) digestFromBuildPod(ctx context.Context, build *ge
 				return digest
 			}
 		}
-		data, err := r.Kube.CoreV1().Pods(build.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
+		data, err := r.Kube.CoreV1().Pods(jobNamespaceOf(build)).GetLogs(pod.Name, &corev1.PodLogOptions{Container: kanikoContainerName}).Do(ctx).Raw()
 		if err != nil {
 			continue
 		}
@@ -685,5 +706,9 @@ func (r *GeassBuildReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// What a report that runs on its own wants tried again arrives here, as the pause it asked for ends.
 		controllerBuilder = controllerBuilder.WatchesRawSource(source.Channel(r.reports.channel(), &handler.EnqueueRequestForObject{}))
 	}
-	return controllerBuilder.For(&geassv1alpha1.GeassBuild{}).Owns(&batchv1.Job{}).Named("geassbuild").Complete(r)
+	return controllerBuilder.For(&geassv1alpha1.GeassBuild{}).Owns(&batchv1.Job{}).
+		// The Job of an organization's build is in the organization's build namespace, so it is not owned by the build and
+		// finds it by its labels.
+		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(buildForJob)).
+		Named("geassbuild").Complete(r)
 }

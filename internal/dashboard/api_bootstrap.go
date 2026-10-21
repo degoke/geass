@@ -32,22 +32,30 @@ func (s *Server) loadDashboardBootstrap(ctx context.Context, viewer bool) (dashb
 	if err := s.Client.List(ctx, &data.CloudConnections, client.InNamespace(systemNamespace)); err != nil {
 		return data, err
 	}
+	// The platform's own settings, its clusters and their health are not an organization's to see.
+	platformView := isPlatformContext(ctx)
 	if !viewer {
-		if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
-			return data, err
+		if platformView {
+			if err := s.Client.List(ctx, &data.PlatformConfig, client.InNamespace(systemNamespace)); err != nil {
+				return data, err
+			}
 		}
 		if err := s.Client.List(ctx, &data.Builds, client.InNamespace(systemNamespace)); err != nil {
 			return data, err
 		}
 	}
-	if err := s.Client.List(ctx, &data.Clusters); err != nil {
-		return data, err
+	if platformView {
+		if err := s.Client.List(ctx, &data.Clusters); err != nil {
+			return data, err
+		}
 	}
 	if err := s.Client.List(ctx, &data.Deployments, client.InNamespace(systemNamespace)); err != nil {
 		return data, err
 	}
-	if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
-		return data, err
+	if platformView {
+		if err := s.Client.List(ctx, &data.HAReadiness, client.InNamespace(systemNamespace)); err != nil {
+			return data, err
+		}
 	}
 	if err := s.Client.List(ctx, &data.BackupArchives, client.InNamespace(systemNamespace)); err != nil {
 		return data, err

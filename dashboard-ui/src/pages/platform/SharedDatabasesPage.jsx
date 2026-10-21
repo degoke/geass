@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Modal, Stack, Text } from "@mantine/core";
+import { useQuery } from "@tanstack/react-query";
 import { Database } from "lucide-react";
-import { action, condition, list, resourceDisplayName, resourceName } from "@/lib/api";
-import { canMutate } from "@/lib/dashboard";
+import { action, api, condition, list, resourceDisplayName, resourceName } from "@/lib/api";
+import { canMutate, isPlatformSession, sessionScopes } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
 import { platformRegions, sharedServerRegion } from "@/lib/placement";
@@ -32,6 +33,9 @@ function SetupForm({ data, reload, onDone }) {
   const [name, setName] = useState("");
   const [region, setRegion] = useState("");
   const [ha, setHa] = useState(false);
+  const [org, setOrg] = useState("");
+  const orgsOn = sessionScopes(data).length > 0 && isPlatformSession(data);
+  const orgs = useQuery({ queryKey: ["orgs"], queryFn: () => api("/api/orgs"), enabled: orgsOn });
   const defaults = defaultSizeForKind("database", engine.toLowerCase());
   const [cpu, setCpu] = useState(defaults.cpu);
   const [memory, setMemory] = useState(defaults.memory);
@@ -48,6 +52,7 @@ function SetupForm({ data, reload, onDone }) {
       await action("/shared-databases/create", {
         engine,
         name: name.trim(),
+        org,
         region,
         cpu,
         memory,
@@ -75,6 +80,14 @@ function SetupForm({ data, reload, onDone }) {
         <Field label="Name" description="Optional. Projects see this name when they choose a server.">
           <Input value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder={`cluster-${engine.toLowerCase()}`} aria-label="Name" />
         </Field>
+        {orgsOn ? (
+          <Field label="Organization" description="A server for one organization: only its projects take databases on it, and its people see it. It runs where the organization requires its work to. Leave it empty for a server every project shares.">
+            <Select value={org} onChange={(event) => setOrg(event.currentTarget.value)} aria-label="Organization">
+              <option value="">Shared by every project</option>
+              {(orgs.data?.items || []).map((entry) => <option key={entry.name} value={entry.name}>{entry.displayName}</option>)}
+            </Select>
+          </Field>
+        ) : null}
         {regions.length ? (
           <Field label="Region" description="Projects can only use a server in their own region, so every query stays close.">
             <Select value={region} onChange={(event) => setRegion(event.currentTarget.value)} aria-label="Region">
@@ -151,6 +164,9 @@ export function SharedDatabasesPage({ data, reload, embedded = false }) {
   const mutable = canMutate(data);
   const servers = sharedDatabaseServers(data);
   const logical = list(data, "logicalDatabases");
+  const orgsOn = sessionScopes(data).length > 0 && isPlatformSession(data);
+  const orgList = useQuery({ queryKey: ["orgs"], queryFn: () => api("/api/orgs"), enabled: orgsOn });
+  const orgNames = Object.fromEntries((orgList.data?.items || []).map((entry) => [entry.name, entry.displayName]));
 
   const rows = servers.map((server) => {
     const name = resourceName(server);
@@ -160,6 +176,7 @@ export function SharedDatabasesPage({ data, reload, embedded = false }) {
     return {
       key: name,
       name: resourceDisplayName(server),
+      owner: server.spec?.org ? orgNames[server.spec.org] || server.spec.org : "Every project",
       engine: server.spec?.engine === "MySQL" ? "MySQL" : "PostgreSQL",
       region: sharedServerRegion(server) || "—",
       usage: databases.length ? `${databases.length} ${databases.length === 1 ? "database" : "databases"} · ${projects} ${projects === 1 ? "project" : "projects"}` : "Not used yet",
@@ -180,6 +197,7 @@ export function SharedDatabasesPage({ data, reload, embedded = false }) {
         <DataTable
           columns={[
             { label: "Server", key: "name" },
+            { label: "For", key: "owner" },
             { label: "Engine", key: "engine" },
             { label: "Region", key: "region" },
             { label: "In use", key: "usage" },

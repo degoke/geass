@@ -107,7 +107,8 @@ spec:
 | --- | --- | --- | --- | --- |
 | `spec.provider` | string | none | Required. `AWS`, `PlanetScale`, `GCP`, `DigitalOcean`, `Hetzner`, `OVHcloud`, `Vultr`, `Linode`, `Scaleway`, `Azure`, `OCI`, `UpCloud` or `Webhook` | The vendor. Every one except `PlanetScale` can create machines. |
 | `spec.secretRef.name` | string | none | Required | A Secret in `geass-system` with the credentials. |
-| `spec.project` | string | none | none | The project ID that may use the connection. Required in practice for buckets, backups and databases, and **must be empty** for `Compute`. See below. |
+| `spec.project` | string | none | none | The project ID that may use the connection. Required in practice for buckets, backups and databases, and **must be empty** for `Compute`. See the rule below. |
+| `spec.org` | string | none | `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, at most 63 characters | A [GeassOrganization](/docs/reference/resources/geass-organization/) that owns the connection, when it names no project: every project of that organization may use it, and no other. Ignored when `spec.project` is set. Not for `Compute`, which belongs to the cluster. |
 | `spec.region` | string | none | none | The connection's default region: an AWS region for buckets and backups, and for machines the cloud's own place (a location, zone or region), used when a pool or a server names none. |
 | `spec.organization` | string | none | none | The PlanetScale organization. When empty, the Secret's `organization` key is used. PlanetScale only. |
 | `spec.purposes` | list | See below | At most 3. Each is `Storage`, `Database` or `Compute`. A set | What the connection is for. |
@@ -118,14 +119,15 @@ What a connection is for decides what may use it. Left out, `spec.purposes` mean
 
 ### Scope
 
-A connection for buckets, backups or databases is scoped to a project, and every use checks that `spec.project` names the project that is using it:
+A connection for buckets, backups or databases belongs to a project or to an organization, and every use checks that it belongs to the project that is using it:
 
-- A connection with an empty `spec.project` cannot be used by any of them. The error is `cloud connection "<name>" must be scoped to a project`, or `use a project-scoped cloud connection` in the dashboard.
-- A project that names another project's connection gets `cloud connection "<name>" is scoped to project "<project>"`.
+- A connection that names a project (`spec.project`) is that project's alone. A project that names another project's connection gets `cloud connection "<name>" is scoped to project "<project>"`.
+- A connection with no project that names an organization (`spec.org`) may be used by every project of that organization, and by no other. A project of another organization, or of none, gets `cloud connection "<name>" belongs to an organization that project "<project>" is not in`.
+- A connection with neither cannot be used by anything. The error is `cloud connection "<name>" must be scoped to a project or an organization`.
 
-So there is no platform-wide connection for those: create one per project. The dashboard also refuses to save such a connection without a project.
+So there is no platform-wide connection: create one per project, or one per organization. The dashboard also refuses to save a connection without a project or an organization (`org`, by a platform administrator or an administrator of the whole organization for their own). Any project of the organization can use the credentials of an organization's connection, so keep them to what its projects may all touch.
 
-A connection for `Compute` is the opposite. It belongs to the cluster, never to a project: a pool or a server that names one with a `spec.project` is refused (`cloud connection "<name>" belongs to project "<project>", and a project's connection cannot create machines for the cluster`), and so is one that lacks the purpose (`cloud connection "<name>" is not for compute: add Compute to its purposes`). Only an admin can make one, change one or use one. Because storage must be project-scoped and machines must not be, one AWS connection cannot serve both: make two.
+A connection for `Compute` is the opposite. It belongs to the cluster, never to a project: a pool or a server that names one with a `spec.project` or a `spec.org` is refused (`cloud connection "<name>" belongs to project "<project>", and a project's connection cannot create machines for the cluster`), and so is one that lacks the purpose (`cloud connection "<name>" is not for compute: add Compute to its purposes`). Only an admin can make one, change one or use one. Because storage must belong to a project or an organization and machines must not, one AWS connection cannot serve both: make two.
 
 ### The Secret
 
@@ -137,7 +139,7 @@ A connection for `Compute` is the opposite. It belongs to the cluster, never to 
 | PlanetScale | `organization` | Yes, unless `spec.organization` is set |
 | Each other cloud | The keys that cloud names: see [the table](/docs/guides/connectors/clouds/#the-clouds) | The ones that are not marked optional |
 
-The dashboard and `geass connections add` create the Secret `<name>-credentials`. If a Secret with that name already exists, the AWS card keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials). **Edit** under **Cloud connections** and `geass connections update` replace credentials in it.
+The dashboard and `geass connections add` create the Secret `<name>-credentials`, after the connection. If a Secret with that name already exists, the AWS card keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials). **Edit** under **Cloud connections** and `geass connections update` replace credentials in it. When [organizations are on](/docs/guides/organizations-and-workspaces/), a connection made by an organization is refused instead ("that name is already taken"), so that it cannot adopt a Secret that is not its own.
 
 ## Status
 

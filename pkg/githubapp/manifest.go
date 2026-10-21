@@ -14,15 +14,18 @@ import (
 
 // AppManifest is the payload posted to github.com/settings/apps/new.
 type AppManifest struct {
-	Name               string            `json:"name"`
-	URL                string            `json:"url"`
-	HookAttributes     ManifestHook      `json:"hook_attributes"`
-	RedirectURL        string            `json:"redirect_url"`
-	CallbackURLs       []string          `json:"callback_urls"`
-	SetupURL           string            `json:"setup_url,omitempty"`
-	Public             bool              `json:"public"`
-	DefaultPermissions map[string]string `json:"default_permissions"`
-	DefaultEvents      []string          `json:"default_events"`
+	Name           string       `json:"name"`
+	URL            string       `json:"url"`
+	HookAttributes ManifestHook `json:"hook_attributes"`
+	RedirectURL    string       `json:"redirect_url"`
+	CallbackURLs   []string     `json:"callback_urls"`
+	SetupURL       string       `json:"setup_url,omitempty"`
+	// RequestOAuthOnInstall makes GitHub ask the person who installs the App to authorize it, and send the code to the
+	// callback address with the installation id. The code is how Geass knows who came back.
+	RequestOAuthOnInstall bool              `json:"request_oauth_on_install,omitempty"`
+	Public                bool              `json:"public"`
+	DefaultPermissions    map[string]string `json:"default_permissions"`
+	DefaultEvents         []string          `json:"default_events"`
 }
 
 type ManifestHook struct {
@@ -58,8 +61,10 @@ func NewGeassAppManifest(dashboardURL, appName string) AppManifest {
 		},
 		RedirectURL:  base + "/settings/github/manifest/callback",
 		CallbackURLs: []string{base + "/github/callback"},
-		SetupURL:     base + "/github/callback",
-		Public:       false,
+		// With the person's authorization asked for during installation, GitHub redirects to the callback URL and
+		// ignores a setup URL, so none is given.
+		RequestOAuthOnInstall: true,
+		Public:                false,
 		DefaultPermissions: map[string]string{
 			// Checks is what "Wait for CI" reads: GET /commits/{sha}/check-runs is refused without it.
 			"checks":   levelRead,

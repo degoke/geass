@@ -80,6 +80,10 @@ func authLost(ctx context.Context) <-chan struct{} {
 // such record: its secret always names the same token, which either still stands or does not.
 type streamCredentials struct {
 	identity, role string
+	// org and workspace are what the person was working in, and platform is whether they acted for the platform: a
+	// stream does not outlive a change of any of them.
+	org, workspace string
+	platform       bool
 }
 
 // guardStream watches a stream's credentials for as long as the handler runs. The request it returns has a context that
@@ -93,6 +97,7 @@ func (s *Server) guardStream(r *http.Request) (*http.Request, func()) {
 	if tokenFromRequest(r) == nil {
 		if session := s.currentSession(r); session != nil {
 			was.identity, was.role = session.Identity, session.Role
+			was.org, was.workspace, was.platform = session.Org, session.Workspace, session.PlatformAdmin
 		}
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -121,7 +126,8 @@ func (s *Server) guardStream(r *http.Request) (*http.Request, func()) {
 // worse than waiting for the next check.
 func (s *Server) streamStillAllowed(r *http.Request, was streamCredentials) bool {
 	// A copy with no context of its own: what the first check worked out and kept in it must be worked out again.
-	fresh := r.Clone(context.Background())
+	// The check is the dashboard's own work: it reads the users and the tokens, which an organization may not.
+	fresh := r.Clone(asSystem(context.Background()))
 	if presented, ok := bearerToken(fresh); ok {
 		_, err := s.authenticateAPIToken(fresh.Context(), presented)
 		return err == nil || !errors.Is(err, errInvalidToken)
@@ -132,5 +138,6 @@ func (s *Server) streamStillAllowed(r *http.Request, was streamCredentials) bool
 	}
 	fresh = fresh.WithContext(context.WithValue(fresh.Context(), authSnapshotKey{}, snapshot))
 	session := s.currentSession(fresh)
-	return session != nil && session.Role == was.role && session.Identity == was.identity
+	return session != nil && session.Role == was.role && session.Identity == was.identity &&
+		session.Org == was.org && session.Workspace == was.workspace && session.PlatformAdmin == was.platform
 }

@@ -111,7 +111,7 @@ func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) Met
 	prometheusURL := ""
 	if readPlatformConfig && s.Client != nil {
 		config := &geassv1alpha1.GeassPlatformConfig{}
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
+		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
 			prometheusURL = config.Spec.PrometheusURL
 		}
 	}

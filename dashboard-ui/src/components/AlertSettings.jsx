@@ -60,10 +60,13 @@ const INTEGRATIONS = { slack: "Slack", email: "email" };
  * monitoring add-on. The Slack address and the mail password are secrets: they are stored in Secrets and never come back
  * to the browser. A channel can be limited to some kinds of alert, some projects and some environments.
  */
-export function AlertSettings({ mutable, projects = [] }) {
+export function AlertSettings({ mutable, projects = [], org = false }) {
+  // An organization has channels of its own, which post to Slack and hear only about its projects. They are served by the
+  // organization's routes; the platform's, with the mail server and the cluster's own alerts, are under Settings.
+  const base = org ? "/alerts" : "/settings/alerts";
   const settings = useQuery({
-    queryKey: ["alert-settings"],
-    queryFn: () => api("/api/settings/alerts"),
+    queryKey: ["alert-settings", org ? "org" : "platform"],
+    queryFn: () => api(`/api${base}`),
     enabled: mutable,
     staleTime: 0,
     refetchOnMount: "always",
@@ -133,7 +136,7 @@ export function AlertSettings({ mutable, projects = [] }) {
       alertError("Choose at least one kind of alert.");
       return;
     }
-    const result = await run("channel", "/settings/alerts/channels/save", channelValues(editing), editing.id ? "Channel saved" : "Channel added");
+    const result = await run("channel", `${base}/channels/save`, channelValues(editing), editing.id ? "Channel saved" : "Channel added");
     if (result) setEditing(null);
   };
 
@@ -143,7 +146,7 @@ export function AlertSettings({ mutable, projects = [] }) {
     setBusy(`test-${channel.id}`);
     notify(`Sending a test to ${channel.name} through Alertmanager…`);
     try {
-      const result = await action("/settings/alerts/channels/test", { id: channel.id });
+      const result = await action(`${base}/channels/test`, { id: channel.id });
       if (result.ok) notify(`Test sent to ${channel.name}`, "success");
       else alertError(result.error || `The test to ${channel.name} did not go through`);
     } catch (error) {
@@ -154,7 +157,7 @@ export function AlertSettings({ mutable, projects = [] }) {
   };
 
   const toggleChannel = (channel) =>
-    run("channel", "/settings/alerts/channels/save", channelValues({
+    run("channel", `${base}/channels/save`, channelValues({
       ...channel,
       url: "",
       recipients: channel.recipients.join("\n"),
@@ -181,7 +184,7 @@ export function AlertSettings({ mutable, projects = [] }) {
     });
 
   const remove = async () => {
-    const result = await run("remove", "/settings/alerts/channels/delete", { id: removing.id }, "Channel deleted");
+    const result = await run("remove", `${base}/channels/delete`, { id: removing.id }, "Channel deleted");
     if (result) setRemoving(null);
   };
 
@@ -221,16 +224,15 @@ export function AlertSettings({ mutable, projects = [] }) {
     const port = security === "tls" && smtp.port === "587" ? "465" : security === "starttls" && smtp.port === "465" ? "587" : smtp.port;
     setSMTP({ ...smtp, security, port, ...(security === "none" ? { username: "", password: "" } : {}) });
   };
-  const needsMailServer = !saved.smtp && saved.channels.some((channel) => channel.type === "email");
+  const needsMailServer = !org && !saved.smtp && saved.channels.some((channel) => channel.type === "email");
   const failedDeliveries = Object.entries(saved.deliveries || {}).filter(([, delivery]) => delivery.failed > 0);
 
   return (
     <div className="rw-webhooks rw-alerts">
       <p className="rw-rail-body">
-        Geass tells you when a build or a deploy fails, a service is down, a database&apos;s backups are failing, a pod keeps
-        crashing, storage is filling, or a node stops responding. Add a Slack channel or a list of email addresses, and choose which
-        alerts each one hears. Alerts that belong to the cluster itself (nodes, certificates, upgrades) go to channels that are not
-        limited to projects.
+        {org
+          ? "Geass tells you when a build or a deploy fails, a service is down, a database's backups are failing, a pod keeps crashing, or storage is filling, in your organization's projects. Add a Slack channel and choose which alerts it hears and for which projects."
+          : "Geass tells you when a build or a deploy fails, a service is down, a database's backups are failing, a pod keeps crashing, storage is filling, or a node stops responding. Add a Slack channel or a list of email addresses, and choose which alerts each one hears. Alerts that belong to the cluster itself (nodes, certificates, upgrades) go to channels that are not limited to projects."}
       </p>
 
       <Stack gap="xs">
@@ -241,8 +243,9 @@ export function AlertSettings({ mutable, projects = [] }) {
         </Group>
         {!saved.alertmanager.ready ? (
           <Muted size="sm" c="red.4">
-            Alertmanager cannot be reached, so nothing can be sent. It is part of the monitoring add-on, which has to be on for alerts.
-            {saved.alertmanager.error ? ` (${saved.alertmanager.error})` : ""}
+            {org
+              ? saved.alertmanager.error || "Alerts cannot be sent right now."
+              : `Alertmanager cannot be reached, so nothing can be sent. It is part of the monitoring add-on, which has to be on for alerts.${saved.alertmanager.error ? ` (${saved.alertmanager.error})` : ""}`}
           </Muted>
         ) : null}
         {failedDeliveries.map(([integration, delivery]) => (
@@ -257,7 +260,7 @@ export function AlertSettings({ mutable, projects = [] }) {
         <Text fw={600} size="sm">Channels</Text>
         <Group gap="sm">
           <Button leftSection={<Plus size={14} />} onClick={() => setEditing(blankChannel("slack", kinds))}>Slack channel</Button>
-          <Button variant="outline" leftSection={<Plus size={14} />} onClick={() => setEditing(blankChannel("email", kinds))}>Email</Button>
+          {org ? null : <Button variant="outline" leftSection={<Plus size={14} />} onClick={() => setEditing(blankChannel("email", kinds))}>Email</Button>}
         </Group>
       </Group>
 
@@ -300,6 +303,7 @@ export function AlertSettings({ mutable, projects = [] }) {
         <Muted size="sm" className="rw-settings-empty-inline">No channels yet.</Muted>
       )}
 
+      {org ? null : (
       <Stack gap="xs">
         <Group justify="space-between" align="center">
           <Text fw={600} size="sm">Mail server</Text>
@@ -326,6 +330,7 @@ export function AlertSettings({ mutable, projects = [] }) {
           <Muted size="xs">Mail servers and Slack addresses on private networks are refused unless the operator sets GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS=true.</Muted>
         )}
       </Stack>
+      )}
 
       <Stack gap="xs">
         <Text fw={600} size="sm">Firing now</Text>
@@ -370,7 +375,9 @@ export function AlertSettings({ mutable, projects = [] }) {
                   label="Slack incoming webhook URL"
                   description={editing.id
                     ? "Leave blank to keep the saved one. It is a secret: anyone who has it can post to the channel."
-                    : "Create one under Slack apps, Incoming Webhooks. It works with anything that takes Slack's webhook JSON, such as Mattermost. It is stored as a secret."}
+                    : org
+                      ? "Create one under Slack apps, Incoming Webhooks. It starts with https://hooks.slack.com/ and is stored as a secret."
+                      : "Create one under Slack apps, Incoming Webhooks. It works with anything that takes Slack's webhook JSON, such as Mattermost. It is stored as a secret."}
                 >
                   <Input
                     type="password"
@@ -400,7 +407,7 @@ export function AlertSettings({ mutable, projects = [] }) {
                   ))}
                 </Stack>
               </Field>
-              <Field label="Projects" description="Leave all unchecked for every project. Only a channel that is not limited to projects hears about the cluster itself: nodes, certificates and upgrades.">
+              <Field label="Projects" description={org ? "Leave all unchecked for all of your organization's projects, including ones made later." : "Leave all unchecked for every project. Only a channel that is not limited to projects hears about the cluster itself: nodes, certificates and upgrades."}>
                 <Stack gap={6} className="rw-alert-checks">
                   {projects.length ? projects.map((project) => (
                     <Checkbox

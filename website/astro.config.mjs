@@ -118,6 +118,7 @@ export default defineConfig({
             "docs/guides/mcp-server",
             "docs/guides/users-and-tokens",
             "docs/guides/external-sign-in",
+            "docs/guides/organizations-and-workspaces",
           ],
         },
         {

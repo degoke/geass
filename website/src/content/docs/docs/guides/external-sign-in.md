@@ -3,7 +3,7 @@ title: "Sign in with an identity provider"
 description: "Let an identity provider such as Better Auth, Keycloak or Okta decide who signs in to the dashboard and with which role: set it up, test it, turn it on."
 ---
 
-By default the people who can sign in to the dashboard are the users in a Kubernetes Secret, each with a password. That is enough for a few people, and it has no invitations, no sign-in by email code or link, and no organizations or teams. If you want those, connect an identity provider. It owns the people: who exists, how they prove who they are, who was invited, which organization and team they are in. Geass does not grow any of that. It verifies the provider's signed answer and turns one claim of it into one of its two roles, **admin** or **viewer**.
+By default the people who can sign in to the dashboard are the users in a Kubernetes Secret, each with a password. That is enough for a few people, and it has no invitations, no sign-in by email code or link, and no organizations or teams. If you want those, connect an identity provider (and, to keep each organization's projects apart, see [organizations and workspaces](/docs/guides/organizations-and-workspaces/)). It owns the people: who exists, how they prove who they are, who was invited, which organization and team they are in. Geass does not grow any of that. It verifies the provider's signed answer and turns one claim of it into one of its two roles, **admin** or **viewer**.
 
 Any provider that speaks OpenID Connect works: [Better Auth](https://www.better-auth.com), Keycloak, Authentik, Zitadel, Auth0, Okta, Google Workspace and others. Nothing here is specific to one of them except the recipe for Better Auth near the end.
 
@@ -16,7 +16,7 @@ Programs are not affected. [API tokens](/docs/guides/users-and-tokens/), deploy 
 | Who can sign in | The users in `geass-dashboard-auth` | Whoever the provider lets in and the role claim maps to a role |
 | Invitations, codes, organizations, teams | None | At the provider |
 | Roles | `admin` or `viewer`, set in the Secret | `admin` or `viewer`, from a claim of the provider's token |
-| Role changes | Apply to open sessions | Apply when the person next signs in (a sign-in lasts an hour by default) |
+| Role changes | Apply to open sessions | Apply when the person next signs in (a sign-in lasts an hour by default), or within minutes if you [check people again](#check-people-again-while-they-are-signed-in) |
 | Removing someone | Delete the entry | Remove them at the provider |
 | Tokens and deploy hooks | Unchanged | Unchanged |
 | A user with a password in the Secret | Signs in | Signs in only if an admin. A viewer's password is refused, and turning the provider on ends their open sessions |
@@ -78,6 +78,7 @@ People are named by their email address in the dashboard and in what they make. 
 Removing a person at the provider ends their access in two ways, and you should use both.
 
 - **Short sessions.** Their next sign-in, at most one session length away, goes through the provider, which refuses them.
+- **Checking people again.** With [a check every few minutes](#check-people-again-while-they-are-signed-in), Geass asks the provider whether each signed-in person is still its own, and ends the sessions of one that is not, without waiting for the session to end.
 - **Back-channel logout.** When someone signs out at the provider or is removed, the provider can tell Geass at once. Give it the **Back-channel logout URI** the page shows, `https://geass.example.com/auth/oidc/backchannel-logout`. Geass then ends every session that person has, in every browser, and, unless you turn that off (below), revokes the API tokens and deploy hooks they made. A provider cannot say whether a person signed out or was removed, so with it on both do this: **an API token or deploy hook that CI depends on should not be made from the account of a person who signs out**; make it, with an expiry, from an account that does not.
 
 Without the second, or with the switch below off, a token someone made while they had access keeps working until it expires or you revoke it under **Settings** → **Tokens**. Many providers insist that the logout address is a public `https` address they can reach, so it works for a dashboard published on a domain, and not for one you reach only through an SSH tunnel or on `localhost`.
@@ -96,6 +97,25 @@ change who can sign in. Saving the provider's other settings keeps it.
 
 With it off, offboarding someone removed at the provider rests on the session length and on you: sign them out of Geass by letting their
 session end, and revoke the tokens they made under **Settings** → **Tokens** (the list says who made each).
+
+## Check people again while they are signed in
+
+A session carries the role, and with organizations the organizations, that the person had when they signed in, and is honoured until it ends. To notice a change sooner, set **Check people again every** (`spec.auth.oidc.refreshMinutes`, 5 to 1440 minutes) in the provider's settings. Geass then asks for the `offline_access` scope, keeps the refresh token the provider gives (sealed with a key made from the session key, in the Secret `geass-sso-refresh`, never shown), and every so often asks the provider again for each person who signed in:
+
+- If the provider no longer honours the token (they signed out there, or were removed), or says the person no longer maps to a role or an organization, their sessions end.
+- If what it says of them is not what their session was made with (their role, the organizations or workspaces they are in, a platform claim), their sessions end too, and they sign in again to get what is true now.
+- If the provider cannot be reached, nothing is changed: a check that could not be made says nothing about the person. Their session is kept until the provider has been out of reach for **Keep a session when the provider is down for** (`staleGraceMinutes`, 120 by default), and is then ended, because it cannot be vouched for.
+
+It needs a provider that gives refresh tokens for `offline_access`, and one that answers a refresh with a new ID token, which most do; a provider that answers without one still has its sessions ended when it stops honouring the token, but what changed cannot be compared. Off, which is the default, keeps nothing. The people checked are those who signed in through the platform's provider and through any organization's own provider.
+
+## Organizations made by sign-in
+
+With [organizations](/docs/guides/organizations-and-workspaces/) on, only organizations that a platform administrator set up can be signed in to. To let the first sign-in of an organization's administrator make the organization, choose **Make organizations** under **Sign-in** → **Organizations made by sign-in** (`spec.auth.tenancy.autoProvision`). Use it only with a provider in which people you trust make organizations: one that lets anyone make one would let anyone make one here.
+
+- **Pending approval** makes the organization suspended. The person is told it is waiting, and a platform administrator approves it under **Settings** → **Organizations** by turning **Suspended** off. Until then nobody signs in to it.
+- **At once, for the ids listed** makes it ready to use, but only for the ids you list (an id as it is, or the start of one followed by `*`), so that it is never every organization the provider has. Open needs the list.
+
+In both, the person has to administer the organization at the provider, and the provider has to say in so many words that their address is verified. At most 20 can be made this way (`max`, to 500), and the ones a platform administrator makes do not count. Nothing but the organization is made: no workspace, no project. A platform administrator is never given an organization they did not ask for.
 
 ## Better Auth
 
@@ -150,9 +170,9 @@ A provider on `localhost`, such as Better Auth during development, is refused by
 
 ## What it does not do
 
-- **No roles per project.** Admin and viewer apply to the whole dashboard, as they do for passwords. Teams and organizations at the provider decide who gets which of the two, and Geass does not model them.
+- **No roles per project.** Admin and viewer apply to the whole dashboard, as they do for passwords, unless you turn on [organizations and workspaces](/docs/guides/organizations-and-workspaces/): then each organization's people see only its own projects, and a role applies in the place a person works. Teams and organizations at the provider still decide who is in which; Geass reads them from the token and does not keep a list of people.
 - **No provisioning.** Geass does not create people ahead of time or keep a list of them. Someone exists here from their first sign-in. Revoke their tokens at **Settings** → **Tokens** if you need to before a logout reaches it.
-- **One provider.** One identity provider at a time.
+- **One provider for the platform.** One identity provider decides who is in which organization. An organization can bring [a provider of its own](/docs/guides/organizations-and-workspaces/#an-organizations-own-identity-provider) for its people.
 - **The ID token only.** The role and the email are read from the ID token. The provider's userinfo endpoint is not called.
 - **Secure endpoints only.** The issuer, and the authorization, token and keys addresses its discovery document lists, have to be `https` (a provider on this machine, with the operator's opt-in below, may use `http`). A document that lists one over plain `http` is refused, because the client secret and the keys travel there.
 
@@ -168,6 +188,7 @@ The setting is `spec.auth.mode` of the [GeassPlatformConfig](/docs/reference/res
 
 ## Related
 
+- [Organizations and workspaces](/docs/guides/organizations-and-workspaces/)
 - [Users and API tokens](/docs/guides/users-and-tokens/)
 - [Sign in to the dashboard](/docs/getting-started/sign-in/)
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)

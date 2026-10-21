@@ -136,14 +136,14 @@ func (s *Server) removeEnvironment(ctx context.Context, projectName, environment
 	if len(secretKeys) > 0 {
 		secret := &corev1.Secret{}
 		key := client.ObjectKey{Name: projectName + "-shared-secrets", Namespace: systemNamespace}
-		if getErr := s.Client.Get(ctx, key, secret); getErr == nil {
+		if getErr := s.Client.Get(asSystem(ctx), key, secret); getErr == nil {
 			for _, secretKey := range secretKeys {
 				delete(secret.Data, secretKey)
 			}
 			if len(secret.Data) == 0 {
-				_ = s.Client.Delete(ctx, secret)
+				_ = s.Client.Delete(asSystem(ctx), secret)
 			} else {
-				_ = s.Client.Update(ctx, secret)
+				_ = s.Client.Update(asSystem(ctx), secret)
 			}
 		}
 	}

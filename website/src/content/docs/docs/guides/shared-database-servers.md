@@ -60,7 +60,7 @@ curl -X POST https://geass.example.com/api/shared-databases/create \
   --data-urlencode storageSize=20Gi
 ```
 
-The reply is `{"database":"shared-postgres"}`. The API also accepts `region`, `highAvailability=on`, `version` and `runOnTags`. The server is a `GeassDatabase` with no `project`, in the `geass-system` namespace. The setup sheet has no field for `runOnTags`, which places the server on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
+The reply is `{"database":"shared-postgres"}`. The API also accepts `region`, `highAvailability=on`, `version`, `runOnTags` and `org` (an [organization](/docs/guides/organizations-and-workspaces/#shared-things-an-organization-owns) the server is for: only its projects may use it). The server is a `GeassDatabase` with no `project`, in the `geass-system` namespace. The setup sheet has no field for `runOnTags`, which places the server on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
 
 From the command line, the versioned API takes the same fields as JSON:
 

@@ -86,6 +86,7 @@ The operator copies these from the service. Changing a field of the service chan
 | --- | --- | --- |
 | `status.phase` | string | `Pending`, `WaitingForCI`, `Running`, `Succeeded`, `Failed` or `Cancelled`. See below. |
 | `status.jobRef` | string | The Job that runs the build, `<build>-kaniko`. |
+| `status.jobNamespace` | string | The namespace the Job runs in when it is not the build's own: the [organization's build namespace](/docs/guides/organizations-and-workspaces/#builds-and-the-registry), for a project that belongs to an organization. Empty means the build's own namespace. |
 | `status.image` | string | The image the build pushes to: `spec.registry`. |
 | `status.imageDigest` | string | The `sha256:` digest of the image the last run pushed. Kaniko writes it to the termination message of the `kaniko` container (`--digest-file=/dev/termination-log`), and Geass reads it from the pod of the Job that succeeded. For a Job made before that, the fallback is the `Pushed <repository>@sha256:…` line of the Kaniko log. It is read again for every run. A run that starts over clears it. The service runs `<repository of status.image>@<this digest>`. |
 | `status.sourceRevision` | string | The commit that was built. It is resolved when a run starts, from `spec.revision` or from the head of `spec.branch`, and kept for that run. A run that starts over clears it, so the next run resolves the head again. |

@@ -15,6 +15,12 @@ const (
 	pathNameParam    = "name"
 	pathEnvironments = "environments"
 
+	// verbCreate is the action word of a route that makes something.
+	verbCreate = "create"
+	verbSave   = "save"
+	// ssoUnavailable is the sign-in error of something the dashboard could not read, and the answer a person is given for it.
+	ssoUnavailable = "unavailable"
+
 	formProject     = "project"
 	formRegion      = "region"
 	formEnvironment = "environment"

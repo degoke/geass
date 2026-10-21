@@ -1,6 +1,7 @@
 import { useRouterState } from "@tanstack/react-router";
-import { BarChart3, Bell, Globe, HardDrive, KeyRound, LogIn, Plug, Settings } from "lucide-react";
-import { SETTINGS_LINKS } from "@/lib/platform-nav";
+import { BarChart3, Bell, Building2, Container, Globe, HardDrive, KeyRound, LogIn, Plug, Settings } from "lucide-react";
+import { settingsLinksFor } from "@/lib/platform-nav";
+import { isPlatformSession, useBootstrap } from "@/lib/dashboard";
 import { SettingsShell } from "@/layout/SettingsShell";
 
 const SETTINGS_ICONS = {
@@ -10,13 +11,16 @@ const SETTINGS_ICONS = {
   connectors: Plug,
   tokens: KeyRound,
   auth: LogIn,
+  organizations: Building2,
   alerts: Bell,
+  registry: Container,
   object: HardDrive,
 };
 
 export function PlatformSettingsLayout({ children }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const nav = SETTINGS_LINKS.map((item) => ({
+  const { data } = useBootstrap();
+  const nav = settingsLinksFor(isPlatformSession(data)).map((item) => ({
     id: item.id,
     label: item.label,
     to: item.to,

@@ -82,7 +82,19 @@ func matchers(channel Channel) []monitoringv1alpha1.Matcher {
 		kind = regexpOf(channel.Events)
 	}
 	out := []monitoringv1alpha1.Matcher{{Name: LabelKind, Value: kind, MatchType: monitoringv1alpha1.MatchRegexp}}
-	if len(channel.Projects) > 0 {
+	switch {
+	case channel.Org != "":
+		// An organization's channel is always limited to its own projects, and never leaves the limit off: an empty list
+		// of choices means all of them, not every project there is. With none to hear about it matches nothing. That
+		// value is not a name a project can have, and an alert without a project, which is one about the cluster, has an
+		// empty one, so it is not let through either.
+		scope := regexpOf(channel.Scope)
+		matcher := monitoringv1alpha1.Matcher{Name: LabelProject, Value: scope, MatchType: monitoringv1alpha1.MatchRegexp}
+		if len(channel.Scope) == 0 {
+			matcher = monitoringv1alpha1.Matcher{Name: LabelProject, Value: NoProject, MatchType: monitoringv1alpha1.MatchEqual}
+		}
+		out = append(out, matcher)
+	case len(channel.Projects) > 0:
 		out = append(out, monitoringv1alpha1.Matcher{Name: LabelProject, Value: regexpOf(channel.Projects), MatchType: monitoringv1alpha1.MatchRegexp})
 	}
 	if len(channel.Environments) > 0 {
@@ -169,6 +181,7 @@ const (
 	reasonNoRecipients   = "This channel has no email addresses."
 	reasonNoMailPassword = "The mail server has a username but no password is saved for it."
 	reasonUnknownType    = "This channel is neither Slack nor email."
+	reasonOrgEmail       = "An organization's channel is Slack: mail goes out through the platform's mail server."
 )
 
 // buildReceiver makes the receiver of a channel, or says why it cannot be made.
@@ -177,6 +190,11 @@ func buildReceiver(config Config, channel Channel, name, base string, sendResolv
 	case TypeSlack:
 		return slackReceiver(name, channel, base, sendResolved)
 	case TypeEmail:
+		if channel.Org != "" {
+			// Mail goes out through the platform's mail server, from its address, to any address: not for an organization to
+			// send through.
+			return monitoringv1alpha1.Receiver{}, reasonOrgEmail
+		}
 		return emailReceiver(name, channel, config.SMTP, base, sendResolved)
 	}
 	return monitoringv1alpha1.Receiver{}, reasonUnknownType

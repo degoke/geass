@@ -362,6 +362,8 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A project starting to require node tags needs a storage class for them, so its databases
 		// are not left waiting for the next node event.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// An organization requiring node tags of its projects needs a storage class for them in the same way.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// The same goes for the object storage server being placed on tagged nodes.
 		Watches(&geassv1alpha1.GeassObjectStore{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(objectStoreServerPlaced())).
 		Named("geasscluster").

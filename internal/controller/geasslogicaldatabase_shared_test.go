@@ -378,3 +378,53 @@ func TestDeletingGivesUpOnADropThatNeverFinishes(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, wait, "a drop that has taken too long is abandoned rather than holding the object forever")
 }
+
+func TestAServerAnOrganizationOwnsIsOnlyForItsProjects(t *testing.T) {
+	for name, tc := range map[string]struct {
+		projectOrg string
+		wantJob    bool
+	}{
+		"a project of the organization":     {"org-1", true},
+		"a project of another organization": {"org-2", false},
+		"a project that belongs to nobody":  {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newSharedFixture(t, func(objects *[]client.Object) {
+				for _, object := range *objects {
+					switch typed := object.(type) {
+					case *geassv1alpha1.GeassDatabase:
+						typed.Spec.Org = "org-1"
+					case *geassv1alpha1.GeassProject:
+						typed.Spec.Org = tc.projectOrg
+					}
+				}
+			})
+			f.reconcile(t)
+			f.reconcile(t)
+
+			message, ok := f.ready(t)
+			var jobs batchv1.JobList
+			require.NoError(t, f.c.List(context.Background(), &jobs))
+			if tc.wantJob {
+				require.NotEmpty(t, jobs.Items, "the database is made: %s", message)
+				return
+			}
+			require.False(t, ok)
+			require.Contains(t, message, "belongs to an organization that the project is not in")
+			require.Empty(t, jobs.Items, "nothing is made on a server that is not the project's organization's")
+		})
+	}
+}
+
+func TestAServerThePlatformOwnsIsForAnyProjectAsBefore(t *testing.T) {
+	f := newSharedFixture(t, func(objects *[]client.Object) {
+		for _, object := range *objects {
+			if project, ok := object.(*geassv1alpha1.GeassProject); ok {
+				project.Spec.Org = "org-2"
+			}
+		}
+	})
+	f.reconcile(t)
+	f.reconcile(t)
+	require.NotNil(t, f.job(t, "orders-create"))
+}

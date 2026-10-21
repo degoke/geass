@@ -60,6 +60,14 @@ type Identity struct {
 	CanMutate        bool   `json:"canMutate"`
 	CanReadSensitive bool   `json:"canReadSensitive"`
 	Authentication   string `json:"authentication"`
+	// Org and Workspace (with their names) say where the caller works when the platform has organizations on: the
+	// organization, and the workspace of it, or all of it when Workspace is empty. PlatformAdmin is true for the
+	// platform's own administrators, who work in none.
+	Org           string `json:"org,omitempty"`
+	OrgName       string `json:"orgName,omitempty"`
+	Workspace     string `json:"workspace,omitempty"`
+	WorkspaceName string `json:"workspaceName,omitempty"`
+	PlatformAdmin bool   `json:"platformAdmin,omitempty"`
 	// ExpiresAt is when the token stops working. It is nil for a token that never expires.
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }

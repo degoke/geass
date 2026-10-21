@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -67,10 +69,47 @@ func previousTargetNamespace(statusNS, currentNS string) (string, bool) {
 	return statusNS, true
 }
 
+// errNamespaceNotOwned is returned when a project's environment namespace already exists and belongs to someone else.
+var errNamespaceNotOwned = errors.New("namespace is owned by something else")
+
+// namespaceBelongsTo reports whether a project may use, and later delete, the namespace. A namespace that names its
+// project belongs to that project alone. One that does not name a project, which an older version created, belongs to
+// whoever Geass created it for, and one Geass did not create (kube-system, a namespace made by hand) belongs to nobody
+// here, however a project and an environment happen to spell its name.
+func namespaceBelongsTo(ns *corev1.Namespace, project string) bool {
+	// An organization's build namespace is nobody's project's, however a project and an environment spell its name.
+	if ns.Labels[platform.LabelOrgBuild] != "" {
+		return false
+	}
+	if owner := ns.Labels[platform.LabelProject]; owner != "" {
+		return owner == project
+	}
+	return ns.Labels[platform.LabelManagedBy] == platform.ManagedByValue
+}
+
+// deleteOwnedNamespace deletes a project environment's namespace, unless it is someone else's. The labels on an object
+// passed to Delete are not looked at by the API server, so the owner has to be checked on what is stored.
+func deleteOwnedNamespace(ctx context.Context, c client.Client, name, project string) error {
+	ns := &corev1.Namespace{}
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, ns); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !namespaceBelongsTo(ns, project) {
+		return nil
+	}
+	return client.IgnoreNotFound(c.Delete(ctx, ns))
+}
+
+// ensureNamespace creates a project environment's namespace, or accepts the one that is there when it is the project's.
+// It refuses a namespace that belongs to another project or that Geass did not create: using it would hand one project
+// the other's workloads, and deleting the project would delete them.
 func ensureNamespace(ctx context.Context, c client.Client, name string, labels map[string]string) error {
 	ns := &corev1.Namespace{}
 	err := c.Get(ctx, client.ObjectKey{Name: name}, ns)
 	if err == nil {
+		if project := labels[platform.LabelProject]; project != "" && !namespaceBelongsTo(ns, project) {
+			return fmt.Errorf("%w: namespace %q already exists and is not project %q's", errNamespaceNotOwned, name, project)
+		}
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {

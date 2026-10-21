@@ -163,6 +163,18 @@ spec:
 
 Do not apply it as a whole over a platform configuration that has other settings: `kubectl apply` of a partial manifest can drop fields. Use `kubectl patch` or edit the object. The field reference is in [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/#spec-fields).
 
+## Alerts for an organization
+
+With [organizations](/docs/guides/organizations-and-workspaces/) on, an organization has channels of its own, under **Settings** → **Alerts**, and the platform's channels are under the platform's settings. An organization's channel:
+
+- hears only about the organization's projects (the ones it names, or all of them, including ones made later), and never about the cluster or another organization's projects. It is routed on the projects the organization has now: a project given to another organization stops being heard about as soon as it is;
+- posts to Slack (`hooks.slack.com` only). Mail goes out through the platform's mail server, from its address, and is not for an organization to send through;
+- is made, seen, tested and deleted by an administrator of the organization. A member of one workspace manages the channels that name projects of that workspace; a channel of all the organization's projects is for its administrators;
+- never shows its address: like every Slack address it is kept in a Secret, and only the host is shown;
+- counts against the organization's own 10 channels, not the platform's 20.
+
+The platform's channels that are not limited to projects still hear about every project, so the platform's administrators are told of what happens to every organization. The API is `GET /api/alerts` and `POST /api/alerts/channels/save`, `/delete` and `/test`; the platform's `/api/settings/alerts` is closed to an organization.
+
 ## How it works
 
 Three things in the cluster, in order:
@@ -179,7 +191,7 @@ If you run your own Alertmanager, point the dashboard's view at it with `GEASS_A
 
 ## Limits and safety
 
-- Up to 20 channels, up to 20 addresses on an email channel, and up to 100 projects or environments in a channel's filters.
+- Up to 20 channels of the platform's and up to 10 for each organization, up to 20 addresses on an email channel, and up to 100 projects or environments in a channel's filters.
 - Only a signed-in admin can see or change alert settings. An API token cannot, not even an admin token: a token that could change where alerts go could also silence them.
 - Alertmanager, not Geass, connects to Slack and to the mail server, so the guard that [outbound webhooks](/docs/guides/github-and-builds/#outgoing-webhooks) have at the moment they connect does not apply. Geass checks the host when you save: one that is or resolves to a loopback, link-local or, unless the operator runs with `GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS=true`, private address is refused. It cannot see a name that resolves differently later.
 - A Slack address must be `https`.

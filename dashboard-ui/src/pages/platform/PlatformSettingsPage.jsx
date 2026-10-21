@@ -3,16 +3,18 @@ import { api, list } from "@/lib/api";
 import { ApiTokens } from "@/components/ApiTokens";
 import { AlertSettings } from "@/components/AlertSettings";
 import { AuthSettings } from "@/components/AuthSettings";
+import { OrgRegistrySettings } from "@/components/OrgRegistrySettings";
 import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
-import { canMutate } from "@/lib/dashboard";
+import { canMutate, isPlatformSession } from "@/lib/dashboard";
 import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
 import { ClusterCapacityPage } from "@/pages/platform/ClusterCapacityPage";
 import { ObjectStorageSettingsPage } from "@/pages/platform/ObjectStorageSettingsPage";
 import { SharedDatabasesPage } from "@/pages/platform/SharedDatabasesPage";
 import { ConnectorsPage } from "@/pages/platform/ConnectorsPage";
+import { OrganizationsPage } from "@/pages/platform/OrganizationsPage";
 
 function apexFromDashboardHost(host, subdomain = "geass") {
   const h = String(host || "").trim().toLowerCase();
@@ -59,6 +61,15 @@ export function PlatformSettingsPage({ data, page, reload }) {
     staleTime: 0,
     refetchOnMount: "always",
   });
+  // Everything but the tokens is the platform's: an organization's administrators are not offered it, and would be refused.
+  if (page !== "tokens" && page !== "alerts" && page !== "registry" && !isPlatformSession(data)) {
+    return (
+      <SettingsSection title="Settings" flat>
+        <p className="rw-rail-body">These settings belong to the platform's administrators. As an administrator of an organization you manage its API tokens and its alerts here.</p>
+      </SettingsSection>
+    );
+  }
+  if (page === "organizations") return <OrganizationsPage data={data} />;
   if (page === "domain") {
     return (
       <DomainSettingsPage
@@ -83,7 +94,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page === "tokens") {
     return (
       <SettingsSection title="API tokens" flat>
-        <ApiTokens scope="workspace" projects={list(data, "projects")} mutable={canMutate(data)} />
+        <ApiTokens scope="workspace" projects={list(data, "projects")} mutable={canMutate(data)} data={data} />
       </SettingsSection>
     );
   }
@@ -97,7 +108,14 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page === "alerts") {
     return (
       <SettingsSection title="Alerts" flat>
-        <AlertSettings mutable={canMutate(data)} projects={list(data, "projects")} />
+        <AlertSettings mutable={canMutate(data)} projects={list(data, "projects")} org={!isPlatformSession(data)} />
+      </SettingsSection>
+    );
+  }
+  if (page === "registry") {
+    return (
+      <SettingsSection title="Registry" flat>
+        <OrgRegistrySettings mutable={canMutate(data) && !isPlatformSession(data)} />
       </SettingsSection>
     );
   }

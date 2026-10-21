@@ -132,6 +132,26 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		"canMutate": caller.canMutate(), "canReadSensitive": caller.canReadSensitive(),
 		"authentication": "session",
 	}
+	// Where the caller works, once organizations are on: the organization and workspace, by name, or the platform.
+	if s.tenancyOn(r.Context()) {
+		if caller.session.PlatformAdmin && caller.session.Org == "" {
+			me["platformAdmin"] = true
+		}
+		if caller.session.Org != "" {
+			me["org"] = caller.session.Org
+			if org, err := s.organization(r.Context(), caller.session.Org); err == nil && org != nil {
+				me["orgName"] = org.Spec.DisplayName
+				for _, workspace := range org.Spec.Workspaces {
+					if workspace.ID == caller.session.Workspace {
+						me["workspaceName"] = workspace.DisplayName
+					}
+				}
+			}
+			if caller.session.Workspace != "" {
+				me["workspace"] = caller.session.Workspace
+			}
+		}
+	}
 	if caller.token != nil {
 		me["authentication"], me["scope"] = "token", caller.token.Scope
 		if project, environment, ok := caller.scope(); ok {
@@ -429,7 +449,7 @@ func (s *Server) v1AppStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if namespace, err := resourceNamespaceForApp(*app); err == nil {
 		var deploy appsv1.Deployment
-		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: app.Name, Namespace: namespace}, &deploy); err == nil {
+		if err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: app.Name, Namespace: namespace}, &deploy); err == nil {
 			desired := int32(1)
 			if deploy.Spec.Replicas != nil {
 				desired = *deploy.Spec.Replicas
@@ -564,7 +584,7 @@ func (s *Server) v1Connection(kind string) http.HandlerFunc {
 			return
 		}
 		var secret corev1.Secret
-		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: secretName, Namespace: namespace}, &secret); err != nil {
+		if err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: secretName, Namespace: namespace}, &secret); err != nil {
 			if apierrors.IsNotFound(err) {
 				writeV1Error(w, http.StatusNotFound, "no connection details yet: the resource has not finished setting up")
 				return

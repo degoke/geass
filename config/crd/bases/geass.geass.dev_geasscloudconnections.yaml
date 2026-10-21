@@ -37,6 +37,14 @@ spec:
             type: object
           spec:
             properties:
+              org:
+                description: |-
+                  Org makes a connection with no project an organization's: the name of a GeassOrganization. Every project of the
+                  organization may use it, and only the organization's people see it. One that names a project belongs to the
+                  project, and this is ignored.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               organization:
                 description: Organization is the PlanetScale organization slug.
                 type: string

@@ -66,6 +66,9 @@ type Config struct {
 	// RequireClaim limits sign-in to people whose token has a claim with a value: {"organization_id": "org_123"}
 	// lets only members of that organization in. The claim may be a string or a list that contains the value.
 	RequireClaim map[string]string
+	// Tenancy, when it names an organizations claim, makes the person's place in each organization of the provider
+	// what the role is read from, in place of RoleClaim.
+	Tenancy Tenancy
 }
 
 // Fingerprint identifies a configuration, so that a test sign-in can be tied to exactly the settings it tested.
@@ -76,7 +79,8 @@ func (c Config) Fingerprint() string {
 		Issuer, ClientID, Secret, RoleClaim string
 		Scopes                              []string
 		RoleMap, RequireClaim               map[string]string
-	}{strings.TrimRight(c.Issuer, "/"), c.ClientID, c.ClientSecret, c.RoleClaim, scopes, c.RoleMap, c.RequireClaim})
+		Tenancy                             Tenancy
+	}{strings.TrimRight(c.Issuer, "/"), c.ClientID, c.ClientSecret, c.RoleClaim, scopes, c.RoleMap, c.RequireClaim, c.Tenancy})
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }
@@ -91,7 +95,7 @@ func (c Config) Validate() error {
 		return errors.New("the issuer must be an https URL")
 	case strings.TrimSpace(c.ClientID) == "":
 		return errors.New("the client ID is required")
-	case strings.TrimSpace(c.RoleClaim) == "":
+	case strings.TrimSpace(c.RoleClaim) == "" && !c.Tenancy.On():
 		return errors.New("name the claim that holds the person's role")
 	case len(c.RoleMap) == 0:
 		return errors.New("map at least one role of the provider to admin or viewer")
@@ -109,7 +113,7 @@ func (c Config) Validate() error {
 			return errors.New("a required claim needs a name and a value")
 		}
 	}
-	return nil
+	return c.Tenancy.validate()
 }
 
 // Key is the stable name of a person at a provider. It is made from the issuer and the subject, which the provider
@@ -126,7 +130,18 @@ type Identity struct {
 	// Key is Key(Issuer, Subject).
 	Key   string
 	Email string
-	Role  string
+	// Role is the Geass role the person has: with organizations on, the highest of the roles they have in them.
+	Role string
+	// Memberships are the organizations the token puts the person in, and Platform is whether it makes them an
+	// administrator of the whole platform. Both are set only when the configuration reads organizations.
+	Memberships []Membership
+	Platform    bool
+	// EmailVerified is whether the provider said, in so many words, that it has verified the address. A provider that
+	// does not say leaves the person signed in, but not verified.
+	EmailVerified bool
+	// RefreshToken is what the provider gave to ask it again, if it gave one. Only Exchange sets it. It is a credential,
+	// and is never shown, logged or kept except in what the dashboard keeps for refreshing a session.
+	RefreshToken string
 }
 
 // Denied is a sign-in the provider allowed and Geass did not. Reason is a short fixed code, safe to put in a URL
@@ -280,8 +295,74 @@ func (p *Provider) Exchange(ctx context.Context, redirectURL, code, verifier, no
 	}
 	identity.Issuer, identity.Subject = idToken.Issuer, idToken.Subject
 	identity.Key = Key(idToken.Issuer, idToken.Subject)
+	identity.RefreshToken = token.RefreshToken
 	return identity, nil
 }
+
+// ErrRefreshRevoked is what Refresh says when the provider no longer honours the refresh token: the person signed out
+// there, was removed, or the grant was withdrawn. It is the provider's answer, and not a failure to reach it.
+var ErrRefreshRevoked = errors.New("the provider no longer honours the session")
+
+// Refreshed is what asking the provider again found.
+type Refreshed struct {
+	// Identity is who the person is now, by the claims of a new ID token with the configuration applied. It is nil when the
+	// provider answered without an ID token, which it is allowed to: the session is still its own, and nothing is known of
+	// what changed.
+	Identity *Identity
+	// RefreshToken is the token to use next time. It is the one asked with when the provider did not rotate it.
+	RefreshToken string
+}
+
+// Refresh asks the provider again, with the refresh token it gave at sign-in, whether the person is still its own and what
+// it now says of them. expectedKey is who the session is for: an answer about anybody else is refused. A refusal by the
+// provider is ErrRefreshRevoked; a configuration that no longer lets the person in is a *Denied; anything else is a failure to
+// ask, which says nothing about the person.
+func (p *Provider) Refresh(ctx context.Context, refreshToken, expectedKey string) (*Refreshed, error) {
+	if strings.TrimSpace(refreshToken) == "" {
+		return nil, ErrRefreshRevoked
+	}
+	ctx = oidc.ClientContext(ctx, p.client)
+	token, err := p.oauth("").TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken}).Token()
+	if err != nil {
+		var refused *oauth2.RetrieveError
+		if errors.As(err, &refused) {
+			switch refused.ErrorCode {
+			case "invalid_grant", "invalid_token", "unauthorized_client":
+				return nil, ErrRefreshRevoked
+			}
+		}
+		return nil, fmt.Errorf("could not ask the provider again: %w", err)
+	}
+	result := &Refreshed{RefreshToken: refreshToken}
+	if token.RefreshToken != "" {
+		result.RefreshToken = token.RefreshToken
+	}
+	raw, _ := token.Extra("id_token").(string)
+	if raw == "" {
+		return result, nil
+	}
+	idToken, err := p.verifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, fmt.Errorf("could not verify the ID token: %w", err)
+	}
+	if Key(idToken.Issuer, idToken.Subject) != expectedKey {
+		return nil, ErrRefreshRevoked
+	}
+	var claims map[string]any
+	if err := idToken.Claims(&claims); err != nil {
+		return nil, fmt.Errorf("could not read the ID token: %w", err)
+	}
+	identity, err := p.config.Authorize(claims)
+	if err != nil {
+		return nil, err
+	}
+	identity.Issuer, identity.Subject, identity.Key = idToken.Issuer, idToken.Subject, expectedKey
+	result.Identity = identity
+	return result, nil
+}
+
+// OfflineAccessScope is the scope that asks a provider for a refresh token.
+const OfflineAccessScope = "offline_access"
 
 // Authorize applies the configuration to the claims of a verified token: who it is, whether the provider says the
 // address is theirs, whether it is a person this installation lets in, and the role. It returns a *Denied when it
@@ -302,12 +383,34 @@ func (c Config) Authorize(claims map[string]any) (*Identity, error) {
 			return nil, &Denied{DeniedRequiredClaim, fmt.Sprintf("the claim %q does not have the required value %q", claim, want)}
 		}
 	}
+	if c.Tenancy.On() {
+		memberships, platform := c.Tenancy.memberships(claims, c.RoleMap), c.Tenancy.platform(claims)
+		if len(memberships) == 0 && !platform {
+			return nil, &Denied{DeniedNoOrg, fmt.Sprintf("the claim %q puts the person in no organization with a role that maps to admin or viewer", c.Tenancy.OrgsClaim)}
+		}
+		role := RoleViewer
+		if platform {
+			role = RoleAdmin
+		}
+		for _, member := range memberships {
+			if member.Role == RoleAdmin {
+				role = RoleAdmin
+			}
+		}
+		return &Identity{Email: email, Role: role, Memberships: memberships, Platform: platform, EmailVerified: emailVerified(claims)}, nil
+	}
 	roles := claimValues(claims, c.RoleClaim, true)
 	role := c.roleOf(roles)
 	if role == "" {
 		return nil, &Denied{DeniedNoRole, fmt.Sprintf("none of the values of the claim %q maps to a role (%s)", c.RoleClaim, describeValues(roles))}
 	}
-	return &Identity{Email: email, Role: role}, nil
+	return &Identity{Email: email, Role: role, EmailVerified: emailVerified(claims)}, nil
+}
+
+// emailVerified is whether the claims say the address is verified.
+func emailVerified(claims map[string]any) bool {
+	value, said := claims["email_verified"]
+	return said && value != nil && affirmative(value)
 }
 
 // roleOf is the highest role any of the values maps to, or "" when none does.

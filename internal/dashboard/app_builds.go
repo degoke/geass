@@ -41,6 +41,14 @@ func (s *Server) currentBuild(ctx context.Context, app *geassv1alpha1.GeassApp) 
 	return platform.NewestBuild(builds.Items), nil
 }
 
+// buildJobNamespace is the namespace a build's Job and pods are in: the build's own, or its organization's build namespace.
+func buildJobNamespace(build *geassv1alpha1.GeassBuild) string {
+	if build.Status.JobNamespace != "" {
+		return build.Status.JobNamespace
+	}
+	return build.Namespace
+}
+
 // retriggerBuild runs a build again from the start: its Job is removed, so the controller does not read the
 // old Job's result, and its status is reset, so nothing of the last run is taken for the next one. The
 // controller then resolves the head of the branch again (or the pinned commit) and builds it. A Job that could
@@ -50,7 +58,7 @@ func (s *Server) currentBuild(ctx context.Context, app *geassv1alpha1.GeassApp) 
 func (s *Server) retriggerBuild(ctx context.Context, build *geassv1alpha1.GeassBuild) error {
 	if s.Kube != nil {
 		policy := metav1.DeletePropagationBackground
-		err := s.Kube.BatchV1().Jobs(build.Namespace).Delete(ctx, build.Name+"-kaniko", metav1.DeleteOptions{PropagationPolicy: &policy})
+		err := s.Kube.BatchV1().Jobs(buildJobNamespace(build)).Delete(ctx, build.Name+"-kaniko", metav1.DeleteOptions{PropagationPolicy: &policy})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}

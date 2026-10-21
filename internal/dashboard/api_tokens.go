@@ -32,11 +32,13 @@ const apiTokensSecretName = "geass-api-tokens"
 const tokenUseRecordInterval = 10 * time.Minute
 
 var (
-	errTokenNotFound  = errors.New("token was not found")
-	errTooManyTokens  = errors.New("too many API tokens; revoke some before creating more")
-	errHookExists     = errors.New("this service already has a deploy hook; delete it to make a new one")
-	errInvalidToken   = errors.New("invalid or expired API token")
-	errTokensViewOnly = errors.New("API tokens can only be managed from the dashboard by an admin")
+	errTokenNotFound = errors.New("token was not found")
+	errTooManyTokens = errors.New("too many API tokens; revoke some before creating more")
+	errHookExists    = errors.New("this service already has a deploy hook; delete it to make a new one")
+	// errTokenScopeWider is what a person is told who asks for a token that acts beyond where they work.
+	errTokenScopeWider = errors.New("a token acts where its maker works, or in less; only a platform administrator can make one for another organization")
+	errInvalidToken    = errors.New("invalid or expired API token")
+	errTokensViewOnly  = errors.New("API tokens can only be managed from the dashboard by an admin")
 )
 
 type apiTokenContextKey struct{}
@@ -53,6 +55,12 @@ func tokenSession(record *apitokens.Record) *dashboardSessionInfo {
 		Username:  "token:" + record.Name,
 		Role:      record.Role,
 		CanMutate: record.Role == apitokens.RoleAdmin,
+		// A token made for an organization acts for it. One that names none is install-wide, as every token was before
+		// organizations existed, and acts for the platform. A project token takes the organization of its project
+		// (see tenantOfSession).
+		PlatformAdmin: record.Scope != apitokens.ScopeProject && record.Org == "",
+		Org:           record.Org,
+		Workspace:     record.Workspace,
 		// An observer is shut out of nothing that only reads. Everything it can reach it can only look at:
 		// writes are refused for it (it cannot mutate), whatever it asks.
 		CanReadSensitive: record.Role == apitokens.RoleAdmin || record.Role == apitokens.RoleObserver,
@@ -91,7 +99,7 @@ func loadAPITokens(secret *corev1.Secret) map[string]apitokens.Record {
 
 func (s *Server) listAPITokens(ctx context.Context) (map[string]apitokens.Record, error) {
 	secret := &corev1.Secret{}
-	err := s.Client.Get(ctx, client.ObjectKey{Name: apiTokensSecretName, Namespace: systemNamespace}, secret)
+	err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: apiTokensSecretName, Namespace: systemNamespace}, secret)
 	if apierrors.IsNotFound(err) {
 		return map[string]apitokens.Record{}, nil
 	}
@@ -107,7 +115,7 @@ func (s *Server) mutateAPITokens(ctx context.Context, mutate func(records map[st
 	key := client.ObjectKey{Name: apiTokensSecretName, Namespace: systemNamespace}
 	return retry.RetryOnConflict(writeRetry, func() error {
 		secret := &corev1.Secret{}
-		err := s.Client.Get(ctx, key, secret)
+		err := s.Client.Get(asSystem(ctx), key, secret)
 		exists := err == nil
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
@@ -126,7 +134,7 @@ func (s *Server) mutateAPITokens(ctx context.Context, mutate func(records map[st
 			data[id] = raw
 		}
 		if !exists {
-			err := s.Client.Create(ctx, &corev1.Secret{
+			err := s.Client.Create(asSystem(ctx), &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
 				Data:       data,
 			})
@@ -136,7 +144,7 @@ func (s *Server) mutateAPITokens(ctx context.Context, mutate func(records map[st
 			return err
 		}
 		secret.Data = data
-		return s.Client.Update(ctx, secret)
+		return s.Client.Update(asSystem(ctx), secret)
 	})
 }
 
@@ -305,24 +313,27 @@ func (s *Server) allowProjectToken(w http.ResponseWriter, r *http.Request, recor
 // ---- endpoints for token holders ----
 
 type apiTokenView struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Scope       string     `json:"scope"`
-	Project     string     `json:"project,omitempty"`
-	Environment string     `json:"environment,omitempty"`
-	App         string     `json:"app,omitempty"`
-	Role        string     `json:"role"`
-	CreatedBy   string     `json:"createdBy,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
-	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
-	Expired     bool       `json:"expired"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Scope       string `json:"scope"`
+	Project     string `json:"project,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	App         string `json:"app,omitempty"`
+	Role        string `json:"role"`
+	// Org and Workspace say where the token acts, when the platform has organizations. Empty is install-wide.
+	Org        string     `json:"org,omitempty"`
+	Workspace  string     `json:"workspace,omitempty"`
+	CreatedBy  string     `json:"createdBy,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	Expired    bool       `json:"expired"`
 }
 
 func viewOfToken(record apitokens.Record, now time.Time) apiTokenView {
 	return apiTokenView{
 		ID: record.ID, Name: record.Name, Scope: record.Scope, Project: record.Project, Environment: record.Environment, App: record.App,
-		Role: record.Role, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
+		Role: record.Role, Org: record.Org, Workspace: record.Workspace, CreatedBy: record.CreatedBy, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
 		LastUsedAt: record.LastUsedAt, Expired: record.Expired(now),
 	}
 }
@@ -443,9 +454,13 @@ func (s *Server) handleAPITokensList(w http.ResponseWriter, r *http.Request) {
 	}
 	project := strings.TrimSpace(r.URL.Query().Get("project"))
 	now := time.Now()
+	tenant, _ := tenantOf(r.Context())
 	items := []apiTokenView{}
 	for _, record := range records {
 		if project != "" && record.Project != project {
+			continue
+		}
+		if !s.tokenVisibleTo(r.Context(), tenant, record) {
 			continue
 		}
 		items = append(items, viewOfToken(record, now))
@@ -484,6 +499,13 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 		CreatedByID:   s.currentSession(r).Identity,
 		ExpiresInDays: days,
 	}
+	// A token is the creator's own: it acts for the organization and workspace they work in. Only the platform's
+	// administrators may make one for an organization they are not in, which is how automation for a customer is set up.
+	var scopeErr error
+	if request.Org, request.Workspace, scopeErr = s.tokenScopeFor(r); scopeErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: scopeErr.Error()})
+		return
+	}
 	token, record, err := apitokens.New(request, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: err.Error()})
@@ -509,7 +531,7 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err = s.mutateAPITokens(r.Context(), func(records map[string]apitokens.Record) (bool, error) {
-		if len(records) >= apitokens.MaxTokens {
+		if tooManyTokens(records, record.Org) {
 			return false, errTooManyTokens
 		}
 		if record.Scope == apitokens.ScopeService {
@@ -535,13 +557,53 @@ func (s *Server) handleAPITokenCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "token": token, "item": viewOfToken(record, time.Now())})
 }
 
+// tokenScopeFor is the organization and workspace a new token acts for. It is the creator's own scope, or a narrower one:
+// a person who works in a whole organization may make a token for one workspace of it. Only a platform administrator may
+// name an organization they are not in, which is how automation for a customer is set up; it has to be one that is set up
+// and open. Nobody picks a wider scope than their own.
+func (s *Server) tokenScopeFor(r *http.Request) (org, workspace string, err error) {
+	session := s.currentSession(r)
+	asked := strings.TrimSpace(r.FormValue("org"))
+	askedWorkspace := strings.TrimSpace(r.FormValue("workspace"))
+	if asked == "" && askedWorkspace == "" {
+		return session.Org, session.Workspace, nil
+	}
+	tenant, _ := tenantOf(r.Context())
+	if !tenant.Platform {
+		switch {
+		case asked != "" && asked != session.Org:
+			return "", "", errTokenScopeWider
+		case session.Workspace != "" && askedWorkspace != session.Workspace:
+			return "", "", errTokenScopeWider
+		case session.Workspace != "" || askedWorkspace == "":
+			return session.Org, session.Workspace, nil
+		}
+		asked = session.Org
+	} else if asked == "" {
+		return "", "", errors.New("name the organization the workspace belongs to")
+	}
+	found, lookupErr := s.organization(r.Context(), asked)
+	if lookupErr != nil {
+		return "", "", lookupErr
+	}
+	if found == nil || found.Spec.Suspended {
+		return "", "", errors.New("organization was not found, or is suspended")
+	}
+	if askedWorkspace != "" && !slices.ContainsFunc(found.Spec.Workspaces, func(w geassv1alpha1.GeassOrganizationWorkspace) bool { return w.ID == askedWorkspace }) {
+		return "", "", errors.New("workspace was not found in that organization")
+	}
+	return found.Name, askedWorkspace, nil
+}
+
 func (s *Server) handleAPITokenRevoke(w http.ResponseWriter, r *http.Request) {
 	if !requireMutation(w, r, "/") || !parseFormOrRedirect(w, r, "/") || !s.requireTokenAdmin(w, r) {
 		return
 	}
 	id := strings.TrimSpace(r.FormValue("id"))
+	tenant, _ := tenantOf(r.Context())
 	err := s.mutateAPITokens(r.Context(), func(records map[string]apitokens.Record) (bool, error) {
-		if _, ok := records[id]; !ok {
+		// A token that is another organization's is answered as one that is not there.
+		if record, ok := records[id]; !ok || !s.tokenVisibleTo(r.Context(), tenant, record) {
 			return false, errTokenNotFound
 		}
 		delete(records, id)
@@ -559,6 +621,42 @@ func (s *Server) handleAPITokenRevoke(w http.ResponseWriter, r *http.Request) {
 	s.releaseHook(id)
 	ctrllog.FromContext(r.Context()).Info("Revoked API token", "id", id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// tooManyTokens is whether one more token for the organization would be over a limit: the Secret's, or the organization's
+// own. An install-wide token (org "") counts only against the Secret's.
+func tooManyTokens(records map[string]apitokens.Record, org string) bool {
+	if len(records) >= apitokens.MaxTokens {
+		return true
+	}
+	if org == "" {
+		return false
+	}
+	held := 0
+	for _, existing := range records {
+		if existing.Org == org {
+			held++
+		}
+	}
+	return held >= apitokens.MaxTokensPerOrg
+}
+
+// tokenVisibleTo is whether the tenant may see, and revoke, a token. The platform sees them all. An organization sees the
+// tokens made for it, and those of its projects, but never the install-wide ones that were made before organizations
+// existed or by the platform's administrators.
+func (s *Server) tokenVisibleTo(ctx context.Context, tenant Tenant, record apitokens.Record) bool {
+	if tenant.Platform {
+		return true
+	}
+	if record.Scope == apitokens.ScopeWorkspace {
+		return record.Org != "" && record.Org == tenant.Org && (tenant.Workspace == "" || record.Workspace == tenant.Workspace)
+	}
+	// A project's token or deploy hook belongs to whoever the project does now.
+	var project geassv1alpha1.GeassProject
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: record.Project, Namespace: systemNamespace}, &project); err != nil {
+		return false
+	}
+	return tenant.sees(&project)
 }
 
 // deleteAPITokensFor revokes the project tokens of a deleted project, or of one removed environment

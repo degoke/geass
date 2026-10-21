@@ -107,9 +107,9 @@ func (s *Server) updateReapplying(ctx context.Context, obj client.Object, reappl
 func (s *Server) upsertSecretKey(ctx context.Context, key client.ObjectKey, dataKey, value string) error {
 	return retry.RetryOnConflict(writeRetry, func() error {
 		secret := &corev1.Secret{}
-		err := s.Client.Get(ctx, key, secret)
+		err := s.Client.Get(asSystem(ctx), key, secret)
 		if apierrors.IsNotFound(err) {
-			err = s.Client.Create(ctx, &corev1.Secret{
+			err = s.Client.Create(asSystem(ctx), &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
 				Data:       map[string][]byte{dataKey: []byte(value)},
 			})
@@ -125,7 +125,7 @@ func (s *Server) upsertSecretKey(ctx context.Context, key client.ObjectKey, data
 			secret.Data = map[string][]byte{}
 		}
 		secret.Data[dataKey] = []byte(value)
-		return s.Client.Update(ctx, secret)
+		return s.Client.Update(asSystem(ctx), secret)
 	})
 }
 
@@ -295,7 +295,7 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 	secretName := app.Name + "-secrets"
 	secret := &corev1.Secret{}
 	secretKey := client.ObjectKey{Name: secretName, Namespace: systemNamespace}
-	getErr := s.Client.Get(r.Context(), secretKey, secret)
+	getErr := s.Client.Get(asSystem(r.Context()), secretKey, secret)
 	secretExists := getErr == nil
 	if getErr != nil && !apierrors.IsNotFound(getErr) {
 		s.appSecretsFormError(w, r, name, getErr.Error())
@@ -315,9 +315,9 @@ func (s *Server) handleAppSecretSet(w http.ResponseWriter, r *http.Request, name
 	secret.Data[key] = []byte(value)
 	var saveErr error
 	if secretExists {
-		saveErr = s.Client.Update(r.Context(), secret)
+		saveErr = s.Client.Update(asSystem(r.Context()), secret)
 	} else {
-		saveErr = s.Client.Create(r.Context(), secret)
+		saveErr = s.Client.Create(asSystem(r.Context()), secret)
 	}
 	if saveErr != nil {
 		s.appSecretsFormError(w, r, name, saveErr.Error())
@@ -355,15 +355,15 @@ func (s *Server) handleAppSecretDelete(w http.ResponseWriter, r *http.Request, n
 	if app.Spec.SecretRef != nil {
 		secret := &corev1.Secret{}
 		secretKey := client.ObjectKey{Name: app.Spec.SecretRef.Name, Namespace: systemNamespace}
-		if err := s.Client.Get(r.Context(), secretKey, secret); err == nil {
+		if err := s.Client.Get(asSystem(r.Context()), secretKey, secret); err == nil {
 			delete(secret.Data, key)
 			if len(secret.Data) == 0 {
-				if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
+				if err := s.Client.Delete(asSystem(r.Context()), secret); err != nil && !apierrors.IsNotFound(err) {
 					s.appSecretsFormError(w, r, name, dashboardActionFailed)
 					return
 				}
 				clearSecretRef = true
-			} else if err := s.Client.Update(r.Context(), secret); err != nil {
+			} else if err := s.Client.Update(asSystem(r.Context()), secret); err != nil {
 				s.appSecretsFormError(w, r, name, dashboardActionFailed)
 				return
 			}
@@ -421,7 +421,7 @@ func (s *Server) appSecretKeys(ctx context.Context, app *geassv1alpha1.GeassApp)
 		return app.Spec.SecretData
 	}
 	secret := &corev1.Secret{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: app.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: app.Spec.SecretRef.Name, Namespace: systemNamespace}, secret); err != nil {
 		return nil
 	}
 	keys := make(map[string]string, len(secret.Data))

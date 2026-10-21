@@ -8,6 +8,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -58,8 +59,14 @@ func (r *AlertRoutingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	onlyThePlatform := predicate.NewPredicateFuncs(func(object client.Object) bool {
 		return object.GetName() == platform.HAReadinessName && object.GetNamespace() == platform.SystemNamespace
 	})
+	// An organization's channel hears about the projects the organization has, so a project made, deleted or given to
+	// another organization changes the routes. Every such change asks for the one thing there is to do.
+	platformConfig := func(context.Context, client.Object) []ctrl.Request {
+		return []ctrl.Request{{NamespacedName: client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}}}
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("alertrouting").
 		For(&geassv1alpha1.GeassPlatformConfig{}, builder.WithPredicates(onlyThePlatform, predicate.GenerationChangedPredicate{})).
+		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(platformConfig), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }

@@ -36,13 +36,25 @@ func (r *GeassDatabaseReconciler) resolveDatabasePlacement(ctx context.Context, 
 		return platform.ResolvePlacement(ctx, r.Client, db.Spec.Project, db.Spec.RunOn.Tags)
 	}
 	region := db.Spec.ServerRegion
+	// A server an organization owns runs where the organization requires its work to: in its region, on the nodes tagged
+	// for it, as one of its projects would.
+	org, err := platform.OrganizationNamed(ctx, r.Client, db.Spec.Org)
+	if err != nil {
+		return platform.Placement{}, err
+	}
+	if region == "" && org != nil {
+		region = org.Spec.Region
+	}
 	if region == "" {
-		var err error
 		if region, err = platform.DefaultRegion(ctx, r.Client, ""); err != nil {
 			return platform.Placement{}, err
 		}
 	}
-	return platform.NewPlacement(region, db.Spec.RunOn.Tags), nil
+	placement := platform.NewPlacement(region, db.Spec.RunOn.Tags)
+	if org != nil {
+		placement = placement.WithRequired(org.Spec.RequiredTags)
+	}
+	return placement, nil
 }
 
 // pinNodePlacement records the decision. Like pinStorageClass it patches only the annotation, from a

@@ -207,6 +207,21 @@ func TestAPoolNeedsAMaximumAndAWorkingConnection(t *testing.T) {
 	require.Contains(t, out["error"], "does not read the setting")
 }
 
+// A connection an organization owns is for the organization's projects: machines belong to the cluster, so a pool will
+// not take one, however the connection came to name an organization.
+func TestAPoolRefusesAConnectionThatAnOrganizationOwns(t *testing.T) {
+	f := newComputeFixture(t)
+	f.connect(t)
+	var connection geassv1alpha1.GeassCloudConnection
+	require.NoError(t, f.srv.Client.Get(context.Background(), client.ObjectKey{Name: "hetzner", Namespace: platform.SystemNamespace}, &connection))
+	connection.Spec.Org = "org-acme"
+	require.NoError(t, f.srv.Client.Update(context.Background(), &connection))
+
+	status, out := f.call(t, f.admin, http.MethodPost, "/api/v1/pools", map[string]any{"name": "burst", "connection": "hetzner", "size": "cx23", "maxNodes": 3})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Contains(t, out["error"], "belongs to an organization")
+}
+
 func TestAPoolIsMadeWithItsSettingsAndSafeDefaults(t *testing.T) {
 	f := newComputeFixture(t)
 	f.connect(t)

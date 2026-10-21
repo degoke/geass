@@ -11,6 +11,8 @@ export const SSO_ERRORS = {
   email_unverified: "The identity provider says your email address is not verified.",
   required_claim: "Your account is not one this installation lets in.",
   no_role: "Your account has no role here. Ask an admin to give you one at the identity provider.",
+  no_org: "Your account is not in an organization set up here. Ask a platform administrator to add it.",
+  org_pending: "Your organization was made for you and is waiting for a platform administrator to approve it. Try again once it has been.",
 };
 
 export const ssoErrorMessage = (code) => SSO_ERRORS[code] || "The sign-in did not go through.";

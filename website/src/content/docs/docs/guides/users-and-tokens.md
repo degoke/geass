@@ -163,7 +163,7 @@ rather than a credential for the API.
 | | Workspace token | Project token |
 | --- | --- | --- |
 | Prefix | `gsw_` | `gsp_` |
-| Acts as | A dashboard user, across every project | A fixed list of actions on one environment of one project |
+| Acts as | A dashboard user, across every project (of one organization, when [organizations are on](/docs/guides/organizations-and-workspaces/#tokens) and an organization's admin made it) | A fixed list of actions on one environment of one project |
 | Access | `admin` (**Full access**), `observer` (**Read only, with logs**) or `viewer` (**Read only**) | Fixed list, see below |
 | Choose when | A script manages many things, or you only need to read | CI deploys one service and edits its variables |
 
@@ -185,7 +185,7 @@ admin token (`403`: "API tokens can only be managed from the dashboard by an adm
    only once.
 
 The API accepts any lifetime from 1 to 3650 days, and treats a missing `expiresInDays`, or `0`, as no expiration. A project
-token needs a project and an environment that exist. At most 200 tokens, deploy hooks included, can exist at once.
+token needs a project and an environment that exist. At most 600 tokens, deploy hooks included, can exist at once, and 100 of them for one [organization](/docs/guides/organizations-and-workspaces/#tokens).
 
 Create one with the API from a dashboard session (a token cannot do this). Sign in first and keep the cookie:
 

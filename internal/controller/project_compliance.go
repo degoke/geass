@@ -20,7 +20,11 @@ import (
 // run on, and makes sure the admission policy that enforces it is installed. The controllers put the
 // node selector on what they create; the policy catches everything else.
 func (r *GeassProjectReconciler) reconcileProjectCompliance(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string) error {
-	required := platform.RequiredTagsAnnotation(project.Spec.RequiredTags)
+	tags, err := platform.ProjectTags(ctx, r.Client, project)
+	if err != nil {
+		return err
+	}
+	required := platform.RequiredTagsAnnotation(tags)
 	if err := ensureNamespaceAnnotation(ctx, r.Client, namespace, platform.AnnotationRequiredTags, required); err != nil {
 		return err
 	}

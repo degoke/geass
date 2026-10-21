@@ -90,7 +90,7 @@ func imageAppSource(image string) geassv1alpha1.GeassAppSource {
 func withAdminSession(t *testing.T, srv *Server, r *http.Request) *http.Request {
 	t.Helper()
 	secret := dashboardUsersSecret(dashboardUser{Username: "admin", Password: "test-password", Role: dashboardRoleAdmin})
-	if err := srv.Client.Create(context.Background(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+	if err := srv.Client.Create(asSystem(context.Background()), secret); err != nil && !apierrors.IsAlreadyExists(err) {
 		require.NoError(t, err)
 	}
 	return withDashboardSession(t, srv, r, "admin", dashboardRoleAdmin)
@@ -933,7 +933,12 @@ func TestHandleAppCreateValidation(t *testing.T) {
 
 func TestHandleAppCreateUpdateDelete(t *testing.T) {
 	ctx := context.Background()
-	c := newFakeClient()
+	// The service is moved to staging below, so its project has to have that environment.
+	project := &geassv1alpha1.GeassProject{
+		ObjectMeta: metav1.ObjectMeta{Name: testProjectName, Namespace: platform.SystemNamespace},
+		Spec:       geassv1alpha1.GeassProjectSpec{Environments: []string{"dev", "staging"}},
+	}
+	c := newFakeClient(project)
 	srv := &Server{Client: c}
 
 	form := url.Values{}
@@ -1332,7 +1337,7 @@ func TestAPIDatabaseCreateRejectsPlatformWideCloudConnection(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, rec.Body.String(), "project-scoped")
+	require.Contains(t, rec.Body.String(), "must be scoped to a project or an organization", "a connection that is nobody's is no project's")
 }
 
 func TestAPIDatabaseCreateRejectsForeignCloudConnection(t *testing.T) {
@@ -1427,7 +1432,7 @@ func TestAPICloudConnectionCreateRequiresProjectScope(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.handleAPI(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Contains(t, rec.Body.String(), "project scope is required")
+	require.Contains(t, rec.Body.String(), "name the project the connection is for", "a connection is a project's or an organization's")
 }
 
 func TestAPIObjectStoreCreateExternalS3(t *testing.T) {

@@ -12,14 +12,24 @@ import (
 	"github.com/degoke/geass/pkg/cloud"
 )
 
-// ValidateCloudConnectionForProject ensures a scoped connection is only used by its project.
-func ValidateCloudConnectionForProject(connection geassv1alpha1.GeassCloudConnection, project string) error {
-	scoped := strings.TrimSpace(connection.Spec.Project)
-	if scoped == "" {
-		return fmt.Errorf("cloud connection %q must be scoped to a project", connection.Name)
+// ValidateCloudConnectionForProject ensures a connection is used only by what it belongs to: the project it names, or,
+// when it names none and belongs to an organization, any project of that organization. A connection that names neither
+// is not for a project at all. The project is read to find its organization.
+func ValidateCloudConnectionForProject(ctx context.Context, c client.Reader, connection geassv1alpha1.GeassCloudConnection, project string) error {
+	project = strings.TrimSpace(project)
+	if scoped := strings.TrimSpace(connection.Spec.Project); scoped != "" {
+		if project != scoped {
+			return fmt.Errorf("cloud connection %q is scoped to project %q", connection.Name, scoped)
+		}
+		return nil
 	}
-	if strings.TrimSpace(project) != scoped {
-		return fmt.Errorf("cloud connection %q is scoped to project %q", connection.Name, scoped)
+	org := strings.TrimSpace(connection.Spec.Org)
+	if org == "" {
+		return fmt.Errorf("cloud connection %q must be scoped to a project or an organization", connection.Name)
+	}
+	var owner geassv1alpha1.GeassProject
+	if err := c.Get(ctx, client.ObjectKey{Name: project, Namespace: SystemNamespace}, &owner); err != nil || owner.Spec.Org != org {
+		return fmt.Errorf("cloud connection %q belongs to an organization that project %q is not in", connection.Name, project)
 	}
 	return nil
 }
@@ -30,7 +40,7 @@ func LoadCloudConnection(ctx context.Context, c client.Reader, project, name str
 	if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: SystemNamespace}, connection); err != nil {
 		return nil, nil, fmt.Errorf("cloud connection %q is unavailable", name)
 	}
-	if err := ValidateCloudConnectionForProject(*connection, project); err != nil {
+	if err := ValidateCloudConnectionForProject(ctx, c, *connection, project); err != nil {
 		return nil, nil, err
 	}
 	if connection.Spec.SecretRef.Name == "" {

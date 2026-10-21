@@ -28,7 +28,7 @@ type platformReadiness struct {
 
 func (s *Server) platformConfig(ctx context.Context) (geassv1alpha1.GeassPlatformConfig, error) {
 	config := geassv1alpha1.GeassPlatformConfig{}
-	err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, &config)
+	err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, &config)
 	if apierrors.IsNotFound(err) {
 		return geassv1alpha1.GeassPlatformConfig{}, nil
 	}
@@ -47,7 +47,7 @@ func (s *Server) platformReadiness(ctx context.Context) (platformReadiness, erro
 	var secret *corev1.Secret
 	if config.Spec.GitHubAppRef != nil && config.Spec.GitHubAppRef.Name != "" {
 		secret = &corev1.Secret{}
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: config.Spec.GitHubAppRef.Name, Namespace: systemNamespace}, secret); err != nil && !apierrors.IsNotFound(err) {
+		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: config.Spec.GitHubAppRef.Name, Namespace: systemNamespace}, secret); err != nil && !apierrors.IsNotFound(err) {
 			return platformReadiness{}, err
 		}
 		if apierrors.IsNotFound(err) {

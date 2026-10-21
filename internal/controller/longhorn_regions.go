@@ -335,7 +335,10 @@ func (r *GeassClusterReconciler) requiredTagScopes(ctx context.Context) ([]tagge
 		return nil, err
 	}
 	for i := range projects.Items {
-		tags := platform.NewPlacement("", projects.Items[i].Spec.RequiredTags).Tags
+		tags, err := platform.ProjectTags(ctx, r.Client, &projects.Items[i])
+		if err != nil {
+			return nil, err
+		}
 		if len(tags) == 0 {
 			continue
 		}

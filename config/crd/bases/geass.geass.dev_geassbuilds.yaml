@@ -214,6 +214,11 @@ spec:
                   ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
                   it, and the digest recorded when that run ends is the one its own pod reports.
                 type: string
+              jobNamespace:
+                description: |-
+                  JobNamespace is the namespace the build's Job runs in, when it is not the build's own: the organization's build
+                  namespace, for a project that belongs to one. Empty means the build's own namespace.
+                type: string
               jobRef:
                 type: string
               lastLogLine:

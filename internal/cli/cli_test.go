@@ -806,3 +806,19 @@ func TestTheExitCodeFollowsTheKindOfFailure(t *testing.T) {
 	require.Equal(t, ExitError, exitCodeFor(io.EOF))
 	require.Equal(t, ExitUsage, exitCodeFor(usageError("bad")))
 }
+
+func TestTheRoleIsDescribedWithWhereTheCallerWorks(t *testing.T) {
+	for name, tc := range map[string]struct {
+		me   client.Identity
+		want string
+	}{
+		"no organizations": {client.Identity{Role: "admin"}, "admin"},
+		"an organization":  {client.Identity{Role: "admin", Org: "org-1", OrgName: "Acme"}, "admin of Acme"},
+		"a workspace":      {client.Identity{Role: "viewer", Org: "org-1", OrgName: "Acme", Workspace: "ws-1", WorkspaceName: "Payments"}, "read-only of Acme / Payments"},
+		"names missing":    {client.Identity{Role: "observer", Org: "org-1", Workspace: "ws-1"}, "read-only, with logs of org-1 / ws-1"},
+		"the platform":     {client.Identity{Role: "admin", PlatformAdmin: true}, "admin of the platform"},
+		"a project token":  {client.Identity{Scope: "project", Project: "p", Environment: "production", Org: "org-1"}, "project token for p/production"},
+	} {
+		require.Equal(t, tc.want, describeRole(tc.me), name)
+	}
+}

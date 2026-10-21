@@ -71,6 +71,9 @@ func (f *ConnectionComputeFactory) Provider(ctx context.Context, name string) (c
 	if connection.Spec.Project != "" {
 		return nil, connection, &ConnectionError{Message: fmt.Sprintf("cloud connection %q belongs to project %q, and a project's connection cannot create machines for the cluster: make one that is not scoped to a project", name, connection.Spec.Project)}
 	}
+	if connection.Spec.Org != "" {
+		return nil, connection, &ConnectionError{Message: fmt.Sprintf("cloud connection %q belongs to organization %q, and an organization's connection cannot create machines for the cluster: make one that is not owned by an organization", name, connection.Spec.Org)}
+	}
 	if connection.Spec.SecretRef.Name == "" {
 		return nil, connection, &ConnectionError{Message: fmt.Sprintf("cloud connection %q has no credentials", name)}
 	}

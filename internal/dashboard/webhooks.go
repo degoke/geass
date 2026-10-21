@@ -22,7 +22,7 @@ func (s *Server) webhookDispatcher() *webhooks.Dispatcher {
 	if s.Webhooks != nil {
 		return s.Webhooks
 	}
-	return webhooks.NewDispatcher(s.Client)
+	return webhooks.NewDispatcher(s.system())
 }
 
 // announceDeployment tells webhook subscribers a deploy started and marks the deploy so the
@@ -205,15 +205,15 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, project, fa
 func (s *Server) removeWebhookSecret(ctx context.Context, project, id string) {
 	secret := &corev1.Secret{}
 	key := client.ObjectKey{Name: webhooks.SecretName(project), Namespace: systemNamespace}
-	if err := s.Client.Get(ctx, key, secret); err != nil {
+	if err := s.Client.Get(asSystem(ctx), key, secret); err != nil {
 		return
 	}
 	delete(secret.Data, id)
 	if len(secret.Data) == 0 {
-		_ = client.IgnoreNotFound(s.Client.Delete(ctx, secret))
+		_ = client.IgnoreNotFound(s.Client.Delete(asSystem(ctx), secret))
 		return
 	}
-	_ = s.Client.Update(ctx, secret)
+	_ = s.Client.Update(asSystem(ctx), secret)
 }
 
 // replyWebhookMutation answers a webhook change: success body, a user-facing error for the known

@@ -71,7 +71,7 @@ func newFakeAlertmanager(t *testing.T, srv *Server) *fakeAlertmanager {
 			fake.posted = append(fake.posted, body...)
 			integration := "slack"
 			if channel, ok := body[0]["labels"].(map[string]any)[alerts.LabelTestChannel].(string); ok {
-				if config, err := alerts.Load(context.Background(), srv.Client, platform.SystemNamespace); err == nil {
+				if config, err := alerts.Load(asSystem(context.Background()), srv.Client, platform.SystemNamespace); err == nil {
 					if found, ok := config.Channel(channel); ok && found.Type == alerts.TypeEmail {
 						integration = "email"
 					}

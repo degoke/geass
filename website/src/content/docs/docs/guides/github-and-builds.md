@@ -28,7 +28,7 @@ an image; that path does not involve the build system at all.
 ## How a repository service works
 
 1. You choose **Deploy changes**. Geass creates a **build** for the service.
-2. A short-lived Kubernetes Job in `geass-system` clones the repository at one commit and runs Kaniko on its Dockerfile.
+2. A short-lived Kubernetes Job in `geass-system` clones the repository at one commit and runs Kaniko on its Dockerfile. (For a project that belongs to an [organization](/docs/guides/organizations-and-workspaces/#builds-and-the-registry) the Job runs in the organization's own build namespace, `geass-build-<organization>`, which holds only that build's credentials and reaches no private address; the organization can have a registry of its own.)
 3. Kaniko pushes the image to your registry.
 4. Geass records the image's digest and runs the service from it, as `<repository>@sha256:…`. While a build runs, the
    service shows "Git source is waiting for a successful build" and the previous pods keep serving.
@@ -185,7 +185,7 @@ A few things to know:
 
 ## How a build runs
 
-The build is a `GeassBuild` object in `geass-system`, named `<service ID>-build-<12 characters>`. The characters are a
+The build is a `GeassBuild` object in `geass-system` (its Job may run in an organization's build namespace, which the build's `status.jobNamespace` says), named `<service ID>-build-<12 characters>`. The characters are a
 hash of the build's settings, so changing the repository, branch, pinned commit, Dockerfile path, root directory, cache
 setting, registry or CI setting starts a new build record. The same settings always give the same record, and a
 finished record is run again by a push or a rebuild, which put it back to the start.

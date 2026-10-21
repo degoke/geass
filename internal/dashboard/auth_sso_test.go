@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -56,11 +57,26 @@ type testIdP struct {
 	// tokenCalls and discoveryCalls count what the dashboard asked of the provider; discoveryDown makes discovery fail.
 	tokenCalls, discoveryCalls atomic.Int32
 	discoveryDown              atomic.Bool
+	// refresh is what a refresh token stands for, by token, and refreshed what the provider now says of a person (by subject)
+	// when it is asked again. revoked and the switches below shape its answer to that.
+	refresh   map[string]testRefresh
+	refreshed map[string]map[string]any
+	revoked   map[string]bool
+	// refreshDown makes the provider unreachable when asked again, noIDTokenOnRefresh makes it answer without one, and
+	// noRefreshTokens makes it give no refresh token at sign-in at all.
+	refreshDown, noIDTokenOnRefresh, noRefreshTokens atomic.Bool
+	refreshCalls                                     atomic.Int32
+	refreshSerial                                    atomic.Int32
 }
 
 type testCode struct {
-	challenge, nonce, redirect string
-	person                     map[string]any
+	challenge, nonce, redirect, scope string
+	person                            map[string]any
+}
+
+type testRefresh struct {
+	subject string
+	person  map[string]any
 }
 
 func newTestIdP(t *testing.T) *testIdP {
@@ -68,7 +84,8 @@ func newTestIdP(t *testing.T) *testIdP {
 	t.Setenv("GEASS_ALLOW_LOOPBACK", "true")
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	p := &testIdP{t: t, key: private, public: public, codes: map[string]testCode{}, person: testPerson("u-alice", "alice@example.com", "owner")}
+	p := &testIdP{t: t, key: private, public: public, codes: map[string]testCode{}, person: testPerson("u-alice", "alice@example.com", "owner"),
+		refresh: map[string]testRefresh{}, refreshed: map[string]map[string]any{}, revoked: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		p.discoveryCalls.Add(1)
@@ -105,7 +122,7 @@ func (p *testIdP) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	code := "code-" + query.Get("state")
 	p.mu.Lock()
-	p.codes[code] = testCode{challenge: query.Get("code_challenge"), nonce: query.Get("nonce"), redirect: query.Get("redirect_uri"), person: maps.Clone(p.person)}
+	p.codes[code] = testCode{challenge: query.Get("code_challenge"), nonce: query.Get("nonce"), redirect: query.Get("redirect_uri"), scope: query.Get("scope"), person: maps.Clone(p.person)}
 	p.mu.Unlock()
 	back := url.Values{"code": {code}, "state": {query.Get("state")}, "iss": {p.server.URL}}
 	http.Redirect(w, r, query.Get("redirect_uri")+"?"+back.Encode(), http.StatusFound)
@@ -118,6 +135,10 @@ func (p *testIdP) token(w http.ResponseWriter, r *http.Request) {
 	user, password, basic := r.BasicAuth()
 	if !basic {
 		user, password = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+	}
+	if r.PostForm.Get("grant_type") == "refresh_token" {
+		p.refreshGrant(w, r, user, password)
+		return
 	}
 	p.mu.Lock()
 	issued, ok := p.codes[r.PostForm.Get("code")]
@@ -133,7 +154,54 @@ func (p *testIdP) token(w http.ResponseWriter, r *http.Request) {
 	p.mu.Unlock()
 	claims := map[string]any{"iss": p.server.URL, "aud": ssoTestClient, "nonce": issued.nonce, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()}
 	maps.Copy(claims, issued.person)
-	_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": p.sign(claims)})
+	answer := map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": p.sign(claims)}
+	if strings.Contains(issued.scope, "offline_access") && !p.noRefreshTokens.Load() {
+		subject, _ := issued.person["sub"].(string)
+		answer["refresh_token"] = p.newRefreshToken(subject, issued.person)
+	}
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
+func (p *testIdP) newRefreshToken(subject string, person map[string]any) string {
+	token := fmt.Sprintf("rt-%s-%d", subject, p.refreshSerial.Add(1))
+	p.mu.Lock()
+	p.refresh[token] = testRefresh{subject: subject, person: maps.Clone(person)}
+	p.mu.Unlock()
+	return token
+}
+
+// refreshGrant is the provider asked again with a refresh token: it answers for what it says of the person now.
+func (p *testIdP) refreshGrant(w http.ResponseWriter, r *http.Request, user, password string) {
+	p.refreshCalls.Add(1)
+	if p.refreshDown.Load() {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+		return
+	}
+	token := r.PostForm.Get("refresh_token")
+	p.mu.Lock()
+	grant, ok := p.refresh[token]
+	revoked := p.revoked[token]
+	now, changed := p.refreshed[grant.subject]
+	p.mu.Unlock()
+	if user != ssoTestClient || password != ssoTestSecret || !ok || revoked {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+		return
+	}
+	person := grant.person
+	if changed {
+		person = now
+	}
+	claims := map[string]any{"iss": p.server.URL, "aud": ssoTestClient, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()}
+	maps.Copy(claims, person)
+	answer := map[string]any{"access_token": "at2", "token_type": "Bearer", "refresh_token": p.newRefreshToken(grant.subject, person)}
+	if !p.noIDTokenOnRefresh.Load() {
+		answer["id_token"] = p.sign(claims)
+	}
+	p.mu.Lock()
+	delete(p.refresh, token)
+	p.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(answer)
 }
 
 func (p *testIdP) sign(claims map[string]any) string {
@@ -194,7 +262,7 @@ func newSSOFixture(t *testing.T, mode string) ssoFixture {
 func (f ssoFixture) config(t *testing.T) geassv1alpha1.GeassPlatformConfig {
 	t.Helper()
 	var config geassv1alpha1.GeassPlatformConfig
-	require.NoError(t, f.srv.Client.Get(context.Background(), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &config))
+	require.NoError(t, f.srv.Client.Get(asSystem(context.Background()), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &config))
 	return config
 }
 
@@ -202,7 +270,7 @@ func (f ssoFixture) updateConfig(t *testing.T, change func(*geassv1alpha1.GeassP
 	t.Helper()
 	config := f.config(t)
 	change(&config)
-	require.NoError(t, f.srv.Client.Update(context.Background(), &config))
+	require.NoError(t, f.srv.Client.Update(asSystem(context.Background()), &config))
 }
 
 func (f ssoFixture) setMode(t *testing.T, mode string) {

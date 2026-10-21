@@ -97,3 +97,54 @@ func TestAProjectWithoutRequiredTagsResolvesAsBefore(t *testing.T) {
 	require.Equal(t, NewPlacement("eu", nil), p)
 	require.Nil(t, p.Required)
 }
+
+func organizationWith(region string, tags ...string) *geassv1alpha1.GeassOrganization {
+	return &geassv1alpha1.GeassOrganization{
+		ObjectMeta: metav1.ObjectMeta{Name: "org-1", Namespace: SystemNamespace},
+		Spec:       geassv1alpha1.GeassOrganizationSpec{DisplayName: "Acme", IdPID: "acme", Region: region, RequiredTags: tags},
+	}
+}
+
+func projectOf(org, region string, tags ...string) *geassv1alpha1.GeassProject {
+	project := projectIn(region)
+	project.Spec.Org = org
+	project.Spec.RequiredTags = tags
+	return project
+}
+
+func TestAnOrganizationsRegionStandsInForAProjectThatNamesNone(t *testing.T) {
+	c := placementClient(t, clusterWithDefault("us"), organizationWith("eu"), projectOf("org-1", ""))
+	p, err := ResolvePlacement(context.Background(), c, "shop", nil)
+	require.NoError(t, err)
+	require.Equal(t, "eu", p.Region, "the organization's region beats the cluster's default")
+
+	c = placementClient(t, clusterWithDefault("us"), organizationWith("eu"), projectOf("org-1", "ap"))
+	p, err = ResolvePlacement(context.Background(), c, "shop", nil)
+	require.NoError(t, err)
+	require.Equal(t, "ap", p.Region, "and a project's own region beats the organization's")
+}
+
+func TestAnOrganizationsTagsAreAddedToItsProjectsOwn(t *testing.T) {
+	c := placementClient(t, clusterWithDefault(""), organizationWith("", "pci", "hipaa"), projectOf("org-1", "", "gdpr", "hipaa"))
+	tags, err := ProjectRequiredTags(context.Background(), c, "shop")
+	require.NoError(t, err)
+	require.Equal(t, []string{"gdpr", "hipaa", "pci"}, tags, "the union, each once")
+
+	job, err := ProjectJobPlacement(context.Background(), c, "shop")
+	require.NoError(t, err)
+	require.Equal(t, tags, job.Required, "builds and jobs run on the nodes the organization requires too")
+}
+
+func TestAProjectOfAnOrganizationThatIsGoneRunsAsItDidBefore(t *testing.T) {
+	c := placementClient(t, clusterWithDefault("us"), projectOf("org-gone", "", "gdpr"))
+	p, err := ResolvePlacement(context.Background(), c, "shop", nil)
+	require.NoError(t, err, "an organization that is not there must not hold a project back")
+	require.Equal(t, "us", p.Region)
+	require.Equal(t, []string{"gdpr"}, p.Required)
+
+	c = placementClient(t, clusterWithDefault("us"), organizationWith("eu", "pci"), projectOf("", "", "gdpr"))
+	p, err = ResolvePlacement(context.Background(), c, "shop", nil)
+	require.NoError(t, err)
+	require.Equal(t, "us", p.Region, "a project that belongs to no organization takes nothing from one")
+	require.Equal(t, []string{"gdpr"}, p.Required)
+}

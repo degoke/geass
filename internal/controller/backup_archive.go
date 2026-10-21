@@ -57,7 +57,7 @@ func resolveAWSConnection(ctx context.Context, c client.Reader, project, name, r
 	if err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: platform.SystemNamespace}, connection); err != nil {
 		return nil, fmt.Errorf("cloud connection %q is unavailable", name)
 	}
-	if err := platform.ValidateCloudConnectionForProject(*connection, project); err != nil {
+	if err := platform.ValidateCloudConnectionForProject(ctx, c, *connection, project); err != nil {
 		return nil, err
 	}
 	if connection.Spec.Provider != geassv1alpha1.CloudProviderAWS {

@@ -69,7 +69,7 @@ func nodeReady(node *corev1.Node) bool {
 // listNodes reads the cluster's nodes.
 func (s *Server) listNodes(ctx context.Context) ([]corev1.Node, error) {
 	var nodes corev1.NodeList
-	if err := s.Client.List(ctx, &nodes); err != nil {
+	if err := s.Client.List(asSystem(ctx), &nodes); err != nil {
 		return nil, err
 	}
 	return nodes.Items, nil
@@ -78,7 +78,7 @@ func (s *Server) listNodes(ctx context.Context) ([]corev1.Node, error) {
 // placementFor is where a workload of the project may run. A project that cannot be read yields the
 // tags alone: the capacity check is advice, and must not fail a request over a lookup.
 func (s *Server) placementFor(ctx context.Context, project string, tags []string) platform.Placement {
-	placement, err := platform.ResolvePlacement(ctx, s.Client, project, tags)
+	placement, err := platform.ResolvePlacement(ctx, s.system(), project, tags)
 	if err != nil {
 		return platform.NewPlacement("", tags)
 	}
@@ -98,6 +98,17 @@ func (s *Server) databasePlacement(ctx context.Context, db *geassv1alpha1.GeassD
 	}
 	if db.Status.TargetNamespace != "" {
 		return platform.Placement{}
+	}
+	if db.Spec.Project == "" && db.Spec.Org != "" {
+		// A server an organization owns will be placed as the organization requires its work to be.
+		placement := s.placementFor(ctx, "", db.Spec.RunOn.Tags)
+		if org, err := platform.OrganizationNamed(ctx, s.system(), db.Spec.Org); err == nil && org != nil {
+			if db.Spec.ServerRegion == "" && org.Spec.Region != "" {
+				placement = platform.NewPlacement(org.Spec.Region, db.Spec.RunOn.Tags)
+			}
+			placement = placement.WithRequired(org.Spec.RequiredTags)
+		}
+		return placement
 	}
 	return s.placementFor(ctx, db.Spec.Project, db.Spec.RunOn.Tags)
 }
@@ -313,7 +324,12 @@ func (s *Server) projectsRequiringTags(ctx context.Context) (map[string][]geassv
 	}
 	required := map[string][]geassv1alpha1.GeassProject{}
 	for _, project := range projects.Items {
-		for _, tag := range project.Spec.RequiredTags {
+		// A project requires its own tags and those its organization requires of all its projects.
+		tags, err := platform.ProjectTags(ctx, s.system(), &project)
+		if err != nil {
+			return nil, err
+		}
+		for _, tag := range tags {
 			required[tag] = append(required[tag], project)
 		}
 	}
@@ -330,7 +346,7 @@ func capitalizeFirst(text string) string {
 // declareNodePlacement records the placement on the node's GeassNode, if it has one.
 func (s *Server) declareNodePlacement(ctx context.Context, nodeName string, placement geassv1alpha1.GeassNodePlacement) error {
 	var geassNodes geassv1alpha1.GeassNodeList
-	if err := s.Client.List(ctx, &geassNodes); err != nil {
+	if err := s.Client.List(asSystem(ctx), &geassNodes); err != nil {
 		return err
 	}
 	for i := range geassNodes.Items {
@@ -388,7 +404,7 @@ func (s *Server) tagWarnings(ctx context.Context, nodes []corev1.Node, nodeName 
 			continue
 		}
 		for _, project := range projects {
-			region := project.Spec.Region
+			region := s.projectOwnRegion(ctx, &project)
 			if region == "" {
 				region, _ = platform.DefaultRegion(ctx, s.Client, project.Spec.ClusterRef.Name)
 			}
@@ -436,7 +452,7 @@ func (s *Server) regionWarnings(ctx context.Context, nodes []corev1.Node, nodeNa
 	defaultRegion, _ := platform.DefaultRegion(ctx, s.Client, "")
 	var warnings []string
 	for _, project := range projects.Items {
-		region := project.Spec.Region
+		region := s.projectOwnRegion(ctx, &project)
 		if region == "" {
 			region = defaultRegion
 		}
@@ -445,6 +461,16 @@ func (s *Server) regionWarnings(ctx context.Context, nodes []corev1.Node, nodeNa
 		}
 	}
 	return warnings
+}
+
+// projectOwnRegion is the region the project asks for, its own or else its organization's. It is empty when neither
+// names one, which leaves the cluster's default to decide.
+func (s *Server) projectOwnRegion(ctx context.Context, project *geassv1alpha1.GeassProject) string {
+	org, err := platform.OrganizationOf(ctx, s.system(), project)
+	if err != nil {
+		org = nil
+	}
+	return platform.EffectiveRegion(project, org)
 }
 
 func withRegion(labels map[string]string, region string) map[string]string {
@@ -528,7 +554,7 @@ func (s *Server) runOnTagsFromForm(w http.ResponseWriter, r *http.Request, fallb
 		return nil, true, false
 	}
 	tags = splitNames(r.Form["runOnTags"])
-	region, err := platform.ProjectRegion(r.Context(), s.Client, project)
+	region, err := platform.ProjectRegion(r.Context(), s.system(), project)
 	if err == nil {
 		err = s.validateTags(r.Context(), region, tags)
 	}

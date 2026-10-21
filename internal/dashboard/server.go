@@ -83,7 +83,9 @@ type Server struct {
 	// cannot list them.
 	Compute ComputeProviders
 
-	authMu    sync.Mutex
+	authMu sync.Mutex
+	// refreshMu keeps two passes that ask the provider again about people from running at once.
+	refreshMu sync.Mutex
 	auth      *dashboardAuth
 	loginMu   sync.Mutex
 	tokenUsed sync.Map // API token id -> time its last use was stored
@@ -121,6 +123,8 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.Cache != nil {
 		go s.runDashboardWatch(ctx)
 	}
+	// People who signed in through the provider are asked about again from time to time, when the platform says so.
+	go s.runSSORefresh(ctx)
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
@@ -285,6 +289,10 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name, _, err := s.createProjectIn(r.Context(), region)
 	if err != nil {
+		if platform.IsUserError(err) {
+			redirectFormUserError(w, r, fallback, err)
+			return
+		}
 		redirectFormInternalError(w, r, fallback)
 		return
 	}
@@ -302,17 +310,25 @@ func (s *Server) createProjectIn(ctx context.Context, region string) (string, in
 		return "", http.StatusInternalServerError, err
 	}
 	environments := []string{string(geassv1alpha1.EnvironmentProduction)}
-	cluster, err := s.defaultCluster(ctx)
+	cluster, err := s.clusterForNewProject(ctx)
 	if err != nil {
 		return "", http.StatusBadRequest, err
 	}
 	var clusterObject geassv1alpha1.GeassCluster
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: cluster, Namespace: systemNamespace}, &clusterObject); err != nil {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: cluster, Namespace: systemNamespace}, &clusterObject); err != nil {
 		return "", http.StatusBadRequest, fmt.Errorf("the platform default cluster does not exist")
 	}
 	for _, environment := range environments {
 		if _, err := platform.ProjectNamespace(id, environment); err != nil {
 			return "", http.StatusBadRequest, err
+		}
+	}
+	// An organization that has reached its limit makes no more projects.
+	tenant, scoped := tenantOf(ctx)
+	scoped = scoped && !tenant.Platform && tenant.Org != ""
+	if scoped {
+		if err := s.checkProjectLimit(ctx, tenant.Org, ""); err != nil {
+			return "", http.StatusConflict, err
 		}
 	}
 	p := &geassv1alpha1.GeassProject{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: systemNamespace}, Spec: geassv1alpha1.GeassProjectSpec{DisplayName: displayName, ClusterRef: corev1.LocalObjectReference{Name: cluster}, Environments: environments, Region: region, Network: geassv1alpha1.NewProjectNetwork()}}
@@ -321,6 +337,16 @@ func (s *Server) createProjectIn(ctx context.Context, region string) (string, in
 			return "", http.StatusConflict, fmt.Errorf("project already exists")
 		}
 		return "", http.StatusInternalServerError, err
+	}
+	// Two projects made at the same moment can both pass the check above, and nothing makes the count atomic, so it is
+	// taken again once the project exists: whichever finds the organization over its limit withdraws its own.
+	if scoped {
+		if err := s.checkProjectLimit(ctx, tenant.Org, id); err != nil {
+			if deleteErr := s.Client.Delete(ctx, p); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+				return "", http.StatusInternalServerError, deleteErr
+			}
+			return "", http.StatusConflict, err
+		}
 	}
 	return id, http.StatusSeeOther, nil
 }
@@ -359,9 +385,21 @@ func (s *Server) generateUniqueProject(ctx context.Context) (string, string, err
 	return "", "", fmt.Errorf("could not generate a unique project")
 }
 
+// clusterForNewProject is the cluster a project is made in: the one its organization is bound to, when it is bound to
+// one, and the platform's default otherwise. (Only one cluster exists today, so the binding changes nothing yet; it is
+// where an organization's projects would be sent to another.)
+func (s *Server) clusterForNewProject(ctx context.Context) (string, error) {
+	if tenant, ok := tenantOf(ctx); ok && !tenant.Platform && tenant.Org != "" {
+		if org, err := s.organization(ctx, tenant.Org); err == nil && org != nil && org.Spec.ClusterRef != nil && org.Spec.ClusterRef.Name != "" {
+			return org.Spec.ClusterRef.Name, nil
+		}
+	}
+	return s.defaultCluster(ctx)
+}
+
 func (s *Server) defaultCluster(ctx context.Context) (string, error) {
 	var clusters geassv1alpha1.GeassClusterList
-	if err := s.Client.List(ctx, &clusters); err != nil {
+	if err := s.Client.List(asSystem(ctx), &clusters); err != nil {
 		return "", fmt.Errorf("unable to list clusters: %w", err)
 	}
 	if len(clusters.Items) == 1 {
@@ -371,7 +409,7 @@ func (s *Server) defaultCluster(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no cluster found")
 	}
 	var config geassv1alpha1.GeassPlatformConfig
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, &config); err == nil && config.Spec.DefaultClusterRef.Name != "" {
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: systemNamespace}, &config); err == nil && config.Spec.DefaultClusterRef.Name != "" {
 		for _, cluster := range clusters.Items {
 			if cluster.Name == config.Spec.DefaultClusterRef.Name {
 				return cluster.Name, nil
@@ -422,6 +460,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectGitHubDisconnect(w, r, name)
 		case len(parts) == 2 && parts[1] == "deploy":
 			s.handleProjectDeployPending(w, r, name)
+		case len(parts) == 2 && parts[1] == "assign":
+			s.handleProjectAssign(w, r, name)
 		default:
 			http.NotFound(w, r)
 		}
@@ -438,7 +478,16 @@ type projectUsageMetric struct {
 }
 
 func (s *Server) queryProjectUsage(ctx context.Context, project string) []projectUsageMetric {
-	selector := `namespace=~"` + regexp.QuoteMeta(project) + `-[^\"]+"`
+	// The project's namespaces are matched exactly. A prefix match on its name would also add up the environments of
+	// another project whose name starts with it ("api" and "api-v2").
+	var scope metricScope
+	var projectObject geassv1alpha1.GeassProject
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &projectObject); err == nil {
+		if namespaces, err := projectMetricNamespaces(&projectObject, ""); err == nil {
+			scope.namespaces = namespaces
+		}
+	}
+	selector := scope.namespaceMatcher()
 	queries := []struct {
 		name, unit, query string
 	}{
@@ -610,14 +659,14 @@ func (s *Server) handleProjectVariableSave(w http.ResponseWriter, r *http.Reques
 	} else if oldSecretKey != "" {
 		secretKey := client.ObjectKey{Name: secretName, Namespace: systemNamespace}
 		secret := &corev1.Secret{}
-		if err := s.Client.Get(r.Context(), secretKey, secret); err == nil {
+		if err := s.Client.Get(asSystem(r.Context()), secretKey, secret); err == nil {
 			delete(secret.Data, oldSecretKey)
 			if len(secret.Data) == 0 {
-				if err := s.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
+				if err := s.Client.Delete(asSystem(r.Context()), secret); err != nil && !apierrors.IsNotFound(err) {
 					redirectFormInternalError(w, r, fallback)
 					return
 				}
-			} else if err := s.Client.Update(r.Context(), secret); err != nil {
+			} else if err := s.Client.Update(asSystem(r.Context()), secret); err != nil {
 				redirectFormInternalError(w, r, fallback)
 				return
 			}
@@ -693,12 +742,12 @@ func (s *Server) handleProjectVariableDelete(w http.ResponseWriter, r *http.Requ
 	if secretKey != "" {
 		secret := &corev1.Secret{}
 		secretObjectKey := client.ObjectKey{Name: name + "-shared-secrets", Namespace: systemNamespace}
-		if err := s.Client.Get(r.Context(), secretObjectKey, secret); err == nil {
+		if err := s.Client.Get(asSystem(r.Context()), secretObjectKey, secret); err == nil {
 			delete(secret.Data, secretKey)
 			if len(secret.Data) == 0 {
-				_ = s.Client.Delete(r.Context(), secret)
+				_ = s.Client.Delete(asSystem(r.Context()), secret)
 			} else {
-				_ = s.Client.Update(r.Context(), secret)
+				_ = s.Client.Update(asSystem(r.Context()), secret)
 			}
 		}
 	}
@@ -941,6 +990,31 @@ func (s *Server) handleHAReadinessCheck(w http.ResponseWriter, r *http.Request) 
 	redirect(w, r, fallback)
 }
 
+// connectionOrganization is the organization a connection made without a project belongs to, or what is wrong. The
+// platform names one that is set up; an organization's administrator makes it for their own, and a person who works in one
+// workspace does not decide what the whole organization's projects use.
+func (s *Server) connectionOrganization(r *http.Request) (org, refused string) {
+	tenant, _ := tenantOf(r.Context())
+	if tenant.Platform || tenant.Org == "" {
+		named := strings.TrimSpace(r.FormValue("org"))
+		if named == "" {
+			return "", "name the project the connection is for, or an organization to make it for all of its projects"
+		}
+		found, err := s.organization(r.Context(), named)
+		if err != nil || found == nil {
+			return "", "there is no such organization"
+		}
+		return found.Name, ""
+	}
+	if tenant.Workspace != "" {
+		return "", "only an administrator of the whole organization makes a connection for all of its projects; name a project instead"
+	}
+	if named := strings.TrimSpace(r.FormValue("org")); named != "" && named != tenant.Org {
+		return "", "a connection can only be made for your own organization"
+	}
+	return tenant.Org, ""
+}
+
 func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Request) {
 	fallback := "/cloud-connections"
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -976,31 +1050,38 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		redirectFormError(w, r, fallback, "provider must be AWS or PlanetScale")
 		return
 	}
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-credentials", Namespace: systemNamespace}, StringData: secretData}
-	if err := s.Client.Create(r.Context(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
-		redirectFormInternalError(w, r, fallback)
-		return
-	}
 	scopedProject := strings.TrimSpace(r.FormValue("project"))
+	orgScope := ""
 	if scopedProject == "" {
-		redirectFormError(w, r, fallback, "project scope is required for cloud connections")
-		return
+		// With no project the connection is an organization's, for all its projects to use.
+		var refused string
+		if orgScope, refused = s.connectionOrganization(r); refused != "" {
+			redirectFormError(w, r, fallback, refused)
+			return
+		}
+	} else {
+		// The project is proved the caller's before anything is made: the credentials are a Secret the dashboard writes for
+		// itself, which no organization's permissions are checked against.
+		var project geassv1alpha1.GeassProject
+		if err := s.Client.Get(r.Context(), client.ObjectKey{Name: scopedProject, Namespace: systemNamespace}, &project); err != nil {
+			redirectFormError(w, r, fallback, "project was not found")
+			return
+		}
 	}
-	var project geassv1alpha1.GeassProject
-	if err := s.Client.Get(r.Context(), client.ObjectKey{Name: scopedProject, Namespace: systemNamespace}, &project); err != nil {
-		redirectFormError(w, r, fallback, "project was not found")
-		return
-	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-credentials", Namespace: systemNamespace}, StringData: secretData}
 	connection := &geassv1alpha1.GeassCloudConnection{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: systemNamespace},
 		Spec: geassv1alpha1.GeassCloudConnectionSpec{
 			Provider:     provider,
 			SecretRef:    corev1.LocalObjectReference{Name: secret.Name},
 			Project:      scopedProject,
+			Org:          orgScope,
 			Region:       strings.TrimSpace(r.FormValue("region")),
 			Organization: strings.TrimSpace(r.FormValue("organization")),
 		},
 	}
+	// The connection comes first: it is what makes the name the caller's, so the Secret that goes with it cannot be one
+	// that was already there for something else.
 	if err := s.Client.Create(r.Context(), connection); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			redirectFormError(w, r, fallback, "connection already exists")
@@ -1008,6 +1089,19 @@ func (s *Server) handleCloudConnectionCreate(w http.ResponseWriter, r *http.Requ
 		}
 		redirectFormInternalError(w, r, fallback)
 		return
+	}
+	if err := s.Client.Create(asSystem(r.Context()), secret); err != nil {
+		// For the platform a Secret that is already there is kept, as it always was (it is how the credentials are changed
+		// without saving the connection again). For an organization it is somebody else's, or nobody's, and is not taken.
+		if !apierrors.IsAlreadyExists(err) || !isPlatformContext(r.Context()) {
+			_ = s.Client.Delete(asSystem(r.Context()), connection)
+			if apierrors.IsAlreadyExists(err) {
+				redirectFormError(w, r, fallback, "that name is already taken")
+				return
+			}
+			redirectFormInternalError(w, r, fallback)
+			return
+		}
 	}
 	redirect(w, r, fallback)
 }
@@ -1087,6 +1181,10 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app := s.appFromForm(name, image, r)
+	if err := s.checkAppHosts(r.Context(), app, nil); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
+	}
 	app.Spec.Resources = res
 	app.Spec.Replicas = &replicas
 	if err := applyAutoscalingFromForm(r, app); err != nil {
@@ -2091,6 +2189,54 @@ func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request, name st
 	s.deleteResource(w, r, name, &geassv1alpha1.GeassApp{}, "/apps")
 }
 
+// applyAppHostForm sets the hostname the form names and checks the hostnames the service will have. A service that moved
+// to another project is checked for all its hostnames, not only the new ones, because its new organization may allow
+// other domains than the one it came from.
+func (s *Server) applyAppHostForm(r *http.Request, app *geassv1alpha1.GeassApp, previousHosts []string, previousProject string) error {
+	moved := app.Spec.Project != previousProject
+	if !formHasValue(r, "host") && !moved {
+		return nil
+	}
+	if formHasValue(r, "host") {
+		app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
+	}
+	if moved {
+		previousHosts = nil
+	}
+	return s.checkAppHosts(r.Context(), app, previousHosts)
+}
+
+// applyAppMoveForm moves a service to the project and environment the form names. Moving it puts it in another project's
+// namespace, so the target has to be a project and environment that exist, not just a name that spells a valid namespace.
+func (s *Server) applyAppMoveForm(r *http.Request, app *geassv1alpha1.GeassApp) error {
+	if !formHasValue(r, "project") && !formHasValue(r, "environment") {
+		return nil
+	}
+	project := strings.TrimSpace(r.FormValue("project"))
+	if project == "" {
+		project = app.Spec.Project
+	}
+	environment := strings.TrimSpace(r.FormValue("environment"))
+	if environment == "" {
+		environment = string(app.Spec.Environment)
+	}
+	if _, err := platform.ProjectNamespace(project, environment); err != nil {
+		return err
+	}
+	if project != app.Spec.Project || environment != string(app.Spec.Environment) {
+		if err := s.validateMoveTarget(r.Context(), project, environment); err != nil {
+			return err
+		}
+	}
+	if formHasValue(r, "environment") && environment != "" {
+		app.Spec.Environment = geassv1alpha1.GeassEnvironment(environment)
+	}
+	if formHasValue(r, "project") {
+		app.Spec.Project = strings.TrimSpace(r.FormValue("project"))
+	}
+	return nil
+}
+
 func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name string) {
 	fallback := "/apps/" + name
 	if !requireMutation(w, r, fallback) || !parseFormOrRedirect(w, r, fallback) {
@@ -2103,6 +2249,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	}
 	fallback = workspaceResourceURL(app.Spec.Project, string(app.Spec.Environment), "apps", name, "settings")
 	deployNow := r.FormValue("deploy") == "on"
+	previousHosts, previousProject := appHosts(&app), app.Spec.Project
 	// What the form changes is judged against this copy: only settings that need a deploy make the
 	// service pending, and a form that changes nothing writes nothing.
 	before := app.Spec.DeepCopy()
@@ -2112,25 +2259,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 	} else if present {
 		app.Spec.RunOn.Tags = tags
 	}
-	if formHasValue(r, "project") || formHasValue(r, "environment") {
-		project := strings.TrimSpace(r.FormValue("project"))
-		if project == "" {
-			project = app.Spec.Project
-		}
-		environment := strings.TrimSpace(r.FormValue("environment"))
-		if environment == "" {
-			environment = string(app.Spec.Environment)
-		}
-		if _, err := platform.ProjectNamespace(project, environment); err != nil {
-			redirectFormUserError(w, r, fallback, err)
-			return
-		}
-		if formHasValue(r, "environment") && environment != "" {
-			app.Spec.Environment = geassv1alpha1.GeassEnvironment(environment)
-		}
-		if formHasValue(r, "project") {
-			app.Spec.Project = strings.TrimSpace(r.FormValue("project"))
-		}
+	if err := s.applyAppMoveForm(r, &app); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	if err := applyFunctionSourceForm(r, app.Spec.Source.Function); err != nil {
 		redirectFormUserError(w, r, fallback, err)
@@ -2203,8 +2334,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request, name st
 		redirectFormUserError(w, r, fallback, err)
 		return
 	}
-	if formHasValue(r, "host") {
-		app.Spec.Ingress.Host = strings.TrimSpace(r.FormValue("host"))
+	if err := s.applyAppHostForm(r, &app, previousHosts, previousProject); err != nil {
+		redirectFormUserError(w, r, fallback, err)
+		return
 	}
 	if formHasValue(r, "tls") {
 		app.Spec.Ingress.TLSEnabled = r.FormValue("tls") == "on"
@@ -2587,7 +2719,7 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if password := r.FormValue("password"); password != "" {
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-external", Namespace: systemNamespace}, StringData: map[string]string{platform.ConnectionKeyPassword: password}}
-		if err := s.Client.Create(r.Context(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		if err := s.Client.Create(asSystem(r.Context()), secret); err != nil && !apierrors.IsAlreadyExists(err) {
 			redirectFormInternalError(w, r, fallback)
 			return
 		}
@@ -2880,10 +3012,11 @@ func isClusterObjectStore(store *geassv1alpha1.GeassObjectStore) bool {
 	return platform.IsClusterObjectStoreServer(store)
 }
 
-// clusterObjectStore returns the cluster's object storage server, or nil when there is none.
+// clusterObjectStore returns the cluster's object storage server, or nil when there is none. It looks at every object
+// store, whoever asks: an organization's buckets are made on the platform's server, and which server that is is not a secret.
 func (s *Server) clusterObjectStore(ctx context.Context) (*geassv1alpha1.GeassObjectStore, error) {
 	var list geassv1alpha1.GeassObjectStoreList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
+	if err := s.Client.List(asSystem(ctx), &list, client.InNamespace(systemNamespace)); err != nil {
 		return nil, err
 	}
 	for i := range list.Items {
@@ -2904,7 +3037,7 @@ func (s *Server) isClusterObjectStoreName(ctx context.Context, name string) bool
 // attachedProjectBucketNames are the project buckets on the cluster's object storage server.
 func (s *Server) attachedProjectBucketNames(ctx context.Context) ([]string, error) {
 	var list geassv1alpha1.GeassObjectStoreList
-	if err := s.Client.List(ctx, &list, client.InNamespace(systemNamespace)); err != nil {
+	if err := s.Client.List(asSystem(ctx), &list, client.InNamespace(systemNamespace)); err != nil {
 		return nil, err
 	}
 	var names []string
@@ -2930,6 +3063,10 @@ func (s *Server) handleObjectStoreCreate(w http.ResponseWriter, r *http.Request)
 	placement := parseObjectStorePlacement(r.FormValue("placement"))
 	engine := parseObjectStoreEngine(r.FormValue("engine"), r.FormValue("placement"))
 	if r.FormValue("cluster") == "on" || r.FormValue("cluster") == "true" {
+		// The cluster's own server is the platform's to set up.
+		if !requirePlatformContext(w, r) {
+			return
+		}
 		s.handleClusterObjectStoreCreate(w, r)
 		return
 	}

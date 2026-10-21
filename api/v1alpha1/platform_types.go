@@ -51,6 +51,17 @@ type GeassProjectSpec struct {
 	// ClusterRef identifies the GeassCluster that owns this project.
 	// +kubebuilder:validation:Required
 	ClusterRef corev1.LocalObjectReference `json:"clusterRef"`
+	// Org is the organization that owns this project: the name of a GeassOrganization. Empty means the project is
+	// not assigned to one, which only the platform's administrators can see once organizations are turned on.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Org string `json:"org,omitempty"`
+	// Workspace is the id of the workspace of the organization this project is in. Empty means the project belongs
+	// to the organization as a whole, which only its administrators can see.
+	// +kubebuilder:validation:Pattern=`^ws-[a-f0-9]{6}$`
+	// +optional
+	Workspace string `json:"workspace,omitempty"`
 	// Region is where this project's workloads run: only nodes in the region are used. Empty means the
 	// cluster's default region. It is chosen when the project is created and cannot change while the
 	// project has databases or storage, because their data lives on the nodes.
@@ -319,6 +330,10 @@ const MaxCIChecks = 50
 type GeassBuildStatus struct {
 	Phase  GeassBuildPhase `json:"phase,omitempty"`
 	JobRef string          `json:"jobRef,omitempty"`
+	// JobNamespace is the namespace the build's Job runs in, when it is not the build's own: the organization's build
+	// namespace, for a project that belongs to one. Empty means the build's own namespace.
+	// +optional
+	JobNamespace string `json:"jobNamespace,omitempty"`
 	// Image is the destination the build pushes to, as it was told to (spec.registry).
 	Image string `json:"image,omitempty"`
 	// ImageDigest is the sha256 digest of the image the last run pushed. A run that is started again clears
@@ -594,6 +609,64 @@ type GeassPlatformAuthSpec struct {
 	// before that.
 	// +optional
 	OIDC *GeassPlatformOIDCSpec `json:"oidc,omitempty"`
+	// Tenancy makes the people who sign in through the provider belong to organizations, each seeing only its own
+	// projects. It works only while Mode is external, because the provider is what says who is in which organization.
+	// +optional
+	Tenancy *GeassPlatformTenancySpec `json:"tenancy,omitempty"`
+}
+
+// GeassPlatformTenancySpec says how the sign-in token of the identity provider names a person's organizations.
+type GeassPlatformTenancySpec struct {
+	// Enabled turns organizations on. While it is off, everyone who may sign in sees everything, as before. A
+	// project that is not assigned to an organization is then seen by the platform's administrators only.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// OrgsClaim is the claim of the ID token that lists the organizations a person is in: a name, or a dotted path
+	// into nested objects. It holds a list of objects, each with the organization's "id", the person's "role" in it
+	// (mapped to a Geass role by the provider's roleMap), and optionally the "workspaces" they are in, each with an "id"
+	// and optionally a "role".
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	OrgsClaim string `json:"orgsClaim,omitempty"`
+	// PlatformClaim is the claim of the ID token that makes someone an administrator of the whole platform (its
+	// nodes, add-ons, domain and organizations) when it holds any of PlatformValues. Without it only the password
+	// administrators are, and no one who signs in through the provider.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	PlatformClaim string `json:"platformClaim,omitempty"`
+	// PlatformValues are the values of PlatformClaim that make someone a platform administrator.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	PlatformValues []string `json:"platformValues,omitempty"`
+	// AutoProvision makes an organization of the provider that Geass does not know yet when one of its administrators
+	// signs in, instead of refusing them. Without it only the organizations a platform administrator set up can be
+	// signed in to.
+	// +optional
+	AutoProvision *GeassPlatformAutoProvisionSpec `json:"autoProvision,omitempty"`
+}
+
+// GeassPlatformAutoProvisionSpec says when an organization that the identity provider knows is made in Geass the first
+// time one of its administrators signs in. It is for a provider that only people you trust can make organizations in: one
+// that lets anyone make one would let anyone make one here. A person has to administer the organization at the provider,
+// and their address has to be one the provider says it has verified.
+type GeassPlatformAutoProvisionSpec struct {
+	// Mode is Pending, which makes the organization suspended until a platform administrator approves it (the person is
+	// told it is waiting), or Open, which makes it ready to use at once. Open needs Allow, so that it is never for every
+	// organization the provider has.
+	// +kubebuilder:validation:Enum=Pending;Open
+	Mode string `json:"mode"`
+	// Allow limits which organizations may be made, by the provider's id for them: an id as it is, or the start of
+	// one followed by "*". Pending without it makes any that asks; Open needs it.
+	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:items:MaxLength=253
+	// +optional
+	Allow []string `json:"allow,omitempty"`
+	// Max is how many organizations can be made this way in all. Unset means 20. It is what keeps a flood of sign-ins
+	// from filling the cluster with organizations.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=500
+	// +optional
+	Max *int32 `json:"max,omitempty"`
 }
 
 // GeassPlatformOIDCSpec says how to reach an OpenID Connect identity provider and how its claims become a Geass
@@ -642,6 +715,22 @@ type GeassPlatformOIDCSpec struct {
 	// +kubebuilder:default=60
 	// +optional
 	SessionMinutes int32 `json:"sessionMinutes,omitempty"`
+	// RefreshMinutes makes Geass ask the provider again, this often, whether each person who signed in is still its own and
+	// what it now says of them, so that a role that changed, an organization they were taken out of, or a person who was
+	// removed is noticed within minutes and not when their session ends. It needs a provider that gives refresh tokens
+	// (Geass asks for the offline_access scope). A change ends the person's sessions, and they sign in again to get what is
+	// now true. Zero, the default, is off.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1440
+	// +optional
+	RefreshMinutes int32 `json:"refreshMinutes,omitempty"`
+	// StaleGraceMinutes is how long the provider can be unreachable before the sessions that could not be checked are ended,
+	// when RefreshMinutes is on. Unset means 120. Until then a session whose check failed because the provider was down is
+	// kept, since it says nothing about the person.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1440
+	// +optional
+	StaleGraceMinutes int32 `json:"staleGraceMinutes,omitempty"`
 	// RevokeTokensOnLogout is whether a back-channel logout from the provider (someone signed out there, or was removed)
 	// also revokes the API tokens and deploy hooks that person made. It always ends their sessions here. Unset means true,
 	// which is the safe choice for offboarding: a provider cannot say whether someone signed out or was removed. Turn it off
@@ -729,6 +818,13 @@ type GeassCloudConnectionSpec struct {
 	// Project optionally scopes this connection to a single Geass project.
 	// +optional
 	Project string `json:"project,omitempty"`
+	// Org makes a connection with no project an organization's: the name of a GeassOrganization. Every project of the
+	// organization may use it, and only the organization's people see it. One that names a project belongs to the
+	// project, and this is ignored.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Org string `json:"org,omitempty"`
 	// Region is the default AWS region for this connection.
 	// +optional
 	Region string `json:"region,omitempty"`

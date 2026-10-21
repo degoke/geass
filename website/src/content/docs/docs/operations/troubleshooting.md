@@ -144,6 +144,15 @@ The operator log has the reason (`kubectl -n geass-system logs deployment/geass-
 **The sign-in page says "Your account has no role here" or "not one this installation lets in".**
 The provider signed the person in, and Geass has no role for them. **Test sign-in** on the **Sign-in** page shows what the token holds: the role claim's values, and which required claim is missing. Check the claim's name (a dotted path reaches into nested claims), that your **Roles** list has the provider's names exactly as the token spells them, and, for Better Auth, that the callback that adds `org_role` to the ID token runs for this person.
 
+**The sign-in page says "Your account is not in an organization set up here".**
+Organizations are on, and the token puts the person in none that Geass can use. **Test sign-in** lists the organizations the token named and whether each is set up. Check the claim's name, that each organization has a `GeassOrganization` whose `idpID` is the provider's id, that the organization is not suspended, and that a member who is not an administrator is in at least one workspace the organization declares. See [Organizations and workspaces](/docs/guides/organizations-and-workspaces/#if-something-goes-wrong).
+
+**After turning organizations on, projects are missing.**
+A project that belongs to no organization is seen by the platform's administrators only. Assign it (`POST /api/projects/{project}/assign`) or sign in as a platform administrator: an admin who signs in with a password is one.
+
+**An organization's administrator gets "only the platform's administrators can do this".**
+Settings, nodes, the domain, the registry, sign-in, alerts, shared servers and organizations are the platform's, whatever role someone holds in an organization. Ask a platform administrator, or name them in `platformClaim`.
+
 **The sign-in page says "The identity provider did not say what your email address is".**
 The ID token has no `email` claim. Better Auth leaves it out of the ID token unless you add it in `customIdTokenClaims`. See [Sign in with an identity provider](/docs/guides/external-sign-in/#better-auth).
 

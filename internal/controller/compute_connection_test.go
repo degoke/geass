@@ -33,6 +33,12 @@ func connectionObjects(provider geassv1alpha1.GeassCloudProvider, project string
 	}
 }
 
+// withOrg makes the connection of a set of objects an organization's.
+func withOrg(objects []client.Object, org string) []client.Object {
+	objects[0].(*geassv1alpha1.GeassCloudConnection).Spec.Org = org
+	return objects
+}
+
 func connectionClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -51,6 +57,7 @@ func TestTheFactoryOnlyBuildsProvidersForConnectionsThatMayCreateMachines(t *tes
 		"no such connection": {nil, "does not exist"},
 		"not for compute":    {connectionObjects(geassv1alpha1.CloudProviderAWS, "proj", nil, map[string][]byte{"accessKeyId": []byte("a")}), "not for compute"},
 		"a project's":        {connectionObjects(geassv1alpha1.CloudProviderHetzner, "proj-1", forCompute, token), "belongs to project"},
+		"an organization's":  {withOrg(connectionObjects(geassv1alpha1.CloudProviderHetzner, "", forCompute, token), "org-acme"), "belongs to organization"},
 		"credentials absent": {connectionObjects(geassv1alpha1.CloudProviderHetzner, "", forCompute, nil)[:1], "unavailable"},
 		"token missing":      {connectionObjects(geassv1alpha1.CloudProviderHetzner, "", forCompute, map[string][]byte{}), "API token"},
 	} {
