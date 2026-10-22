@@ -94,13 +94,18 @@ export function openEventSource(path) {
   return new FetchEventSource(path);
 }
 
-/** How long a dropped stream waits before it is opened again, as an EventSource does by itself. */
+/** How long a dropped stream waits before it is opened again, as an EventSource does by itself, and how long at most. */
 const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_DELAY_MAX_MS = 30000;
+
+/** An answer that no new try will change: like an EventSource, the stream gives up on it. */
+const FINAL_STATUSES = new Set([401, 403, 404]);
 
 export class FetchEventSource {
   constructor(path, { reconnectDelay = RECONNECT_DELAY_MS } = {}) {
     this.path = path;
     this.reconnectDelay = reconnectDelay;
+    this.delay = reconnectDelay;
     this.listeners = new Map();
     this.onopen = null;
     this.onmessage = null;
@@ -141,7 +146,13 @@ export class FetchEventSource {
         const headers = { Accept: "text/event-stream" };
         if (this.lastEventId) headers["Last-Event-ID"] = this.lastEventId;
         const response = await apiFetch(this.path, { headers, signal: this.controller.signal });
+        if (FINAL_STATUSES.has(response.status)) {
+          this.closed = true;
+          this.dispatch("error", { type: "error", error: new Error(`Event stream refused (${response.status})`), status: response.status });
+          return;
+        }
         if (!response.ok || !response.body) throw new Error(`Event stream refused (${response.status})`);
+        this.delay = this.reconnectDelay;
         this.dispatch("open", { type: "open" });
         await this.read(response.body);
       } catch (error) {
@@ -150,8 +161,9 @@ export class FetchEventSource {
       }
       if (this.closed) return;
       await new Promise((resolve) => {
-        this.timer = window.setTimeout(resolve, this.reconnectDelay);
+        this.timer = window.setTimeout(resolve, this.delay);
       });
+      this.delay = Math.min(this.delay * 2, RECONNECT_DELAY_MAX_MS);
     }
   }
 

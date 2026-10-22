@@ -203,6 +203,26 @@ describe("openEventSource", () => {
     }
   });
 
+  it("gives up on an answer that trying again will not change, as EventSource does, and does not ask the host for tokens for ever", async () => {
+    const fetchMock = vi.fn(async () => json({ error: "invalid or expired API token" }, 401));
+    vi.stubGlobal("fetch", fetchMock);
+    const getToken = vi.fn(() => "gsw_abc");
+    configureTransport({ getToken });
+    const source = new FetchEventSource("/api/events", { reconnectDelay: 5 });
+    const errors = [];
+    source.onerror = (event) => errors.push(event.status);
+    try {
+      await vi.waitFor(() => expect(errors).toEqual([401]));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      // One try, and the one more the transport makes with a fresh token.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(getToken).toHaveBeenCalledTimes(2);
+      expect(errors).toEqual([401]);
+    } finally {
+      source.close();
+    }
+  });
+
   it("stops for good when closed", async () => {
     const fetchMock = vi.fn(async () => new Response(streamOf("data: x\n\n"), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

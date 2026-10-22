@@ -142,11 +142,13 @@ pnpm test        # vitest: the transport, the hide options, and the component mo
 pnpm pack        # a tarball with dist-lib and the type definitions
 ```
 
-Another repository can use it from a pnpm workspace (`"@geass/dashboard-ui": "workspace:*"`, after `pnpm build:lib`),
-from a tarball (`pnpm pack`, then `"file:../geass-dashboard-ui-0.1.0.tgz"`), or from git
-(`"github:degoke/geass#path:/dashboard-ui"`; pnpm runs `prepack`, which builds the library, before it installs it). The package
-is private, so nothing publishes it by accident. React, Mantine, TanStack Router and Query are peer dependencies: the host
-provides one of each, and the library build leaves them as imports.
+Another repository can use it from a pnpm workspace (`"@geass/dashboard-ui": "workspace:*"`, after `pnpm build:lib`), from a
+tarball (`pnpm pack`, then `"file:../geass-dashboard-ui-0.1.0.tgz"`), or from git: `pnpm add "github:degoke/geass#<commit>&path:/dashboard-ui"`.
+Installing from git makes pnpm install the dashboard's own dependencies and run `prepack`, which builds the library (a minute or so),
+and pnpm 10 and later refuse to run that build until the host lists the package in `allowBuilds` in its `pnpm-workspace.yaml`, under the
+full name pnpm prints (`@geass/dashboard-ui@git+https://github.com/degoke/geass.git#<commit>&path:/dashboard-ui: true`). A tarball
+built in CI is simpler for a build that runs often. The package is private, so nothing publishes it by accident. React, Mantine,
+TanStack Router and Query are peer dependencies: the host provides one of each, and the library build leaves them as imports.
 
 ```jsx
 import "@mantine/core/styles.css";
