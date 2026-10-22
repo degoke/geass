@@ -31,6 +31,7 @@ import { projectResources } from "@/lib/project-resources";
 import { defaultRegion, platformRegions } from "@/lib/placement";
 import { RailCopyField } from "@/components/rail-controls";
 import { ApiTokens } from "@/components/ApiTokens";
+import { useHidden } from "@/lib/options";
 import { PREnvironments } from "@/components/PREnvironments";
 import { ProjectBackups } from "@/components/ProjectBackups";
 import { ProjectCompliance } from "@/components/ProjectCompliance";
@@ -69,6 +70,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [section, setSection] = useState("general");
+  const hideTokens = useHidden("tokens");
   const [displayName, setDisplayName] = useState(project.spec?.displayName || name);
   const [region, setRegion] = useState(project.spec?.region || "");
   const [newEnvironment, setNewEnvironment] = useState("");
@@ -187,7 +189,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       .then((ok) => { if (ok) setRemoveTarget(null); });
   };
 
-  const nav = SECTIONS.map((item) => ({
+  const nav = SECTIONS.filter((item) => !(hideTokens && item.id === "tokens")).map((item) => ({
     ...item,
     active: section === item.id,
     onClick: () => setSection(item.id),
@@ -476,7 +478,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
         </SettingsSection>
       )}
 
-      {section === "tokens" && (
+      {section === "tokens" && !hideTokens && (
         <SettingsSection title="Tokens" flat>
           <ApiTokens scope="project" project={project} projects={[project]} mutable={mutable} />
         </SettingsSection>

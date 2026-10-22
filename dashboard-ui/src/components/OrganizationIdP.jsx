@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Group, Stack, Text } from "@mantine/core";
 import { action } from "@/lib/api";
 import { alertError, notify } from "@/lib/notify";
+import { publicOrigin } from "@/lib/transport";
 import { ssoErrorMessage } from "@/lib/sso";
 import { Badge, Button, Field, Input, Muted, Textarea } from "@/components/geass-ui";
 
@@ -18,7 +19,7 @@ export function OrganizationIdP({ org, refetch }) {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState("");
   const base = `/orgs/${org.name}/idp`;
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const origin = publicOrigin();
 
   const run = async (key, path, values, done) => {
     setBusy(key);

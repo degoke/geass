@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, Search } from "lucide-react";
 import { api, resourceDisplayName, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
+import { openEventSource } from "@/lib/transport";
 import { projectResources } from "@/lib/project-resources";
 import { logRetentionDays, loggingEnabled } from "@/lib/placement";
 import { ProjectChrome } from "@/layout/ProjectChrome";
@@ -118,7 +119,7 @@ export function ProjectLogsPage({ project, data, environment }) {
     setLive([]);
     setStreamError("");
     seen.current = new Set();
-    const source = new EventSource(`/api/projects/${name}/logs/stream?${params.toString()}`);
+    const source = openEventSource(`/api/projects/${name}/logs/stream?${params.toString()}`);
     source.onmessage = (event) => {
       try {
         const line = JSON.parse(event.data);

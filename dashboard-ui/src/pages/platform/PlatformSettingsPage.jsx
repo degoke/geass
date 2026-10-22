@@ -8,6 +8,7 @@ import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
 import { canMutate, isPlatformSession } from "@/lib/dashboard";
+import { useDashboardOptions, visibleSettingsLinks } from "@/lib/options";
 import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
 import { ClusterCapacityPage } from "@/pages/platform/ClusterCapacityPage";
@@ -51,6 +52,7 @@ function cloudflareInfoFromBootstrap(data, apiPayload) {
 }
 
 export function PlatformSettingsPage({ data, page, reload }) {
+  const { hidden } = useDashboardOptions();
   const config = data?.platformConfig?.items?.[0];
   const connectorsPage = page === "connectors";
   const github = useQuery({ queryKey: ["github-settings"], queryFn: () => api("/api/settings/github"), enabled: connectorsPage });
@@ -139,7 +141,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
       <SettingsDivider />
       <SettingsSection title="Platform" flat>
         <SettingsPanel className="rw-settings-link-list">
-          {SETTINGS_LINKS.filter((item) => item.id !== "general" && item.id !== "usage").map((item) => (
+          {visibleSettingsLinks(SETTINGS_LINKS, hidden).filter((item) => item.id !== "general" && item.id !== "usage").map((item) => (
             <AppLink key={item.id} href={item.to} className="rw-settings-platform-link">
               {item.label}
             </AppLink>

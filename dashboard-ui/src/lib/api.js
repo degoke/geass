@@ -1,3 +1,5 @@
+import { apiFetch } from "@/lib/transport";
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -28,7 +30,7 @@ function apiErrorMessage(path, status, payload) {
 }
 
 export async function api(path, options = {}) {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
+  const response = await apiFetch(path, options);
   const type = response.headers.get("content-type") || "";
   const payload = type.includes("json") ? await response.json() : await response.text();
   if (!response.ok) {

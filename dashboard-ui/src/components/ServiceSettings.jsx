@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ExternalLink, Gauge, GitBranch, Globe, Hammer, Rocket, Settings } from "lucide-react";
 import { action, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
+import { useHidden } from "@/lib/options";
 import { alertUser } from "@/lib/notify";
 import { outOfMemoryNotice, settingsSavedMessage } from "@/lib/services";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
@@ -42,6 +43,7 @@ function ToggleRow({ label, description, checked, onChange, disabled }) {
 }
 
 export function ServiceSettings({ item, name, data, project, reload, navigate, onClose }) {
+  const hideTokens = useHidden("tokens");
   const spec = item.spec || {};
   const git = spec.source?.git;
   const fn = spec.source?.function;
@@ -416,9 +418,11 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                   </ResourceSettingsBlock>
                   {saveButton("deploy")}
                 </FormStack>
-                <ResourceSettingsBlock title="Deploy hook" description="A URL that deploys this service when something calls it.">
-                  <DeployHook project={resourceName(project)} environment={spec.environment} app={name} gitSource={Boolean(git)} />
-                </ResourceSettingsBlock>
+                {hideTokens ? null : (
+                  <ResourceSettingsBlock title="Deploy hook" description="A URL that deploys this service when something calls it.">
+                    <DeployHook project={resourceName(project)} environment={spec.environment} app={name} gitSource={Boolean(git)} />
+                  </ResourceSettingsBlock>
+                )}
               </ResourceSettingsSection>
             )}
 

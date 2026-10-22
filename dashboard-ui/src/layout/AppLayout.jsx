@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
+import { useDashboardOptions, useHidden, visibleSettingsLinks } from "@/lib/options";
 import { canMutate, currentScope, dashboardSession, isPlatformSession, scopeLabel, sessionScopes, useBootstrap } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import {
@@ -29,6 +30,7 @@ import {
   ACCOUNT_USAGE,
   FOOTER_LINKS,
   settingsActive,
+  settingsLinksFor,
 } from "@/lib/platform-nav";
 import { ClusterHealth } from "@/components/ClusterHealth";
 import { GeassLogo } from "@/components/GeassLogo";
@@ -246,17 +248,21 @@ function TopBar({
   onToggleNav,
 }) {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
+  const hideBrand = useHidden("brand");
+  const hideAccount = useHidden("account");
   const inProject = Boolean(project && projectSlug);
   const environments = project?.spec?.environments || [];
   const pullRequests = project?.status?.pullRequests || [];
   return (
     <header className="rw-top">
       <Burger className="rw-top-burger" opened={navOpened} onClick={onToggleNav} hiddenFrom="sm" size="sm" aria-label="Open navigation" />
-      <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
-        <GeassLogo height={24} width={91} />
-      </Link>
+      {hideBrand ? null : (
+        <Link to="/projects" className="rw-top-brand" aria-label="Geass home">
+          <GeassLogo height={24} width={91} />
+        </Link>
+      )}
 
-      <ScopeSwitcher data={data} />
+      {hideAccount ? null : <ScopeSwitcher data={data} />}
 
       {inProject ? (
         <>
@@ -311,31 +317,33 @@ function TopBar({
 
       <div className="rw-top-end">
         {inProject ? <DeployControls projectName={projectSlug} environment={environment} data={data} reload={reload} /> : null}
-        <Menu position="bottom-end" width={200}>
-          <Menu.Target>
-            <button type="button" className="rw-top-avatar" aria-label="Account menu" title={username}>
-              {initial(username)}
-            </button>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Label>{username}</Menu.Label>
-            <Menu.Divider />
-            <Menu.Label>Theme</Menu.Label>
-            {THEME_CHOICES.map(({ value, label, Icon }) => (
-              <Menu.Item
-                key={value}
-                aria-current={colorScheme === value ? "true" : undefined}
-                leftSection={<Icon size={14} />}
-                rightSection={colorScheme === value ? <Check size={14} /> : null}
-                onClick={() => setColorScheme(value)}
-              >
-                {label}
-              </Menu.Item>
-            ))}
-            <Menu.Divider />
-            <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
+        {hideAccount ? null : (
+          <Menu position="bottom-end" width={200}>
+            <Menu.Target>
+              <button type="button" className="rw-top-avatar" aria-label="Account menu" title={username}>
+                {initial(username)}
+              </button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>{username}</Menu.Label>
+              <Menu.Divider />
+              <Menu.Label>Theme</Menu.Label>
+              {THEME_CHOICES.map(({ value, label, Icon }) => (
+                <Menu.Item
+                  key={value}
+                  aria-current={colorScheme === value ? "true" : undefined}
+                  leftSection={<Icon size={14} />}
+                  rightSection={colorScheme === value ? <Check size={14} /> : null}
+                  onClick={() => setColorScheme(value)}
+                >
+                  {label}
+                </Menu.Item>
+              ))}
+              <Menu.Divider />
+              <Menu.Item leftSection={<LogOut size={14} />} color="red" onClick={onSignOut}>Sign out</Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )}
       </div>
     </header>
   );
@@ -379,6 +387,8 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
   // The cluster's usage and the platform's settings are for the platform's administrators. An organization is offered its
   // own API tokens under Settings.
   const platformSession = isPlatformSession(data);
+  const { hidden } = useDashboardOptions();
+  const settingsLinks = visibleSettingsLinks(settingsLinksFor(platformSession), hidden);
   const usageActive = ACCOUNT_USAGE.active(pathname);
   const settingsOn = settingsActive(pathname) && !usageActive;
   const UsageIcon = NAV_ICONS.cluster;
@@ -407,7 +417,7 @@ function AccountNav({ pathname, collapsed, onToggleCollapsed, data }) {
           })}
           {platformSession ? sideLink(ACCOUNT_USAGE.to, usageActive, <UsageIcon size={16} />, ACCOUNT_USAGE.label) : null}
           {platformSession ? sideLink(ACCOUNT_POOLS.to, ACCOUNT_POOLS.active(pathname), <PoolsIcon size={16} />, ACCOUNT_POOLS.label) : null}
-          {sideLink(platformSession ? "/settings" : "/settings/tokens", settingsOn, <Settings size={16} />, "Settings")}
+          {settingsLinks.length ? sideLink(platformSession ? "/settings" : settingsLinks[0].to, settingsOn, <Settings size={16} />, "Settings") : null}
         </nav>
 
         <div className="rw-account-foot">

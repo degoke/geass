@@ -203,6 +203,15 @@ The first public release, open source under the Apache License 2.0.
   observer 21 and a viewer 18.
 - **API.** `/api/v1/compute/providers`, `/compute/sizes`, `/connections`, `/pools` and `/servers`, and `pool` and
   `ephemeral` on `/nodes`.
+- **The dashboard as a library.** `dashboard-ui` also builds as the package `@geass/dashboard-ui`, whose `GeassDashboard`
+  component another React app (Mantine, TanStack Router and Query) can mount under a path of its own. The host says where
+  the Geass API is (`apiBaseUrl`) and how a request signs in (`getToken`, an API token sent as `Authorization: Bearer`,
+  also on the stream of changes, the log stream and the terminal), instead of the dashboard's cookie, and can leave out
+  the pages a self-hosted cluster is set up through (`hide`). The dashboard the operator embeds is built as before. See
+  [docs/development.md](docs/development.md#the-dashboard-as-a-library).
+- **Terminal with an API token from a browser.** A browser cannot set `Authorization` on a WebSocket, so the terminal's
+  WebSocket also takes the token as the subprotocol `geass.bearer.<token>`, next to `geass.v1`. It is checked as the
+  header is, and read for no other request.
 
 ### Changed
 

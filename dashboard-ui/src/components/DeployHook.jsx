@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Webhook } from "lucide-react";
 import { action, api } from "@/lib/api";
 import { alertUser } from "@/lib/notify";
+import { publicOrigin } from "@/lib/transport";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Muted } from "@/components/geass-ui";
 import { SettingsPanel } from "@/layout/SettingsShell";
@@ -61,7 +62,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
     navigator.clipboard?.writeText(text).then(() => alertUser("Copied"), () => alertUser("Could not copy"));
   };
 
-  const url = created ? `${window.location.origin}/hooks/deploy/${created.token}` : "";
+  const url = created ? `${publicOrigin()}/hooks/deploy/${created.token}` : "";
 
   return (
     <SettingsPanel>
