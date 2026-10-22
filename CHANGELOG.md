@@ -17,6 +17,11 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
+  signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
+  token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the
+  `geass.bearer.<token>` subprotocol. It maps to a session exactly as an ID token does, records the person as the actor, is
+  refused the routes that manage sign-in and tokens, and ends a stream when the token expires. Off by default.
 - **Dashboard and controllers apart.** `--controllers=false` runs only the dashboard and API, and `--dashboard=false`
   only the controllers; both stay on by default, so installed clusters are unchanged. A dashboard-only process runs no
   reconciler, migration or check, never takes the leader election lease, and refuses to start (and stops, if the data

@@ -739,6 +739,28 @@ type GeassPlatformOIDCSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	RevokeTokensOnLogout *bool `json:"revokeTokensOnLogout,omitempty"`
+	// AccessTokens lets a program, or a dashboard embedded in another application, call the API with an access token the
+	// provider issued to a person, as `Authorization: Bearer <token>`. The person acts as they would signing in. Unset means
+	// off.
+	// +optional
+	AccessTokens *GeassPlatformOIDCAccessTokensSpec `json:"accessTokens,omitempty"`
+}
+
+// GeassPlatformOIDCAccessTokensSpec says whether Geass accepts the provider's access tokens as a bearer credential, and
+// for whom they must have been issued.
+type GeassPlatformOIDCAccessTokensSpec struct {
+	// Enabled turns it on. It has an effect only while people sign in through the provider (mode external). The token has to
+	// be a signed JWT access token (RFC 9068, header typ "at+jwt") from the issuer, whose audience names this cluster (see
+	// Audience), and whose claims map to a role the way an ID token's do: RoleClaim, RoleMap and RequireClaim, and the
+	// organizations claim when organizations are on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Audience is the value the token's aud claim has to contain, and so what says the token was issued for this cluster and
+	// not another one of the same provider. Empty means the client ID. A provider that issues access tokens for an API
+	// (Better Auth does, for a resource) is given the identifier of that resource here.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	Audience string `json:"audience,omitempty"`
 }
 
 type GeassTraefikAccessLogsSpec struct {

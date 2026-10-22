@@ -232,7 +232,7 @@ func deviceError(w http.ResponseWriter, status int, code, message string) {
 // handleDeviceLookup serves GET /api/v1/auth/device/{code}: what the approval page shows before the person
 // approves, so they can see what they are approving.
 func (s *Server) handleDeviceLookup(w http.ResponseWriter, r *http.Request) {
-	if !s.v1Caller(r).workspaceAdmin() || tokenFromRequest(r) != nil {
+	if !s.v1Caller(r).workspaceAdmin() || credentialIsBearer(r) {
 		writeV1Error(w, http.StatusForbidden, "only a signed-in admin can approve a sign-in")
 		return
 	}

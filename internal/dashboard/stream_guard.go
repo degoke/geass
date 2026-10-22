@@ -94,6 +94,7 @@ func (s *Server) guardStream(r *http.Request) (*http.Request, func()) {
 		return r, func() {}
 	}
 	was := streamCredentials{}
+	// An access token of the provider is a person's, so what they could do when it began is kept as for a person who signed in.
 	if tokenFromRequest(r) == nil {
 		if session := s.currentSession(r); session != nil {
 			was.identity, was.role = session.Identity, session.Role
@@ -102,12 +103,23 @@ func (s *Server) guardStream(r *http.Request) (*http.Request, func()) {
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	lost := make(chan struct{})
+	// A stream opened with an identity provider's access token ends when the token does, not at the next check.
+	var expired <-chan time.Time
+	if bearer := oidcBearerFromRequest(r); bearer != nil {
+		timer := time.NewTimer(time.Until(bearer.Expires))
+		expired = timer.C
+		context.AfterFunc(ctx, func() { timer.Stop() })
+	}
 	go func() {
 		ticker := time.NewTicker(streamAuthRecheck)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-expired:
+				close(lost)
+				cancel()
 				return
 			case <-ticker.C:
 				if !s.streamStillAllowed(r, was) {
@@ -129,6 +141,19 @@ func (s *Server) streamStillAllowed(r *http.Request, was streamCredentials) bool
 	// The check is the dashboard's own work: it reads the users and the tokens, which an organization may not.
 	fresh := r.Clone(asSystem(context.Background()))
 	if presented, ok := bearerToken(fresh); ok {
+		if isOIDCBearerCandidate(presented) {
+			// The token is verified again: it may have expired, the provider's keys or the sign-in settings may have changed, and
+			// the person may have been signed out or lost the access it gave. Not being able to ask is not an answer.
+			session, _, err := s.authenticateOIDCAccessToken(fresh, presented)
+			switch {
+			case errors.Is(err, errOIDCBearerUnavailable):
+				return true
+			case err != nil:
+				return false
+			}
+			return session.Role == was.role && session.Identity == was.identity &&
+				session.Org == was.org && session.Workspace == was.workspace && session.PlatformAdmin == was.platform
+		}
 		_, err := s.authenticateAPIToken(fresh.Context(), presented)
 		return err == nil || !errors.Is(err, errInvalidToken)
 	}
