@@ -725,3 +725,39 @@ func TestAnIAMUsersKeySignsTheSameThreeHeadersAsEver(t *testing.T) {
 	require.Equal(t, "6171eb09865e32b0602af0f7957e26573a51f53caaedff02ff88883cb0275885", req.Header.Get("X-Amz-Content-Sha256"))
 	require.Empty(t, req.Header.Values("X-Amz-Security-Token"), "a key with no session token sends none")
 }
+
+func TestTemporaryCredentialsSendTheSessionTokenAndSignIt(t *testing.T) {
+	const token = "FwoGZXIvYXdzEXAMPLE+SESSION/token="
+	client := &AWSClient{AccessKey: "AKIDEXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", SessionToken: token}
+	req := signedEC2Query(t, client)
+
+	require.Equal(t, token, req.Header.Get("X-Amz-Security-Token"))
+	require.Equal(t, "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261022/eu-north-1/ec2/aws4_request, "+
+		"SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, "+
+		"Signature=05928dc7988e1e452dbc1e1c2cb6918dc912884898d7e1a3a34f63dfcdc11961", req.Header.Get("Authorization"))
+
+	client.SessionToken = "another-token"
+	other := signedEC2Query(t, client)
+	require.NotEqual(t, req.Header.Get("Authorization"), other.Header.Get("Authorization"), "the token is part of what is signed, not only attached")
+}
+
+func TestTheSharedSignerSendsASessionTokenOnEveryServiceItSigns(t *testing.T) {
+	var got *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Clone(r.Context())
+		_, _ = w.Write([]byte("state"))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", SessionToken: "tok", Endpoint: srv.URL}
+	_, err := client.GetObject("state", "key", 100)
+	require.NoError(t, err)
+	require.Equal(t, "tok", got.Header.Get("X-Amz-Security-Token"))
+	require.Contains(t, got.Header.Get("Authorization"), "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token,")
+
+	client.SessionToken = ""
+	_, err = client.GetObject("state", "key", 100)
+	require.NoError(t, err)
+	require.Empty(t, got.Header.Values("X-Amz-Security-Token"))
+	require.Contains(t, got.Header.Get("Authorization"), "SignedHeaders=host;x-amz-content-sha256;x-amz-date,")
+}

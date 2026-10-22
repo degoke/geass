@@ -12,6 +12,9 @@
 //     cluster). A group the user names is used as it is.
 //   - Burstable (T) instances are launched with standard credits: the default, unlimited, can bill beyond the hourly
 //     price.
+//   - The credentials may be temporary ones (from sts:AssumeRole): a session token beside the key pair, sent and signed
+//     with every request. They last an hour at most, so whatever issues them replaces them in the connection's Secret,
+//     and the operator builds a new Provider when the Secret changes. A Provider never changes its credentials.
 package aws
 
 import (
@@ -50,12 +53,13 @@ const (
 	tagName        = "Name"
 )
 
-// Credential and setting keys. The credential keys are the ones an AWS connection for storage already uses, so one
-// kind of Secret serves both.
+// Credential and setting keys. The access key, the secret and the region are the ones an AWS connection for storage
+// already uses, so one kind of Secret serves both. The session token is read for machines only.
 const (
 	keyAccessKeyID     = "accessKeyId"
 	keySecretAccessKey = "secretAccessKey"
 	keyRegion          = "region"
+	keySessionToken    = "sessionToken"
 
 	SettingSubnetID        = "subnetId"
 	SettingSecurityGroupID = "securityGroupId"
@@ -66,11 +70,12 @@ func init() {
 	compute.Register(compute.Descriptor{
 		ID:      ID,
 		Label:   "Amazon EC2",
-		Summary: "An IAM user's access key that may launch only instances tagged geass-managed=true and terminate only the instances that carry the tag (the policy is in the AWS connector documentation).",
+		Summary: "An IAM user's access key that may launch only instances tagged geass-managed=true and terminate only the instances that carry the tag (the policy is in the AWS connector documentation). Temporary credentials from sts:AssumeRole work too, with their session token.",
 		Fields: []compute.Field{
 			{Key: keyAccessKeyID, Label: "Access key ID"},
 			{Key: keySecretAccessKey, Label: "Secret access key", Secret: true},
 			{Key: keyRegion, Label: "Default region", Optional: true, Help: "Used when a pool names no region, for example eu-north-1."},
+			{Key: keySessionToken, Label: "Session token", Secret: true, Optional: true, Help: "For temporary credentials, such as the ones sts:AssumeRole returns: the token that comes with the key pair. Leave it out for an IAM user's key. When temporary credentials are renewed, replace the key, the secret and the token together."},
 		},
 		Settings: []compute.Setting{
 			{Key: SettingSubnetID, Label: "Subnet ID", Help: "Launch into this subnet (it must give instances a public address, or the pool's address type must be Private). Default: a default-VPC subnet."},
@@ -83,7 +88,9 @@ func init() {
 			if region == "" {
 				region = options.Region
 			}
-			return New(creds.Get(keyAccessKeyID), creds.Get(keySecretAccessKey), region, options), nil
+			p := New(creds.Get(keyAccessKeyID), creds.Get(keySecretAccessKey), region, options)
+			p.sessionToken = creds.Get(keySessionToken)
+			return p, nil
 		},
 	})
 }
@@ -91,15 +98,18 @@ func init() {
 // Provider is a compute.Provider for EC2.
 type Provider struct {
 	accessKey, secretKey string
-	region               string
-	options              compute.Options
+	// sessionToken is the third part of temporary credentials, and empty for an IAM user's key.
+	sessionToken string
+	region       string
+	options      compute.Options
 
 	// mu guards clients: one Provider serves the node, pool and connection controllers and the dashboard at once.
 	mu      sync.Mutex
 	clients map[string]*compute.Client
 }
 
-// New returns a provider that acts with an access key. region is the default for a spec that names none.
+// New returns a provider that acts with an IAM user's access key. region is the default for a spec that names none.
+// compute.New builds the provider of a connection whose credentials include a session token.
 func New(accessKey, secretKey, region string, options compute.Options) *Provider {
 	if region == "" {
 		region = defaultRegion
@@ -125,7 +135,7 @@ func (p *Provider) api(service, region string) *compute.Client {
 		// driver reads XML from both.
 		Header: http.Header{"User-Agent": []string{"geass"}, "Accept": []string{"text/xml"}},
 		Authorize: func(req *http.Request, body []byte) error {
-			return cloud.SignAWSRequest(req, body, p.accessKey, p.secretKey, service, region)
+			return cloud.SignAWSRequest(req, body, p.accessKey, p.secretKey, p.sessionToken, service, region)
 		},
 		ClassifyError: classify,
 	}
@@ -189,6 +199,9 @@ func classify(_, _ string, _ int, body []byte) error {
 		return &compute.CapacityError{Message: message}
 	case "RequestLimitExceeded", "Throttling", "ThrottlingException":
 		return &compute.RateLimitError{Message: message}
+	// ExpiredToken, which temporary credentials get when they have lapsed, is left out of the auth errors on purpose:
+	// whatever issues them is about to replace them in the connection, and a node that waits for that is better off than
+	// one that is failed for it, which is what an auth error does.
 	case "AuthFailure", "UnauthorizedOperation", "InvalidClientTokenId", "SignatureDoesNotMatch", "OptInRequired", "UnrecognizedClientException":
 		return fmt.Errorf("%w: %s %s", compute.ErrAuth, code, message)
 	case "InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed":

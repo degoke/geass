@@ -38,6 +38,9 @@ type AWSClient struct {
 	Region      string
 	Endpoint    string
 	IAMEndpoint string
+	// SessionToken is the third part of temporary credentials, such as the ones sts:AssumeRole returns. When it is set
+	// every request carries it as X-Amz-Security-Token and the signature covers it. Empty for an IAM user's key.
+	SessionToken string
 	// BucketActions and ObjectActions are the S3 actions a bucket user's policy allows on the bucket and on
 	// the objects in it. Empty means the AWS set; a server that does not know every AWS action name sets its own.
 	BucketActions, ObjectActions []string
@@ -906,10 +909,12 @@ func (c *AWSClient) ensurePathStyleBucket(bucket string) error {
 	return fmt.Errorf("object store %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 }
 
-// SignAWSRequest signs a request with AWS Signature Version 4 for a service and region, using an IAM user's access
-// key. The compute provider for EC2 uses it, so that signing exists once.
-func SignAWSRequest(req *http.Request, payload []byte, accessKey, secretKey, service, region string) error {
-	return (&AWSClient{AccessKey: accessKey, SecretKey: secretKey}).signWithRegion(req, payload, service, region)
+// SignAWSRequest signs a request with AWS Signature Version 4 for a service and region, using an access key. The
+// compute provider for EC2 uses it, so that signing exists once. sessionToken is empty for an IAM user's key; for
+// temporary credentials (sts:AssumeRole) it is the token that comes with the key pair, and the request carries it as
+// X-Amz-Security-Token, signed.
+func SignAWSRequest(req *http.Request, payload []byte, accessKey, secretKey, sessionToken, service, region string) error {
+	return (&AWSClient{AccessKey: accessKey, SecretKey: secretKey, SessionToken: sessionToken}).signWithRegion(req, payload, service, region)
 }
 
 func (c *AWSClient) sign(req *http.Request, payload []byte, service string) error {
@@ -935,6 +940,13 @@ func (c *AWSClient) signAt(req *http.Request, payload []byte, service, region st
 	}
 	canonicalHeaders := fmt.Sprintf("host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n", strings.ToLower(req.URL.Host), payloadHash, amzDate)
 	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	if c.SessionToken != "" {
+		// Temporary credentials: the token is sent and signed. Header names are signed in alphabetical order, and
+		// x-amz-security-token comes after x-amz-date.
+		req.Header.Set("X-Amz-Security-Token", c.SessionToken)
+		canonicalHeaders += "x-amz-security-token:" + c.SessionToken + "\n"
+		signedHeaders += ";x-amz-security-token"
+	}
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		path,

@@ -1,10 +1,15 @@
 package aws
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,7 +26,9 @@ type fakeInstance struct {
 	tags                       map[string]string
 }
 
-// fakeEC2 is the part of the EC2 Query API Geass uses, in memory. Every request is checked for a SigV4 signature.
+// fakeEC2 is the part of the EC2 Query API Geass uses, in memory. Every request must carry a SigV4 signature that is
+// right for the key the fake knows, and a request with an X-Amz-* header that the signature leaves out is refused, as
+// AWS refuses it.
 type fakeEC2 struct {
 	t         *testing.T
 	instances []*fakeInstance
@@ -35,13 +42,93 @@ type fakeEC2 struct {
 	descriptions []string
 	arch         string
 	dryRunResult string
+	// wantToken, when set, is the session token that every request must carry: AWS refuses temporary credentials sent
+	// without theirs, or with another.
+	wantToken string
+	// seen records how each request was signed.
+	seen []signedCall
+}
+
+// signedCall is what a request said about how it was signed.
+type signedCall struct {
+	action, token, signedHeaders string
 }
 
 func newFakeEC2(t *testing.T) (*fakeEC2, *Provider) {
+	f, url := newFakeEC2Server(t)
+	return f, New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: url})
+}
+
+// newFakeEC2Server starts the fake and gives its address, for a test that builds the provider its own way.
+func newFakeEC2Server(t *testing.T) (*fakeEC2, string) {
 	f := &fakeEC2{t: t, groups: map[string]map[string]any{}, fail: map[string]string{}, arch: "x86_64", dryRunResult: "DryRunOperation"}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	return f, New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: srv.URL})
+	return f, srv.URL
+}
+
+// authorizationParts reads the Credential, SignedHeaders and Signature of a SigV4 Authorization header, or nil.
+func authorizationParts(r *http.Request) map[string]string {
+	auth, ok := strings.CutPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 ")
+	if !ok {
+		return nil
+	}
+	parts := map[string]string{}
+	for _, field := range strings.Split(auth, ", ") {
+		if k, v, found := strings.Cut(field, "="); found {
+			parts[k] = v
+		}
+	}
+	return parts
+}
+
+// verifySigV4 checks a request's signature the way AWS does, from what the request carries, with code of its own
+// that shares nothing with the signer: it rebuilds the canonical request from the headers the signature names and
+// compares the result with the signature.
+func verifySigV4(r *http.Request, body []byte, secret string) error {
+	parts := authorizationParts(r)
+	if parts == nil {
+		return errors.New("not a SigV4 request")
+	}
+	signedHeaders := strings.Split(parts["SignedHeaders"], ";")
+	for name := range r.Header {
+		if lower := strings.ToLower(name); strings.HasPrefix(lower, "x-amz-") && !slices.Contains(signedHeaders, lower) {
+			return fmt.Errorf("the header %s is sent but not signed", name)
+		}
+	}
+	payloadHash := sha256.Sum256(body)
+	if r.Header.Get("X-Amz-Content-Sha256") != hex.EncodeToString(payloadHash[:]) {
+		return errors.New("the payload hash does not match the body")
+	}
+	var canonicalHeaders strings.Builder
+	for _, name := range signedHeaders {
+		value := r.Header.Get(name)
+		if name == "host" {
+			value = r.Host
+		}
+		canonicalHeaders.WriteString(name + ":" + strings.TrimSpace(value) + "\n")
+	}
+	canonical := strings.Join([]string{r.Method, r.URL.EscapedPath(), r.URL.RawQuery, canonicalHeaders.String(), parts["SignedHeaders"], hex.EncodeToString(payloadHash[:])}, "\n")
+	_, scope, _ := strings.Cut(parts["Credential"], "/")
+	scopeParts := strings.Split(scope, "/")
+	if len(scopeParts) != 4 {
+		return fmt.Errorf("odd credential scope %q", scope)
+	}
+	hash := sha256.Sum256([]byte(canonical))
+	toSign := strings.Join([]string{"AWS4-HMAC-SHA256", r.Header.Get("X-Amz-Date"), scope, hex.EncodeToString(hash[:])}, "\n")
+	mac := func(key []byte, data string) []byte {
+		h := hmac.New(sha256.New, key)
+		h.Write([]byte(data))
+		return h.Sum(nil)
+	}
+	key := mac([]byte("AWS4"+secret), scopeParts[0])
+	for _, part := range scopeParts[1:] {
+		key = mac(key, part)
+	}
+	if want := hex.EncodeToString(mac(key, toSign)); want != parts["Signature"] {
+		return errors.New("the signature does not match")
+	}
+	return nil
 }
 
 func (f *fakeEC2) xmlError(w http.ResponseWriter, status int, code, message string) {
@@ -53,10 +140,22 @@ func (f *fakeEC2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/") {
 		f.t.Errorf("request is not signed: %q", r.Header.Get("Authorization"))
 	}
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err := verifySigV4(r, body, "secret"); err != nil {
+		f.t.Errorf("a request AWS would refuse: %v", err)
+		f.xmlError(w, 403, "SignatureDoesNotMatch", err.Error())
+		return
+	}
 	_ = r.ParseForm()
 	form := r.PostForm
 	action := form.Get("Action")
 	f.calls = append(f.calls, action)
+	f.seen = append(f.seen, signedCall{action: action, token: r.Header.Get("X-Amz-Security-Token"), signedHeaders: authorizationParts(r)["SignedHeaders"]})
+	if f.wantToken != "" && r.Header.Get("X-Amz-Security-Token") != f.wantToken {
+		f.xmlError(w, 403, "InvalidClientTokenId", "The security token included in the request is invalid.")
+		return
+	}
 	if code, ok := f.fail[action]; ok {
 		delete(f.fail, action)
 		status := 400
@@ -580,6 +679,133 @@ func TestTheProviderRegistersWithTheStorageConnectionsCredentialKeys(t *testing.
 	}
 	if _, err := compute.New(ID, compute.Credentials{"accessKeyId": "a"}, compute.Options{}); err == nil {
 		t.Error("a provider was built without the secret key")
+	}
+}
+
+const testSessionToken = "FwoGZXIvYXdzEXAMPLE+SESSION/token="
+
+// temporaryProvider builds the provider of a connection that holds temporary credentials, the way the operator does.
+func temporaryProvider(t *testing.T, url string, creds compute.Credentials) *Provider {
+	t.Helper()
+	built, err := compute.New(ID, creds, compute.Options{BaseURL: url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return built.(*Provider)
+}
+
+func TestTheSessionTokenIsAnOptionalSecretCredential(t *testing.T) {
+	d, ok := compute.Lookup(ID)
+	if !ok {
+		t.Fatal("not registered")
+	}
+	var found bool
+	for _, f := range d.Fields {
+		if f.Key == keySessionToken {
+			found = true
+			if !f.Secret || !f.Optional {
+				t.Errorf("the session token must be a secret that may be left out: %+v", f)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no session token among the fields: %+v", d.Fields)
+	}
+	if missing := d.MissingFields(compute.Credentials{"accessKeyId": "a", "secretAccessKey": "s"}); len(missing) != 0 {
+		t.Errorf("a connection made before the session token existed is still complete, but %v is missing", missing)
+	}
+	if p := temporaryProvider(t, "", compute.Credentials{"accessKeyId": "a", "secretAccessKey": "s", "sessionToken": " " + testSessionToken + "\n"}); p.sessionToken != testSessionToken {
+		t.Errorf("session token = %q", p.sessionToken)
+	}
+}
+
+func TestAKeyWithoutASessionTokenSendsNoneAndSignsTheSameHeadersAsEver(t *testing.T) {
+	f, p := newFakeEC2(t)
+	ctx := context.Background()
+	if _, err := p.Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	created, err := p.Create(ctx, spec("burst-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Delete(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	for _, call := range f.seen {
+		seen[call.action] = true
+		if call.token != "" || call.signedHeaders != "host;x-amz-content-sha256;x-amz-date" {
+			t.Errorf("%s: token %q, signed headers %q", call.action, call.token, call.signedHeaders)
+		}
+	}
+	for _, action := range []string{"GetCallerIdentity", "RunInstances", "TerminateInstances"} {
+		if !seen[action] {
+			t.Errorf("%s was never called, so it was never checked", action)
+		}
+	}
+}
+
+func TestTemporaryCredentialsSendTheSessionTokenOnEveryRequestAndSignIt(t *testing.T) {
+	f, url := newFakeEC2Server(t)
+	f.wantToken = testSessionToken
+	p := temporaryProvider(t, url, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken, "region": "eu-north-1"})
+	ctx := context.Background()
+
+	account, err := p.Verify(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.Name != "AWS account 123456789012" || len(account.Warnings) != 0 {
+		t.Errorf("account = %+v", account)
+	}
+	created, err := p.Create(ctx, spec("burst-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Get(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Delete(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	for _, call := range f.seen {
+		seen[call.action] = true
+		if call.token != testSessionToken || call.signedHeaders != "host;x-amz-content-sha256;x-amz-date;x-amz-security-token" {
+			t.Errorf("%s: token %q, signed headers %q", call.action, call.token, call.signedHeaders)
+		}
+	}
+	for _, action := range []string{"GetCallerIdentity", "DescribeInstances", "RunInstances", "TerminateInstances"} {
+		if !seen[action] {
+			t.Errorf("%s was never called, so it was never checked", action)
+		}
+	}
+
+	// The fake refuses temporary credentials sent without their token, as AWS does.
+	plain := New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: url})
+	if _, err := plain.Verify(ctx); !errors.Is(err, compute.ErrAuth) {
+		t.Errorf("a key without the token should be refused, got %v", err)
+	}
+}
+
+// An hour after they were made, temporary credentials are refused with ExpiredToken. That is not a refusal for good: the
+// operator that issues them replaces them in the connection, so it must not read as an auth error, which fails a node.
+func TestAnExpiredSessionTokenIsNotTreatedAsRefusedCredentials(t *testing.T) {
+	f, url := newFakeEC2Server(t)
+	p := temporaryProvider(t, url, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken})
+	ctx := context.Background()
+
+	f.fail["TerminateInstances"] = "ExpiredToken"
+	err := p.Delete(ctx, "eu-north-1/i-0001")
+	if err == nil || errors.Is(err, compute.ErrAuth) || !strings.Contains(err.Error(), "ExpiredToken") {
+		t.Errorf("Delete: %v", err)
+	}
+	f.fail["GetCallerIdentity"] = "ExpiredToken"
+	if _, err := p.Verify(ctx); err == nil || errors.Is(err, compute.ErrAuth) || !strings.Contains(err.Error(), "ExpiredToken") {
+		t.Errorf("Verify: %v", err)
 	}
 }
 

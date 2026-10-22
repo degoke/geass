@@ -21,6 +21,9 @@ const (
 	SecretKeySecretAccessKey = "secretAccessKey"
 	SecretKeyRegion          = "region"
 	SecretKeyOrganization    = "organization"
+	// SecretKeySessionToken is the third part of temporary AWS credentials (from sts:AssumeRole). Only a connection for
+	// machines reads it: the Amazon EC2 driver sends and signs it with every request. It is optional.
+	SecretKeySessionToken = "sessionToken"
 )
 
 const (
