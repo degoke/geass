@@ -30,6 +30,11 @@ type GeassPlatformConfigReconciler struct {
 	Scheme     *runtime.Scheme
 	HTTPClient *http.Client
 
+	// DashboardElsewhere is true when the dashboard does not run in this cluster (the operator started with
+	// --dashboard=false): it is served from somewhere else, and nothing here has a dashboard Service to publish or
+	// probe, so the dashboard domain is left alone instead of being pointed at a Service with no pods behind it.
+	DashboardElsewhere bool
+
 	// now overrides the wall clock in tests; nil means time.Now.
 	now func() time.Time
 

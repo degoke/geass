@@ -246,3 +246,55 @@ func IsTooNew(err error) bool {
 	var tooNew *ErrSchemaTooNew
 	return errors.As(err, &tooNew)
 }
+
+// ErrSchemaBehind is returned by Check when the cluster's data has not been migrated up to what this binary reads.
+type ErrSchemaBehind struct {
+	// Stored is the schema level the cluster is at, Supported the level this binary reads.
+	Stored, Supported int
+	// Release is the release that last wrote the record, when it said.
+	Release string
+}
+
+func (e *ErrSchemaBehind) Error() string {
+	from := ""
+	if e.Release != "" {
+		from = " by Geass " + e.Release
+	}
+	return fmt.Sprintf("the data in this cluster is at schema level %d%s, but this release reads level %d. "+
+		"Only the controllers migrate data, and a process that did not would write the old shape over what this release expects. "+
+		"Update the controllers of this cluster to this release first, and let them start",
+		e.Stored, from, e.Supported)
+}
+
+// Check compares the cluster's schema level with the newest migration, and changes nothing. It is for a process that
+// reads and writes the data but must not migrate it, such as a dashboard that runs apart from the controllers: it
+// returns nil when the cluster is exactly at the level the migrations end at, *ErrSchemaTooNew when it is ahead
+// (this binary would misread what it finds) and *ErrSchemaBehind when it is behind (this binary would write the old
+// shape, because the controllers that migrate have not run).
+func Check(ctx context.Context, c client.Reader, namespace string, migrations []Migration) error {
+	if err := Validate(migrations); err != nil {
+		return err
+	}
+	record := &corev1.ConfigMap{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ConfigMapName}, record); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("read the schema record: %w", err)
+	}
+	stored, err := storedVersion(record)
+	if err != nil {
+		return err
+	}
+	target := latest(migrations)
+	switch {
+	case stored > target:
+		return &ErrSchemaTooNew{Stored: stored, Supported: target, Release: record.Data[keyRelease]}
+	case stored < target:
+		return &ErrSchemaBehind{Stored: stored, Supported: target, Release: record.Data[keyRelease]}
+	}
+	return nil
+}
+
+// IsBehind reports whether err says the cluster's data is behind this binary.
+func IsBehind(err error) bool {
+	var behind *ErrSchemaBehind
+	return errors.As(err, &behind)
+}
