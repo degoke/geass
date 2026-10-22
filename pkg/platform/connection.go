@@ -24,6 +24,9 @@ const (
 	// SecretKeySessionToken is the third part of temporary AWS credentials (from sts:AssumeRole). Only a connection for
 	// machines reads it: the Amazon EC2 driver sends and signs it with every request. It is optional.
 	SecretKeySessionToken = "sessionToken"
+	// SecretKeyExpiresAt is when AWS credentials stop working, as an RFC 3339 time. It is not secret, and optional: AWS
+	// does not say, so a connection shows an expiry only if whoever made the credentials gives one.
+	SecretKeyExpiresAt = "expiresAt"
 )
 
 const (

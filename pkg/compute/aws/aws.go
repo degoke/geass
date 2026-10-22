@@ -54,12 +54,13 @@ const (
 )
 
 // Credential and setting keys. The access key, the secret and the region are the ones an AWS connection for storage
-// already uses, so one kind of Secret serves both. The session token is read for machines only.
+// already uses, so one kind of Secret serves both. The session token and the expiry are read for machines only.
 const (
 	keyAccessKeyID     = "accessKeyId"
 	keySecretAccessKey = "secretAccessKey"
 	keyRegion          = "region"
 	keySessionToken    = "sessionToken"
+	keyExpiresAt       = "expiresAt"
 
 	SettingSubnetID        = "subnetId"
 	SettingSecurityGroupID = "securityGroupId"
@@ -76,6 +77,7 @@ func init() {
 			{Key: keySecretAccessKey, Label: "Secret access key", Secret: true},
 			{Key: keyRegion, Label: "Default region", Optional: true, Help: "Used when a pool names no region, for example eu-north-1."},
 			{Key: keySessionToken, Label: "Session token", Secret: true, Optional: true, Help: "For temporary credentials, such as the ones sts:AssumeRole returns: the token that comes with the key pair. Leave it out for an IAM user's key. When temporary credentials are renewed, replace the key, the secret and the token together."},
+			{Key: keyExpiresAt, Label: "Expires at", Optional: true, Help: "When the credentials stop working, as an RFC 3339 time such as 2026-10-22T14:30:00Z. AWS does not say, so the connection shows an expiry only if you give one."},
 		},
 		Settings: []compute.Setting{
 			{Key: SettingSubnetID, Label: "Subnet ID", Help: "Launch into this subnet (it must give instances a public address, or the pool's address type must be Private). Default: a default-VPC subnet."},
@@ -90,6 +92,14 @@ func init() {
 			}
 			p := New(creds.Get(keyAccessKeyID), creds.Get(keySecretAccessKey), region, options)
 			p.sessionToken = creds.Get(keySessionToken)
+			// A time that cannot be read does not stop machines from being made: Verify says so instead.
+			if raw := creds.Get(keyExpiresAt); raw != "" {
+				if t, err := time.Parse(time.RFC3339, raw); err == nil {
+					p.expiresAt = t
+				} else {
+					p.badExpiry = raw
+				}
+			}
 			return p, nil
 		},
 	})
@@ -100,8 +110,12 @@ type Provider struct {
 	accessKey, secretKey string
 	// sessionToken is the third part of temporary credentials, and empty for an IAM user's key.
 	sessionToken string
-	region       string
-	options      compute.Options
+	// expiresAt is when the connection says the credentials stop working, if it does: AWS does not tell. badExpiry is
+	// the value that could not be read as a time.
+	expiresAt time.Time
+	badExpiry string
+	region    string
+	options   compute.Options
 
 	// mu guards clients: one Provider serves the node, pool and connection controllers and the dashboard at once.
 	mu      sync.Mutex
@@ -325,6 +339,14 @@ func (p *Provider) Verify(ctx context.Context) (compute.Account, error) {
 	}
 	_ = xml.Unmarshal(out, &identity)
 	account.Name = "AWS account " + identity.Account
+	// GetCallerIdentity does not say when credentials end, so the expiry is the one the connection was given, if any.
+	// Temporary credentials are marked as such, so that the connection does not count them down: whatever issues them
+	// renews them long before the countdown for an ordinary key would start.
+	account.ExpiresAt = p.expiresAt
+	account.Temporary = p.sessionToken != ""
+	if p.badExpiry != "" {
+		account.Warnings = append(account.Warnings, fmt.Sprintf("%s is %q, which is not an RFC 3339 time such as 2026-10-22T14:30:00Z, so the connection cannot say when the credentials expire", keyExpiresAt, p.badExpiry))
+	}
 	if _, err := p.ec2(ctx, p.region, url.Values{paramAction: {"DescribeInstances"}, "MaxResults": {"5"}}); err != nil {
 		return account, err
 	}

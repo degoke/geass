@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/degoke/geass/pkg/compute"
 )
@@ -806,6 +808,56 @@ func TestAnExpiredSessionTokenIsNotTreatedAsRefusedCredentials(t *testing.T) {
 	f.fail["GetCallerIdentity"] = "ExpiredToken"
 	if _, err := p.Verify(ctx); err == nil || errors.Is(err, compute.ErrAuth) || !strings.Contains(err.Error(), "ExpiredToken") {
 		t.Errorf("Verify: %v", err)
+	}
+}
+
+func TestTheExpiryTheConnectionHoldsIsReportedBecauseAWSDoesNotSayWhen(t *testing.T) {
+	expires := time.Date(2026, time.October, 22, 14, 30, 0, 0, time.UTC)
+	base := compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret"}
+	with := func(extra map[string]string) compute.Credentials {
+		creds := compute.Credentials{}
+		maps.Copy(creds, base)
+		maps.Copy(creds, extra)
+		return creds
+	}
+	for name, tc := range map[string]struct {
+		creds     compute.Credentials
+		expiresAt time.Time
+		temporary bool
+		warning   string
+	}{
+		"temporary credentials with their expiry": {with(map[string]string{"sessionToken": testSessionToken, "expiresAt": "2026-10-22T14:30:00Z"}), expires, true, ""},
+		"an expiry given in another zone":         {with(map[string]string{"sessionToken": testSessionToken, "expiresAt": "2026-10-22T16:30:00+02:00"}), expires, true, ""},
+		"a key with an expiry of its own":         {with(map[string]string{"expiresAt": "2026-10-22T14:30:00Z"}), expires, false, ""},
+		"temporary credentials with none given":   {with(map[string]string{"sessionToken": testSessionToken}), time.Time{}, true, ""},
+		"an ordinary key":                         {base, time.Time{}, false, ""},
+		"an expiry that is not a time":            {with(map[string]string{"sessionToken": testSessionToken, "expiresAt": "tomorrow"}), time.Time{}, true, "RFC 3339"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, url := newFakeEC2Server(t)
+			p := temporaryProvider(t, url, tc.creds)
+			account, err := p.Verify(context.Background())
+			if err != nil {
+				t.Fatalf("a connection whose expiry cannot be read still works: %v", err)
+			}
+			if !account.ExpiresAt.Equal(tc.expiresAt) || account.Temporary != tc.temporary {
+				t.Errorf("expires %v, temporary %v; want %v, %v", account.ExpiresAt, account.Temporary, tc.expiresAt, tc.temporary)
+			}
+			switch {
+			case tc.warning == "" && len(account.Warnings) != 0:
+				t.Errorf("warnings = %v", account.Warnings)
+			case tc.warning != "" && (len(account.Warnings) != 1 || !strings.Contains(account.Warnings[0], tc.warning)):
+				t.Errorf("warnings = %v, want one about %q", account.Warnings, tc.warning)
+			}
+			if tc.temporary {
+				// AWS is never asked when the credentials end: GetCallerIdentity does not say.
+				for _, call := range f.seen {
+					if call.action != "GetCallerIdentity" && call.action != "DescribeInstances" && call.action != "RunInstances" {
+						t.Errorf("Verify called %s", call.action)
+					}
+				}
+			}
+		})
 	}
 }
 
