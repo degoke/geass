@@ -57,8 +57,8 @@ type signedCall struct {
 }
 
 func newFakeEC2(t *testing.T) (*fakeEC2, *Provider) {
-	f, url := newFakeEC2Server(t)
-	return f, New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: url})
+	f, base := newFakeEC2Server(t)
+	return f, New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: base})
 }
 
 // newFakeEC2Server starts the fake and gives its address, for a test that builds the provider its own way.
@@ -76,7 +76,7 @@ func authorizationParts(r *http.Request) map[string]string {
 		return nil
 	}
 	parts := map[string]string{}
-	for _, field := range strings.Split(auth, ", ") {
+	for field := range strings.SplitSeq(auth, ", ") {
 		if k, v, found := strings.Cut(field, "="); found {
 			parts[k] = v
 		}
@@ -687,9 +687,9 @@ func TestTheProviderRegistersWithTheStorageConnectionsCredentialKeys(t *testing.
 const testSessionToken = "FwoGZXIvYXdzEXAMPLE+SESSION/token="
 
 // temporaryProvider builds the provider of a connection that holds temporary credentials, the way the operator does.
-func temporaryProvider(t *testing.T, url string, creds compute.Credentials) *Provider {
+func temporaryProvider(t *testing.T, base string, creds compute.Credentials) *Provider {
 	t.Helper()
-	built, err := compute.New(ID, creds, compute.Options{BaseURL: url})
+	built, err := compute.New(ID, creds, compute.Options{BaseURL: base})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,9 +750,9 @@ func TestAKeyWithoutASessionTokenSendsNoneAndSignsTheSameHeadersAsEver(t *testin
 }
 
 func TestTemporaryCredentialsSendTheSessionTokenOnEveryRequestAndSignIt(t *testing.T) {
-	f, url := newFakeEC2Server(t)
+	f, base := newFakeEC2Server(t)
 	f.wantToken = testSessionToken
-	p := temporaryProvider(t, url, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken, "region": "eu-north-1"})
+	p := temporaryProvider(t, base, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken, "region": "eu-north-1"})
 	ctx := context.Background()
 
 	account, err := p.Verify(ctx)
@@ -787,7 +787,7 @@ func TestTemporaryCredentialsSendTheSessionTokenOnEveryRequestAndSignIt(t *testi
 	}
 
 	// The fake refuses temporary credentials sent without their token, as AWS does.
-	plain := New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: url})
+	plain := New("AKIDEXAMPLE", "secret", "eu-north-1", compute.Options{BaseURL: base})
 	if _, err := plain.Verify(ctx); !errors.Is(err, compute.ErrAuth) {
 		t.Errorf("a key without the token should be refused, got %v", err)
 	}
@@ -796,8 +796,8 @@ func TestTemporaryCredentialsSendTheSessionTokenOnEveryRequestAndSignIt(t *testi
 // An hour after they were made, temporary credentials are refused with ExpiredToken. That is not a refusal for good: the
 // operator that issues them replaces them in the connection, so it must not read as an auth error, which fails a node.
 func TestAnExpiredSessionTokenIsNotTreatedAsRefusedCredentials(t *testing.T) {
-	f, url := newFakeEC2Server(t)
-	p := temporaryProvider(t, url, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken})
+	f, base := newFakeEC2Server(t)
+	p := temporaryProvider(t, base, compute.Credentials{"accessKeyId": "AKIDEXAMPLE", "secretAccessKey": "secret", "sessionToken": testSessionToken})
 	ctx := context.Background()
 
 	f.fail["TerminateInstances"] = "ExpiredToken"
@@ -834,8 +834,8 @@ func TestTheExpiryTheConnectionHoldsIsReportedBecauseAWSDoesNotSayWhen(t *testin
 		"an expiry that is not a time":            {with(map[string]string{"sessionToken": testSessionToken, "expiresAt": "tomorrow"}), time.Time{}, true, "RFC 3339"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f, url := newFakeEC2Server(t)
-			p := temporaryProvider(t, url, tc.creds)
+			f, base := newFakeEC2Server(t)
+			p := temporaryProvider(t, base, tc.creds)
 			account, err := p.Verify(context.Background())
 			if err != nil {
 				t.Fatalf("a connection whose expiry cannot be read still works: %v", err)
