@@ -30,6 +30,12 @@ type GeassPlatformConfigReconciler struct {
 	Scheme     *runtime.Scheme
 	HTTPClient *http.Client
 
+	// DashboardElsewhere is true when the dashboard does not run in this cluster (the operator started with
+	// --dashboard=false): it is served from somewhere else, and nothing here has a dashboard Service to publish or
+	// probe, so the dashboard domain is left alone (the dashboard sets its own condition) instead of being pointed at
+	// a Service with no pods behind it.
+	DashboardElsewhere bool
+
 	// now overrides the wall clock in tests; nil means time.Now.
 	now func() time.Time
 
@@ -63,6 +69,12 @@ func (r *GeassPlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.
 	}
 	if !platform.CloudflareConfigured(config) {
 		cfRequeue = 0
+	}
+
+	// A dashboard that runs elsewhere verifies its own address and sets the condition itself, from where it is
+	// reachable. Writing it here would undo that on every pass.
+	if r.DashboardElsewhere {
+		return ctrl.Result{RequeueAfter: cfRequeue}, nil
 	}
 
 	// Dashboard domain verification always runs, even while the Cloudflare

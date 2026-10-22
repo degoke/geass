@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"os"
 	"time"
@@ -94,18 +95,14 @@ func init() {
 }
 
 // nolint:gocyclo
+
+// nolint:gocyclo
 func main() {
 	// The operator's image is also what takes part in the check that the cluster enforces network policies, where it
 	// is a small program that listens or connects. That is not the operator and must not start it.
 	if len(os.Args) > 1 && os.Args[1] == "netcheck" {
 		os.Exit(netcheck.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
-	// One client configuration for everything that talks to the API server, so they share a connection
-	// pool and rate limits are not multiplied by the number of clients.
-	restConfig := ctrl.GetConfigOrDie()
-	// Time every request to the API server. The reconcile and queue metrics say how the controllers are
-	// doing; this says how the API server is doing for them.
-	restConfig.Wrap(platform.InstrumentTransport)
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -115,13 +112,15 @@ func main() {
 	var enableHTTP2 bool
 	var dashboardAddr string
 	var lostNodeAfter time.Duration
+	var runControllers, runDashboard bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8086", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+			"Enabling this will ensure there is only one active controller manager. "+
+			"Ignored with --controllers=false: a dashboard-only process never takes the controllers' lease.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
@@ -135,6 +134,11 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&dashboardAddr, "dashboard-bind-address", ":8085",
 		"The address the Geass HTMX dashboard binds to. Use 0 to disable.")
+	flag.BoolVar(&runControllers, "controllers", true,
+		"Run the controllers: the reconcilers, the data migrations and the checks that go with them. "+
+			"Use --controllers=false to run only the dashboard, next to controllers of the same release that run elsewhere.")
+	flag.BoolVar(&runDashboard, "dashboard", true,
+		"Serve the dashboard and its API. Use --dashboard=false to run only the controllers.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -146,15 +150,40 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	m := mode{controllers: runControllers, dashboard: runDashboard, dashboardAddr: dashboardAddr}
+	if err := m.validate(); err != nil {
+		setupLog.Error(err, "Refusing to start")
+		os.Exit(1)
+	}
+	if enableLeaderElection && !m.controllers {
+		setupLog.Info("Ignoring --leader-elect: this process runs no controllers and takes no lease")
+	}
+
+	// One client configuration for everything that talks to the API server, so they share a connection
+	// pool and rate limits are not multiplied by the number of clients. It is read after the flags are, so that
+	// --kubeconfig counts: outside a cluster, that is how a dashboard-only process finds its API server.
+	restConfig := ctrl.GetConfigOrDie()
+	// Time every request to the API server. The reconcile and queue metrics say how the controllers are
+	// doing; this says how the API server is doing for them.
+	restConfig.Wrap(platform.InstrumentTransport)
+
 	// The signal handler can be installed once. Migrations and the manager share it, so that a stop signal
 	// during a migration ends the process instead of leaving it half way.
 	ctx := ctrl.SetupSignalHandler()
 
-	setupLog.Info("Starting Geass operator", "release", release.Version, "schemaLevel", migrations.Latest())
-	// Data written by an earlier release is brought up to what this one reads before a single controller
-	// starts, and an operator that is older than the data refuses to run over it. See pkg/migrations.
-	if err := migrateData(ctx, restConfig); err != nil {
-		setupLog.Error(err, "Could not prepare the cluster's data for this release")
+	setupLog.Info("Starting Geass operator", "release", release.Version, "schemaLevel", migrations.Latest(),
+		"controllers", m.controllers, "dashboard", m.dashboard)
+	if m.controllers {
+		// Data written by an earlier release is brought up to what this one reads before a single controller
+		// starts, and an operator that is older than the data refuses to run over it. See pkg/migrations.
+		if err := migrateData(ctx, restConfig); err != nil {
+			setupLog.Error(err, "Could not prepare the cluster's data for this release")
+			os.Exit(1)
+		}
+	} else if err := checkSchemaLevel(ctx, restConfig); err != nil {
+		// Only the controllers migrate. A dashboard that ran over data of another level would write what the
+		// controllers of this cluster do not read, or misread what they wrote.
+		setupLog.Error(err, "Refusing to start: the cluster's data is not at the level this release reads")
 		os.Exit(1)
 	}
 
@@ -225,7 +254,7 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	managerOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Cache:                  controller.CacheOptions(),
 		Metrics:                metricsServerOptions,
@@ -237,15 +266,71 @@ func main() {
 		// replaces this one (an update restarts it) takes over at once and not after the lease runs out. This
 		// is safe because the process ends as soon as the manager does: nothing runs after the lease is let go.
 		LeaderElectionReleaseOnCancel: true,
-	})
+	}
+	m.adjustManager(&managerOptions)
+	mgr, err := ctrl.NewManager(restConfig, managerOptions)
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
 		os.Exit(1)
 	}
+
+	// What the dashboard shares with the controllers when one process runs both.
+	shared := sharedParts{}
+	if m.controllers {
+		shared = addControllers(mgr, restConfig, controllerOptions{
+			lostNodeAfter: lostNodeAfter,
+			// A cluster whose dashboard is served elsewhere has no dashboard Service to publish.
+			dashboardElsewhere: !m.dashboard,
+		})
+	}
+	if m.serveDashboard() {
+		if err := addDashboard(mgr, restConfig, dashboardAddr, shared, m); err != nil {
+			setupLog.Error(err, "Failed to add dashboard server")
+			os.Exit(1)
+		}
+	}
+
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "Failed to set up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		setupLog.Error(err, "Failed to set up ready check")
+		os.Exit(1)
+	}
+
+	setupLog.Info("Starting manager")
+	if err := mgr.Start(ctx); err != nil {
+		setupLog.Error(err, "Failed to run manager")
+		os.Exit(1)
+	}
+}
+
+// controllerOptions are what addControllers is told besides the manager.
+type controllerOptions struct {
+	lostNodeAfter time.Duration
+	// dashboardElsewhere says the dashboard does not run in this cluster.
+	dashboardElsewhere bool
+}
+
+// sharedParts are what the controllers build that the dashboard of the same process uses too. A dashboard that runs
+// alone builds its own.
+type sharedParts struct {
+	webhooks *webhooks.Dispatcher
+	compute  *controller.ConnectionComputeFactory
+}
+
+// addControllers registers everything the operator does besides the dashboard: its reconcilers, and the runnables
+// that feed or check them. Nothing in it runs until the manager starts. It is the only place that creates what only the
+// controllers own, so a process that does not call it neither reconciles, takes the leader election lease, nor
+// creates the operator's own monitoring objects.
+//
+// nolint:gocyclo
+func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptions) sharedParts {
 	if err := (&controller.GeassClusterReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
-		LostNodeAfter: lostNodeAfter,
+		LostNodeAfter: o.lostNodeAfter,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
 		os.Exit(1)
@@ -356,8 +441,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.GeassPlatformConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		DashboardElsewhere: o.dashboardElsewhere,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassplatformconfig")
 		os.Exit(1)
@@ -411,38 +497,37 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+	return sharedParts{webhooks: webhookDispatcher, compute: computeFactory}
+}
 
-	if dashboardAddr != "0" {
-		if err := mgr.Add(&dashboard.Server{
-			// Everything the dashboard reads and writes goes through the client that limits it to the caller's tenant.
-			Client:    dashboard.ScopeClient(mgr.GetClient()),
-			Cache:     mgr.GetCache(),
-			Addr:      dashboardAddr,
-			Kube:      kubernetes.NewForConfigOrDie(restConfig),
-			Config:    restConfig,
-			GitHubApp: githubapp.LoadConfigFromEnv(),
-			Webhooks:  webhookDispatcher,
-			Compute:   computeFactory,
-		}); err != nil {
-			setupLog.Error(err, "Failed to add dashboard server")
-			os.Exit(1)
+// addDashboard adds the dashboard server, which serves the web interface and /api, /api/v1 and /api/events. With the
+// controllers in the same process it uses their webhook dispatcher and cloud providers; alone it builds its own, which
+// only read objects and call out, and add nothing that the controllers own.
+func addDashboard(mgr ctrl.Manager, restConfig *rest.Config, addr string, shared sharedParts, m mode) error {
+	if shared.webhooks == nil {
+		shared.webhooks = webhooks.NewDispatcher(mgr.GetClient())
+	}
+	if shared.compute == nil {
+		shared.compute = &controller.ConnectionComputeFactory{Reader: mgr.GetClient()}
+	}
+	if !m.controllers {
+		// The dashboard must not be on data of another level than it writes. The check at the start covers a process that
+		// starts on the wrong data; this one covers a cluster that is migrated while the dashboard runs.
+		if err := mgr.Add(&schemaGuard{Reader: mgr.GetAPIReader(), Interval: schemaGuardInterval}); err != nil {
+			return err
 		}
 	}
-
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "Failed to set up health check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "Failed to set up ready check")
-		os.Exit(1)
-	}
-
-	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctx); err != nil {
-		setupLog.Error(err, "Failed to run manager")
-		os.Exit(1)
-	}
+	return mgr.Add(&dashboard.Server{
+		// Everything the dashboard reads and writes goes through the client that limits it to the caller's tenant.
+		Client:    dashboard.ScopeClient(mgr.GetClient()),
+		Cache:     mgr.GetCache(),
+		Addr:      addr,
+		Kube:      kubernetes.NewForConfigOrDie(restConfig),
+		Config:    restConfig,
+		GitHubApp: githubapp.LoadConfigFromEnv(),
+		Webhooks:  shared.webhooks,
+		Compute:   shared.compute,
+	})
 }
 
 // migrateData runs the data migrations this release knows of, over a client that talks to the API server
@@ -475,3 +560,102 @@ func migrateData(ctx context.Context, cfg *rest.Config) error {
 	}
 	return nil
 }
+
+const (
+	// schemaCheckTimeout bounds the one check a dashboard-only process makes before it starts.
+	schemaCheckTimeout = time.Minute
+	// schemaGuardInterval is how often a running dashboard-only process looks again at the schema level.
+	schemaGuardInterval = time.Minute
+)
+
+// mode says which halves of the operator a process runs. The controllers reconcile the cluster; the dashboard serves
+// the web interface and the API. One process runs both unless it is told otherwise, which is what the installer's
+// manifests do.
+type mode struct {
+	controllers bool
+	dashboard   bool
+	// dashboardAddr is --dashboard-bind-address, where "0" means no server.
+	dashboardAddr string
+}
+
+// validate refuses a process that has nothing to do.
+func (m mode) validate() error {
+	if !m.controllers && !m.dashboard {
+		return errors.New("--controllers=false and --dashboard=false leave nothing to run: turn at least one on")
+	}
+	if !m.controllers && m.dashboardAddr == "0" {
+		return errors.New("--controllers=false with --dashboard-bind-address=0 leaves nothing to run: " +
+			"give the dashboard an address")
+	}
+	return nil
+}
+
+// serveDashboard says whether a dashboard server listens in this process. A process that runs the controllers and
+// has its dashboard address turned off (0) has none, and is otherwise as it was before the two halves could be split.
+func (m mode) serveDashboard() bool {
+	return m.dashboard && m.dashboardAddr != "0"
+}
+
+// adjustManager takes from the manager's options what only the controllers need. A dashboard-only process never
+// competes for the leader election lease, so a copy of it next to the controllers cannot make them lose it, and it
+// has no webhook server.
+func (m mode) adjustManager(o *ctrl.Options) {
+	if m.controllers {
+		return
+	}
+	o.LeaderElection = false
+	o.LeaderElectionReleaseOnCancel = false
+	o.WebhookServer = nil
+}
+
+// checkSchemaLevel refuses to start a process that does not migrate over data that is not at the level it reads. See
+// migrations.Check.
+func checkSchemaLevel(ctx context.Context, cfg *rest.Config) error {
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
+	defer cancel()
+	return migrations.Check(ctx, c, platform.SystemNamespace, migrations.All)
+}
+
+// schemaGuard stops a dashboard-only process when the cluster's data is migrated away from the level it reads. It runs
+// beside the dashboard and asks the API server directly, and it ends the manager (and so the process) when the
+// answer is that the data is ahead of or behind this release. A failure to ask is not an answer: the guard asks
+// again.
+type schemaGuard struct {
+	Reader   client.Reader
+	Interval time.Duration
+}
+
+// Start implements manager.Runnable.
+func (g *schemaGuard) Start(ctx context.Context) error {
+	interval := g.Interval
+	if interval <= 0 {
+		interval = schemaGuardInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		// The first check is at once, not after an interval: the data may have moved since the check at the start.
+		checkCtx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
+		err := migrations.Check(checkCtx, g.Reader, platform.SystemNamespace, migrations.All)
+		cancel()
+		switch {
+		case err == nil, ctx.Err() != nil:
+		case migrations.IsTooNew(err), migrations.IsBehind(err):
+			return err
+		default:
+			setupLog.Error(err, "Could not check the schema level of the cluster's data, will try again")
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// NeedLeaderElection implements manager.LeaderElectionRunnable: the guard runs wherever the dashboard does.
+func (g *schemaGuard) NeedLeaderElection() bool { return false }

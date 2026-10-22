@@ -101,8 +101,9 @@ setting, so workers do not get it, and a control plane server that you join with
 
 ## Operator flags
 
-The operator and the dashboard are one process, `/manager`. The installed Deployment `geass-controller-manager` in
-`geass-system` runs it with four flags:
+The operator and the dashboard are one process, `/manager`, unless you start it with `--controllers=false` or
+`--dashboard=false` to run only one of them (see [Dashboard and controllers apart](/docs/operations/dashboard-only/)). The
+installed Deployment `geass-controller-manager` in `geass-system` runs both, with four flags:
 
 ```text title="Installed arguments"
 --metrics-bind-address=:8443
@@ -113,14 +114,16 @@ The operator and the dashboard are one process, `/manager`. The installed Deploy
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--dashboard-bind-address` | `:8085` | Where the dashboard and API listen (plain HTTP). `0` turns the dashboard off |
+| `--controllers` | `true` | Run the controllers: the reconcilers, the data migrations and the checks that go with them. `--controllers=false` runs only the dashboard, which refuses to start unless the controllers of the same release have migrated the cluster's data. It never takes the leader election lease and ignores `--leader-elect` |
+| `--dashboard` | `true` | Serve the dashboard and API. `--dashboard=false` runs only the controllers, with nothing listening on the dashboard port. Turning both off is refused |
+| `--dashboard-bind-address` | `:8085` | Where the dashboard and API listen (plain HTTP). `0` turns the dashboard off. With `--controllers=false` it is refused, as there would be nothing left to run |
 | `--health-probe-bind-address` | `:8086` | Where `/healthz` and `/readyz` are served |
 | `--metrics-bind-address` | `0` (off) | Where operator metrics are served. The installed manifest sets `:8443` |
 | `--metrics-secure` | `true` | Serve metrics over HTTPS with Kubernetes authentication and authorization. `--metrics-secure=false` serves plain HTTP |
 | `--metrics-cert-path`, `--metrics-cert-name`, `--metrics-cert-key` | none, `tls.crt`, `tls.key` | A certificate for the metrics endpoint. Without one, a self-signed certificate is generated |
-| `--leader-elect` | `false` | Elect one active operator among replicas. The installed manifest turns it on |
+| `--leader-elect` | `false` | Elect one active operator among replicas. The installed manifest turns it on. Ignored with `--controllers=false` |
 | `--enable-http2` | `false` | Allow HTTP/2 on the metrics server. Off to avoid the known HTTP/2 reset attacks |
-| `--kubeconfig` | in-cluster | Path to a kubeconfig, for running outside the cluster |
+| `--kubeconfig` | in-cluster | Path to a kubeconfig, for running outside the cluster. `KUBECONFIG` works too |
 | `--webhook-cert-path`, `--webhook-cert-name`, `--webhook-cert-key` | none, `tls.crt`, `tls.key` | Scaffolding for a certificate for an admission webhook server. The operator registers no admission webhooks, so these do nothing |
 | `--zap-devel` | `true` | Development logging: console format and debug level. Set `--zap-devel=false` for JSON and info level |
 | `--zap-encoder`, `--zap-log-level`, `--zap-stacktrace-level`, `--zap-time-encoding` | per `--zap-devel` | Log format, verbosity, stack trace threshold and timestamp format |
@@ -181,6 +184,10 @@ kubectl -n geass-system set env deployment/geass-controller-manager GEASS_PROMET
 The default Prometheus address depends on the monitoring add-on. A `prometheusURL` set on the platform configuration wins over
 `GEASS_PROMETHEUS_URL`, which wins over the default. Standard Kubernetes variables such as `KUBECONFIG` also apply, because the
 operator uses controller-runtime.
+
+A dashboard-only process outside the cluster (`--controllers=false`) cannot resolve the in-cluster defaults of the three
+`*_URL` variables, so it must set the ones for the features it shows. See
+[Dashboard and controllers apart](/docs/operations/dashboard-only/#environment).
 
 ## The dashboard auth Secret
 

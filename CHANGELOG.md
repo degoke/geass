@@ -17,6 +17,12 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Dashboard and controllers apart.** `--controllers=false` runs only the dashboard and API, and `--dashboard=false`
+  only the controllers; both stay on by default, so installed clusters are unchanged. A dashboard-only process runs no
+  reconciler, migration or check, never takes the leader election lease, and refuses to start (and stops, if the data
+  moves) unless the cluster's data is at the schema level it reads. `config/dashboard-only` is the ClusterRole it
+  needs, and `GEASS_PROMETHEUS_URL`, `GEASS_ALERTMANAGER_URL` and `GEASS_LOGS_URL` point it at the add-ons when it runs
+  outside the cluster. The operator's `--kubeconfig` flag is now read, as it was parsed after the client configuration.
 - **Installer.** One command installs K3s, the Geass operator and the dashboard on a fresh Linux server (amd64 or
   arm64), and running a newer installer updates the cluster in place: it keeps the data, takes an etcd snapshot first,
   checks that the custom resource definitions stay compatible with what is stored, runs data migrations, refuses a
