@@ -81,9 +81,6 @@ const (
 	migrationTimeout = 10 * time.Minute
 )
 
-// registeredProblemCollector is the collector addControllers last put on the metrics registry.
-var registeredProblemCollector *controller.ProblemCollector
-
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -479,13 +476,8 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		os.Exit(1)
 	}
 	// What is wrong, as Prometheus reads it: one series for each problem. The alert rules and Alertmanager do the rest.
-	// One collector per process: a second call to this function (a test) replaces the first.
-	if registeredProblemCollector != nil {
-		ctrlmetrics.Registry.Unregister(registeredProblemCollector)
-	}
 	problemCollector := controller.NewProblemCollector()
 	ctrlmetrics.Registry.MustRegister(problemCollector)
-	registeredProblemCollector = problemCollector
 	if err := mgr.Add(&controller.ProblemExporter{Client: mgr.GetClient(), Collector: problemCollector}); err != nil {
 		setupLog.Error(err, "Failed to add the problem exporter")
 		os.Exit(1)
