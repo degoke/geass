@@ -463,7 +463,7 @@ func (s *Server) handleAPITokenDeploy(w http.ResponseWriter, r *http.Request) {
 
 // requireTokenAdmin allows only a signed-in admin. Tokens, even admin tokens, cannot mint or list tokens.
 func (s *Server) requireTokenAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if tokenFromRequest(r) != nil || !s.sessionCanMutate(r) {
+	if credentialIsBearer(r) || !s.sessionCanMutate(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: errTokensViewOnly.Error()})
 		return false
 	}

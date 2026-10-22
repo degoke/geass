@@ -241,7 +241,7 @@ func requireMutation(w http.ResponseWriter, r *http.Request, fallback string) bo
 func sameOriginMutation(r *http.Request) bool {
 	// An API token is sent explicitly in a header, never attached by the browser, so a cross-site
 	// form post cannot carry one and there is no origin to check.
-	if tokenFromRequest(r) != nil {
+	if credentialIsBearer(r) {
 		return true
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))

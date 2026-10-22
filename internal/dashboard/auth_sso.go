@@ -149,6 +149,10 @@ type ssoSettings struct {
 	// can be unreachable before what could not be checked is ended. Zero RefreshMinutes is never.
 	RefreshMinutes int
 	StaleGrace     time.Duration
+	// AccessTokens is whether the provider's access tokens are accepted as a bearer credential, and AccessTokenAudience what
+	// their audience has to hold: the client ID when empty. Only the platform's provider has them, never an organization's.
+	AccessTokens        bool
+	AccessTokenAudience string
 }
 
 // External is whether people sign in through the provider now.
@@ -187,6 +191,9 @@ func ssoSettingsOf(config geassv1alpha1.GeassPlatformConfig) ssoSettings {
 		settings.RevokeTokensOnLogout = *oidc.RevokeTokensOnLogout
 	}
 	settings.HasSecret = oidc.CredentialRef != nil && oidc.CredentialRef.Name != ""
+	if oidc.AccessTokens != nil {
+		settings.AccessTokens, settings.AccessTokenAudience = oidc.AccessTokens.Enabled, strings.TrimSpace(oidc.AccessTokens.Audience)
+	}
 	settings.Config = oidcauth.Config{
 		Issuer: strings.TrimSpace(oidc.Issuer), ClientID: strings.TrimSpace(oidc.ClientID), Scopes: oidc.Scopes,
 		RoleClaim: strings.TrimSpace(oidc.RoleClaim), RoleMap: oidc.RoleMap, RequireClaim: oidc.RequireClaim,
@@ -731,7 +738,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	purpose := purposeLogin
 	if r.URL.Query().Get("purpose") == purposeTest {
 		purpose = purposeTest
-		if tokenFromRequest(r) != nil || !s.sessionCanMutate(r) {
+		if credentialIsBearer(r) || !s.sessionCanMutate(r) {
 			ssoFailure(w, r, purpose, "forbidden")
 			return
 		}
