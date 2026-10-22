@@ -13,8 +13,9 @@
 //   - Burstable (T) instances are launched with standard credits: the default, unlimited, can bill beyond the hourly
 //     price.
 //   - The credentials may be temporary ones (from sts:AssumeRole): a session token beside the key pair, sent and signed
-//     with every request. They last an hour at most, so whatever issues them replaces them in the connection's Secret,
-//     and the operator builds a new Provider when the Secret changes. A Provider never changes its credentials.
+//     with every request. They expire (after an hour, unless the role says otherwise), so whatever issues them replaces
+//     them in the connection's Secret, and the operator builds a new Provider when the Secret changes. A Provider never
+//     changes its credentials.
 package aws
 
 import (

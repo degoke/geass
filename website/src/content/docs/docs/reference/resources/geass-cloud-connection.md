@@ -134,6 +134,7 @@ A connection for `Compute` is the opposite. It belongs to the cluster, never to 
 | Provider | Keys | Required |
 | --- | --- | --- |
 | AWS | `accessKeyId`, `secretAccessKey` | Both |
+| AWS | `sessionToken`, `expiresAt` | No, and for a connection for `Compute` only. `sessionToken` is the third part of temporary credentials (from `sts:AssumeRole`): Geass sends it, signed, with every request. `expiresAt` is an RFC 3339 time that says when the credentials stop working, which AWS does not. See [Temporary credentials](/docs/guides/connectors/clouds/#temporary-credentials) |
 | AWS | `region` | No. For buckets the default region is `spec.region`, then the Secret's `region`, then `us-east-1`. For machines it is the Secret's `region`, then `spec.region`, then `us-east-1` |
 | PlanetScale | `token` | Yes |
 | PlanetScale | `organization` | Yes, unless `spec.organization` is set |
@@ -150,7 +151,7 @@ The dashboard and `geass connections add` create the Secret `<name>-credentials`
 | `status.account` | string | The account, project or tenant the credentials act on, as the cloud reports it. For `Compute` only. |
 | `status.message` | string | What the last check found, or why it could not tell. |
 | `status.verifiedAt` | date-time | When the cloud last accepted the credentials. |
-| `status.expiresAt` | date-time | When the credentials stop working, for the clouds that say (OVHcloud's project, a webhook that reports it). |
+| `status.expiresAt` | date-time | When the credentials stop working, for the clouds that say (OVHcloud's project, a webhook that reports it) and for an AWS connection that holds an `expiresAt`. |
 | `status.warnings` | list | Things that work now and are likely to fail later, at most 10. See [Cloud connections for machines](/docs/guides/connectors/clouds/#what-the-connection-says-about-itself). |
 
 | Condition | Status | Reason | Meaning |

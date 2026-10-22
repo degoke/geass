@@ -82,7 +82,7 @@ is different: Geass makes its host key itself and checks it.
 
 | Connection | Secret | Keys |
 | --- | --- | --- |
-| AWS | `<name>-credentials` | `accessKeyId`, `secretAccessKey`, `region` |
+| AWS | `<name>-credentials` | `accessKeyId`, `secretAccessKey`, `region`, and for a connection for machines `sessionToken` and `expiresAt` (both optional) |
 | A cloud for machines | `<name>-credentials` | The cloud's own keys: see [the table](/docs/guides/connectors/clouds/#the-clouds) |
 | The key Geass logs in to its machines with | `geass-nodepool-ssh` | `ssh-privatekey`, `ssh-publickey` |
 | The host key of a machine Geass created | `<node>-hostkey` | `private`, `public` |

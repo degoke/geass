@@ -19,7 +19,9 @@ database backups there. Geass supports three things with it:
 This page is about the AWS connection for buckets and backups, which belongs to one project. Geass can also create **EC2
 machines** in your AWS account, for [node pools](/docs/guides/node-pools/). That needs a different connection, with the purpose
 Compute, that belongs to the cluster and has its own key and policy: see [Cloud connections for machines](/docs/guides/connectors/clouds/#amazon-ec2).
-A connection made as described below never creates machines, and the key on this page cannot launch instances.
+A connection made as described below never creates machines, and the key on this page cannot launch instances. It also
+takes an IAM user's key only: the session token of temporary credentials, such as the ones an assumed role gets, is read by
+the connection for machines (see [Temporary credentials](/docs/guides/connectors/clouds/#temporary-credentials)).
 
 ## Before you start
 
