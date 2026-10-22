@@ -917,7 +917,11 @@ func (c *AWSClient) sign(req *http.Request, payload []byte, service string) erro
 }
 
 func (c *AWSClient) signWithRegion(req *http.Request, payload []byte, service, region string) error {
-	now := time.Now().UTC()
+	return c.signAt(req, payload, service, region, time.Now().UTC())
+}
+
+// signAt is signWithRegion at a given moment, so that a test can fix the clock and compare with a known signature.
+func (c *AWSClient) signAt(req *http.Request, payload []byte, service, region string, now time.Time) error {
 	amzDate := now.Format("20060102T150405Z")
 	dateStamp := now.Format("20060102")
 	payloadHash := sha256Hex(payload)
