@@ -67,5 +67,5 @@ func mustVersion(t *testing.T, c client.Client, cluster *geassv1alpha1.GeassClus
 	t.Helper()
 	nodes, err := controlPlaneNodes(context.Background(), c)
 	require.NoError(t, err)
-	return workerK3sVersion(nodes, cluster)
+	return workerK3sVersion(nodes, "", cluster)
 }

@@ -131,6 +131,7 @@ export default defineConfig({
             "docs/operations/disaster-recovery",
             "docs/operations/sizing",
             "docs/operations/multi-provider",
+            "docs/operations/hosted-control-plane",
             "docs/operations/security",
             "docs/operations/troubleshooting",
             "docs/operations/uninstall",

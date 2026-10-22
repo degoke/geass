@@ -20,9 +20,15 @@ const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 // the installer fills it with "v1", which is not a k3s release, so every worker failed to install k3s.
 // It is only used when it is itself a k3s version (an operator who pinned one on purpose); otherwise the
 // answer is empty, and k3s's installer then picks its current stable release.
-func workerK3sVersion(nodes []corev1.Node, cluster *geassv1alpha1.GeassCluster) string {
+//
+// hosted is the release a control plane that is not one of the cluster's nodes reports (see hostedServerVersion),
+// and empty for a cluster with a control plane node.
+func workerK3sVersion(nodes []corev1.Node, hosted string, cluster *geassv1alpha1.GeassCluster) string {
 	if lowest := oldestK3sVersion(nodes); lowest != "" {
 		return lowest
+	}
+	if hosted != "" {
+		return hosted
 	}
 	if release.ValidK3s(cluster.Spec.Version) {
 		return cluster.Spec.Version
