@@ -16,7 +16,9 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/apitokens"
@@ -265,23 +267,26 @@ func TestAnAccessTokenIsRefusedWhatOnlyASignedInAdminMayDo(t *testing.T) {
 	for _, request := range []struct {
 		method, path string
 		form         url.Values
+		status       int
+		says         string
 	}{
-		{http.MethodGet, "/api/settings/auth", nil},
-		{http.MethodGet, "/api/tokens", nil},
-		{http.MethodPost, "/api/tokens/create", url.Values{"name": {"mine"}, "scope": {"workspace"}, "role": {"admin"}}},
-		{http.MethodPost, "/api/tokens/revoke", url.Values{"id": {"x"}}},
-		{http.MethodPost, "/api/settings/auth/save", f.saveForm(nil)},
-		{http.MethodPost, "/api/settings/auth/mode", url.Values{"mode": {"local"}}},
-		{http.MethodPost, "/api/settings/auth/clear", url.Values{}},
-		{http.MethodPost, "/api/settings/auth/logout-policy", url.Values{"revokeTokens": {"off"}}},
-		{http.MethodPost, "/api/settings/auth/tenancy", url.Values{}},
-		{http.MethodPost, "/api/auth/device/approve", url.Values{"userCode": {"ABCD-EFGH"}}},
-		{http.MethodGet, "/api/v1/auth/device/ABCD-EFGH", nil},
-		{http.MethodPost, "/api/session/scope", url.Values{"org": {"x"}}},
+		{http.MethodGet, "/api/settings/auth", nil, http.StatusForbidden, sessionAdminOnly},
+		{http.MethodGet, "/api/tokens", nil, http.StatusForbidden, errTokensViewOnly.Error()},
+		{http.MethodPost, "/api/tokens/create", url.Values{"name": {"mine"}, "scope": {"workspace"}, "role": {"admin"}}, http.StatusForbidden, errTokensViewOnly.Error()},
+		{http.MethodPost, "/api/tokens/revoke", url.Values{"id": {"x"}}, http.StatusForbidden, errTokensViewOnly.Error()},
+		{http.MethodPost, "/api/settings/auth/save", f.saveForm(nil), http.StatusForbidden, sessionAdminOnly},
+		{http.MethodPost, "/api/settings/auth/mode", url.Values{"mode": {"local"}}, http.StatusForbidden, sessionAdminOnly},
+		{http.MethodPost, "/api/settings/auth/clear", url.Values{}, http.StatusForbidden, sessionAdminOnly},
+		{http.MethodPost, "/api/settings/auth/logout-policy", url.Values{"revokeTokens": {"off"}}, http.StatusForbidden, sessionAdminOnly},
+		{http.MethodPost, "/api/settings/auth/tenancy", url.Values{}, http.StatusForbidden, sessionAdminOnly},
+		{http.MethodPost, "/api/auth/device/approve", url.Values{"userCode": {"ABCD-EFGH"}}, http.StatusForbidden, errTokensViewOnly.Error()},
+		{http.MethodGet, "/api/v1/auth/device/ABCD-EFGH", nil, http.StatusForbidden, "only a signed-in admin can approve"},
+		// A session's place is changed by the person's own cookie, which a bearer credential has none of.
+		{http.MethodPost, "/api/session/scope", url.Values{"org": {"x"}}, http.StatusBadRequest, "a token works in the place it was made for"},
 	} {
 		rec := f.do(bearer(token, request.method, request.path, request.form))
-		require.Contains(t, []int{http.StatusForbidden, http.StatusBadRequest}, rec.Code, "%s %s: %s", request.method, request.path, rec.Body.String())
-		require.NotEqual(t, http.StatusOK, rec.Code, "%s %s", request.method, request.path)
+		require.Equal(t, request.status, rec.Code, "%s %s: %s", request.method, request.path, rec.Body.String())
+		require.Contains(t, rec.Body.String(), request.says, "%s %s", request.method, request.path)
 	}
 	records, err := f.srv.listAPITokens(context.Background())
 	require.NoError(t, err)
@@ -294,10 +299,59 @@ func TestAnAccessTokenIsRefusedWhatOnlyASignedInAdminMayDo(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, f.do(bearerGet(apiToken, "/api/settings/auth")).Code)
 }
 
+func TestAnAccessTokenMayNotLiveLongerThanASignIn(t *testing.T) {
+	f := newSSOFixture(t, platform.AuthModeExternal)
+	f.acceptAccessTokens(t, "")
+	now := time.Now()
+	lives := func(d time.Duration) string {
+		return f.idp.accessToken(alice, map[string]any{"iat": now.Unix(), "exp": now.Add(d).Unix()})
+	}
+
+	// The fixture's sign-in lasts 60 minutes. A token that would outlive the memory of a sign-out, or that nothing asks the
+	// provider about again for a week, is not taken.
+	require.Equal(t, http.StatusOK, f.do(bearerGet(lives(time.Hour), "/api/v1/me")).Code)
+	require.Equal(t, http.StatusUnauthorized, f.do(bearerGet(lives(time.Hour+time.Minute), "/api/v1/me")).Code)
+	require.Equal(t, http.StatusUnauthorized, f.do(bearerGet(lives(7*24*time.Hour), "/api/v1/me")).Code)
+
+	f.updateConfigDirect(t, func(c *geassv1alpha1.GeassPlatformConfig) { c.Spec.Auth.OIDC.SessionMinutes = 720 })
+	require.Equal(t, http.StatusOK, f.do(bearerGet(lives(12*time.Hour), "/api/v1/me")).Code, "the length of a sign-in is what counts")
+}
+
+func TestACredentialThatCannotBeAnAccessTokenReadsNoSecret(t *testing.T) {
+	f := newSSOFixture(t, platform.AuthModeExternal)
+	f.acceptAccessTokens(t, "")
+	reads := 0
+	f.srv.Client = &secretCountingClient{Client: f.srv.Client, reads: &reads}
+	for name, raw := range map[string]string{
+		"junk":               "junk",
+		"an ID token":        f.idp.signTyped("JWT", f.idp.accessClaims(alice, map[string]any{"nonce": "n"})),
+		"a Geass-shaped one": "gsw_nothing_here",
+	} {
+		before := reads
+		require.Equal(t, http.StatusUnauthorized, f.do(bearerGet(raw, "/api/v1/me")).Code, name)
+		if name != "a Geass-shaped one" { // that one is looked up as the API token it claims to be, which reads its Secret
+			require.Equal(t, before, reads, "%s: a Secret was read for a credential that cannot be an access token", name)
+		}
+	}
+}
+
+type secretCountingClient struct {
+	client.Client
+	reads *int
+}
+
+func (c *secretCountingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, isSecret := obj.(*corev1.Secret); isSecret {
+		*c.reads++
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
 func TestAnAccessTokenIsRefusedOnceThePersonSignedOutOrWasRemoved(t *testing.T) {
 	f := newSSOFixture(t, platform.AuthModeExternal)
 	f.acceptAccessTokens(t, "")
-	token := f.idp.accessToken(alice, nil)
+	now := time.Now()
+	token := f.idp.accessToken(alice, map[string]any{"iat": now.Add(-5 * time.Second).Unix(), "exp": now.Add(time.Hour - 5*time.Second).Unix()})
 	require.Equal(t, http.StatusOK, f.do(bearerGet(token, "/api/v1/me")).Code)
 
 	// A logout from the provider ends the sessions of the person, and so the tokens it issued before.
@@ -305,6 +359,12 @@ func TestAnAccessTokenIsRefusedOnceThePersonSignedOutOrWasRemoved(t *testing.T) 
 	require.Equal(t, http.StatusUnauthorized, f.do(bearerGet(token, "/api/v1/me")).Code)
 	require.Equal(t, http.StatusOK, f.do(bearerGet(f.idp.accessToken(alice, map[string]any{"iat": time.Now().Add(5 * time.Second).Unix()}), "/api/v1/me")).Code,
 		"a token issued after it is another matter")
+	// A token says when it was issued in whole seconds and the sign-out is noted to the millisecond: one issued in the same
+	// second is the person signing in again, and is not refused; one from the second before is.
+	require.Equal(t, http.StatusOK, f.do(bearerGet(f.idp.accessToken(alice, map[string]any{"iat": time.Now().Unix()}), "/api/v1/me")).Code,
+		"a token issued in the second of the sign-out")
+	require.Equal(t, http.StatusUnauthorized, f.do(bearerGet(f.idp.accessToken(alice, map[string]any{"iat": time.Now().Add(-2 * time.Second).Unix(), "exp": time.Now().Add(time.Hour - 2*time.Second).Unix()}), "/api/v1/me")).Code,
+		"a token issued before the second of the sign-out")
 	require.Equal(t, http.StatusOK, f.do(bearerGet(f.idp.accessToken(testPerson("u-bob", "bob@example.com", "owner"), nil), "/api/v1/me")).Code, "and so is another person")
 }
 
@@ -386,7 +446,8 @@ func TestAStreamOpenedWithAnAccessTokenEndsWhenThePersonIsSignedOut(t *testing.T
 	f.acceptAccessTokens(t, "")
 	server := httptest.NewServer(f.handler)
 	t.Cleanup(server.Close)
-	token := f.idp.accessToken(alice, nil)
+	now := time.Now()
+	token := f.idp.accessToken(alice, map[string]any{"iat": now.Add(-5 * time.Second).Unix(), "exp": now.Add(time.Hour - 5*time.Second).Unix()})
 	stream := openEvents(t, server, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) })
 	require.False(t, stream.endsWithin(300*time.Millisecond))
 

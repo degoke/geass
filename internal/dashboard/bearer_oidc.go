@@ -61,14 +61,19 @@ func isOIDCBearerCandidate(presented string) bool {
 // errOIDCBearerDenied when it is one but the configuration lets its person in nowhere.
 func (s *Server) authenticateOIDCAccessToken(r *http.Request, presented string) (*dashboardSessionInfo, *oidcBearer, error) {
 	ctx := r.Context()
-	settings, err := s.ssoSettings(ctx)
+	// The cheap things first, so that a credential that cannot be an access token costs one read of the configuration: only
+	// while the provider is what decides who signs in, and only when it was turned on, is a credential that is not a Geass
+	// token anything; and only a JWT of the right type is worth reading the client secret for.
+	config, err := s.platformConfig(ctx)
 	if err != nil {
 		return nil, nil, errOIDCBearerUnavailable
 	}
-	// Only while the provider is what decides who signs in, and only when it was turned on: the rest of the time a
-	// credential that is not a Geass token is simply not one.
-	if !settings.External() || !settings.AccessTokens {
+	if enabled := ssoSettingsOf(config); !enabled.External() || !enabled.AccessTokens || !oidcauth.PlausibleAccessToken(presented) {
 		return nil, nil, errInvalidToken
+	}
+	settings, err := s.ssoSettings(ctx)
+	if err != nil {
+		return nil, nil, errOIDCBearerUnavailable
 	}
 	audience := settings.AccessTokenAudience
 	if audience == "" {
@@ -84,13 +89,22 @@ func (s *Server) authenticateOIDCAccessToken(r *http.Request, presented string) 
 		ctrllog.FromContext(ctx).V(1).Info("Refused a bearer credential that is not a valid access token", "reason", err.Error())
 		return nil, nil, errInvalidToken
 	}
+	// The claims of a token are as they were when it was issued, and nothing asks the provider again. So it may last no longer
+	// than a sign-in does (sessionMinutes): that is how long a role that changed, or a person who was removed, can go on being
+	// honoured, and it keeps a token from outliving the memory of a sign-out (ssoRevocationKeep, which no session exceeds).
+	if token.Expires.Sub(token.IssuedAt) > settings.sessionTTL() {
+		ctrllog.FromContext(ctx).V(1).Info("Refused an access token that lives longer than a sign-in", "lifetime", token.Expires.Sub(token.IssuedAt).String())
+		return nil, nil, errInvalidToken
+	}
 	// Who signed out, or was removed, after the token was issued is not honoured through it: the same record that ends the
-	// sessions of a person (a sign-out here, a back-channel logout from the provider) ends it.
+	// sessions of a person (a sign-out here, a back-channel logout from the provider) ends it. A token says when it was issued
+	// in whole seconds and a sign-out is noted to the millisecond, so a token is taken to be from before it only when its whole
+	// second was: one issued in the second of the sign-out is the person signing in again.
 	auth, err := s.authForRequest(r)
 	if err != nil {
 		return nil, nil, errOIDCBearerUnavailable
 	}
-	if issued := token.IssuedAt.UnixMilli(); issued <= auth.ssoNotBefore || issued <= auth.ssoRevoked[token.Key] {
+	if issuedEnd := token.IssuedAt.UnixMilli() + time.Second.Milliseconds(); issuedEnd <= auth.ssoNotBefore || issuedEnd <= auth.ssoRevoked[token.Key] {
 		return nil, nil, errInvalidToken
 	}
 	identity, err := settings.Config.AuthorizeAccessToken(token.Claims)

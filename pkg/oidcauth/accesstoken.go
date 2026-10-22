@@ -53,6 +53,17 @@ type AccessToken struct {
 	Claims map[string]any
 }
 
+// PlausibleAccessToken is whether a credential is shaped as an access token: a signed JWT, by an algorithm that is accepted,
+// of the type at+jwt, and not too long. It needs no keys and reads nothing, so it is how a caller turns away the credentials
+// that cannot be one before it reads anything to verify them.
+func PlausibleAccessToken(raw string) bool {
+	if raw == "" || len(raw) > accessTokenMaxLength {
+		return false
+	}
+	signed, err := jose.ParseSigned(raw, signatureAlgorithms)
+	return err == nil && len(signed.Signatures) == 1 && isAccessTokenType(signed.Signatures[0].Protected.ExtraHeaders[jose.HeaderType])
+}
+
 // VerifyAccessToken checks a bearer credential as an access token of the provider that is good for audience at now. It
 // returns ErrNotAccessToken, wrapped with the reason, when it is not.
 func (p *Provider) VerifyAccessToken(ctx context.Context, raw, audience string, now time.Time) (*AccessToken, error) {

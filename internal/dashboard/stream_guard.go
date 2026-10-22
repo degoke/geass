@@ -86,6 +86,18 @@ type streamCredentials struct {
 	platform       bool
 }
 
+// streamCredentialsOf is what a stream is opened with by a person.
+func streamCredentialsOf(session *dashboardSessionInfo) streamCredentials {
+	return streamCredentials{
+		identity: session.Identity, role: session.Role, org: session.Org, workspace: session.Workspace, platform: session.PlatformAdmin,
+	}
+}
+
+// stands is whether a person's session is still what these credentials were: the same person, role and place.
+func (c streamCredentials) stands(session *dashboardSessionInfo) bool {
+	return session != nil && streamCredentialsOf(session) == c
+}
+
 // guardStream watches a stream's credentials for as long as the handler runs. The request it returns has a context that
 // ends when they stop standing, and carries the channel authLost reads. The function returned must be called when the
 // handler is done.
@@ -97,8 +109,7 @@ func (s *Server) guardStream(r *http.Request) (*http.Request, func()) {
 	// An access token of the provider is a person's, so what they could do when it began is kept as for a person who signed in.
 	if tokenFromRequest(r) == nil {
 		if session := s.currentSession(r); session != nil {
-			was.identity, was.role = session.Identity, session.Role
-			was.org, was.workspace, was.platform = session.Org, session.Workspace, session.PlatformAdmin
+			was = streamCredentialsOf(session)
 		}
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -151,8 +162,7 @@ func (s *Server) streamStillAllowed(r *http.Request, was streamCredentials) bool
 			case err != nil:
 				return false
 			}
-			return session.Role == was.role && session.Identity == was.identity &&
-				session.Org == was.org && session.Workspace == was.workspace && session.PlatformAdmin == was.platform
+			return was.stands(session)
 		}
 		_, err := s.authenticateAPIToken(fresh.Context(), presented)
 		return err == nil || !errors.Is(err, errInvalidToken)
@@ -163,6 +173,5 @@ func (s *Server) streamStillAllowed(r *http.Request, was streamCredentials) bool
 	}
 	fresh = fresh.WithContext(context.WithValue(fresh.Context(), authSnapshotKey{}, snapshot))
 	session := s.currentSession(fresh)
-	return session != nil && session.Role == was.role && session.Identity == was.identity &&
-		session.Org == was.org && session.Workspace == was.workspace && session.PlatformAdmin == was.platform
+	return was.stands(session)
 }
