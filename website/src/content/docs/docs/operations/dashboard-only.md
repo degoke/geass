@@ -1,6 +1,6 @@
 ---
 title: "Dashboard and controllers apart"
-description: "Run the Geass dashboard and API in one process and the controllers in another, such as a dashboard next to a hosted K3s server and controllers on the cluster's own machines. What each starts, what it needs, and the access it is given."
+description: "Run the Geass dashboard and API in one process and the controllers in another: the flags, what each mode starts, what it needs, and its access."
 ---
 
 The operator binary is two things: the **controllers**, which reconcile the cluster, and the **dashboard**, which serves
