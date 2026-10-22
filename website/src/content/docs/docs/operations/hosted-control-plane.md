@@ -1,6 +1,6 @@
 ---
 title: "Hosted control plane"
-description: "Run Geass on a cluster whose K3s server is hosted outside its nodes: every node a worker, the operator on a worker, the image from a registry. What changes and what to set up."
+description: "Run Geass on a cluster whose K3s server is hosted elsewhere: every node a worker, the operator image from a registry. What changes and what to set up."
 ---
 
 The installer makes the control plane one of the cluster's own machines: the K3s server and the Geass operator run there,
