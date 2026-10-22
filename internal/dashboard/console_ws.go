@@ -59,6 +59,8 @@ type consoleExecFunc func(ctx context.Context, target consoleTarget, streams con
 var consoleUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
+	// A page that works with an API token offers it as a subprotocol (see websocketBearer), and must be answered with one it offered.
+	Subprotocols: []string{websocketProtocol},
 	// Browsers always send Origin on WebSocket upgrades. Reuse the dashboard's same-origin rule so
 	// another site cannot open a shell with the visitor's session cookie.
 	CheckOrigin: sameOriginMutation,

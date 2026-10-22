@@ -7,6 +7,7 @@ import { Maximize2, Minimize2, Terminal as TerminalIcon } from "lucide-react";
 import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
+import { openSocket } from "@/lib/transport";
 import { Button, Muted, Select } from "@/components/geass-ui";
 
 const SESSION_SECONDS = 300;
@@ -33,10 +34,9 @@ function kubectlCommand(namespace, pod, container) {
   return `kubectl exec -it -n ${namespace} ${pod} -c ${container} -- sh`;
 }
 
-function socketURL(name, session, terminal) {
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+function socketPath(name, session, terminal) {
   const query = new URLSearchParams({ session, cols: String(terminal.cols), rows: String(terminal.rows) });
-  return `${scheme}://${window.location.host}/api/apps/${name}/console/ws?${query}`;
+  return `/api/apps/${name}/console/ws?${query}`;
 }
 
 /**
@@ -144,7 +144,14 @@ export function ServiceConsole({ item, name, data }) {
     fit();
     terminal.reset();
     terminal.writeln(`\x1b[90mConnecting to ${podName} (${container})…\x1b[0m`);
-    const socket = new WebSocket(socketURL(name, session, terminal));
+    let socket;
+    try {
+      socket = await openSocket(socketPath(name, session, terminal));
+    } catch (error) {
+      setState("idle");
+      alertUser(error.message);
+      return;
+    }
     socket.binaryType = "arraybuffer";
     socketRef.current = socket;
     let opened = false;

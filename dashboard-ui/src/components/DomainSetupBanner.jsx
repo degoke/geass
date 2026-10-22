@@ -2,11 +2,13 @@ import { useRouterState } from "@tanstack/react-router";
 import { StripBanner } from "@/components/StripBanner";
 import { useBootstrap } from "@/lib/dashboard";
 import { showDomainSetupBanner } from "@/lib/domain-setup";
+import { useHidden } from "@/lib/options";
 
 export function DomainSetupBanner() {
   const { data } = useBootstrap();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  if (!showDomainSetupBanner(data, pathname)) return null;
+  const hidden = useHidden("domain");
+  if (hidden || !showDomainSetupBanner(data, pathname)) return null;
 
   return (
     <StripBanner

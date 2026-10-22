@@ -85,6 +85,43 @@ jobs:
             exit 1
           }
 
+  # The dashboard is also a package that another app mounts (docs/development.md, "The dashboard as a library"): its tests
+  # run here, and so does the library build, which the operator's own build does not need.
+  dashboard-ui:
+    permissions:
+      contents: read
+    name: Dashboard package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard-ui
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard-ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the tests
+        run: pnpm test
+
+      - name: Build the library
+        run: pnpm build:lib
+
   website:
     permissions:
       contents: read

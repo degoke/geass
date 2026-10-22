@@ -9,6 +9,7 @@ import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
 import { ClusterBackup } from "@/components/ClusterBackup";
 import { RecoverBackups } from "@/components/RecoverBackups";
 import { ClusterVersion } from "@/components/ClusterVersion";
+import { useHidden } from "@/lib/options";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
 import { AddServerSheet } from "@/components/compute/AddServerSheet";
@@ -64,6 +65,8 @@ function NetworkPolicySection({ data }) {
 export function ClusterCapacityPage({ data, reload, embedded = false }) {
   const capacity = data?.platform?.capacity || {};
   const mutable = canMutate(data);
+  const hideUpgrade = useHidden("upgrade");
+  const hideServers = useHidden("servers");
   const [editing, setEditing] = useState(null);
   const [addingServer, setAddingServer] = useState(false);
   const [removing, setRemoving] = useState(null);
@@ -154,13 +157,13 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
         </PageSection>
       )}
       <NetworkPolicySection data={data} />
-      <ClusterVersion data={data} />
+      {hideUpgrade ? null : <ClusterVersion data={data} />}
       <ClusterBackup mutable={mutable} />
       <RecoverBackups mutable={mutable} />
       <PageSection
         title="Nodes"
         description="Per-node allocatable resources and pressure."
-        actions={mutable ? (
+        actions={mutable && !hideServers ? (
           <Button size="sm" variant="outline" leftSection={<Plus size={14} />} onClick={() => setAddingServer(true)}>Add server</Button>
         ) : null}
       >
@@ -195,7 +198,7 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
               render: (row) => (mutable ? (
                 <span className="cp-row-actions">
                   <Button size="xs" variant="outline" onClick={() => setEditing(row.raw)} aria-label={`Edit ${row.name}`}>Edit</Button>
-                  {row.removable ? (
+                  {row.removable && !hideServers ? (
                     <Button size="xs" variant="outline" onClick={() => { setRemoveError(""); setRemoving(row); }} aria-label={`Remove ${row.name}`}>Remove</Button>
                   ) : null}
                 </span>
@@ -223,7 +226,7 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       <DefaultRegionSection data={data} reload={reload} mutable={mutable} />
       <HAReadinessSection data={data} />
       <NodePlacementDialog node={editing} data={data} reload={reload} onClose={() => setEditing(null)} />
-      <AddServerSheet opened={addingServer} onClose={() => setAddingServer(false)} />
+      <AddServerSheet opened={addingServer && !hideServers} onClose={() => setAddingServer(false)} />
       <ConfirmDelete
         opened={Boolean(removing)}
         title="Remove server?"

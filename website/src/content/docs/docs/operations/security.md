@@ -270,6 +270,12 @@ A write that carries a cookie must also carry an `Origin` or `Referer` header wh
 what stops another site from using a visitor's session. The terminal WebSocket applies the same rule. Calls with a Bearer
 token skip this check, because browsers never attach one.
 
+A browser cannot set `Authorization` on a WebSocket. A page that works with an API token (the dashboard shown inside another
+app, see [Development](https://github.com/degoke/geass/blob/main/docs/development.md#the-dashboard-as-a-library)) offers the token as
+the subprotocol `geass.bearer.<token>`, next to `geass.v1`, and the server answers with `geass.v1` only. It reads a token from
+there for the upgrade of a terminal's WebSocket and nowhere else, and holds it to the same rules as the header: a viewer's or
+a project's token is refused, and a socket that is open ends when its token is revoked.
+
 Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` and a
 content security policy. The policy takes scripts, fonts and connections only from the dashboard's own address (inline styles and
 `data:` images are also allowed), refuses to be framed, and limits form posts to the dashboard and `github.com`.
