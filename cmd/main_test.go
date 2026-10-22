@@ -192,6 +192,16 @@ func TestControllersOnlyAddsNoDashboardAndTheDashboardSharesWhatTheControllersBu
 	require.Nil(t, mgr.guard(), "with the controllers in the process there is nothing for a guard to watch")
 }
 
+func TestControllersCanBeAddedMoreThanOnceInAProcess(t *testing.T) {
+	m := mode{controllers: true, dashboardAddr: ":8085"}
+	first, cfg := newRecordingManager(t, m)
+	second, _ := newRecordingManager(t, m)
+	require.NotPanics(t, func() {
+		addControllers(first, cfg, controllerOptions{})
+		addControllers(second, cfg, controllerOptions{})
+	}, "the problem collector goes on a registry that exists once per process")
+}
+
 func hasRunnable[T manager.Runnable](m *recordingManager) bool {
 	for _, r := range m.runnables {
 		if _, ok := r.(T); ok {

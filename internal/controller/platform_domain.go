@@ -21,8 +21,6 @@ const (
 	domainReasonPendingDNS = "PendingDNS"
 	domainReasonError      = "Error"
 	domainReasonTimedOut   = "VerificationTimedOut"
-	// domainReasonElsewhere says the dashboard is not served from this cluster, so there is nothing to verify.
-	domainReasonElsewhere = "DashboardElsewhere"
 )
 
 func (r *GeassPlatformConfigReconciler) reconcileDashboardDomain(ctx context.Context, config *geassv1alpha1.GeassPlatformConfig) (platform.DashboardDomainReconcileResult, time.Duration) {
@@ -32,16 +30,6 @@ func (r *GeassPlatformConfigReconciler) reconcileDashboardDomain(ctx context.Con
 			Status:  metav1.ConditionFalse,
 			Reason:  "NoDomain",
 			Message: "Dashboard domain is not configured",
-		}, 0
-	}
-
-	// The dashboard runs in another process, outside this cluster: no Ingress or tunnel route here would reach it,
-	// and probing its public address would only say whether the other place is up.
-	if r.DashboardElsewhere {
-		return platform.DashboardDomainReconcileResult{
-			Status:  metav1.ConditionFalse,
-			Reason:  domainReasonElsewhere,
-			Message: "The dashboard does not run in this cluster (the operator started with --dashboard=false), so this cluster does not publish or verify its address",
 		}, 0
 	}
 

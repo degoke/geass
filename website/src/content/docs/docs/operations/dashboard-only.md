@@ -31,7 +31,7 @@ own machines.
 | Leader election lease | takes it with `--leader-elect` | **never**, even with `--leader-elect` | takes it with `--leader-elect` |
 | Pod usage tracker, network policy check, problem exporter, alert routing | yes | **no** | yes |
 | The operator's own monitoring objects (its ServiceMonitor and alert rules) | yes | **no** | yes |
-| Dashboard Service, Ingress and tunnel route for the dashboard's address | yes | not applicable | **left alone**: the domain condition says the dashboard is elsewhere |
+| Dashboard Service, Ingress and tunnel route for the dashboard's address | yes | not applicable | **left alone**: no Ingress or route, and the dashboard sets its own domain condition |
 | Dashboard, `/api`, `/api/v1`, `/api/events`, deploy hooks, GitHub callbacks | yes | yes, with the same sign-in and access rules | **no HTTP server on the dashboard port** |
 | Health probes (`--health-probe-bind-address`) | yes | yes | yes |
 | Metrics (`--metrics-bind-address`) | if set | if set, without the controllers' series | if set |
@@ -39,9 +39,14 @@ own machines.
 The operator registers no admission webhooks, so there is none to start or skip.
 
 Everything the dashboard writes is an object a person can edit: projects, services, databases, settings, the
-Secrets that hold users and tokens. It never writes what only the controllers own: the schema record, the
-leader election lease, the cluster's add-ons and the workloads that services become. Their status is the controllers' to
-set, and the dashboard waits for it.
+Secrets that hold users and tokens. It never writes the schema record, the leader election lease, the cluster's add-ons or
+the workloads that services become. It does write the status of a few of the same kinds (a deploy or retry it starts
+records its attempt in the status of the service, database, bucket or build), so the access below includes it. Everything
+else in a status is the controllers' to set, and the dashboard waits for it.
+
+What the two halves shared in one process is not shared when they are apart: the dashboard builds its own webhook dispatcher
+and cloud providers, and each process keeps its own hold-back for reports that GitHub refused, so both may call GitHub
+after it has turned reports away from the other.
 
 ## Run only the dashboard
 
@@ -151,9 +156,9 @@ where the controllers must be: on the cluster's own machines.
 Nothing the controllers need comes from the dashboard. What changes is what points at it:
 
 - **The dashboard's address.** The controllers publish the dashboard's domain, with an Ingress or a Cloudflare tunnel route
-  to the Service `geass-dashboard`. With `--dashboard=false` there is no dashboard behind that Service, so they leave
-  it alone, set the `DashboardDomainReady` condition on the platform settings to `False` with the reason
-  `DashboardElsewhere`, and send no tunnel route for it. Services' own routes are unaffected. Publish the dashboard where it
+  to the Service `geass-dashboard`. With `--dashboard=false` there is no dashboard behind that Service, so they create
+  no Ingress and send no tunnel route for it, and they do not write the `DashboardDomainReady` condition on the platform
+  settings: the dashboard verifies its own address and sets it. Services' own routes are unaffected. Publish the dashboard where it
   runs.
 - **Probes of the dashboard's URL** are not made, for the same reason.
 - **GitHub, deploy hooks and sign-in callbacks** are served by the dashboard, wherever it runs.

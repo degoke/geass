@@ -81,6 +81,9 @@ const (
 	migrationTimeout = 10 * time.Minute
 )
 
+// registeredProblemCollector is the collector addControllers last put on the metrics registry.
+var registeredProblemCollector *controller.ProblemCollector
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -476,8 +479,13 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		os.Exit(1)
 	}
 	// What is wrong, as Prometheus reads it: one series for each problem. The alert rules and Alertmanager do the rest.
+	// One collector per process: a second call to this function (a test) replaces the first.
+	if registeredProblemCollector != nil {
+		ctrlmetrics.Registry.Unregister(registeredProblemCollector)
+	}
 	problemCollector := controller.NewProblemCollector()
 	ctrlmetrics.Registry.MustRegister(problemCollector)
+	registeredProblemCollector = problemCollector
 	if err := mgr.Add(&controller.ProblemExporter{Client: mgr.GetClient(), Collector: problemCollector}); err != nil {
 		setupLog.Error(err, "Failed to add the problem exporter")
 		os.Exit(1)
@@ -631,23 +639,28 @@ type schemaGuard struct {
 
 // Start implements manager.Runnable.
 func (g *schemaGuard) Start(ctx context.Context) error {
-	ticker := time.NewTicker(g.Interval)
+	interval := g.Interval
+	if interval <= 0 {
+		interval = schemaGuardInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		// The first check is at once, not after an interval: the data may have moved since the check at the start.
+		checkCtx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
+		err := migrations.Check(checkCtx, g.Reader, platform.SystemNamespace, migrations.All)
+		cancel()
+		switch {
+		case err == nil, ctx.Err() != nil:
+		case migrations.IsTooNew(err), migrations.IsBehind(err):
+			return err
+		default:
+			setupLog.Error(err, "Could not check the schema level of the cluster's data, will try again")
+		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			checkCtx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
-			err := migrations.Check(checkCtx, g.Reader, platform.SystemNamespace, migrations.All)
-			cancel()
-			switch {
-			case err == nil:
-			case migrations.IsTooNew(err), migrations.IsBehind(err):
-				return err
-			default:
-				setupLog.Error(err, "Could not check the schema level of the cluster's data, will try again")
-			}
 		}
 	}
 }

@@ -106,9 +106,9 @@ func (e *ErrSchemaTooNew) Error() string {
 	if e.Release != "" {
 		from = " by Geass " + e.Release
 	}
-	return fmt.Sprintf("the data in this cluster is at schema level %d%s, but this operator only knows up to level %d. "+
-		"It is older than the release that last ran here, and reconciling data it may misread could damage it, so it will not start. "+
-		"Install the release that wrote it or a newer one; to go back to an older release, restore the etcd snapshot taken before the update",
+	return fmt.Sprintf("the data in this cluster is at schema level %d%s, but this release only knows up to level %d. "+
+		"It is older than the release that last ran here, and running over data it may misread could damage it, so it will not start. "+
+		"Install the release that wrote it or a newer one (the controllers and the dashboard of a cluster must be the same release); to go back to an older release, restore the etcd snapshot taken before the update",
 		e.Stored, from, e.Supported)
 }
 

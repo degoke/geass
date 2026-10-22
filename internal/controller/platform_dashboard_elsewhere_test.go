@@ -11,24 +11,35 @@ import (
 	"github.com/degoke/geass/pkg/platform"
 )
 
-// With --dashboard=false the dashboard is served from somewhere else. A cluster that then pointed an Ingress or a
-// tunnel route at its dashboard Service would send people to a Service with no pods behind it.
-func TestADashboardServedElsewhereIsNeitherPublishedNorProbed(t *testing.T) {
+// With --dashboard=false the dashboard is served from somewhere else, and it verifies its own address and sets
+// DashboardDomainReady itself. The controllers writing the condition as well would undo it on every pass, and the
+// dashboard's GitHub App and sign-in would lose their address until it verified again.
+func TestADashboardServedElsewhereKeepsItsOwnDomainCondition(t *testing.T) {
 	f := newTunnelFixture(t)
 	f.r.DashboardElsewhere = true
+	key := clientKey(platform.SystemNamespace, platform.HAReadinessName)
+	ctx := context.Background()
 
-	// Everything the dashboard-in-the-cluster path would use is in place and answering; none of it is asked.
-	result, requeue := f.r.reconcileDashboardDomain(context.Background(), &geassv1alpha1.GeassPlatformConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace},
-		Spec: geassv1alpha1.GeassPlatformConfigSpec{
-			RootDomain: "example.com", DashboardURL: "https://geass.example.com",
-		},
-	})
-	require.Equal(t, metav1.ConditionFalse, result.Status)
-	require.Equal(t, domainReasonElsewhere, result.Reason)
-	require.Contains(t, result.Message, "--dashboard=false")
-	require.Zero(t, requeue, "nothing to poll: the answer does not change until the operator is started another way")
-	require.Zero(t, f.calls.total(), "no probe of the public address and no call to Cloudflare")
+	// Nothing has verified the address: the controllers do not say it is not ready, or anything else.
+	f.reconcile(t)
+	config := &geassv1alpha1.GeassPlatformConfig{}
+	require.NoError(t, f.c.Get(ctx, key, config))
+	require.Nil(t, platform.DashboardDomainCondition(config.Status.Conditions))
+
+	// The dashboard verifies it.
+	config.Status.Conditions = platform.SetConditionForGeneration(config.Status.Conditions,
+		platform.ConditionDashboardDomainReady, metav1.ConditionTrue, "Verified", "Dashboard HTTPS endpoint is reachable", config.Generation)
+	require.NoError(t, f.c.Status().Update(ctx, config))
+	require.NoError(t, f.c.Get(ctx, key, config))
+	before := config.ResourceVersion
+	require.True(t, platform.DashboardDomainReady(*config))
+
+	f.reconcile(t)
+	f.reconcile(t)
+
+	require.NoError(t, f.c.Get(ctx, key, config))
+	require.True(t, platform.DashboardDomainReady(*config), "still verified after the controllers reconciled")
+	require.Equal(t, before, config.ResourceVersion, "the controllers wrote nothing to the platform configuration")
 }
 
 func TestTheTunnelCarriesNoRouteToADashboardThatIsElsewhere(t *testing.T) {
