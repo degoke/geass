@@ -1,16 +1,22 @@
 import { AppLink } from "@/components/AppLink";
+import { useHidden } from "@/lib/options";
 import { Button } from "@/components/geass-ui";
 import { SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { GitHubManualForm } from "@/pages/platform/GitHubManualForm";
 import { GitHubAppActions } from "@/pages/platform/GitHubAppActions";
 
 export function GitHubConnectorPanel({ info, reload, inSheet = false }) {
+  const hideDomain = useHidden("domain");
   const body = !info.hasDashboardURL ? (
         <>
-          <p className="rw-rail-body">Connect Geass to GitHub for repository deploys. Set a public host before registering the GitHub App.</p>
-          <SettingsPanel variant="flat">
-            <AppLink href="/settings/domain"><Button>Configure domain</Button></AppLink>
-          </SettingsPanel>
+          <p className="rw-rail-body">
+            Connect Geass to GitHub for repository deploys. {hideDomain ? "The GitHub App needs a public host, which is set for you." : "Set a public host before registering the GitHub App."}
+          </p>
+          {hideDomain ? null : (
+            <SettingsPanel variant="flat">
+              <AppLink href="/settings/domain"><Button>Configure domain</Button></AppLink>
+            </SettingsPanel>
+          )}
         </>
       ) : (
         <>

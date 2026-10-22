@@ -21,10 +21,10 @@ import (
 
 // terminalServer serves the whole dashboard (its authentication included) over a real socket, with a fake TTY behind
 // the terminal of the service "web".
-func terminalServer(t *testing.T) (tokenFixture, *httptest.Server) {
+func terminalServer(t *testing.T, shell consoleExecFunc) (tokenFixture, *httptest.Server) {
 	t.Helper()
 	f := newTokenFixture(t)
-	f.srv.consoleExec = (&echoShell{}).run
+	f.srv.consoleExec = shell
 	require.NoError(t, f.srv.Client.Create(context.Background(), &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: platform.SystemNamespace},
 		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: "production", Source: imageAppSource("nginx:alpine")},
@@ -43,7 +43,7 @@ func dialTerminal(server *httptest.Server, protocols ...string) (*websocket.Conn
 }
 
 func TestATerminalOpensWithATokenOfferedAsASubprotocol(t *testing.T) {
-	f, server := terminalServer(t)
+	f, server := terminalServer(t, (&echoShell{}).run)
 	token := f.workspaceToken(t, apitokens.RoleAdmin)
 
 	conn, response, err := dialTerminal(server, websocketProtocol, websocketBearerPrefix+token)
@@ -58,7 +58,7 @@ func TestATerminalOpensWithATokenOfferedAsASubprotocol(t *testing.T) {
 }
 
 func TestATerminalIsRefusedToATokenThatMayNotHaveOne(t *testing.T) {
-	f, server := terminalServer(t)
+	f, server := terminalServer(t, (&echoShell{}).run)
 	for name, token := range map[string]string{
 		"a viewer":         f.workspaceToken(t, apitokens.RoleViewer),
 		"a project token":  f.projectToken(t, "production"),
@@ -76,7 +76,7 @@ func TestATerminalIsRefusedToATokenThatMayNotHaveOne(t *testing.T) {
 }
 
 func TestATokenInASubprotocolOpensNothingButATerminal(t *testing.T) {
-	f, _ := terminalServer(t)
+	f, _ := terminalServer(t, (&echoShell{}).run)
 	token := f.workspaceToken(t, apitokens.RoleAdmin)
 
 	// The credential is read only from the upgrade of a terminal. A request that merely carries the header, or that is
@@ -100,7 +100,7 @@ func TestATokenInASubprotocolOpensNothingButATerminal(t *testing.T) {
 }
 
 func TestAnAuthorizationHeaderStillWinsOverASubprotocol(t *testing.T) {
-	f, _ := terminalServer(t)
+	f, _ := terminalServer(t, (&echoShell{}).run)
 	viewer := f.workspaceToken(t, apitokens.RoleViewer)
 	admin := f.workspaceToken(t, apitokens.RoleAdmin)
 
@@ -141,33 +141,7 @@ func TestWebsocketBearerParsing(t *testing.T) {
 
 func TestATerminalOpenedWithATokenEndsWhenTheTokenIsRevoked(t *testing.T) {
 	quickRecheck(t)
-	f := newTokenFixture(t)
-	// A shell that stops when its context does, as the real exec does.
-	f.srv.consoleExec = func(ctx context.Context, _ consoleTarget, streams consoleStreams) error {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			buf := make([]byte, 256)
-			for {
-				if _, err := streams.Stdin.Read(buf); err != nil {
-					return
-				}
-			}
-		}()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-done:
-			return nil
-		}
-	}
-	require.NoError(t, f.srv.Client.Create(context.Background(), &geassv1alpha1.GeassApp{
-		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: platform.SystemNamespace},
-		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: "production", Source: imageAppSource("nginx:alpine")},
-	}))
-	require.NoError(t, f.srv.Client.Create(context.Background(), activeConsoleSession("sess")))
-	server := httptest.NewServer(f.handler)
-	t.Cleanup(server.Close)
+	f, server := terminalServer(t, echoUntilContextEnds)
 	token := f.workspaceToken(t, apitokens.RoleAdmin)
 
 	conn, response, err := dialTerminal(server, websocketProtocol, websocketBearerPrefix+token)

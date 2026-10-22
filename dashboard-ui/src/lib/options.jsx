@@ -33,7 +33,6 @@ export function DashboardOptionsProvider({ hide, logos, onUnauthorized, children
   const value = useMemo(
     () => ({ embedded: true, hidden: new Set(hide || []), logos, onUnauthorized }),
     // The list is read by content, so a host that passes a new array on every render does not remount anything.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [Array.isArray(hide) ? hide.join(",") : "", logos, onUnauthorized],
   );
   return <OptionsContext.Provider value={value}>{children}</OptionsContext.Provider>;

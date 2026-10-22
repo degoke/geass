@@ -51,6 +51,11 @@ export interface GeassDashboardProps {
    * the credential.
    */
   getToken?: (options?: GetTokenOptions) => string | undefined | Promise<string | undefined>;
+  /**
+   * Who the requests are for (a user id, say). When it changes, what was fetched for the last person is dropped. Give it
+   * whenever one host page can sign another person in to the same cluster without a reload.
+   */
+  sessionKey?: string;
   /** Replaces `window.fetch` for every request of the dashboard, for a host that signs requests itself. */
   fetch?: typeof fetch;
   /** The `credentials` of every request. "same-origin" by default. */

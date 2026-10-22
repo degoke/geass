@@ -200,8 +200,11 @@ How it works, so that a change keeps it working:
   `data-mantine-color-scheme` the host's Mantine puts on `<html>`.
 - **What can be left out.** `hide` takes names from `HIDEABLE` (`src/lib/options.jsx`): `upgrade`, `servers`, `signin`, `domain`, `tokens`,
   `alerts`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
-  says *Not available here*. `tokens`, `alerts` and `registry` are hidden because the server answers those only to a signed-in admin, never
+  says *Not available here*. `tokens` also takes away a project's Tokens section and a service's Deploy hook, which are made with tokens. `tokens`, `alerts` and `registry` are hidden because the server answers those only to a signed-in admin, never
   to a token (`requireSessionAdmin`), so with a token they would only fail. A new page that a host cannot use belongs in that list.
+- **People.** The query cache is dropped when `apiBaseUrl` or `sessionKey` changes, so pass `sessionKey` (a user id) when one host page can sign
+  another person in to the same cluster without a reload. Menus open with a fixed position (a nested theme sets `floatingStrategy`), since the
+  dashboard's element clips what overflows it.
 - **Sizes.** The dashboard fills its element, which must have a height. Only one `GeassDashboard` can show at a time: the way requests are
   made is a setting of the page.
 

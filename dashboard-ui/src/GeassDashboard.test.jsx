@@ -116,6 +116,32 @@ describe("GeassDashboard", () => {
     expect(container.querySelector(".rw-top-avatar")).not.toBeNull();
   });
 
+  it("leaves out the Version section and adding a server on Usage when the host hides them, and shows them otherwise", async () => {
+    const release = { platform: { session: { username: "t", role: "admin", canMutate: true, platformAdmin: true }, release: { geass: "v0.1.0", k3s: "v1.31.0" } } };
+    const api = () => geassApi({ "/api/bootstrap": () => json(bootstrap(release)) });
+    const shown = mount({ fetchStub: api().fetchStub, path: "/acme/clusters/c1/cluster" });
+    await screen.findByRole("button", { name: "Add server" });
+    expect(screen.getByText("K3s (control plane)")).toBeTruthy();
+    shown.unmount();
+
+    mount({ fetchStub: api().fetchStub, path: "/acme/clusters/c1/cluster", props: { hide: ["upgrade", "servers"] } });
+    await screen.findByText("Nodes");
+    expect(screen.queryByRole("button", { name: "Add server" })).toBeNull();
+    expect(screen.queryByText("K3s (control plane)")).toBeNull();
+  });
+
+  it("leaves out a project's Tokens section when the host hides tokens, and shows it otherwise", async () => {
+    const path = "/acme/clusters/c1/projects/proj-1/settings";
+    const shown = mount({ fetchStub: geassApi().fetchStub, path });
+    await screen.findByText("Compliance");
+    expect(screen.queryByText("Tokens")).not.toBeNull();
+    shown.unmount();
+
+    mount({ fetchStub: geassApi().fetchStub, path, props: { hide: ["tokens"] } });
+    await screen.findByText("Compliance");
+    expect(screen.queryByText("Tokens")).toBeNull();
+  });
+
   it("asks the host for a new token when the API turns the token away, instead of showing a sign-in page", async () => {
     const onUnauthorized = vi.fn();
     const { fetchStub, requests } = geassApi({ "/api/bootstrap": () => json({ error: "invalid or expired API token" }, 401) });

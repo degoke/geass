@@ -35,6 +35,8 @@ let mounts = 0;
  *   A request for "/api/bootstrap" goes to `${apiBaseUrl}/api/bootstrap`.
  * - getToken: how a request signs in. Returns the API token (or a promise of it); it is sent as `Authorization: Bearer`. It is
  *   called again with `{ forceRefresh: true }` after a 401. Leave it out when the host's own proxy adds the credential.
+ * - sessionKey: who the requests are for (a user id, say). When it changes, what was fetched for the last person is dropped.
+ *   Give it whenever one host page can sign another person in to the same cluster without a reload.
  * - fetch: replaces window.fetch for every request of the dashboard, for a host that signs requests itself.
  * - credentials: the `credentials` of every request; "same-origin" by default.
  * - publicUrl: the address people are shown for the API (a deploy hook's URL); apiBaseUrl made absolute when left out.
@@ -49,6 +51,7 @@ export function GeassDashboard({
   history,
   apiBaseUrl = "",
   getToken,
+  sessionKey,
   fetch: fetchOverride,
   credentials,
   publicUrl,
@@ -63,13 +66,21 @@ export function GeassDashboard({
   const base = normalizeBasePath(basePath);
   // A router is not given another history or base path once it runs, so a new one is a new element, with its own state.
   const mounted = useMemo(() => ({ router: createDashboardRouter({ basepath: base, history }), key: ++mounts }), [base, history]);
-  // What one cluster answered is not shown for another.
-  const queryClient = useMemo(() => new QueryClient(), [apiBaseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  // What one cluster answered is not shown for another, nor what it answered for one person for the next.
+  const queryClient = useMemo(() => new QueryClient(), [apiBaseUrl, sessionKey]);
 
   // Menus, dialogs and drawers open in the dashboard's own element, where its styles reach them, and not in the host's body.
   const [root, setRoot] = useState(null);
   const theme = useMemo(
-    () => ({ components: { ...geassTheme.components, Portal: { defaultProps: { target: root } } } }),
+    () => ({
+      components: {
+        ...geassTheme.components,
+        Portal: { defaultProps: { target: root } },
+        // The element clips what overflows it, and a dropdown placed as `absolute` inside it would be cut at its edge.
+        Popover: { defaultProps: { floatingStrategy: "fixed" } },
+        Tooltip: { defaultProps: { floatingStrategy: "fixed" } },
+      },
+    }),
     [root],
   );
 

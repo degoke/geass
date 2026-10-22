@@ -202,31 +202,34 @@ func TestOnlyLongLivedPathsAreWatched(t *testing.T) {
 	}
 }
 
+// echoUntilContextEnds is a shell that upper-cases what is typed and stops when its context does, as the real exec does
+// (echoShell only looks after a read returns).
+func echoUntilContextEnds(ctx context.Context, _ consoleTarget, streams consoleStreams) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 256)
+		for {
+			n, err := streams.Stdin.Read(buf)
+			if n > 0 {
+				_, _ = streams.Stdout.Write([]byte(strings.ToUpper(string(buf[:n]))))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
+}
+
 func TestATerminalIsEndedWhenThePersonWhoOpenedItSignsOut(t *testing.T) {
 	quickRecheck(t)
-	// A shell that stops when its context does, as the real exec does (the shared fake only looks after a read returns).
-	shell := func(ctx context.Context, _ consoleTarget, streams consoleStreams) error {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			buf := make([]byte, 256)
-			for {
-				n, err := streams.Stdin.Read(buf)
-				if n > 0 {
-					_, _ = streams.Stdout.Write([]byte(strings.ToUpper(string(buf[:n]))))
-				}
-				if err != nil {
-					return
-				}
-			}
-		}()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-done:
-			return nil
-		}
-	}
+	shell := echoUntilContextEnds
 	app := &geassv1alpha1.GeassApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: platform.SystemNamespace},
 		Spec:       geassv1alpha1.GeassAppSpec{Project: testProjectName, Environment: "production", Source: imageAppSource("nginx:alpine")},
