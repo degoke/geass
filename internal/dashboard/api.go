@@ -150,6 +150,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAppRoutes(w, mutation)
 	case mutation.URL.Path == "/shared-databases/create":
 		s.handleSharedDatabaseCreate(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/shared-databases/"):
+		s.handleSharedDatabaseRoutes(w, mutation)
 	case mutation.URL.Path == "/databases/create":
 		s.handleDatabaseCreate(w, mutation)
 	case mutation.URL.Path == "/databases/restore":

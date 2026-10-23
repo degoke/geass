@@ -212,8 +212,9 @@ func (s *Server) validateLogicalDatabaseServer(ctx context.Context, project, env
 		}
 		return "", nil
 	}
-	// A server an organization owns is for that organization's projects.
-	if server.Spec.Org != "" {
+	// A server an organization owns is for that organization's projects, and while organizations are on the platform's is
+	// for the projects of none (platform.SharedServerAllows).
+	if tenancy := s.tenancyOn(ctx); server.Spec.Org != "" || tenancy {
 		var owner geassv1alpha1.GeassProject
 		if err := s.Client.Get(ctx, client.ObjectKey{Name: project, Namespace: systemNamespace}, &owner); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -221,11 +222,18 @@ func (s *Server) validateLogicalDatabaseServer(ctx context.Context, project, env
 			}
 			return "", err
 		}
-		if owner.Spec.Org != server.Spec.Org {
-			if isPlatformContext(ctx) {
-				return "That server belongs to an organization the project is not in", nil
-			}
+		switch {
+		case platform.SharedServerAllows(tenancy, server.Spec.Org, owner.Spec.Org):
+		case !isPlatformContext(ctx):
 			return "That database server does not exist", nil
+		case server.Spec.Org != "":
+			return "That server belongs to an organization the project is not in", nil
+		default:
+			// Only the platform sees its own server, so only the platform is told this. No server is made for the
+			// organization here: setting one up is the platform's decision, and what it costs is the platform's to weigh.
+			return fmt.Sprintf("That server is the platform's and the project is in the organization %s, but with organizations on %s. "+
+				"Choose a server of %s, or set one up for it with POST /api/shared-databases/create and org=%s",
+				owner.Spec.Org, platform.MessageOneOrganizationPerServer, owner.Spec.Org, owner.Spec.Org), nil
 		}
 	}
 	serverRegion := s.databasePlacement(ctx, &server).Region
