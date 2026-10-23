@@ -103,12 +103,12 @@ The operator checks that the Secrets exist. It does not check that the token is 
 
 | Dashboard | What it does |
 | --- | --- |
-| **Project Settings**, **Integrations**, **Connect to GitHub** | Starts the installation of the platform GitHub App for this project. When GitHub returns, the dashboard stores the token Secret, creates or updates the connection and sets `spec.githubConnectionRef` on the project. |
+| **Project Settings**, **GitHub**, **Connect to GitHub** | Starts the installation of the platform GitHub App for this project. When GitHub returns, the dashboard stores the token Secret, creates or updates the connection and sets `spec.githubConnectionRef` on the project. |
 | **+ Add resource**, **GitHub Repository**, **Connect GitHub** | The same flow, started from the add-resource dialog. It returns you to the repository list. |
-| **Project Settings**, **Integrations**, **Disconnect** | Clears `spec.githubConnectionRef` on the project. The connection object and its Secret stay in place. |
+| **Project Settings**, **GitHub**, **Disconnect** | Clears `spec.githubConnectionRef` on the project. The connection object and its Secret stay in place. |
 | **Project Settings**, **Danger**, **Delete Project** | Deletes the connection object. |
 
-The **Integrations** card shows **Set up GitHub** instead of **Connect to GitHub** when the platform has no GitHub App. Set that up first under **Settings**, **Connectors**. The platform needs a dashboard URL and a GitHub App before a project can connect. See [GitHub and builds](/docs/guides/github-and-builds/).
+The **GitHub** page shows **Set up GitHub** instead of **Connect to GitHub** when the platform has no GitHub App. Set that up first under **Settings**, **Connectors**. The platform needs a dashboard URL and a GitHub App before a project can connect. See [GitHub and builds](/docs/guides/github-and-builds/).
 
 Once a project is connected, **GitHub Repository** in the add-resource dialog lists the repositories that the installation can see. Choosing one creates a draft [GeassApp](/docs/reference/resources/geass-app/) whose `source.git.connectionRef.name` is this connection.
 

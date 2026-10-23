@@ -569,7 +569,7 @@ Click a service on the **Resources** tab to open its panel. The panel has the ta
 
 The **Variables** tab writes `spec.configData` (**New Variable**, **Raw Editor**), the Secret `<app>-secrets` with `spec.secretRef` (the **Secret** switch), `spec.sharedVariableRefs` (**Shared Variable**) and entries in `spec.env` (**Add Reference**, which adds `DATABASE_URL` or `REDIS_URL` from the `uri` key of a database's connection Secret, or `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_BUCKET` from the keys of a bucket's). See [Environment variables](/docs/guides/environment-variables/).
 
-The **Code** tab of a function edits `source.function.code` and `source.function.mode` (the **Mode** menu has **Server (serves HTTP)** and **Handler (gets an event)**), and under **Schedules** it edits `source.function.triggers`. **Save** records a pending change ("Code saved. Deploy to apply it."), and so does **Save schedules** ("Schedules saved. Deploy to start them."). Changing the mode does not rewrite the code.
+The **Code** tab of a function edits `source.function.code` and `source.function.mode` (the **Mode** menu has **Server (serves HTTP)** and **Handler (gets an event)**), and under **Schedules** it edits `source.function.triggers`. **Save** records a pending change ("Code saved"), and so does **Save schedules** ("Schedules saved"). Deploy to apply either. Changing the mode does not rewrite the code.
 
 The **Console** tab opens a shell in a pod and records a [GeassConsoleSession](/docs/reference/resources/geass-console-session/). The **Deployments** tab lists the [GeassDeployment](/docs/reference/resources/geass-deployment/) records and the provision attempts.
 

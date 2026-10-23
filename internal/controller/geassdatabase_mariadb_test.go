@@ -255,7 +255,7 @@ func TestMariaDBStandaloneRunsAServerAndIsReady(t *testing.T) {
 	require.EqualValues(t, 1, mdb.Spec.Replicas)
 	require.Nil(t, mdb.Spec.Replication)
 	require.Equal(t, "geass-replicated", *mdb.Spec.Storage.StorageClassName)
-	require.Equal(t, "orders-password", string(e.secret("orders-bootstrap").Data["password"]), "Geass makes the login, not the operator")
+	requireGeneratedPassword(t, "orders", string(e.secret("orders-bootstrap").Data["password"]), "Geass makes the login, not the operator")
 	require.False(t, e.exists(&mariadbv1.PhysicalBackup{}, "orders-recovery"), "a standalone server has no replica to build")
 	require.False(t, e.exists(&corev1.Secret{}, "orders-connection"), "not published before the server is ready")
 	require.Equal(t, string(metav1.ConditionFalse), e.status().ready)

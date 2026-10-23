@@ -394,8 +394,8 @@ func databaseView(db *geassv1alpha1.GeassDatabase) v1Resource {
 	if db.Spec.Placement != "" {
 		details["placement"] = string(db.Spec.Placement)
 	}
-	if db.Spec.Version != "" {
-		details["version"] = db.Spec.Version
+	if version := platform.DatabaseVersion(db); version != "" {
+		details["version"] = version
 	}
 	return v1Resource{
 		Kind: "database", Name: db.Name, DisplayName: platform.ResourceDisplayName(db.ObjectMeta),

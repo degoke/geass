@@ -78,7 +78,7 @@ In the dashboard:
 
 1. Open the project and choose **Settings**, then **Compliance**.
 2. Tick the tags. Each tag reads like `hipaa (2 nodes, compliance)`. The count is the nodes in the project's region.
-3. Choose **Save**. The dashboard shows "Compliance settings saved".
+3. Choose **Save**. The dashboard shows "Saved".
 
 Only tags that nodes in the project's region carry are listed. A tag whose nodes are not reserved is disabled, with "Mark this tag as a compliance tag on its nodes first." A tag the project already requires stays listed even when no node carries it any more, as "(no node carries it)", so you can remove it. The tags are saved on `spec.requiredTags` of the project, at most 8.
 

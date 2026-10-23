@@ -13,7 +13,7 @@ export function notify(message, tone = "neutral", options = {}) {
 }
 
 const SUCCESS_HINT =
-  /\b(saved|connected|created|removed|deleted|updated|matches|copied|requested)\b/i;
+  /\b(saved|connected|created|added|removed|deleted|updated|matches|copied|requested|deployed|enabled|paused|resumed|delivered)\b/i;
 const FAILURE_HINT = /\b(could not|failed|error|unavailable|invalid|forbidden|denied)\b/i;
 
 function isSuccessMessage(text) {
@@ -26,12 +26,9 @@ export function alertUser(message) {
   notify(text, isSuccessMessage(text) ? "success" : "error");
 }
 
-/** Confirms a template was added as drafts, and repeats its notes: they say what to do next. */
+/** Confirms a template was added. Its notes are in the dialog it was added from, where they are read before the deploy. */
 export function notifyTemplateAdded(template) {
-  const notes = template.notes ? ` ${template.notes}` : "";
-  notify(`${template.name} added as drafts. Review them, then deploy.${notes}`, "success", {
-    autoClose: template.notes ? 15000 : undefined,
-  });
+  notify(`Added ${template.name}`, "success");
 }
 
 export function alertError(message) {

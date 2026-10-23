@@ -95,6 +95,31 @@ func TestAnImageServicesHookDeploysItsPendingChanges(t *testing.T) {
 	require.Empty(t, appPendingKinds(&deployed), "nothing is pending once it is deployed")
 }
 
+// The history of a service says what started each deploy. A hook's deploy said "Dashboard", twice, where nobody had been.
+func TestADeployMadeByAHookIsRecordedAsTheHooksAndNotTheDashboards(t *testing.T) {
+	f := newHookFixture(t)
+	token := f.make(t, "draft-prod")
+
+	require.Equal(t, http.StatusOK, f.call(token).Code)
+
+	var history geassv1alpha1.GeassDeploymentList
+	require.NoError(t, f.srv.Client.List(context.Background(), &history, client.InNamespace(platform.SystemNamespace), client.MatchingLabels{platform.LabelApp: "draft-prod"}))
+	require.Len(t, history.Items, 1)
+	require.Equal(t, "Deploy hook", history.Items[0].Spec.Source)
+	require.Equal(t, "hook for draft-prod", history.Items[0].Spec.Actor, "the hook's name says which one")
+}
+
+func TestADeployWithNothingToSayOtherwiseIsTheDashboards(t *testing.T) {
+	source, actor := deployOriginOf(context.Background())
+	require.Equal(t, "Dashboard", source)
+	require.Equal(t, "Dashboard", actor)
+
+	ctx := context.WithValue(context.Background(), apiTokenContextKey{}, &apitokens.Record{Name: "ci"})
+	source, actor = deployOriginOf(ctx)
+	require.Equal(t, "API token", source, "a deploy made with a token says so")
+	require.Equal(t, "ci", actor)
+}
+
 func TestAHookDeploysItsServiceAndNothingElse(t *testing.T) {
 	f := newHookFixture(t)
 	token := f.make(t, "api-prod")

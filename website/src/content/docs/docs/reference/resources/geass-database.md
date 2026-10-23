@@ -331,9 +331,9 @@ The `Ready` messages you can see, in the order Geass checks them:
 
 | Where | What it does to the `GeassDatabase` |
 | --- | --- |
-| **+ Add resource** > **Database** > **PostgreSQL**, **MySQL**, **MariaDB**, **Redis** or **SQLite** | Creates a draft with a generated name such as `falling-mist`. It sets `project`, `environment`, `engine`, `placement: InCluster`, `resources` (250m and 512Mi, or 100m and 128Mi for SQLite), `storageSize` (`10Gi`, or `1Gi` for SQLite, none for Redis) and, for Postgres, MySQL and SQLite, `backup: {enabled: true, retentionDays: 7}`. A `runOn` choice is saved only by a dashboard admin. |
-| **+ Add resource** > **Database** > **PlanetScale** or **AWS RDS** | Creates a draft with `placement: External`, `provider`, `connectionRef` and an `engine` (`MySQL` for PlanetScale, `Postgres` for AWS RDS). See the caution under [External databases](#external-databases). |
-| **+ Add resource** > **Database** > **Logical database**, or the entry for a shared server (shown as `<name> (shared)`) | Creates a [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/), not a `GeassDatabase`. |
+| **+ Add resource** > **Database** > **Database server** > **PostgreSQL**, **MySQL**, **MariaDB**, **Redis** or **SQLite** | Creates a draft with a generated name such as `falling-mist`. It sets `project`, `environment`, `engine`, `placement: InCluster`, `resources` (250m and 512Mi, or 100m and 128Mi for SQLite), `storageSize` (`10Gi`, or `1Gi` for SQLite, none for Redis) and, for Postgres, MySQL and SQLite, `backup: {enabled: true, retentionDays: 7}`. A `runOn` choice is saved only by a dashboard admin. |
+| **+ Add resource** > **Database** > **Database server** > **PlanetScale** or **AWS RDS** | Creates a draft with `placement: External`, `provider`, `connectionRef` and an `engine` (`MySQL` for PlanetScale, `Postgres` for AWS RDS). See the caution under [External databases](#external-databases). |
+| **+ Add resource** > **Database** > **Logical database** > a server | Creates a [GeassLogicalDatabase](/docs/reference/resources/geass-logical-database/), not a `GeassDatabase`. |
 | Resource panel, **Settings** tab, **Database** section | **Version** writes `spec.version`. **Resources** writes `spec.resources` (the sizes are 0.1, 0.25, 0.5, 1 or 2 CPU and 128 MB to 4 GB). **Size** under **Storage** writes `spec.storageSize`. These wait for a deploy. |
 | **Settings** tab, **Scale** section, **Run on** | Writes `spec.runOn.tags`. It is only editable before the first deploy. After that the dashboard refuses with `A database keeps its data on the nodes it was first deployed to, so which nodes it runs on cannot change after that`. |
 | **Settings** tab, **Backups** section (also the **Backups** tab) | **Back up this database** and **Keep backups for** write `spec.backup`. They apply at once. |
@@ -374,7 +374,7 @@ Once the database is ready, Geass writes a Secret named `<name>-connection` in t
 The login is `app`. Geass first writes the credentials to a Secret named `<name>-bootstrap` and the connection Secret copies them.
 
 :::caution
-Geass derives the generated password from the resource name: it is `<name>-password`. For MySQL the root password is the same value. The password is not random, so do not count on it being secret. Rely on [network isolation](/docs/guides/network-isolation/) and keep the database off the public internet.
+Geass makes the generated password at random, once, when it makes the database: 48 hexadecimal characters, kept in the `<name>-bootstrap` Secret. For MySQL the root password is the same value. A database made by an earlier release keeps the password it was started with, which is `<name>-password`, and it is not secret: rely on [network isolation](/docs/guides/network-isolation/) for it and keep it off the public internet. A database restored from a physical backup of MariaDB (a copy of the server's files) takes the password of the database the backup came from, because the copy holds that server's logins; Geass keeps that password with the backup.
 :::
 
 ## Backups

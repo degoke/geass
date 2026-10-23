@@ -735,7 +735,7 @@ func TestARestoredMariaDBGetsThePasswordTheCopyCarries(t *testing.T) {
 	require.NoError(t, env.r.reconcileBootstrapSecret(ctx, env.db, env.wsNS))
 
 	require.Equal(t, "books", env.db.Annotations[annotationCredentialsOrigin], "the original's name, when the archive says nothing else")
-	require.Equal(t, "books-password", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]), "not orders-password, which the copy does not hold")
+	require.Equal(t, "books-password", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]), "an archive from before passwords were random says nothing, and the copy holds a password derived from its name, not the new database's")
 	require.Equal(t, "books", env.reload().Annotations[annotationCredentialsOrigin], "kept on the database, for the rest of its life")
 
 	// What the archive says wins, so a restore of a restore is given what the copy it came from carries.
@@ -880,7 +880,7 @@ func TestARestoredMariaDBsSecretIsCorrectedUntilTheServerExists(t *testing.T) {
 	source.Spec.Database = "books"
 	env := mariaRestoreEnv(t, source, geassv1alpha1.GeassDatabaseRestoreSpec{}, true)
 	require.NoError(t, env.r.reconcileBootstrapSecret(ctx, env.db, env.wsNS)) // made first, with the database's own password
-	require.Equal(t, testDBName+"-password", string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]))
+	requireGeneratedPassword(t, testDBName, string(env.secret(env.wsNS, testDBName+"-bootstrap").Data["password"]), "")
 	require.NoError(t, env.r.inheritMariaDBCredentials(ctx, env.db))
 	// The test environment starts with a MariaDB in the cluster; the one the restore makes does not exist yet.
 	require.NoError(t, env.client.Delete(ctx, &mariadbv1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: testDBName, Namespace: env.wsNS}}))

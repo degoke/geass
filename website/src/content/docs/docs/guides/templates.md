@@ -73,7 +73,7 @@ Starter examples, such as a database with a web UI or a function with a database
    `production` environment first. If the project has more than one environment, choose the **Environment**.
 3. Choose **Add to project**.
 
-Geass opens the project and shows a toast: "*Template* added as drafts. Review them, then deploy." The new resources
+Geass opens the project and shows a toast, "Added *template*". The new resources
 are drafts with a **New** badge. Open them to check or change settings, then choose **Deploy changes** in the top bar.
 See [Projects and environments](/docs/guides/projects-and-environments/#pending-changes-and-deploy-changes).
 

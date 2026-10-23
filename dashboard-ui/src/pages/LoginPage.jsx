@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Loader, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Button, Loader, PasswordInput, Stack, TextInput, Title } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { action, api } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertError } from "@/lib/notify";
 import { rememberedSSO, rememberSSO, shouldAutoRedirect, ssoErrorMessage, ssoLoginURL } from "@/lib/sso";
 import { LoginPanel } from "@/components/geass-ui";
 
@@ -52,7 +52,6 @@ export function LoginPage({ onSuccess }) {
       <LoginPanel>
         <Stack gap="xs" align="center" ta="center">
           <Title order={2}>Sign in</Title>
-          <Text size="sm" c="dimmed">Use your dashboard username and password.</Text>
         </Stack>
         <PasswordForm onSuccess={onSuccess} />
       </LoginPanel>
@@ -62,7 +61,6 @@ export function LoginPage({ onSuccess }) {
     <LoginPanel>
       <Stack gap="xs" align="center" ta="center">
         <Title order={2}>Sign in</Title>
-        <Text size="sm" c="dimmed">Your organization manages who can sign in.</Text>
       </Stack>
       <Stack>
         {failure ? <Alert color="red" variant="light">{ssoErrorMessage(failure)}</Alert> : null}
@@ -94,7 +92,7 @@ function PasswordForm({ onSuccess }) {
   const submit = (event) => {
     event.preventDefault();
     setPending(true);
-    action("/login", { username, password }).then(() => onSuccess()).catch((error) => alertUser(error.message)).finally(() => setPending(false));
+    action("/login", { username, password }).then(() => onSuccess()).catch((error) => alertError(error.message)).finally(() => setPending(false));
   };
   return (
     <form onSubmit={submit}>

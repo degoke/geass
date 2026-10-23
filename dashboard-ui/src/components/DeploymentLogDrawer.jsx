@@ -87,7 +87,6 @@ export function DeploymentLogDrawer({ kind, name, data, deploymentId, onClose })
       {row.resolvedErrors?.length ? (
         <div className="rw-deployment-details-block">
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Resolved during deploy</Text>
-          <Muted size="xs">These cleared on their own and the deploy succeeded.</Muted>
           <ul className="rw-deployment-resolved-list">
             {row.resolvedErrors.map((message, index) => (
               <li key={`${index}-${message}`}><Muted size="sm">{message}</Muted></li>
@@ -102,7 +101,7 @@ export function DeploymentLogDrawer({ kind, name, data, deploymentId, onClose })
         </div>
       ) : null}
       {row.legacy ? (
-        <Muted size="xs">Limited history — deploy or retry again for full logs on future runs.</Muted>
+        <Muted size="xs">Limited history</Muted>
       ) : null}
     </div>
   ) : null;
@@ -114,19 +113,17 @@ export function DeploymentLogDrawer({ kind, name, data, deploymentId, onClose })
         return (
           <>
             {detailsBody}
-            <CodePanel code={filterLines(provision.lines)} language="bash" empty="No provision log for this deployment." />
+            <CodePanel code={filterLines(provision.lines)} language="bash" empty="No provision log." />
           </>
         );
       }
       return detailsBody;
     }
     if (logTab === "network") {
-      return <Muted size="sm">Network logs are not available for this deployment yet.</Muted>;
+      return <Muted size="sm">Network logs are not available yet.</Muted>;
     }
     const section = bySection[logTab];
-    const emptyCopy = logTab === "build"
-      ? "No build logs for this deployment. Git-based services record Kaniko output here after a build runs."
-      : "No deploy logs for this deployment. Live pod output appears here for the active app deploy.";
+    const emptyCopy = logTab === "build" ? "No build logs." : "No deploy logs.";
     return (
       <CodePanel
         code={filterLines(section?.lines) || (logs.isFetching ? "Loading logs…" : "")}

@@ -241,7 +241,47 @@ The first public release, open source under the Apache License 2.0.
   `purposes` keep their old meaning. `GeassCluster` gains `spec.network.controlPlaneFirewall`, `GeassNode` gains
   `spec.pool`, `spec.storage` and `spec.cloud`, and there is a new `GeassNodePool` resource.
 - The capacity check lets a workload in when an autoscaling pool could make room for it, and refuses it, as before,
-  when the pool is at its maximum.
+  when the pool is at its maximum. The dashboard, the command line and the API ask the same question the operator does,
+  so a full cluster with a pool that can grow no longer refuses what the pool would have made room for.
+- Removing a server. The **Remove server** dialog lists the data that is on that server and nowhere else (a database
+  whose only copy is there, a replica of one that has other copies, a volume with one copy). An instance of a highly
+  available Postgres database whose volume was on a server that is no longer in the cluster is replaced after three
+  minutes, where it waited fifteen for the lost-node limit and about twenty-four in all. The operator hears of a Postgres
+  instance's pod that is made, removed or cannot be placed, so that look is made at once and not at the next regular one.
+- Postgres backups. A base backup is listed as a restore point only when every log file it needs is in the bucket, and
+  a restore is pinned to one that holds (a new backup is trusted for seven minutes, which a quiet database needs to archive
+  its last log file, and looked at every minute until it is checked). A first backup that came before the database could
+  save its log files says so and is taken again once a log file has reached the bucket, up to three times, and a restore that cannot start says
+  what the restore reported instead of staying on "Restoring database from backup". The jobs that dump and load MySQL,
+  MariaDB and SQLite databases wait until the server accepts a connection, which they did not on K3s: the first
+  connection from a new pod is refused for a moment, so the first backup and the final backup on delete failed.
+- A database shows the version it runs. Every database carried a version field that started as a Postgres version, so
+  Redis showed 16; MySQL, MariaDB, Redis and SQLite now show the version Geass runs, and only a Postgres database has a
+  **Version** setting.
+- A service whose image cannot be pulled says which image, and a service or database that is given up on keeps saying
+  why it cannot start instead of "Provisioning failed after repeated errors". A service hears of a pod that cannot start
+  when it happens. A database whose volume Longhorn has no disk for says so and what to do, and does not count that
+  as a failure.
+- The dashboard says less. Intro paragraphs, hints that repeat a label, footnotes and toasts that give instructions are gone
+  from every page, and the notes on the catalog templates are shorter. A success toast reads "Saved" or "Added gatus".
+- Settings, Connectors is grouped by what each connects: **Code and domains** (GitHub, Cloudflare), **Server clouds** (the
+  connections that create servers, which belong to the cluster) and **Storage and databases** (AWS and PlanetScale, each
+  saved for one project or an organization). A project's connections are listed, with Verify, Edit and Remove, in the AWS
+  and PlanetScale drawers. A connection is shown as for Servers, Buckets or Databases, and its project by name.
+  The project's **Integrations** page is now **GitHub**: it held only the project's link to GitHub and a pointer to
+  Connectors.
+- The alert channel and mail server forms open in the side drawer, like the other settings forms.
+- Adding a database asks first whether it is a **Database server** or a **Logical database**. The servers a database
+  can go on, the project's own and the shared ones, are listed together instead of below the engines.
+- The projects allowed to reach a project are shown by name, not by id.
+- `GET /api/v1/connections` says which organization a connection belongs to (`org`), and the AWS and PlanetScale drawers list the
+  connections of that provider that hold buckets or databases, including a cluster one that also creates servers.
+- The first etcd copy is looked for every minute for the first quarter of an hour, so the **Usage** panel stops saying
+  "Waiting for the first copy" soon after the installer has taken it.
+- A deploy made by a deploy hook is recorded as the hook's, and one made with an API token as the token's, where both
+  said "Dashboard". `kubectl get geassbackuparchive` shows **Delete after** as the time, where it showed `<invalid>`.
+  The cloud connection form has one default region box. A failed restore shows the cluster's reason in the dialog.
+  `geass rollback` says that only the image and the number of copies go back: variables and other settings stay.
 - Nodes that hold no data are not counted by high availability readiness, are never used for volume replicas
   (Longhorn is told not to schedule on them), and DNS never points at a node of a pool.
 - The operator's pod cache keeps the volumes that hold data on a node (claims, host paths and on-disk `emptyDir`s), which
@@ -257,6 +297,10 @@ The first public release, open source under the Apache License 2.0.
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+- The password of an in-cluster database that Geass makes is random (it was the resource name and `-password`). A
+  database that already exists keeps the password it has, because everything that connects to it would have to change
+  with it. The backup folder's `geass-archive.json` of a highly available MariaDB database holds the password of the
+  server its physical copies came from, which a restored copy needs and which the copies hold anyway.
 - A project's environment namespace that already exists is used only if it is that project's: a project no longer takes
   over another project's namespace, or one Geass did not create, and deleting a project or an environment deletes only
   namespaces that are its own.

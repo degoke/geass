@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { action, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
 import { Button, Checkbox } from "@/components/geass-ui";
 import { SettingsFormActions } from "@/layout/SettingsShell";
@@ -30,17 +30,15 @@ export function ProjectCompliance({ project, data, mutable, reload }) {
     event.preventDefault();
     setBusy(true);
     action(`/projects/${name}/compliance`, { requiredTags: selected.join(",") })
-      .then(() => { reload(); alertUser("Compliance settings saved"); })
-      .catch((error) => alertUser(error.message))
+      .then(() => { reload(); alertUser("Saved"); })
+      .catch((error) => alertError(error.message))
       .finally(() => setBusy(false));
   };
 
   return (
     <form className="rw-rail-form" onSubmit={save}>
       <p className="rw-rail-body">
-        Choose the node tags this project requires. Everything it runs stays on nodes that carry all of them,
-        and those nodes accept nothing else. Services roll onto the nodes at once; databases keep their data
-        where it is, so a project that already has databases has to restore them into new ones first.
+        Nodes with these tags take no other project&apos;s work. Existing databases must be restored into new ones.
       </p>
       {candidates.length || missing.length ? (
         <div className="rw-rail-stack">
@@ -48,7 +46,7 @@ export function ProjectCompliance({ project, data, mutable, reload }) {
             <Checkbox
               key={tag.name}
               label={`${tag.name} (${tag.nodes} ${tag.nodes === 1 ? "node" : "nodes"}${tag.compliance ? ", compliance" : tag.reserved ? ", reserved" : ""})`}
-              description={tag.reserved || tag.compliance ? undefined : "Mark this tag as a compliance tag on its nodes first."}
+              description={tag.reserved || tag.compliance ? undefined : "Not a compliance tag yet."}
               checked={selected.includes(tag.name)}
               disabled={!mutable || (!tag.reserved && !tag.compliance && !selected.includes(tag.name))}
               onChange={(event) => toggle(tag.name, event.currentTarget.checked)}
@@ -66,13 +64,11 @@ export function ProjectCompliance({ project, data, mutable, reload }) {
         </div>
       ) : (
         <p className="rw-rail-hint">
-          No node in {region ? `the ${region} region` : "the cluster"} has a tag yet. Add a compliance tag to a node on the
-          Usage page first.
+          No node in {region ? `the ${region} region` : "the cluster"} has a tag yet.
         </p>
       )}
       <p className="rw-rail-hint">
-        Log history is not kept for projects that require tags, so their logs never leave the nodes they run on.
-        Live logs still work.
+        Log history is not kept, so logs never leave the nodes.
       </p>
       <SettingsFormActions>
         <Button type="submit" disabled={!mutable || busy || !changed}>Save</Button>

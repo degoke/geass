@@ -60,7 +60,7 @@ This is the workflow you meet first.
 - A new resource is a **draft**. It exists in Geass and nothing runs.
 - Changes to a resource are held as **pending**: they are saved, but the running resource does not change. The top bar shows `N pending`, and its list names what changed in each resource. N counts saved changes, not resources: creating a draft counts one, and each variable you save adds another.
 - **Deploy changes** applies every pending change in the current environment at once. After it, the top bar reads **Up to date**.
-- Some settings are **live**: a replica count, autoscaling, sleep when idle, a domain, HTTPS and metrics apply the moment you save them, because they do not replace the running container. The settings page marks them **Applies instantly**, and the dashboard says `Saved. Applied now` or `Saved. Deploy to apply them`.
+- Some settings are **live**: a replica count, autoscaling, sleep when idle, a domain, HTTPS and metrics apply the moment you save them, because they do not replace the running container. The settings page marks them **Applies instantly**, and the dashboard says `Saved and applied`, or `Saved` when the change waits for a deploy.
 
 A resource that fails to deploy shows **Failed** and waits for **Retry**. See [Deploy your first app](/docs/getting-started/first-app/) for a walk through, and [Projects and environments](/docs/guides/projects-and-environments/#pending-changes-and-deploy-changes).
 
@@ -89,7 +89,7 @@ See [Scaling and placement](/docs/guides/scaling-and-placement/) and [Compliance
 
 ## Connections and connectors
 
-Geass can use accounts you already have. **Settings → Connectors** shows four cards, and a list of **Cloud connections** below them:
+Geass can use accounts you already have. **Settings → Connectors** has three parts: **Code and domains** (GitHub and Cloudflare), **Server clouds**, and **Storage and databases** (AWS and PlanetScale):
 
 | Connector | Used for | Scope |
 | --- | --- | --- |

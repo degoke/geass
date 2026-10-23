@@ -1298,10 +1298,12 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 	if app.Spec.Source.Function != nil {
 		changeTitle = "Deploy function (" + app.Spec.Source.Function.Runtime + ")"
 	}
-	source := "Dashboard"
+	source, actor := deployOriginOf(ctx)
 	if app.Spec.Source.Git != nil {
 		changeTitle = "Deploy " + app.Spec.Source.Git.Repository + "@" + app.Spec.Source.Git.Branch
-		source = "GitHub"
+		if source == deployOriginDashboard {
+			source = "GitHub"
+		}
 	}
 	deployment := &geassv1alpha1.GeassDeployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1318,7 +1320,7 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 			App: app.Name, Project: app.Spec.Project,
 			Environment: app.Spec.Environment,
 			Image:       image, ImageDigest: app.Status.ResolvedImage, Replicas: app.Spec.Replicas,
-			ChangeTitle: changeTitle, Source: source, Actor: "Dashboard",
+			ChangeTitle: changeTitle, Source: source, Actor: actor,
 		},
 	}
 	if err := s.Client.Create(ctx, deployment); err != nil {

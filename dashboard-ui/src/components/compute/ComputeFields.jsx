@@ -44,10 +44,10 @@ export function SizePicker({ label = "Size", value, onChange, query, connection,
 
   let note = null;
   if (quiet) note = null;
-  else if (!connection) note = "Choose a connection to see the sizes its cloud offers. You can also type a size.";
-  else if (query?.isPending && query?.fetchStatus !== "idle") note = "Asking the cloud for its sizes…";
-  else if (query?.isError) note = `${sentence(query.error?.message || "The cloud did not list its sizes")} You can still type a size.`;
-  else if (!sizes.length && connection) note = "The cloud listed no sizes for this region. You can still type one.";
+  else if (!connection) note = "Choose a connection to see its sizes.";
+  else if (query?.isPending && query?.fetchStatus !== "idle") note = "Loading sizes…";
+  else if (query?.isError) note = sentence(query.error?.message || "The cloud did not list its sizes");
+  else if (!sizes.length && connection) note = "No sizes listed for this region.";
 
   return (
     <Field label={<>{label}{required ? <Required /> : null}</>} description={hint}>
@@ -88,9 +88,9 @@ export function SizePicker({ label = "Size", value, onChange, query, connection,
               </button>
             ))}
             {matches.length > shown.length ? (
-              <p className="cp-size-note">{matches.length - shown.length} more sizes. Type to narrow the list.</p>
+              <p className="cp-size-note">{matches.length - shown.length} more sizes. Type to narrow.</p>
             ) : null}
-            {!matches.length ? <p className="cp-size-note">No listed size matches "{value}". Geass will try it as typed.</p> : null}
+            {!matches.length ? <p className="cp-size-note">No listed size matches "{value}". Used as typed.</p> : null}
           </div>
         </div>
       ) : null}
@@ -172,10 +172,7 @@ export function ProviderSettingsFields({ descriptor, values, rows, onValues, onR
         </Field>
       ))}
       {descriptor.freeSettings ? (
-        <Field
-          label={<>Settings<Optional /></>}
-          description={`${descriptor.label} passes these on, as named, to the service that creates the machines.`}
-        >
+        <Field label={<>Settings<Optional /></>}>
           <div className="cp-rows">
             {rows.map((row, index) => (
               <div className="cp-repeat is-pair" key={index}>
@@ -226,11 +223,11 @@ export function PlacementFields({ region, zone, tags, reserved, onChange, disabl
         <Field label={<>Region<Optional /></>} description="Projects pinned to a region only run on nodes in it.">
           <Input value={region} onChange={(event) => onChange({ region: event.currentTarget.value })} placeholder="eu" autoComplete="off" disabled={disabled} aria-label="Placement region" />
         </Field>
-        <Field label={<>Site<Optional /></>} description="The provider or site inside the region.">
+        <Field label={<>Site<Optional /></>}>
           <Input value={zone} onChange={(event) => onChange({ zone: event.currentTarget.value })} placeholder="a name for this site" autoComplete="off" disabled={disabled} aria-label="Placement site" />
         </Field>
       </div>
-      <Field label={<>Tags<Optional /></>} description="What the nodes are for, separated by commas: compute, gpu.">
+      <Field label={<>Tags<Optional /></>} description="Separate with commas.">
         <Input value={tags} onChange={(event) => onChange({ tags: event.currentTarget.value })} placeholder="compute" autoComplete="off" disabled={disabled} aria-label="Node tags" />
       </Field>
       {names.length ? (
@@ -247,7 +244,7 @@ export function PlacementFields({ region, zone, tags, reserved, onChange, disabl
               }}
             />
           ))}
-          <p className="cp-check-hint">A reserved node only runs workloads that ask for that tag. Everything else stays off it.</p>
+          <p className="cp-check-hint">Reserved nodes run only workloads that ask for the tag.</p>
         </div>
       ) : null}
     </>

@@ -13,7 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilptr "k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
@@ -35,6 +37,9 @@ import (
 //     volume is as lost as the machine, and CloudNativePG builds a new instance from the primary on another machine;
 //   - the same goes for an instance on a machine that is up, when its volume has lost its only copy (the disk was replaced,
 //     or was lost with a control plane server that was rebuilt) and the instance has not been able to start for as long;
+//   - and for an instance whose volume can only be used from a machine that has been removed from the cluster, which is
+//     what removing a server leaves behind. Nothing waits for that machine to come back, so it takes strandedVolumeAfter,
+//     not the lost node limit;
 //   - and an instance is never replaced unless the primary is up. While it is not, the data is still to be found on the
 //     machines that are away, and nothing here makes that worse.
 //
@@ -57,11 +62,18 @@ const (
 	// lostNodeIdleRecheck is how often a cluster with a lost node looks again when the last pass had nothing to do: a node that
 	// is never removed must not keep the whole cluster reconciler busy.
 	lostNodeIdleRecheck = 5 * time.Minute
+	// strandedVolumeAfter is how long an instance whose volume can only be used from a machine that was removed from the
+	// cluster is left to start before it is replaced. A machine that is removed is not coming back as a reboot does, so this
+	// is not the lost node limit; it only has to be longer than a machine that is taken out and put in again, whose volumes
+	// are reachable once it is back.
+	strandedVolumeAfter = 3 * time.Minute
 
-	cnpgClusterLabel  = "cnpg.io/cluster"
-	cnpgInstanceLabel = "cnpg.io/instanceName"
+	cnpgClusterLabel  = platform.CNPGLabelCluster
+	cnpgInstanceLabel = platform.CNPGLabelInstance
 	// cnpgJobRoleLabel is on the pods of CloudNativePG's jobs (initdb, join), which belong to a Job and not to the database.
 	cnpgJobRoleLabel = "cnpg.io/jobRole"
+	// cnpgFullRecoveryRole is the job that rebuilds a restored database from its backup.
+	cnpgFullRecoveryRole = "full-recovery"
 
 	// Longhorn's setting for pods on a node that is down.
 	longhornNodeDownPolicySetting = "node-down-pod-deletion-policy"
@@ -197,7 +209,8 @@ func (r *GeassClusterReconciler) reconcileLostNodes(ctx context.Context, cluster
 		return volumeReplicaRetryAfter
 	}
 	lost, wait := lostNodesOf(nodes.Items, r.lostNodeNow(), after)
-	watching, acted := r.recoverPostgres(ctx, lost, after)
+	watching, acted, instanceWait := r.recoverPostgres(ctx, lost, after)
+	wait = shortestRequeue(wait, instanceWait)
 	if len(lost) > 0 && r.recoverServersOnLostNodes(ctx, lost) {
 		acted = true
 	}
@@ -211,16 +224,16 @@ func (r *GeassClusterReconciler) reconcileLostNodes(ctx context.Context, cluster
 	return wait
 }
 
-// recoverPostgres looks at the Postgres databases Geass runs, and says whether any of them is short of instances, and whether
-// it did anything.
-func (r *GeassClusterReconciler) recoverPostgres(ctx context.Context, lost map[string]bool, after time.Duration) (watching, acted bool) {
+// recoverPostgres looks at the Postgres databases Geass runs, and says whether any of them is short of instances, whether
+// it did anything, and how long until an instance that cannot start yet could be replaced.
+func (r *GeassClusterReconciler) recoverPostgres(ctx context.Context, lost map[string]bool, after time.Duration) (watching, acted bool, wait time.Duration) {
 	log := logf.FromContext(ctx)
 	var clusters cnpgv1.ClusterList
 	if err := r.List(ctx, &clusters, client.MatchingLabels{platform.LabelManagedBy: platform.ManagedByValue}); err != nil {
 		if !meta.IsNoMatchError(err) {
 			log.Error(err, "Failed to list Postgres clusters")
 		}
-		return false, false
+		return false, false, 0
 	}
 	for i := range clusters.Items {
 		pg := &clusters.Items[i]
@@ -228,21 +241,21 @@ func (r *GeassClusterReconciler) recoverPostgres(ctx context.Context, lost map[s
 			continue
 		}
 		watching = watching || pg.Status.ReadyInstances < pg.Spec.Instances
-		if r.recoverPostgresDatabase(ctx, pg, lost, after) {
-			acted = true
-		}
+		databaseActed, databaseWait := r.recoverPostgresDatabase(ctx, pg, lost, after)
+		acted = acted || databaseActed
+		wait = shortestRequeue(wait, databaseWait)
 	}
-	return watching, acted
+	return watching, acted, wait
 }
 
 // recoverPostgresDatabase looks at the instances of one Postgres database that cannot run where they are, and says whether it
-// removed anything.
-func (r *GeassClusterReconciler) recoverPostgresDatabase(ctx context.Context, pg *cnpgv1.Cluster, lost map[string]bool, after time.Duration) (acted bool) {
+// removed anything, and how long until the first instance that cannot start yet could be replaced.
+func (r *GeassClusterReconciler) recoverPostgresDatabase(ctx context.Context, pg *cnpgv1.Cluster, lost map[string]bool, after time.Duration) (acted bool, wait time.Duration) {
 	log := logf.FromContext(ctx)
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(pg.Namespace), client.MatchingLabels{cnpgClusterLabel: pg.Name}); err != nil {
 		log.Error(err, "Failed to list the pods of a Postgres database", "database", pg.Name)
-		return false
+		return false, 0
 	}
 	// An instance that was replaced can be made again, by CloudNativePG, for the volume that was being removed. It has no
 	// volume to start with, and would wait for one for ever.
@@ -268,12 +281,12 @@ func (r *GeassClusterReconciler) recoverPostgresDatabase(ctx context.Context, pg
 				acted = true
 			}
 		case replicated && primaryUp && pod.Name != primary && isInstancePod(pod):
-			if r.replaceIfVolumeLost(ctx, pg, pod, after) {
-				acted = true
-			}
+			replaced, again := r.replaceIfVolumeLost(ctx, pg, pod, after)
+			acted = acted || replaced
+			wait = shortestRequeue(wait, again)
 		}
 	}
-	return acted
+	return acted, wait
 }
 
 // isInstancePod says that a pod of a Postgres database is one of its instances, and not a pod of one of CloudNativePG's jobs
@@ -315,24 +328,29 @@ func (r *GeassClusterReconciler) instanceClaims(ctx context.Context, pg *cnpgv1.
 	return claims.Items, nil
 }
 
-// replaceIfVolumeLost replaces an instance that has lost its volume (see hasLostItsVolume).
-func (r *GeassClusterReconciler) replaceIfVolumeLost(ctx context.Context, pg *cnpgv1.Cluster, pod *corev1.Pod, after time.Duration) bool {
-	if !r.hasLostItsVolume(ctx, pg, pod, after) {
-		return false
+// replaceIfVolumeLost replaces an instance that has lost its volume (see hasLostItsVolume). The second result is how long
+// until an instance that is not there yet could be.
+func (r *GeassClusterReconciler) replaceIfVolumeLost(ctx context.Context, pg *cnpgv1.Cluster, pod *corev1.Pod, after time.Duration) (bool, time.Duration) {
+	lost, again := r.hasLostItsVolume(ctx, pg, pod, after)
+	if !lost {
+		return false, again
 	}
 	claims, err := r.instanceClaims(ctx, pg, pod.Name)
 	if err != nil || len(claims) == 0 {
-		return false
+		return false, 0
 	}
-	return r.replacePostgresInstance(ctx, pg, pod, claims, "Replaced a Postgres instance whose volume has lost its only copy")
+	return r.replacePostgresInstance(ctx, pg, pod, claims, "Replaced a Postgres instance whose volume is gone"), 0
 }
 
-// hasLostItsVolume says whether an instance cannot start because Longhorn has no copy of its volume left, and has not been
-// able to for as long as a lost node is waited for. A volume that Longhorn can still bring back, say a node that is
-// restarting, is not faulted for that long.
-func (r *GeassClusterReconciler) hasLostItsVolume(ctx context.Context, pg *cnpgv1.Cluster, pod *corev1.Pod, after time.Duration) bool {
+// hasLostItsVolume says whether an instance cannot start because its volume is gone: Longhorn has no copy of it left, or
+// the only machine it could be used from has been removed from the cluster. It has to have been unable to start for a
+// while first: for as long as a lost node is waited for when the volume is faulted (Longhorn can still bring back a
+// volume on a node that is restarting), and for strandedVolumeAfter when its machine is not in the cluster at all. When
+// it has not been long enough, the second result is how long until it has, so that a pass is made then and not at the
+// next regular one.
+func (r *GeassClusterReconciler) hasLostItsVolume(ctx context.Context, pg *cnpgv1.Cluster, pod *corev1.Pod, after time.Duration) (bool, time.Duration) {
 	if !pod.DeletionTimestamp.IsZero() || podConditionsReady(*pod) {
-		return false
+		return false, 0
 	}
 	since := pod.CreationTimestamp.Time
 	for _, condition := range pod.Status.Conditions {
@@ -340,19 +358,52 @@ func (r *GeassClusterReconciler) hasLostItsVolume(ctx context.Context, pg *cnpgv
 			since = condition.LastTransitionTime.Time
 		}
 	}
-	if r.lostNodeNow().Sub(since) < after {
-		return false
+	stuck := r.lostNodeNow().Sub(since)
+	if soonest := min(after, strandedVolumeAfter); stuck < soonest {
+		return false, soonest - stuck + time.Second
 	}
 	claims, err := r.instanceClaims(ctx, pg, pod.Name)
 	if err != nil {
-		return false
+		return false, 0
+	}
+	for i := range claims {
+		if r.volumeStranded(ctx, &claims[i]) {
+			return true, 0
+		}
+	}
+	if stuck < after {
+		return false, after - stuck + time.Second
 	}
 	for i := range claims {
 		if r.volumeFaulted(ctx, &claims[i]) {
-			return true
+			return true, 0
 		}
 	}
-	return false
+	return false, 0
+}
+
+// volumeStranded says whether a claim's volume can only be used from machines that are not in the cluster any more. This is
+// what removing a server leaves behind for a volume that keeps its one copy where it runs (the geass-single class): the
+// pod that CloudNativePG makes again for the instance is Pending for ever with "volume node affinity conflict", and the
+// data went with the machine. A machine that is in the cluster but not ready is not this: it may come back, and the lost
+// node limit is for it.
+func (r *GeassClusterReconciler) volumeStranded(ctx context.Context, claim *corev1.PersistentVolumeClaim) bool {
+	if claim.Spec.VolumeName == "" {
+		return false
+	}
+	var pv corev1.PersistentVolume
+	if err := r.Get(ctx, client.ObjectKey{Name: claim.Spec.VolumeName}, &pv); err != nil {
+		return false
+	}
+	if _, bound := platform.VolumeNodeSelector(&pv); !bound {
+		return false
+	}
+	var nodes corev1.NodeList
+	// A list that failed, or came back empty, says nothing about the cluster: nothing is replaced on it.
+	if err := r.List(ctx, &nodes); err != nil || len(nodes.Items) == 0 {
+		return false
+	}
+	return !platform.VolumeReachableFrom(&pv, nodes.Items)
 }
 
 // volumeFaulted says whether the Longhorn volume behind a claim has lost all of its copies.
@@ -504,4 +555,35 @@ func (r *GeassClusterReconciler) forceDeletePod(ctx context.Context, pod *corev1
 	}
 	log.Info(message, append([]any{"pod", pod.Name, "namespace", pod.Namespace}, keysAndValues...)...)
 	return true
+}
+
+// postgresInstanceTroubled lets through the one change to a Postgres instance's pod that the pass for lost nodes has to hear
+// of: the pod cannot be scheduled. The pass is otherwise run for the changes to nodes and volumes, and removing a server
+// leaves nothing of the kind after the node itself: the instance on it is made again by the Postgres operator, cannot be
+// placed, and stays that way, so the pass that found the database whole a moment before did not run again until something
+// else woke the cluster, which a live run on K3s showed: the instance waited for eight minutes where it is meant to wait
+// three. The pass then asks to be run again when the wait is over. Pods that are only made, removed or not ready are left
+// out, because a drain or a rolling update changes hundreds of them and each would run every pass of the cluster again; so
+// are the operator's jobs (initdb, join), which are not instances.
+func postgresInstanceTroubled() predicate.Predicate {
+	unschedulable := func(obj client.Object) bool {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok || pod.Labels[cnpgClusterLabel] == "" || pod.Labels[cnpgJobRoleLabel] != "" {
+			return false
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+				return true
+			}
+		}
+		return false
+	}
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return unschedulable(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return unschedulable(e.ObjectNew) && !unschedulable(e.ObjectOld)
+		},
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
 }

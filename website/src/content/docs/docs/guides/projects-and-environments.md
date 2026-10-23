@@ -214,7 +214,7 @@ Open a project's **Settings** tab. The page is called **Project Settings** and h
 | **Limits** | What the project, and each of its environments, can ask for in CPU, memory, disk and pods. See [Project limits](/docs/guides/project-limits/). |
 | **Compliance** | The node tags this project requires, such as `hipaa`. Everything the project runs stays on nodes that carry them. See [Compliance tags](/docs/guides/compliance-tags/). |
 | **Tokens** | API tokens limited to this project. See [Users and API tokens](/docs/guides/users-and-tokens/). |
-| **Integrations** | **Connect to GitHub** or **Disconnect**, and a link to the cluster's connectors. See [GitHub and builds](/docs/guides/github-and-builds/). |
+| **GitHub** | **Connect to GitHub** or **Disconnect**, and **Report to GitHub**. See [GitHub and builds](/docs/guides/github-and-builds/). |
 | **Danger** | **Manage Services** and **Delete Project**. |
 
 ### Name and region

@@ -258,7 +258,7 @@ func (o resourceOwners) service(pod *corev1.Pod) string {
 	if name := labels[platform.K8sLabelAppName]; name != "" && (o.apps[name] || o.databases[name]) {
 		return name
 	}
-	if name := labels["cnpg.io/cluster"]; name != "" && o.databases[name] {
+	if name := labels[platform.CNPGLabelCluster]; name != "" && o.databases[name] {
 		return name
 	}
 	if db, ok := o.charts[labels["app.kubernetes.io/instance"]]; ok {

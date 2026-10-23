@@ -34,7 +34,7 @@ Choose a dedicated database when the data matters enough to need backups and poi
 1. Open **Settings**, then **Databases**.
 2. Select **Set up a server**. The **Shared database server** sheet opens.
 3. Fill in the form.
-4. Select **Set up server**. The dashboard confirms with "Shared database server is starting".
+4. Select **Set up server**. The dashboard confirms with "Server created".
 
 | Field | Meaning | Default |
 | --- | --- | --- |
@@ -71,14 +71,15 @@ geass api POST /shared-databases/create -d '{"engine": "Postgres", "name": "shar
 ## Create a database on the server
 
 1. Open the project and environment. Select **+ Add resource**, then **Database**.
-2. Choose the row named after the server, for example **cluster-postgres (shared)**. Its description reads "A database of its own on the shared Postgres server" (or MySQL).
-3. Geass creates the logical database and opens its **Settings**.
+2. Choose **Logical database**. The other choice, **Database server**, makes a server of its own. The row is greyed out with "No server yet" when there is no server to use.
+3. Choose the server. A shared one shows "shared" next to its engine, for example **cluster-postgres**, PostgreSQL, shared. A server of the project's own in this environment shows "this environment".
+4. Geass creates the logical database and opens its **Settings**.
 
-A server's row is greyed out until the server is **Ready**. Servers in a different region from the project do not appear.
+A server's row is greyed out until the server is **Ready**. Shared servers in a different region from the project do not appear.
 
-A logical database starts working at once. It has no draft or **Deploy** step, although the dashboard message says "saved as a draft".
+A logical database starts working at once. It has no draft or **Deploy** step.
 
-The dialog also has a **Logical database** row with the description "Create inside an existing server". It creates a database on a server that belongs to the same project and environment, a dedicated PostgreSQL or MySQL database you already have. It uses the first such server in the environment, and the row is disabled when the environment has none. The database is created with that server's own login instead of a new one, and Geass does not drop it when you delete the logical database.
+On a server that belongs to the same project and environment, a dedicated PostgreSQL or MySQL database you already have, the database is created with that server's own login instead of a new one, and Geass does not drop it when you delete the logical database.
 
 :::caution
 The dialog always names the database `app`. On a shared server the database and login are derived from the project, the environment and that name. A second logical database in the same project environment therefore maps to the same database and login. Creating it resets the login's password, so the first one's connection secret stops working, and deleting either one drops the shared database. Create one logical database per environment, or choose distinct names through the API.

@@ -6,7 +6,7 @@ import { ArrowLeft, Container, Database, GitBranch, HardDrive, Info, Layers, Sea
 import { action, api, condition, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { validateContainerImageReference } from "@/lib/container-image";
 import { FUNCTION_RUNTIMES } from "@/lib/functions";
-import { alertUser, notifyTemplateAdded } from "@/lib/notify";
+import { alertUser, alertError, notifyTemplateAdded } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { projectRegion, sharedServerRegion } from "@/lib/placement";
 import { Button, Muted } from "@/components/geass-ui";
@@ -18,6 +18,9 @@ const IMAGE_EXAMPLES = [
   "registry.gitlab.com/username/repo:tag",
   "mcr.microsoft.com/username/repo:tag",
 ];
+
+/** Where Back goes from a step: the one before it. Anything else goes to the first. */
+const PARENT_STEP = { server: "database", logical: "database" };
 
 function openResourceSettings(navigate, project, environment, kind, createdName, view = "settings") {
   navigate({
@@ -58,6 +61,8 @@ function looksLikeImage(text) {
 const STEP_PLACEHOLDER = {
   root: "Search, or paste a repo link or image name",
   database: "Choose a database…",
+  server: "Choose an engine…",
+  logical: "Choose a server…",
   bucket: "Choose a bucket…",
   function: "Choose a runtime…",
   template: "Choose a template…",
@@ -144,7 +149,7 @@ export function ResourceDialog({ project, environment, data }) {
         setOpen(false);
         notifyTemplateAdded(template);
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setCreating(false));
   };
 
@@ -157,10 +162,10 @@ export function ResourceDialog({ project, environment, data }) {
       alertUser(message);
       return;
     }
-    alertUser("Resource created");
+    alertUser("Added");
   };
 
-  const missingProject = () => alertUser("Project is missing. Open a project workspace and try again.");
+  const missingProject = () => alertUser("Open a project first.");
 
   const createBucket = (kind) => {
     const values = draftPayload(project, environment, {
@@ -170,8 +175,8 @@ export function ResourceDialog({ project, environment, data }) {
     if (!values) return missingProject();
     if (kind === "s3" && awsConnections[0]) values.connectionRef = resourceName(awsConnections[0]);
     return action("/object-stores/create", values)
-      .then((result) => afterCreate(result, "object-stores", "Bucket saved as a draft. Configure it in settings, then deploy."))
-      .catch((error) => alertUser(error.message));
+      .then((result) => afterCreate(result, "object-stores", "Added bucket"))
+      .catch((error) => alertError(error.message));
   };
 
   const createGitService = (repository, branch) => {
@@ -179,8 +184,8 @@ export function ResourceDialog({ project, environment, data }) {
     if (!values) return missingProject();
     setCreating(true);
     return action("/apps/create", values)
-      .then((result) => afterCreate(result, "apps", "Service saved as a draft. Configure it in settings, then deploy."))
-      .catch((error) => alertUser(error.message))
+      .then((result) => afterCreate(result, "apps", "Added service"))
+      .catch((error) => alertError(error.message))
       .finally(() => setCreating(false));
   };
 
@@ -189,8 +194,8 @@ export function ResourceDialog({ project, environment, data }) {
     if (!values) return missingProject();
     setCreating(true);
     return action("/apps/create", values)
-      .then((result) => afterCreate(result, "apps", "Function saved as a draft. Edit the code, then deploy.", "code"))
-      .catch((error) => alertUser(error.message))
+      .then((result) => afterCreate(result, "apps", "Added function", "code"))
+      .catch((error) => alertError(error.message))
       .finally(() => setCreating(false));
   };
 
@@ -205,18 +210,18 @@ export function ResourceDialog({ project, environment, data }) {
     if (!values) return missingProject();
     setCreating(true);
     return action("/apps/create", values)
-      .then((result) => afterCreate(result, "apps", "Service saved as a draft. Adjust settings or variables, then deploy."))
-      .catch((error) => alertUser(error.message))
+      .then((result) => afterCreate(result, "apps", "Added service"))
+      .catch((error) => alertError(error.message))
       .finally(() => setCreating(false));
   };
 
   const createDatabase = (row) => {
     if (row.value === "logical") {
-      const values = draftPayload(project, environment, { server: row.server || resourceName(servers[0]) });
+      const values = draftPayload(project, environment, { server: row.server });
       if (!values) return missingProject();
       return action("/logical-databases/create", values)
-        .then((result) => afterCreate(result, "logical-databases", "Logical database saved as a draft. Configure it in settings."))
-        .catch((error) => alertUser(error.message));
+        .then((result) => afterCreate(result, "logical-databases", "Added database"))
+        .catch((error) => alertError(error.message));
     }
     const values = draftPayload(project, environment, {
       engine: row.engine || "Postgres",
@@ -227,8 +232,8 @@ export function ResourceDialog({ project, environment, data }) {
     if (row.provider === "PlanetScale" && planetConnections[0]) values.connectionRef = resourceName(planetConnections[0]);
     if (row.provider === "AWS" && awsConnections[0]) values.connectionRef = resourceName(awsConnections[0]);
     return action("/databases/create", values)
-      .then((result) => afterCreate(result, "databases", "Database saved as a draft. Configure it in settings, then deploy."))
-      .catch((error) => alertUser(error.message));
+      .then((result) => afterCreate(result, "databases", "Added database"))
+      .catch((error) => alertError(error.message));
   };
 
   const startGitHubInstall = () => {
@@ -236,8 +241,12 @@ export function ResourceDialog({ project, environment, data }) {
       .then((result) => {
         if (result?.url) window.location.assign(result.url);
       })
-      .catch((error) => alertUser(error.message));
+      .catch((error) => alertError(error.message));
   };
+
+  // What the server rows show: a server that becomes ready, or is added, changes them.
+  const serverKey = servers.map((server) => `${resourceName(server)}:${condition(server)}`).join(",");
+  const sharedServerKey = sharedServers.map((server) => `${resourceName(server)}:${condition(server)}`).join(",");
 
   const query = text.trim();
   const lower = query.toLowerCase();
@@ -277,6 +286,18 @@ export function ResourceDialog({ project, environment, data }) {
       return [...out, ...base.filter((row) => matches(row.label))];
     }
     if (step === "database") {
+      const serverCount = servers.length + sharedServers.length;
+      return [
+        { key: "standalone", label: "Database server", description: "Its own PostgreSQL, MySQL, Redis and more", icon: Database, chevron: true, onSelect: () => { setText(""); setStep("server"); } },
+        {
+          key: "logical", label: "Logical database", icon: Database, chevron: true,
+          description: serverCount ? "Inside an existing or shared server" : "No server yet",
+          disabled: serverCount === 0,
+          onSelect: () => { setText(""); setStep("logical"); },
+        },
+      ].filter((row) => matches(row.label));
+    }
+    if (step === "server") {
       const dbRows = [
         { key: "postgres", label: "PostgreSQL", engine: "Postgres", placement: "InCluster" },
         { key: "mysql", label: "MySQL", engine: "MySQL", placement: "InCluster" },
@@ -290,26 +311,34 @@ export function ResourceDialog({ project, environment, data }) {
         },
         {
           key: "awsdb", label: "AWS RDS", engine: "Postgres", placement: "External", provider: "AWS",
-          description: awsConnections.length ? "Managed Postgres" : "Add an AWS connection in platform settings",
+          description: awsConnections.length ? "Managed Postgres" : "Needs an AWS connection",
           disabled: awsConnections.length === 0,
         },
-        {
-          key: "logical", label: "Logical database", value: "logical",
-          description: servers.length ? "Create inside an existing server" : "Create a database server first",
-          disabled: servers.length === 0,
-        },
-        ...sharedServers.map((server) => ({
-          key: `shared-${resourceName(server)}`,
-          label: `${resourceDisplayName(server)} (shared)`,
-          value: "logical",
-          server: resourceName(server),
-          description: `A database of its own on the shared ${server.spec?.engine === "MySQL" ? "MySQL" : "Postgres"} server`,
-          disabled: condition(server) !== "True",
-        })),
       ];
       return dbRows
         .filter((row) => matches(row.label))
-        .map((row) => ({ ...row, icon: Database, onSelect: () => createDatabase({ value: row.value || row.key, ...row }) }));
+        .map((row) => ({ ...row, icon: Database, onSelect: () => createDatabase(row) }));
+    }
+    if (step === "logical") {
+      const engineName = (server) => (server.spec?.engine === "MySQL" ? "MySQL" : "PostgreSQL");
+      return [
+        ...servers.map((server) => ({
+          key: `own-${resourceName(server)}`,
+          label: resourceDisplayName(server),
+          server: resourceName(server),
+          description: `${engineName(server)}, this environment`,
+          disabled: condition(server) !== "True",
+        })),
+        ...sharedServers.map((server) => ({
+          key: `shared-${resourceName(server)}`,
+          label: resourceDisplayName(server),
+          server: resourceName(server),
+          description: `${engineName(server)}, shared`,
+          disabled: condition(server) !== "True",
+        })),
+      ]
+        .filter((row) => matches(row.label))
+        .map((row) => ({ ...row, icon: Database, onSelect: () => createDatabase({ value: "logical", server: row.server }) }));
     }
     if (step === "template") {
       return (templates.data?.items || [])
@@ -361,13 +390,13 @@ export function ResourceDialog({ project, environment, data }) {
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, objectStorageAvailable, objectStorageEngine, awsConnections.length, planetConnections.length, servers.length, sharedServers.length, repos.data, templates.data]);
+  }, [step, lower, query, parsedRepo?.repository, githubReady, githubLinked, objectStorageAvailable, objectStorageEngine, awsConnections.length, planetConnections.length, serverKey, sharedServerKey, repos.data, templates.data]);
 
   const goBack = () => {
     setText("");
     setActive(0);
     setImageError("");
-    setStep("root");
+    setStep(PARENT_STEP[step] || "root");
   };
 
   const onKeyDown = (event) => {

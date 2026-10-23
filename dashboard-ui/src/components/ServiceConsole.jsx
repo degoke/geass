@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Maximize2, Minimize2, Terminal as TerminalIcon } from "lucide-react";
 import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { openSocket } from "@/lib/transport";
 import { Button, Muted, Select } from "@/components/geass-ui";
 
@@ -86,7 +86,6 @@ export function ServiceConsole({ item, name, data }) {
     termRef.current = terminal;
     fitRef.current = fitAddon;
     fit();
-    terminal.writeln("\x1b[90mConnect to open a shell in a running pod.\x1b[0m");
     terminal.writeln("\x1b[90mSessions last five minutes and are recorded.\x1b[0m");
 
     const input = terminal.onData((text) => {
@@ -138,7 +137,7 @@ export function ServiceConsole({ item, name, data }) {
       session = result.session;
     } catch (error) {
       setState("idle");
-      alertUser(error.message);
+      alertError(error.message);
       return;
     }
     fit();
@@ -149,7 +148,7 @@ export function ServiceConsole({ item, name, data }) {
       socket = await openSocket(socketPath(name, session, terminal));
     } catch (error) {
       setState("idle");
-      alertUser(error.message);
+      alertError(error.message);
       return;
     }
     socket.binaryType = "arraybuffer";

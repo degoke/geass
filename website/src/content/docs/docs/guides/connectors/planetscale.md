@@ -40,7 +40,7 @@ to read the organization's cluster sizes. Check the access names in PlanetScale'
 does not read them.
 
 Add the connection in **Settings** → **Connectors** → **Configure** on the **PlanetScale** card. It asks for **Name**,
-**Project scope** (the project ID, as for [AWS](/docs/guides/connectors/aws/#add-an-aws-connection)), **Organization** and **Service token**. The API takes the same
+**Project** (as for [AWS](/docs/guides/connectors/aws/#add-an-aws-connection)), **Organization** and **Service token**. The API takes the same
 fields (`provider=PlanetScale`, `organization`, `token`). The Secret `<name>-credentials` holds `token` and
 `organization`.
 

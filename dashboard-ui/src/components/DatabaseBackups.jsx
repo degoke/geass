@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { History } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { formatRelativeTime, settingsSavedMessage } from "@/lib/services";
 import {
   archiveForDatabase,
@@ -70,7 +70,7 @@ export function DatabaseBackups({ item, name, data, reload }) {
         reload();
         alertUser(settingsSavedMessage(result));
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
@@ -93,7 +93,7 @@ export function DatabaseBackups({ item, name, data, reload }) {
       <ResourceSettingsBlock title="Status">
         {!settings.enabled ? (
           <SettingsAlert tone="danger">
-            Backups are off — this database has no recovery if its data is lost or deleted
+            Backups are off. This database cannot be recovered if its data is lost or deleted.
           </SettingsAlert>
         ) : (
           <SettingsPanel>
@@ -110,7 +110,7 @@ export function DatabaseBackups({ item, name, data, reload }) {
             {since && !snapshot ? <p className="rw-backup-line">You can restore to any moment since {formatWhen(since)}</p> : null}
             {snapshot ? (
               <p className="rw-backup-line">
-                A backup is taken once a day. If you restore, changes made since the backup was taken are not in the new database.
+                Backed up once a day. Changes since the last backup are not restored.
               </p>
             ) : null}
           </SettingsPanel>
@@ -120,7 +120,6 @@ export function DatabaseBackups({ item, name, data, reload }) {
       <FormStack className="rw-rail-form" onSubmit={save}>
         <ResourceSettingsBlock
           title="Backup settings"
-          description="Backups let you restore this database to a new one if its data is lost, damaged or deleted."
           live
         >
           <SettingsPanel className="rw-resource-settings-toggle-row">
@@ -131,7 +130,7 @@ export function DatabaseBackups({ item, name, data, reload }) {
             />
           </SettingsPanel>
           <SettingsPanel className="rw-resource-settings-panel-spaced">
-            <Field label="Keep backups for" description="How far back you can restore. Longer periods use more storage in your AWS account.">
+            <Field label="Keep backups for" description="Longer periods use more storage in your AWS account.">
               <Select value={days} disabled={!enabled} onChange={(event) => setDays(event.currentTarget.value)} aria-label="Keep backups for">
                 {retentionOptions(days).map((choice) => (
                   <option key={choice} value={String(choice)}>{retentionLabel(choice)}</option>
@@ -146,19 +145,13 @@ export function DatabaseBackups({ item, name, data, reload }) {
       </FormStack>
 
       {needsStorage && project ? (
-        <ResourceSettingsBlock
-          title="Choose where backups are stored"
-          description="Backups need a place to go before they can protect this database."
-        >
+        <ResourceSettingsBlock title="Choose where backups are stored">
           <BackupStorageChooser project={project} data={data} reload={reload} />
         </ResourceSettingsBlock>
       ) : null}
 
       {archive || (settings.enabled && !needsStorage) ? (
-        <ResourceSettingsBlock
-          title="Restore"
-          description="Restoring creates a new database next to this one from a backup. Your current database is not changed."
-        >
+        <ResourceSettingsBlock title="Restore">
           {archive?.spec?.deleteAfter ? (
             <Muted size="sm" mb="sm">
               {settings.enabled ? "These backups" : "Backups from before they were turned off"} are kept until{" "}

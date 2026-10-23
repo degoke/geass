@@ -43,31 +43,27 @@ const DEFAULT_SCALE = {
 const SCALE_FIELDS = [
   {
     key: "scaleUpDelaySeconds", label: "Wait before adding a node", unit: "seconds", min: 1, max: 3600,
-    hint: "A pod must have been unable to start this long before a node is added for it. It keeps a pod that is only slow to be scheduled from buying a machine.",
   },
   {
     key: "maxScaleUp", label: "Add at most", unit: "nodes at a time", min: 1, max: 50,
-    hint: "The most nodes added in one step.",
   },
   {
     key: "scaleDownUtilizationPercent", label: "A node is idle below", unit: "% used", min: 1, max: 100,
-    hint: "The share of a node's CPU or memory, whichever is higher, that its pods reserve. Below it, the node is a candidate for removal.",
+    hint: "Of CPU or memory, whichever is higher.",
   },
   {
     key: "scaleDownAfterMinutes", label: "Remove an idle node after", unit: "minutes", min: 1, max: 1440,
-    hint: "How long a node must have been idle before it is removed.",
   },
   {
     key: "scaleDownDelayAfterAddMinutes", label: "No removals after adding a node for", unit: "minutes", min: 1, max: 1440,
-    hint: "After a node is added, none is removed for this long, so capacity is not taken away before the load that asked for it has used it.",
   },
   {
     key: "minNodeLifetimeMinutes", label: "Keep every node at least", unit: "minutes", min: 0, max: 10080,
-    hint: "Most clouds bill each started hour, so a node removed after ten minutes costs a full hour. 55 keeps a node for the hour that is paid for anyway.",
+    hint: "Most clouds bill each started hour. 55 uses the hour paid for.",
   },
   {
     key: "spareNodes", label: "Keep empty nodes ready", unit: "nodes", min: 0, max: 20,
-    hint: "Spare nodes so that a burst finds room at once instead of waiting minutes for a machine. They count against the maximum and cost money while idle.",
+    hint: "They count against the maximum and cost money while idle.",
   },
 ];
 
@@ -196,7 +192,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
       if (new Set(listed.map((server) => server.name.trim())).size !== listed.length) return "Two servers have the same name.";
       if (!sshKey.includes("PRIVATE KEY")) return "Paste the SSH private key, with its BEGIN and END lines.";
     }
-    if (Number.isNaN(max)) return "Say the most nodes the pool may ever have. It is the limit on what the pool can cost.";
+    if (Number.isNaN(max)) return "Say the most nodes the pool may have.";
     if (Number.isNaN(min)) return "The fewest nodes is a whole number, 0 or more.";
     if (max > 200 || min > 200) return "The fewest and the most nodes are from 0 to 200.";
     if (max < min) return "The most nodes cannot be below the fewest.";
@@ -272,7 +268,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
     try {
       await action(editing ? `/pools/${pool.name}/update` : "/pools/create", body);
       await refresh();
-      notify(editing ? `Saved the pool ${pool.name}` : `Created the pool ${name.trim()}`, "success");
+      notify(editing ? `Saved ${pool.name}` : `Created ${name.trim()}`, "success");
       onDone?.(editing ? pool.name : name.trim());
     } catch (failure) {
       setError(failure.message);
@@ -289,7 +285,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
         {!editing ? (
           <fieldset className="cp-fieldset">
             <legend>Pool</legend>
-            <Field label={<>Name<Required /></>} description="Lowercase letters, numbers and hyphens, at most 48 characters. Each node's name is made from it.">
+            <Field label={<>Name<Required /></>} description="Lowercase letters, numbers and hyphens, up to 48 characters.">
               <Input
                 value={name}
                 onChange={(event) => setName(event.currentTarget.value.toLowerCase())}
@@ -307,13 +303,13 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
                   selected={source === "cloud"}
                   onClick={() => setSource("cloud")}
                   title="A cloud"
-                  description="Geass creates machines at a cloud when pods cannot start, and deletes them when they are idle."
+                  description="Geass creates machines at a cloud."
                 />
                 <Choice
                   selected={source === "inventory"}
                   onClick={() => setSource("inventory")}
                   title="My servers"
-                  description="Geass joins servers you already own when it needs room, and gives them back when it does not."
+                  description="Geass joins servers you already have."
                 />
               </div>
             </Field>
@@ -325,14 +321,10 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             <legend>Machines</legend>
             {editing ? (
               <p className="cp-fieldset-note">
-                Cloud: <strong>{providerName || "a cloud"}</strong> through the connection <strong>{pool.connection}</strong>. Size, region and settings apply to nodes
-                made from now on. The nodes the pool has keep theirs.
+                Cloud: <strong>{providerName || "a cloud"}</strong> through the connection <strong>{pool.connection}</strong>. Changes apply to new nodes only.
               </p>
             ) : (
-              <Field
-                label={<>Cloud connection<Required /></>}
-                description={machineConnections.length ? "The connection whose credentials create the machines." : undefined}
-              >
+              <Field label={<>Cloud connection<Required /></>}>
                 {machineConnections.length ? (
                   <Select value={connection} onChange={(event) => setConnection(event.currentTarget.value)} aria-label="Cloud connection">
                     {machineConnections.map((item) => (
@@ -343,17 +335,17 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
                   </Select>
                 ) : (
                   <Callout>
-                    No cloud is connected yet. <Link to="/settings/connectors">Connect a cloud</Link> in Connectors, then come back, or make a pool of your own servers.
+                    No cloud is connected yet. <Link to="/settings/connectors">Connect a cloud</Link>.
                   </Callout>
                 )}
                 {connectionInfo && unusable(connectionInfo) ? (
-                  <Muted size="xs">This connection is not available now{connectionInfo.message ? `: ${connectionInfo.message}` : ""}. The pool cannot create machines until it is.</Muted>
+                  <Muted size="xs">This connection is not available now{connectionInfo.message ? `: ${connectionInfo.message}` : ""}.</Muted>
                 ) : null}
               </Field>
             )}
             <Field
               label={<>Region<Optional /></>}
-              description={[descriptor?.regionHelp, connectionInfo?.region ? `The connection's default is ${connectionInfo.region}.` : ""].filter(Boolean).join(" ") || "The cloud's own region or location."}
+              description={descriptor?.regionHelp}
             >
               <Input
                 value={region}
@@ -373,16 +365,15 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
               query={sizes}
               connection={mutable ? connection : ""}
               quiet={!mutable}
-              hint="The cloud's name for a size. Choose one from the list, or type it."
             />
             <SizeListField
               label="Fallback sizes"
-              hint="Tried in order, up to five, when the cloud has no room for the size above or the account is at a limit for it."
+              hint="Tried in order, up to five. Separate with commas."
               value={fallbackSizes}
               onChange={setFallbackSizes}
               sizes={sizeList}
             />
-            <Field label={<>Fallback regions<Optional /></>} description="Tried in order, up to five, when the cloud has no room in the region above. Separate with commas.">
+            <Field label={<>Fallback regions<Optional /></>} description="Tried in order, up to five. Separate with commas.">
               <Input value={fallbackRegions} onChange={(event) => setFallbackRegions(event.currentTarget.value)} placeholder="one region, then another" autoComplete="off" spellCheck={false} aria-label="Fallback regions" />
             </Field>
             <ProviderSettingsFields
@@ -394,7 +385,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             />
             <div className="cp-check">
               <Switch label="Use spot machines" checked={spot} onChange={(event) => setSpot(event.currentTarget.checked)} />
-              <p className="cp-check-hint">The cloud's cheaper machines, which it may take back at any time. A node that is taken back is replaced, and the services on it start again elsewhere.</p>
+              <p className="cp-check-hint">Cheaper, but the cloud may take the machine back at any time.</p>
             </div>
           </fieldset>
         ) : null}
@@ -405,15 +396,14 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             {editing ? (
               <>
                 <p className="cp-fieldset-note">
-                  The servers of an inventory cannot be changed here. To draw on others, make a new pool.
+                  The servers cannot be changed after the pool is made.
                 </p>
                 <p className="cp-mono">{(pool.inventory || []).join(", ")}</p>
               </>
             ) : (
               <>
                 <p className="cp-fieldset-note">
-                  Servers you already own. Geass reaches them over SSH as a user that is root or can use sudo without a password, joins one to the cluster when pods need
-                  room, and gives it back when it is idle. Nothing is bought.
+                  Each server needs an SSH user that is root or can use sudo without a password.
                 </p>
                 <div className="cp-rows">
                   {servers.map((server, index) => {
@@ -451,7 +441,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
                 </div>
                 <Field
                   label={<>SSH private key<Required /></>}
-                  description="One key for every server in the list. It is stored in a Secret that only the Geass operator reads, and is never shown again."
+                  description="One key for every server. It is never shown again."
                 >
                   <Textarea
                     className="cp-textarea-mono"
@@ -464,7 +454,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
                     aria-label="SSH private key"
                   />
                 </Field>
-                <Field label={<>Host keys<Optional /></>} description="The servers' host keys, in known_hosts form, to pin them. Without them Geass does not check which server it is talking to.">
+                <Field label={<>Host keys<Optional /></>} description="In known_hosts form. Without them, Geass does not check which server it is talking to.">
                   <Textarea
                     className="cp-textarea-mono"
                     rows={3}
@@ -490,7 +480,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
               onChange={setMinNodes}
               min={0}
               max={200}
-              hint={autoscaling ? "The pool always has at least this many." : "A pool that does not autoscale has exactly this many."}
+              hint={autoscaling ? undefined : "The exact size while autoscaling is off."}
             />
             <NumberField
               label="Most nodes"
@@ -500,12 +490,12 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
               min={0}
               max={200}
               placeholder="5"
-              hint="The pool never has more. This is the cost cap."
+              hint="The cost cap."
             />
           </div>
           <Field label="Data on these nodes" description={storage === "None"
-            ? "None keeps databases, buckets and volumes off these nodes. Only services run on them, which keep nothing on the node, so a node can be removed at any time."
-            : "Allow makes them ordinary workers that may hold data. The autoscaler never removes a node while it holds a volume."}
+            ? "Keeps databases, buckets and volumes off these nodes."
+            : "Nodes may hold data and are never removed while they hold a volume."}
           >
             <Select value={storage} onChange={(event) => setStorage(event.currentTarget.value)} aria-label="Data on these nodes">
               <option value="None">None (default)</option>
@@ -522,9 +512,6 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
               checked={autoscaling}
               onChange={(event) => setAutoscaling(event.currentTarget.checked)}
             />
-            <p className="cp-check-hint">
-              Add nodes when pods cannot start, and remove idle ones, between the fewest and the most. Off, the pool keeps exactly the fewest nodes.
-            </p>
           </div>
           {autoscaling ? (
             <>
@@ -537,7 +524,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
                     min={field.min}
                     max={field.max}
                     value={scale[field.key]}
-                    hint={`${field.hint} Default ${DEFAULT_SCALE[field.key]}.`}
+                    hint={[field.hint, `Default ${DEFAULT_SCALE[field.key]}.`].filter(Boolean).join(" ")}
                     onChange={(value) => setScale({ ...scale, [field.key]: value })}
                   />
                 ))}
@@ -550,7 +537,7 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
           {editing ? (
             <div className="cp-check">
               <Switch label="Suspend scaling" checked={suspend} onChange={(event) => setSuspend(event.currentTarget.checked)} />
-              <p className="cp-check-hint">Stop adding and removing nodes. The nodes the pool has stay, and keep costing what they cost.</p>
+              <p className="cp-check-hint">The pool keeps its nodes, and they keep costing.</p>
             </div>
           ) : null}
         </fieldset>
@@ -560,10 +547,10 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
           <div className="cp-details-body">
             {source === "cloud" ? (
               <>
-                <Field label={<>Image<Optional /></>} description="The operating system image. Default: the cloud's Ubuntu 24.04.">
+                <Field label={<>Image<Optional /></>} description="Default: the cloud's Ubuntu 24.04.">
                   <Input value={image} onChange={(event) => setImage(event.currentTarget.value)} autoComplete="off" spellCheck={false} aria-label="Image" />
                 </Field>
-                <Field label="Address Geass uses" description="Public (the default) is for a cluster that spans sites. Private suits a cluster whose nodes share a private network with these machines.">
+                <Field label="Address Geass uses" description="Use Private when the cluster's nodes share a private network with these machines.">
                   <Select value={addressType} onChange={(event) => setAddressType(event.currentTarget.value)} aria-label="Address type">
                     <option value="Public">Public</option>
                     <option value="Private">Private</option>
@@ -574,8 +561,8 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             <Field
               label="Machines no node owns"
               description={orphanPolicy === "Delete"
-                ? "Delete removes a machine at the cloud that has had no node for twenty minutes. A deleted machine cannot be brought back."
-                : "Report only lists such machines in the pool's status and raises a problem. It is the default, because deleting a machine cannot be undone."}
+                ? "Deletes a machine at the cloud after twenty minutes without a node. This can't be undone."
+                : "Only lists such machines and raises a problem."}
             >
               <Select value={orphanPolicy} onChange={(event) => setOrphanPolicy(event.currentTarget.value)} aria-label="Machines no node owns">
                 <option value="Report">Report (default)</option>
@@ -584,7 +571,6 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             </Field>
             {!editing ? (
               <>
-                <p className="cp-fieldset-note">Placement: where the nodes sit and what they are for. Left empty, the nodes carry no region or tags.</p>
                 <PlacementFields
                   region={placement.region}
                   zone={placement.zone}
@@ -596,8 +582,8 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
             ) : (
               <p className="cp-fieldset-note">
                 {pool.placement
-                  ? `Placement: ${[pool.placement.region && `region ${pool.placement.region}`, pool.placement.zone && `site ${pool.placement.zone}`, (pool.placement.tags || []).length && `tags ${pool.placement.tags.join(", ")}`].filter(Boolean).join(", ")}. It is set when the pool is made.`
-                  : "The nodes carry no region or tags. Placement is set when the pool is made."}
+                  ? `Placement: ${[pool.placement.region && `region ${pool.placement.region}`, pool.placement.zone && `site ${pool.placement.zone}`, (pool.placement.tags || []).length && `tags ${pool.placement.tags.join(", ")}`].filter(Boolean).join(", ")}. Set when the pool is made.`
+                  : "No placement. It is set when the pool is made."}
               </p>
             )}
           </div>
@@ -605,19 +591,19 @@ export function PoolForm({ pool, providers, connections, mutable = true, onDone,
 
         {source === "cloud" ? (
           <Callout tone="cost">
-            <strong>This spends money.</strong> Geass creates the machines in your account at {providerName || "the cloud"}, and the cloud bills you for them.{" "}
+            <strong>This spends money.</strong> {providerName || "The cloud"} bills you for the machines Geass creates.{" "}
             {Number.isNaN(max)
-              ? "Set the most nodes: it is the most machines the pool can ever create, and so the most it can cost."
+              ? "Set the most nodes to cap the cost."
               : cap > 0
-                ? <>At most <strong>{max}</strong> {max === 1 ? "machine" : "machines"} at {formatPrice(price, currency)} each: up to <strong>{formatPrice(cap, currency)}</strong>, about {formatPrice(cap * MONTH_HOURS, currency, "")} a month, if the pool grows to its maximum.</>
-                : <>At most <strong>{max}</strong> {max === 1 ? "machine" : "machines"}. The cloud does not state a price for this size, so check what it costs before you rely on it.</>}
-            {!Number.isNaN(min) && min > 0 && !editing ? ` ${min} ${min === 1 ? "machine is" : "machines are"} created as soon as the pool is saved.` : ""}
+                ? <>At most <strong>{max}</strong> {max === 1 ? "machine" : "machines"} at {formatPrice(price, currency)} each: up to <strong>{formatPrice(cap, currency)}</strong>, about {formatPrice(cap * MONTH_HOURS, currency, "")} a month.</>
+                : <>At most <strong>{max}</strong> {max === 1 ? "machine" : "machines"}. The cloud states no price for this size.</>}
+            {!Number.isNaN(min) && min > 0 && !editing ? ` ${min} ${min === 1 ? "machine is" : "machines are"} created on save.` : ""}
             {editing && !Number.isNaN(min) && min > pool.minNodes && min > (pool.nodes || 0)
-              ? ` Raising the fewest nodes to ${min} creates ${min - (pool.nodes || 0)} more ${min - (pool.nodes || 0) === 1 ? "machine" : "machines"} as soon as you save.`
+              ? ` Saving creates ${min - (pool.nodes || 0)} more ${min - (pool.nodes || 0) === 1 ? "machine" : "machines"}.`
               : ""}
           </Callout>
         ) : (
-          <Callout>Nothing is bought: the pool uses servers you already own. It joins them to the cluster when pods need room.</Callout>
+          <Callout>Nothing is bought.</Callout>
         )}
 
         {error ? <Alert tone="danger">{error}</Alert> : null}

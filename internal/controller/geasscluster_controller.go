@@ -366,6 +366,9 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// The same goes for the object storage server being placed on tagged nodes.
 		Watches(&geassv1alpha1.GeassObjectStore{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(objectStoreServerPlaced())).
+		// An instance of a Postgres database that cannot start is replaced by the pass for lost nodes once it has waited
+		// long enough, which is a pass that has to be run after it started waiting (see postgresInstanceTroubled).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(postgresInstanceTroubled())).
 		Named("geasscluster").
 		Build(r)
 	if err != nil {

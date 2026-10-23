@@ -71,7 +71,7 @@ In **Settings → Connectors**:
 - **Cloudflare → Disconnect.** Type `remove-cloudflare`. This stops the `cloudflared` deployment and automatic DNS updates. Your Cloudflare account, the tunnel named `geass` and every DNS record Geass created stay. Delete them in Cloudflare: the proxied `A` record for the dashboard host (`geass.<your domain>` by default), the `CNAME` records pointing at the tunnel (dashboard and service hostnames, in Tunnel mode), and the tunnel.
 - **GitHub → Remove GitHub App.** Type `remove-github`. This removes Geass's copy of the app's credentials. The GitHub App itself and its installations stay: delete them in your GitHub settings.
 - **AWS and PlanetScale.** Connections are removed with their project (see above). Revoke the access keys and tokens at the provider.
-- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before: a connection that pools or machines still use cannot be removed from the dashboard, because without it the machines could no longer be deleted. **Remove** on each connection under **Cloud connections** (or `geass connections remove NAME`) deletes the connection and its Secret, and the credentials stay valid at the cloud until you revoke them there.
+- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before: a connection that pools or machines still use cannot be removed from the dashboard, because without it the machines could no longer be deleted. **Remove** on each connection under **Server clouds** (or `geass connections remove NAME`) deletes the connection and its Secret, and the credentials stay valid at the cloud until you revoke them there.
 
 ## Step 3: remove workers
 

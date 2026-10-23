@@ -324,7 +324,7 @@ export function Empty({ icon: Icon = BoxIcon, title, description, action }) {
       <Stack align="center" gap="xs">
         <Icon size={28} />
         <Title order={3}>{title}</Title>
-        <Text size="sm" c="dimmed" ta="center" maw={420}>{description}</Text>
+        {description ? <Text size="sm" c="dimmed" ta="center" maw={420}>{description}</Text> : null}
         {action}
       </Stack>
     </Center>

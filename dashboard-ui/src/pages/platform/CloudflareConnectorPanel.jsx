@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { action } from "@/lib/api";
 import { canMutate, useBootstrap } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Field, FormStack, Input, KeyValueTable, Select } from "@/components/geass-ui";
 import { SettingsDivider, SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
 
@@ -106,13 +106,13 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
           return;
         }
         if (!zoneId && found.zones.length === 0) {
-          alertUser("No zones on this token — add Zone read permission or enter zone ID");
+          alertUser("No zones on this token (needs Zone read)");
           setSaving(false);
           return;
         }
       }
       if (!accountId || !zoneId) {
-        alertUser("Account and zone are required — pick a DNS zone if more than one is listed");
+        alertUser("Account and zone are required");
         setSaving(false);
         return;
       }
@@ -122,7 +122,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
         (zoneId === info?.zoneId ? info?.zoneName : "") ||
         "";
       if (!zoneName) {
-        alertUser("DNS zone name is missing — pick a zone from the list or reconnect");
+        alertUser("DNS zone name is missing");
         setSaving(false);
         return;
       }
@@ -142,7 +142,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
       setEditing(false);
       alertUser(connected ? "Cloudflare updated" : "Cloudflare connected");
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setSaving(false);
     }
@@ -165,11 +165,11 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
       const count = result?.zones;
       alertUser(
         typeof count === "number" && count > 0
-          ? `Cloudflare refreshed — ${count} zone${count === 1 ? "" : "s"} available`
-          : "Cloudflare connection refreshed",
+          ? `Updated, ${count} zone${count === 1 ? "" : "s"}`
+          : "Cloudflare updated",
       );
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setRefreshing(false);
     }
@@ -188,14 +188,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
 
   const setupForm = (
     <FormStack className="rw-rail-form rw-cf-form" onSubmit={submit}>
-      <Field
-        label="API token"
-        description={
-          connected
-            ? "Paste a new token only when rotating credentials."
-            : "Copy it from Cloudflare right after you create the token."
-        }
-      >
+      <Field label="API token">
         <Input
           type="password"
           value={values.apiToken}
@@ -235,7 +228,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
           </Select>
         </Field>
       ) : connected && editing && values.zoneId ? (
-        <Field label="DNS zone" description="Enter a new token above to change zone.">
+        <Field label="DNS zone" description="Needs a new token to change.">
           <Input readOnly value={zoneDomain || shortId(values.zoneId)} />
         </Field>
       ) : null}
@@ -267,11 +260,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
             <span className={`rw-integration-status is-${connectionStatus}`}>
               {ready ? "Connected" : "Pending"}
             </span>
-            <p className="rw-cf-connected-lead">
-              {ready
-                ? "Geass runs cloudflared in your cluster and manages tunnel routes and DNS for this zone."
-                : "Credentials are saved. The controller is creating the tunnel and DNS records."}
-            </p>
+            {!ready ? <p className="rw-cf-connected-lead">Creating the tunnel and DNS records.</p> : null}
           </div>
 
           <SettingsPanel className="rw-cf-summary">
@@ -305,7 +294,6 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
           ) : (
             <div className="rw-cf-update-block">
               <h3 className="rw-settings-subtitle">Update credentials</h3>
-              <p className="rw-settings-section-desc">Paste a new API token with the same permissions. We will re-discover your zone.</p>
               {setupForm}
             </div>
           )}
@@ -313,15 +301,9 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
       ) : (
         <>
           <p className="rw-cf-intro">
-            Connect Cloudflare so Geass can run cloudflared in the cluster and manage DNS for your domain.
+            Needs an API token (not the Global API Key) with Account → Cloudflare Tunnel → Edit, Zone → DNS → Edit and
+            Zone → Zone → Read.
           </p>
-          <ol className="rw-cf-steps">
-            <li>
-              Create a custom API token (not the Global API Key): Account → Cloudflare Tunnel → Edit; Zone → DNS → Edit; Zone → Zone
-              → Read — all for the domain you use with Geass.
-            </li>
-            <li>Paste the token below and click Connect — we pick your DNS zone automatically when possible.</li>
-          </ol>
           {setupForm}
         </>
       )}
@@ -332,10 +314,10 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
           <SettingsPanel className="rw-cf-disconnect">
             <h3 className="rw-settings-subtitle">Disconnect Cloudflare</h3>
             <p className="rw-settings-section-desc">
-              Stops the in-cluster cloudflared deployment and automatic DNS updates. Your Cloudflare account and tunnel are not deleted.
+              Stops cloudflared and automatic DNS updates. Your Cloudflare account and tunnel are kept.
             </p>
             <FormStack className="rw-rail-form rw-cf-disconnect-form">
-              <Field label="Confirmation" description='Type "remove-cloudflare" to enable disconnect.'>
+              <Field label="Confirmation" description='Type "remove-cloudflare".'>
                 <Input value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="off" placeholder="remove-cloudflare" />
               </Field>
               <SettingsFormActions>
@@ -353,7 +335,7 @@ export function CloudflareConnectorPanel({ reload, info, inSheet = false }) {
                         setEditing(false);
                         alertUser("Cloudflare removed");
                       })
-                      .catch((error) => alertUser(error.message))
+                      .catch((error) => alertError(error.message))
                   }
                 >
                   Disconnect

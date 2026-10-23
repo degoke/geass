@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { action, api, resourceName } from "@/lib/api";
 import { canMutate, isPlatformSession, scopeLabel, sessionScopes } from "@/lib/dashboard";
 import { alertError, notify } from "@/lib/notify";
-import { Button, Field, Muted, Select } from "@/components/geass-ui";
+import { Button, Field, Select } from "@/components/geass-ui";
 import { SettingsFormActions } from "@/layout/SettingsShell";
 
 /**
@@ -32,7 +32,7 @@ export function ProjectOrganization({ project, data, reload }) {
       || scopes.find((scope) => scope.org === org && !scope.workspace);
     return (
       <p className="rw-rail-body">
-        This project belongs to {here ? scopeLabel({ ...here, workspace: workspace ? here.workspace : "" }) : "your organization"}. Only people who work there can see it.
+        This project belongs to {here ? scopeLabel({ ...here, workspace: workspace ? here.workspace : "" }) : "your organization"}.
       </p>
     );
   }
@@ -58,11 +58,11 @@ export function ProjectOrganization({ project, data, reload }) {
       className="rw-rail-form"
       onSubmit={(event) => {
         event.preventDefault();
-        assign({ org: chosenOrg, workspace: chosenOrg ? chosenWorkspace : "" }, chosenOrg ? "Project assigned" : "Project taken out of its organization");
+        assign({ org: chosenOrg, workspace: chosenOrg ? chosenWorkspace : "" }, chosenOrg ? "Project assigned" : "Removed from organization");
       }}
     >
       <p className="rw-rail-body">
-        {org ? "This project belongs to an organization, so only its people see it." : "This project belongs to no organization, so only the platform's administrators see it."}
+        {org ? "Only its organization's people see it." : "Only platform administrators see it."}
       </p>
       <Field label="Organization">
         <Select
@@ -79,14 +79,13 @@ export function ProjectOrganization({ project, data, reload }) {
         </Select>
       </Field>
       {selected && (selected.workspaces || []).length ? (
-        <Field label="Workspace" description="Empty means the organization as a whole, which only its administrators see.">
+        <Field label="Workspace" description="Without one, only the organization's administrators see it.">
           <Select value={chosenWorkspace} disabled={!canMutate(data)} aria-label="Workspace" onChange={(event) => setChosenWorkspace(event.currentTarget.value)}>
             <option value="">The organization as a whole</option>
             {selected.workspaces.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
           </Select>
         </Field>
       ) : null}
-      <Muted size="xs">Tokens made for the project keep working for whoever it belongs to now.</Muted>
       <SettingsFormActions>
         <Button type="submit" loading={busy} disabled={!canMutate(data) || !changed}>Assign</Button>
       </SettingsFormActions>

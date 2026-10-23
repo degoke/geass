@@ -23,7 +23,7 @@ Creating machines is **experimental**. Amazon EC2 has been run against a live ac
 
 ### What the connection says about itself
 
-`geass connections show NAME` and the **Cloud connections** list show:
+`geass connections show NAME` and the **Server clouds** list show:
 
 | What | Meaning |
 | --- | --- |
@@ -82,9 +82,9 @@ Whatever the cloud calls it, give Geass a project, a resource group, a compartme
 
 ### In the dashboard
 
-1. Open **Settings**, then **Connectors**. Under **Cloud connections** choose **Connect a cloud**.
+1. Open **Settings**, then **Connectors**. Under **Server clouds** choose **Connect a cloud**.
 2. Choose the **Cloud**, name the connection (lowercase letters, numbers and hyphens; pools and servers refer to it by that name), and give the **Default region** if you want one.
-3. Fill in the credentials. A secret is a password box that is never filled in again. For AWS the form also offers **Storage** and **Database** next to the purpose Compute that it always has: leave them off, and make a separate connection for buckets.
+3. Fill in the credentials. A secret is a password box that is never filled in again. For AWS the form also offers **Buckets** and **Databases** next to the purpose Compute (shown as **Servers**) that it always has: leave them off, and make a separate connection for buckets.
 4. Choose **Connect**. Geass asks the cloud whether it accepts the credentials, and the card says **Available** or shows the cloud's message. **Verify now** asks again, **Edit** changes the default region or replaces credentials (type only the ones that change), and **Remove** deletes the connection and its Secret.
 
 ### With the command line

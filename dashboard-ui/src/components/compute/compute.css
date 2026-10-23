@@ -303,6 +303,11 @@
   color: var(--geass-text);
 }
 
+.cp-callout ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .cp-callout.is-cost {
   border-color: color-mix(in srgb, var(--geass-signal) 40%, var(--geass-border));
 }

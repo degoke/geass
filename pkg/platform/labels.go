@@ -18,4 +18,9 @@ const (
 	ProjectSharedSecrets = "geass-shared-secrets"
 	ProjectSharedVars    = "geass-shared-variables"
 	HAReadinessName      = "platform"
+
+	// CNPGLabelCluster and CNPGLabelInstance are on the pods and volumes of a Postgres database made by CloudNativePG: the
+	// database they belong to, and the instance.
+	CNPGLabelCluster  = "cnpg.io/cluster"
+	CNPGLabelInstance = "cnpg.io/instanceName"
 )

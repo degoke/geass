@@ -114,7 +114,8 @@ cannot run fail instead of skip, as CI does.
 
 Backups go to AWS, so a throwaway cluster has nowhere to put them. A manager built with `-tags geasslivetest` reads
 `GEASS_LIVETEST_S3_ENDPOINT` (a host and port) and keeps backups there instead, in an S3 server such as MinIO that the cluster's
-pods can reach (`internal/controller/backup_standin.go`). A release is not built with the tag and has no such setting. The
+pods can reach (`internal/controller/backup_standin.go`). It covers Geass's own calls, the Postgres operator's archive and
+restore (`endpointURL`), the MySQL and SQLite dump jobs, and MariaDB. A release is not built with the tag and has no such setting. The
 project still needs a cloud connection, a backup storage choice and a Secret `geass-backup-storage-<bucket>` in `geass-system`
 (with its `geass.dev/backup-storage-config` annotation), so that Geass does not call AWS to make the bucket and its user.
 

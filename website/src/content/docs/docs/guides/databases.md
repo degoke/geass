@@ -44,7 +44,7 @@ The dashboard shows every database with a version beside its engine, so a MySQL,
 ## Create a database
 
 1. Open the project and environment. Select **+ Add resource**, then **Database**.
-2. Choose **PostgreSQL**, **MySQL**, **Redis** or **SQLite**. Geass saves a draft and opens its **Settings**. The dashboard says "Database saved as a draft. Configure it in settings, then deploy."
+2. Choose **Database server**, then **PostgreSQL**, **MySQL**, **MariaDB**, **Redis** or **SQLite**. Geass saves a draft and opens its **Settings**. To use a server that already runs instead, choose **Logical database**: see [Shared database servers](/docs/guides/shared-database-servers/).
 3. In **Database**, set the **Version** (only PostgreSQL uses it), **CPU** and **Memory** under **Resources**, and the **Size** under **Storage**. In **Backups**, review the defaults. In **Scale**, choose **Run on** if your nodes have tags. A database keeps its data on the nodes it is first deployed to, so this choice closes at the first deploy. If the project requires compliance tags, you do not choose them here: Geass adds them. See [Scaling and placement](/docs/guides/scaling-and-placement/) and [Where a database runs](#where-a-database-runs).
 4. Select **Save changes**. Every **Save changes** button on the page saves all values on it.
 5. Select **Deploy changes** in the project's top bar. The **N pending** button beside it lists what will be deployed.
@@ -179,7 +179,7 @@ kubectl get secret orders-connection -n "$NS" -o jsonpath='{.data.uri}' | base64
 Then replace the host in that string with `localhost`. To read the host, port, database and login without `kubectl`, see [Command line and AI agents](#command-line-and-ai-agents).
 
 :::caution
-Geass does not generate a random password for in-cluster databases. The password for the `app` login is the resource ID followed by `-password`, for example `orders-password`. For MySQL the root password has the same value. Geass creates it once, in the `<ID>-bootstrap` Secret, and does not rotate it. Databases are reachable only inside the cluster, so what protects them is network reachability. Keep project network isolation on, and do not rely on the password as the only barrier. See [Network isolation](/docs/guides/network-isolation/).
+Geass makes a random password for the `app` login of an in-cluster database (48 hexadecimal characters). For MySQL the root password has the same value. Geass creates it once, in the `<ID>-bootstrap` Secret, and does not rotate it. Read it from the connection Secret, not from the name of the database. A database that was made by an earlier release keeps the password it has, which is the resource ID followed by `-password` (for example `orders-password`): Geass does not change the password of a database that is running, because everything that connects to it would have to change with it. Databases are reachable only inside the cluster, and what protects an older one is network reachability, so keep project network isolation on. See [Network isolation](/docs/guides/network-isolation/).
 :::
 
 ## The database panel
@@ -495,7 +495,7 @@ curl -X POST https://geass.example.com/api/databases/orders/delete \
   --data-urlencode confirmName=orders
 ```
 
-The section tells you what happens to the data. If the database has backups running, Geass first takes a final backup and keeps backups for seven days: "Geass takes a final backup first and keeps it for 7 days, so you can restore this database from Project settings → Backups." If it has no backups, "This database has no backups. Deleting it permanently destroys its data." See [Backups and restore](/docs/guides/backups-and-restore/).
+The section tells you what happens to the data. If the database has backups running, Geass first takes a final backup and keeps backups for seven days: "Geass takes a final backup first and keeps it for 7 days (Project settings → Backups)." If it has no backups, "This database has no backups. Deleting it permanently destroys its data." See [Backups and restore](/docs/guides/backups-and-restore/).
 
 What Geass removes, by engine:
 
@@ -600,10 +600,10 @@ The messages below are the text of the Ready condition, which you can read with 
 **The database stays at Draft.**
 It is not deployed. Select **Deploy changes** in the top bar.
 
-**"Platform setup is still in progress. This can take a few minutes." (raw message "Installing Postgres operator chart").**
+**"Platform setup is in progress." (raw message "Installing Postgres operator chart").**
 This is the first PostgreSQL database on the cluster, and Geass is installing the operator. Wait. If it does not finish, check `kubectl get helmcharts.helm.cattle.io -n kube-system` and the pods in `cnpg-system`.
 
-**"There isn't enough capacity for this size. Choose a smaller size or add capacity in Platform settings." (raw message "This PostgreSQL database needs about 250m CPU and 512Mi memory...").**
+**"Not enough capacity for this size. Choose a smaller one or add capacity." (raw message "This PostgreSQL database needs about 250m CPU and 512Mi memory...").**
 No node can hold it. Pick a smaller CPU and memory, or add a node. Deploy is refused until there is room. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 
 **"High availability requires a cluster with at least three healthy nodes".**
@@ -615,7 +615,7 @@ Longhorn is installing or not working. Geass waits up to 15 minutes. "Storage is
 **"Provisioning failed after repeated errors".**
 Open the **Deployments** tab to read the failing attempt, fix the cause, then select **Retry** (`POST /api/databases/<ID>/retry-provision` with the API).
 
-**A MySQL or Redis database shows "Object storage is starting. Try again in a few minutes." for a long time.**
+**A MySQL or Redis database shows "Object storage is starting." for a long time.**
 The dashboard words the raw message "Service is starting" this way for every engine. The server's pod is not ready, and its image is not what is wrong: a pod that cannot get its image says so, as the next entry describes. Run `kubectl get pods -n <namespace>` and `kubectl describe pod` on the database's pod (`geass-mysql-<ID>-0` or `geass-redis-db-<ID>-master-0`). A first MySQL start sets its volume up and can take a few minutes, and a large image that is still being pulled shows as `ContainerCreating` and is also "Service is starting".
 
 **"Could not pull the database image redis:7.4.11-alpine (ImagePullBackOff)" (or `mysql:8.4.11`, or `ErrImagePull`, or `InvalidImageName`).**

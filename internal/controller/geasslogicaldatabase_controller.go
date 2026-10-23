@@ -381,10 +381,28 @@ func logicalDatabaseJobContainer(server *geassv1alpha1.GeassDatabase, admin logi
 	}
 }
 
+// A pod's network rules are programmed a moment after it starts, and the first connection is refused until they are, so
+// each script below holds until the server answers, for up to a minute (see waitForServerScript).
+const waitForPostgres = `tries=0
+until pg_isready -q; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then echo "the database server did not answer" >&2; exit 1; fi
+  sleep 1
+done
+`
+
+const waitForMySQL = `tries=0
+until mysqladmin --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" ping --silent; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then echo "the database server did not answer" >&2; exit 1; fi
+  sleep 1
+done
+`
+
 // The scripts take their values from the environment and hand them to the client as variables, so nothing
 // a project controls is ever interpolated into SQL by the shell.
 const postgresCreateScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
-psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_password="${APP_PASSWORD:-}" -v app_db="$APP_DB" -v conn_limit="$CONNECTION_LIMIT" -v create_login="${CREATE_LOGIN:-0}" <<'SQL'
+` + waitForPostgres + `psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_password="${APP_PASSWORD:-}" -v app_db="$APP_DB" -v conn_limit="$CONNECTION_LIMIT" -v create_login="${CREATE_LOGIN:-0}" <<'SQL'
 SELECT :create_login::int = 1 AS make_login \gset
 \if :make_login
   SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS present \gset
@@ -404,14 +422,14 @@ SQL
 `
 
 const postgresDropScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
-psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
+` + waitForPostgres + `psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
 DROP DATABASE IF EXISTS :"app_db" WITH (FORCE);
 DROP ROLE IF EXISTS :"app_user";
 SQL
 `
 
 const mysqlCreateScript = `export MYSQL_PWD="$DB_PASSWORD"
-{
+` + waitForMySQL + `{
   echo "CREATE DATABASE IF NOT EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
   if [ "${CREATE_LOGIN:-0}" = "1" ]; then
     echo "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD';"
@@ -422,7 +440,7 @@ const mysqlCreateScript = `export MYSQL_PWD="$DB_PASSWORD"
 `
 
 const mysqlDropScript = `export MYSQL_PWD="$DB_PASSWORD"
-{
+` + waitForMySQL + `{
   echo "DROP DATABASE IF EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
   echo "DROP USER IF EXISTS '$APP_USER'@'%';"
 } | mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER"

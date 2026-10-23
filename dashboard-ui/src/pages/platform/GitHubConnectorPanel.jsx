@@ -9,9 +9,7 @@ export function GitHubConnectorPanel({ info, reload, inSheet = false }) {
   const hideDomain = useHidden("domain");
   const body = !info.hasDashboardURL ? (
         <>
-          <p className="rw-rail-body">
-            Connect Geass to GitHub for repository deploys. {hideDomain ? "The GitHub App needs a public host, which is set for you." : "Set a public host before registering the GitHub App."}
-          </p>
+          <p className="rw-rail-body">{hideDomain ? "The public host is already set." : "Set a public host first."}</p>
           {hideDomain ? null : (
             <SettingsPanel variant="flat">
               <AppLink href="/settings/domain"><Button>Configure domain</Button></AppLink>
@@ -23,7 +21,6 @@ export function GitHubConnectorPanel({ info, reload, inSheet = false }) {
           {info.manifestAction && (
             <SettingsPanel className="rw-settings-panel-spaced">
               <h3 className="rw-settings-subtitle">Create on GitHub</h3>
-              <p className="rw-settings-section-desc">Register an app with the correct callback and webhook URLs.</p>
               <form method="post" action={info.manifestAction} className="rw-form">
                 <input type="hidden" name="manifest" value={info.manifest || ""} />
                 <div className="rw-form-actions">

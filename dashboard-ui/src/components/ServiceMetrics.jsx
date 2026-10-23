@@ -140,7 +140,7 @@ export function ServiceMetrics({ scope, name, environment, charts = CHARTS }) {
       {query.data && !available ? (
         <div className="rw-metrics-unavailable">
           <strong>Metrics are not available yet</strong>
-          <span>{query.data.message || "Metrics appear once Prometheus is installed and reachable from Geass."}</span>
+          <span>{query.data.message || "Prometheus is not installed or not reachable."}</span>
         </div>
       ) : null}
       <div className="rw-metrics-grid">

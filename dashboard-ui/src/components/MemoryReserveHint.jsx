@@ -29,8 +29,8 @@ export function MemoryReserveHint({ app, memory, data }) {
   const reservedLabel = sizeLabel(data?.platform?.capacity?.memorySizes || [], memory, formatBytes(reserved));
   return (
     <Muted size="xs" mt="sm">
-      Each copy of this service has typically used about {formatBytes(typical)} lately, but only {reservedLabel} is reserved for
-      it. A service that reserves less than it uses is the first to be stopped when the server runs short of memory.
+      Each copy typically uses about {formatBytes(typical)} but only {reservedLabel} is reserved, so it is stopped first when memory
+      runs short.
     </Muted>
   );
 }

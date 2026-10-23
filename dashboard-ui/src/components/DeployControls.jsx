@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Popover, Stack, Text } from "@mantine/core";
 import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { countProjectPendingChanges, projectPendingItems } from "@/lib/services";
 import { Button } from "@/components/geass-ui";
 
@@ -28,7 +28,7 @@ export function DeployControls({ projectName, environment, data, reload }) {
       setDetailsOpen(false);
       const deployed = Number(result?.deployed ?? 0);
       if (deployed === 0) {
-        alertUser("No pending changes were deployed. Check the environment filter and resource settings.");
+        alertUser("Nothing was deployed");
         return;
       }
       navigate({
@@ -37,7 +37,7 @@ export function DeployControls({ projectName, environment, data, reload }) {
       });
       alertUser(deployed === 1 ? "Deployed 1 change" : `Deployed ${deployed} changes`);
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setDeploying(false);
     }

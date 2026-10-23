@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/cloud"
@@ -255,22 +256,57 @@ func readBackups(storage recoveryStorage, bucket, project, serverName string) (p
 		}
 		infos := platform.BarmanBackupInfoKeys(keys)
 		finished := map[string]time.Time{}
+		cannotRestore := 0
 		for _, id := range platform.NewestBarmanBackupIDs(infos, maxBaseCopiesRead) {
 			info, err := storage.GetObject(bucket, infos[id], maxManifestBytes)
 			if err != nil {
 				continue
 			}
-			if at, ok := platform.ParseBarmanBackupInfo(info); ok {
-				finished[id] = at
+			at, ok := platform.ParseBarmanBackupInfo(info)
+			if !ok {
+				continue
 			}
+			// A copy is a restore point only while the log files it needs are in the bucket too.
+			begin, end := platform.ParseBarmanBackupWal(info)
+			if walIsMissing(storage, bucket, platform.BarmanLogPrefix(project, serverName), begin, end) {
+				cannotRestore++
+				continue
+			}
+			finished[id] = at
 		}
 		points = platform.BarmanRestorePoints(finished)
 		newestLog = newestModified(storage, bucket, platform.BarmanLogPrefix(project, serverName))
+		if len(points) == 0 && cannotRestore > 0 {
+			return manifest, nil, nil, "Its base copies cannot be restored: the log files they need never reached the bucket"
+		}
 	}
 	if len(points) == 0 {
 		return manifest, nil, nil, "It holds no backup that finished, so there is nothing to restore"
 	}
 	return manifest, points, newestLog, ""
+}
+
+// walIsMissing says whether a base copy lacks a log file it needs. A folder that cannot be listed is not a reason to doubt
+// the copy.
+func walIsMissing(storage recoveryStorage, bucket, logPrefix, begin, end string) bool {
+	segments := platform.WalSegments(begin, end)
+	if len(segments) == 0 {
+		return false
+	}
+	byDirectory := map[string][]string{}
+	for _, segment := range segments {
+		byDirectory[platform.WalDirectory(segment)] = append(byDirectory[platform.WalDirectory(segment)], segment)
+	}
+	for directory, wanted := range byDirectory {
+		keys, err := storage.ListKeys(bucket, logPrefix+directory)
+		if err != nil {
+			return false
+		}
+		if len(platform.MissingWalSegments(wanted, keys)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // newestModified is when the newest object under a prefix was written, or nil when there is none or it cannot be listed.
@@ -414,6 +450,22 @@ func (s *Server) ensureRecoveredArchive(ctx context.Context, manifest platform.A
 	}
 	if err := s.Client.Create(ctx, archive); err != nil {
 		return entry, err
+	}
+	if manifest.Password != "" {
+		// A replicated MariaDB database restored from these copies starts with the password of the server they came from.
+		credentials := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: platform.ArchiveCredentialsSecretName(archive.Name), Namespace: systemNamespace,
+				Labels: map[string]string{platform.LabelManagedBy: platform.ManagedByValue},
+			},
+			Data: map[string][]byte{platform.ArchiveCredentialsKeyPassword: []byte(manifest.Password)},
+		}
+		if err := controllerutil.SetControllerReference(archive, credentials, s.Client.Scheme()); err != nil {
+			return entry, err
+		}
+		if err := s.Client.Create(ctx, credentials); err != nil && !apierrors.IsAlreadyExists(err) {
+			return entry, err
+		}
 	}
 	start, end, last := platform.RecoveredWindow(points, newestLog)
 	archive.Status.RestorePoints, archive.Status.RecoveryWindowStart, archive.Status.RecoveryWindowEnd, archive.Status.LastBackupTime = points, start, end, last

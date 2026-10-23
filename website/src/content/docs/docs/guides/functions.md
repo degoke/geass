@@ -177,7 +177,7 @@ reminder. Each run is an HTTP request to the function, so the function needs not
 2. Choose **Add schedule**. Geass adds a row named `schedule-1` that runs at minute 0 of every hour (`0 * * * *`).
 3. Fill in the row: the name (for example `nightly`), the cron schedule in UTC (for example `0 3 * * *`) and the path to
    call (for example `/sync`). Leave the path empty for `/`.
-4. Choose **Save schedules**. A toast says "Schedules saved. Deploy to start them."
+4. Choose **Save schedules**. A toast says "Schedules saved". Deploy to start them.
 5. Choose **Deploy changes** in the top bar.
 
 A schedule is saved as a pending change and starts with the next deploy. Removing one works the same way: choose
@@ -315,7 +315,7 @@ function in handler mode or with schedules. To give a function a database connec
 
 Because the code is part of the service, every deploy records it in the deployment history as `Deploy function (bun)`.
 **Pending changes** shows `Function code updated` when the code changed, and `Source: function (bun) → function (node)`
-when the runtime changed. A change to the mode or the schedules on its own shows `Settings updated — deploy to apply`.
+when the runtime changed. A change to the mode or the schedules on its own shows `Settings updated`.
 
 ## Logs, console and metrics
 

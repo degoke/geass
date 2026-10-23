@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { action } from "@/lib/api";
 import { canMutate, useBootstrap } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { AppLink } from "@/components/AppLink";
 import { Button, Field, FormStack, Input, Select } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
@@ -197,9 +197,9 @@ export function DomainSettingsPage({
       reload();
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
       queryClient.invalidateQueries({ queryKey: ["cloudflare-settings"] });
-      alertUser("Dashboard domain saved");
+      alertUser("Domain saved");
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setSaving(false);
     }
@@ -208,7 +208,7 @@ export function DomainSettingsPage({
   const quickApply = (event) => {
     event.preventDefault();
     if (!cloudflareRoot) {
-      alertUser("Enter your zone apex domain (e.g. example.com)");
+      alertUser("Enter the zone apex domain");
       return;
     }
     persistDomain({
@@ -247,15 +247,10 @@ export function DomainSettingsPage({
               <p className="rw-domain-active-badge">This is your active dashboard domain</p>
             ) : needsApexInput ? (
               <p className="rw-domain-quick-hint">
-                We could not read your zone name from Cloudflare. Enter the apex domain below, or{" "}
+                Could not read the zone name from Cloudflare. Enter the apex domain below, or{" "}
                 <AppLink href="/settings/connectors">reconnect Cloudflare</AppLink>.
               </p>
-            ) : (
-              <p className="rw-domain-quick-hint">
-                One click saves this URL. Geass creates DNS in Cloudflare using your connected
-                token—either an A record to cluster ingress or a Cloudflare Tunnel.
-              </p>
-            )}
+            ) : null}
             {!isActiveDomain ? (
               <div className="rw-domain-quick-actions">
                 <Button
@@ -273,7 +268,7 @@ export function DomainSettingsPage({
             <summary>Customize zone or subdomain</summary>
             <FormStack className="rw-rail-form" onSubmit={quickApply}>
               {needsApexInput || !resolvedApex ? (
-                <Field label="Zone apex domain" description="Your Cloudflare zone, e.g. example.com">
+                <Field label="Zone apex domain">
                   <Input
                     required
                     value={apexOverride}
@@ -285,11 +280,7 @@ export function DomainSettingsPage({
               {showZonePicker ? (
                 <Field
                   label="Cloudflare zone"
-                  description={
-                    zones.length > 1
-                      ? "Zones your API token can read."
-                      : "Only one zone on this token. Reconnect Cloudflare with broader zone access to see more."
-                  }
+                  description={zones.length > 1 ? undefined : "Only one zone on this token."}
                 >
                   <Select
                     required
@@ -302,20 +293,14 @@ export function DomainSettingsPage({
                   </Select>
                 </Field>
               ) : null}
-              <Field
-                label="Subdomain"
-                description={`Host becomes ${dashboardHost(subdomain, cloudflareRoot || "example.com")}`}
-              >
+              <Field label="Subdomain">
                 <Input
                   value={subdomain}
                   onChange={(event) => setSubdomain(event.target.value)}
                   placeholder={DEFAULT_SUBDOMAIN}
                 />
               </Field>
-              <Field
-                label="Publish via"
-                description="Both options use the Cloudflare API with your connected token."
-              >
+              <Field label="Publish via">
                 <Select
                   value={exposure}
                   onChange={(event) => setExposure(event.target.value)}
@@ -343,9 +328,6 @@ export function DomainSettingsPage({
           {!cloudflareConnected ? (
             <SettingsPanel className="rw-domain-connect-cta">
               <p className="rw-settings-subtitle">Connect Cloudflare</p>
-              <p className="rw-rail-body">
-                Pick a zone from your token and set <strong>geass.yourdomain.com</strong> in one step.
-              </p>
               <AppLink href="/settings/connectors" className="rw-domain-connect-btn">
                 Connect Cloudflare
               </AppLink>
@@ -360,18 +342,14 @@ export function DomainSettingsPage({
 
           <SettingsPanel>
             <p className="rw-settings-subtitle">Manual domain</p>
-            <p className="rw-rail-body rw-domain-manual-lead">
-              {cloudflareConnected
-                ? "Use any apex domain you control. DNS must point to your cluster ingress."
-                : "Or enter your apex domain without Cloudflare."}
-            </p>
+            <p className="rw-rail-body rw-domain-manual-lead">DNS must point to your cluster ingress.</p>
             {previewURL ? (
               <p className="rw-domain-manual-preview">
                 Dashboard URL: <strong>{previewURL}</strong>
               </p>
             ) : null}
             <FormStack className="rw-rail-form" onSubmit={saveManual}>
-              <Field label="Root domain" description="Apex only, e.g. example.com">
+              <Field label="Root domain" description="Apex only.">
                 <Input
                   required
                   value={manualRoot}

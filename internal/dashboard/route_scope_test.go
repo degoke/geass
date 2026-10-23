@@ -20,6 +20,7 @@ func TestRoutesAreClassifiedByWhoTheyAreFor(t *testing.T) {
 		{post, "/api/settings/auth/mode", scopePlatform},
 		{post, "/api/settings/alerts/channels", scopePlatform},
 		{post, "/api/nodes/worker-1/placement", scopePlatform},
+		{get, "/api/servers/worker-1/impact", scopePlatform},
 		{post, "/api/platform/default-region", scopePlatform},
 		{post, "/api/ha-readiness/check", scopePlatform},
 		{post, "/api/shared-databases/create", scopePlatform},

@@ -469,8 +469,10 @@ func (a *App) rollbackCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rollback APP [DEPLOYMENT]",
 		Short: "Go back to an earlier deployment (the previous one by default)",
-		Long:  "Go back to an earlier deployment. `geass apps deployments APP` lists them, newest first, with the ids this takes.\nFunctions cannot be rolled back: restore the earlier code and deploy again.",
-		Args:  usageArgs(cobra.RangeArgs(1, 2)),
+		Long: "Go back to an earlier deployment. `geass apps deployments APP` lists them, newest first, with the ids this takes.\n" +
+			"Only what a deployment records goes back: the image of a service that runs one, and the number of copies. Variables and other settings stay as they are now.\n" +
+			"Functions cannot be rolled back: restore the earlier code and deploy again.",
+		Args: usageArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			api, _, err := a.api()
 			if err != nil {
@@ -492,7 +494,7 @@ func (a *App) rollbackCmd() *cobra.Command {
 			if err := api.Rollback(cmd.Context(), args[0], revision); err != nil {
 				return err
 			}
-			a.note("%s: rolling back to %s", args[0], revision)
+			a.note("%s: rolling back to %s (the image and the number of copies; variables and other settings stay as they are)", args[0], revision)
 			if !wait {
 				return nil
 			}

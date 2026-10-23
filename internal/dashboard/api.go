@@ -63,7 +63,10 @@ type dashboardPlatform struct {
 	// for example ones created before Longhorn was installed.
 	FixedSizeDatabases []string `json:"fixedSizeDatabases,omitempty"`
 	// DefaultStorage is the default volume size per engine, so the UI carries no copy.
-	DefaultStorage map[string]string    `json:"defaultStorage"`
+	DefaultStorage map[string]string `json:"defaultStorage"`
+	// EngineVersions is the version Geass runs of each engine whose version it picks, so the UI shows that and not the
+	// version field every database carries.
+	EngineVersions map[string]string    `json:"engineVersions"`
 	Session        dashboardSessionInfo `json:"session"`
 }
 

@@ -5,25 +5,26 @@ sidebar:
   label: Overview
 ---
 
-A connection is a credential that lets Geass call another service on your behalf. Geass has four connectors: [**AWS**](/docs/guides/connectors/aws/)
-(S3 buckets and database backups), [**PlanetScale**](/docs/guides/connectors/planetscale/) (a managed database), [**Cloudflare**](/docs/guides/connectors/cloudflare/) (DNS and an optional tunnel
-for the dashboard) and [**GitHub**](/docs/guides/connectors/github/) (repository deploys). You manage them in **Settings** → **Connectors**, which
-shows one card for each. The button on a card reads **Configure**; on the AWS, PlanetScale and Cloudflare cards it reads
-**Manage** once a connection exists. A fifth kind is different: a [**connection for machines**](/docs/guides/connectors/clouds/) lets Geass
-create and delete servers at Amazon EC2, Azure, DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or
-Vultr, or through a webhook of your own. It is experimental. It has no card: below the cards, **Cloud connections** lists every connection,
-with **Connect a cloud** for a new one (see [Servers and machines](#servers-and-machines)).
+A connection is a credential that lets Geass call another service on your behalf. You manage them in **Settings** → **Connectors**, which has
+three parts:
+
+- **Code and domains**: [**GitHub**](/docs/guides/connectors/github/) (repository deploys) and [**Cloudflare**](/docs/guides/connectors/cloudflare/) (DNS and an
+  optional tunnel for the dashboard). They belong to the whole platform. The button on a card reads **Configure**, and **Manage** once it is set up.
+- **Server clouds**: [connections for machines](/docs/guides/connectors/clouds/), which let Geass create and delete servers at Amazon EC2, Azure,
+  DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud or Vultr, or through a webhook of your own. They belong to
+  the cluster. This is experimental. **Connect a cloud** adds one (see [Servers and machines](#servers-and-machines)).
+- **Storage and databases**: [**AWS**](/docs/guides/connectors/aws/) (S3 buckets and database backups) and
+  [**PlanetScale**](/docs/guides/connectors/planetscale/) (a managed database). Each connection belongs to one project, or to an organization.
+
+A project's link to GitHub is separate, under the project's **Settings** → **GitHub**.
 
 ![Settings, Connectors: the GitHub, Cloudflare, AWS and PlanetScale cards.](../../../../../assets/docs/connections.webp)
-*Screenshot with example data.*
+*Screenshot with example data, from before the cards were grouped under Code and domains and Storage and databases.*
 
 :::caution
 The connections for AWS buckets and PlanetScale databases are the least polished part of Geass. The credentials of a
-connection that is only for storage or databases are not checked when you save them, and the project field expects a
-project ID rather than a name. The project's **Settings** → **Integrations** page also says that Cloudflare, AWS and
-PlanetScale are "configured once for the whole cluster", which is true only of Cloudflare: AWS and PlanetScale connections
-belong to one project. The **Cloud connections** list shows these connections too, with **Remove** on each and **Edit**
-on an AWS one. **Remove** refuses while anything still uses the connection: a pool or a machine, an object store or a
+connection that is only for storage or databases are not checked when you save them. The AWS and PlanetScale drawers list
+their connections, with **Remove** on each and **Edit** on an AWS one. **Remove** refuses while anything still uses the connection: a pool or a machine, an object store or a
 database, the backups of a database that is gone, a project's backup bucket or the control plane firewall. It names them,
 so you can delete or move those first (see [Remove an AWS connection](/docs/guides/connectors/aws/#remove-an-aws-connection)).
 This page documents what the code does today, including those rough edges, so you can work around them.
@@ -44,7 +45,7 @@ so on a cluster it built they are encrypted in the cluster datastore, but anyone
 Read [Security](/docs/operations/security/) before you give Geass a broad AWS key.
 
 Only admins can add, change or remove connections. A viewer or an observer token does not get the AWS and PlanetScale
-connections the dashboard sends, but can read the **Cloud connections** list through the API (`GET /api/v1/connections`): each
+connections the dashboard sends, but can read the list of connections through the API (`GET /api/v1/connections`): each
 connection's name, cloud, purposes, whether it works and what uses it, and never its credentials, the cloud account it belongs
 to or what the cloud said about it (those are for admins). A project token cannot reach connections.
 See [Users and API tokens](/docs/guides/users-and-tokens/).

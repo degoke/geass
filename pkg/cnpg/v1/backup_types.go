@@ -121,6 +121,10 @@ type BackupStatus struct {
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 	StoppedAt *metav1.Time `json:"stoppedAt,omitempty"`
 	Error     string       `json:"error,omitempty"`
+	// BeginWal and EndWal are the first and last write-ahead log files the base copy needs: a copy can be restored only
+	// while every file from the first to the last is in the archive.
+	BeginWal string `json:"beginWal,omitempty"`
+	EndWal   string `json:"endWal,omitempty"`
 }
 
 // ScheduledBackup takes backups of a cluster on a cron schedule.

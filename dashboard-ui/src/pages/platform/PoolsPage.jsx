@@ -70,7 +70,7 @@ export function PoolProblems({ pools, mutable, onResume, resuming, linkToPool = 
             {pool.lastFailure ? <p className="cp-alert-text">Last failure: {pool.lastFailure}</p> : null}
             {mutable ? (
               <p className="cp-alert-text">
-                Resume forgets the failures and lets the pool try again now. If the cause is not fixed, it pauses again after three more.
+                Resume tries again now. The pool pauses again after three more failures.
               </p>
             ) : null}
           </>
@@ -84,13 +84,13 @@ export function PoolProblems({ pools, mutable, onResume, resuming, linkToPool = 
         {orphans.length ? (
           <>
             <p className="cp-alert-text">
-              {orphans.length} {orphans.length === 1 ? "machine" : "machines"} at the cloud carry this pool's labels and belong to no node:{" "}
+              {orphans.length} {orphans.length === 1 ? "machine" : "machines"} at the cloud belong to no node:{" "}
               <span className="cp-mono">{orphans.join(", ")}</span>
             </p>
             <p className="cp-alert-text">
               {pool.orphanPolicy === "Delete"
-                ? "Geass deletes a machine that has had no node for twenty minutes."
-                : "Geass only reports them, because deleting a machine cannot be undone. They may still be billing you: delete them at the cloud, or set the pool to delete them."}
+                ? "Geass deletes a machine after twenty minutes without a node."
+                : "Geass only reports them. They may still be billing you."}
             </p>
           </>
         ) : null}
@@ -109,7 +109,7 @@ export function useResume() {
     setResuming(pool.name);
     try {
       await action(`/pools/${pool.name}/resume`);
-      notify(`Asked ${pool.name} to try again`, "success");
+      notify(`Resumed ${pool.name}`, "success");
       await refresh();
     } catch (failure) {
       notify(failure.message, "error");
@@ -151,11 +151,6 @@ export function PoolsPage({ data }) {
           </div>
         ) : null}
       </div>
-      <p className="cp-intro">
-        A pool adds nodes to the cluster when pods cannot start, and takes idle ones away. Its machines are created at a cloud
-        with a <Link to="/settings/connectors">cloud connection</Link>, or are servers of your own that Geass joins when it needs room. A pool
-        never grows past its maximum, which is the limit on what it can cost.
-      </p>
 
       {pools.isError ? <Alert tone="danger">{pools.error.message}</Alert> : null}
       {pools.isPending ? <Muted size="sm">Loading pools…</Muted> : null}
@@ -245,11 +240,7 @@ export function PoolsPage({ data }) {
               getRowKey={(pool) => pool.name}
               empty={(
                 <div>
-                  <p className="cp-empty">
-                    No pools yet. {mutable
-                      ? "Add one to let the cluster grow when pods cannot start. Nothing is created until you save it, and a pool never has more machines than its maximum."
-                      : "An admin can add one."}
-                  </p>
+                  <p className="cp-empty">No pools yet.</p>
                   {mutable ? <Button leftSection={<Plus size={15} />} onClick={() => setAdding(true)}>Add pool</Button> : null}
                 </div>
               )}
@@ -259,12 +250,7 @@ export function PoolsPage({ data }) {
         </>
       ) : null}
 
-      <SettingsSheet
-        opened={adding}
-        onClose={() => setAdding(false)}
-        title="Add a pool"
-        description="A pool adds nodes when pods cannot start, up to its maximum, and removes idle ones."
-      >
+      <SettingsSheet opened={adding} onClose={() => setAdding(false)} title="Add a pool">
         {adding ? (
           !formReady ? (
             <Muted size="sm">Loading…</Muted>

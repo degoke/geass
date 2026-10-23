@@ -31,7 +31,7 @@ Geass creates the project at once with a generated name such as `swift-river` an
 
 You can also paste the image into the first box. Geass offers **Deploy image mendhak/http-https-echo:41** (`From a container registry`). Either way the box rejects references with spaces or unusual characters.
 
-Geass saves the service as a draft and opens its panel, docked on the right, on **Settings**, with the message `Service saved as a draft. Adjust settings or variables, then deploy.` Nothing runs yet. The service shows **Draft**, the canvas card shows `1 change`, and the top bar shows **1 pending**.
+Geass saves the service as a draft and opens its panel, docked on the right, on **Settings**, with the message `Added service`. Nothing runs yet. The service shows **Draft**, the canvas card shows `1 change`, and the top bar shows **1 pending**.
 
 :::tip
 You can also keep this service as a template. The [HTTP echo example](/docs/guides/templates/#examples-to-copy) is a ready-made one: apply it once, then use **Deploy** on its card under **Templates** to add the image, variables and port as a draft in any project.
@@ -68,7 +68,7 @@ Geass answers `Variables saved. Deploy to apply them.` Variables, like most sett
 
 The top bar now shows **2 pending**: one for creating the draft and one for the variables. The number counts saved changes, not resources, so adding the four variables one at a time would have made it 5. Choose it to see a list, per resource, of what changed (the draft, the variables). Changes to a service that has never been deployed are held as pending, and nothing runs until you deploy.
 
-Some settings never wait: a replica count, autoscaling, sleep when idle, the domain, HTTPS and metrics apply the moment you save them, and the message says `Saved. Applied now`. Anything that changes the container (image, port, variables, command, size) waits for a deploy, and the message says `Saved. Deploy to apply them`.
+Some settings never wait: a replica count, autoscaling, sleep when idle, the domain, HTTPS and metrics apply the moment you save them, and the message says `Saved and applied`. Anything that changes the container (image, port, variables, command, size) waits for a deploy, and the message says `Saved`.
 
 ## 6. Deploy
 
@@ -108,7 +108,7 @@ Whichever way you reach it, the response describes your request and includes an 
 
 ## 8. Change something
 
-1. In the service's **Settings**, open the **Scale** section, set **Replicas** to `2` and choose **Save changes**. It applies at once (`Saved. Applied now`), because it does not replace the running container. The top bar stays at **Up to date**.
+1. In the service's **Settings**, open the **Scale** section, set **Replicas** to `2` and choose **Save changes**. It applies at once (`Saved and applied`), because it does not replace the running container. The top bar stays at **Up to date**.
 2. In **Variables**, change `APP_ENV` to `production` (**Edit** in the row's menu). The top bar shows **1 pending**. The running container still reports `staging`.
 3. Choose **Deploy changes**. The new container starts with the new value. When nothing is pending, the service header has a **Redeploy** button that deploys the service again.
 
@@ -160,7 +160,7 @@ sudo k3s kubectl -n proj-1a2b3c4d-production get deploy,svc,ingress,pods
 
 ## Troubleshooting
 
-**The message `No pending changes were deployed. Check the environment filter and resource settings.`** The top bar is on a different environment from the one you edited. Switch to the environment tab that holds the service.
+**The message `Nothing was deployed`.** The top bar is on a different environment from the one you edited. Switch to the environment tab that holds the service.
 
 **`This service needs about ... CPU and ... memory. The cluster currently has ... available. Scale up the cluster before creating it`.** The nodes have no room for even a 0.1 CPU service. The add-ons Geass installs use CPU and memory too. See **Usage** in the left rail and [Usage and capacity](/docs/guides/usage-and-capacity/).
 

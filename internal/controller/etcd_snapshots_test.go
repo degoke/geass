@@ -176,7 +176,7 @@ func TestACopyThatIsInTheBucketMakesTheClusterCurrentAndSaysWhichOne(t *testing.
 
 func TestTheFirstCopyIsWaitedForAndThenItsAbsenceIsAProblem(t *testing.T) {
 	f := newSnapshotFixture(t, snapshotSpec(), snapshotCredentials("AKIA", "shh"))
-	require.Equal(t, etcdSnapshotsRetryWaiting, f.reconcile())
+	require.Equal(t, etcdSnapshotsRetryFirstCopy, f.reconcile(), "the installer's copy is in the bucket in seconds")
 	require.Equal(t, platform.EtcdSnapshotsReasonWaiting, f.condition().Reason)
 
 	f.now = f.now.Add(platform.EtcdSnapshotsFirstCopyWithin - time.Minute)
@@ -336,16 +336,38 @@ func TestTheBucketIsNotLookedInAgainBeforeTheLookSaidUnlessWhereItIsChanged(t *t
 	require.Equal(t, "another-bucket/geass/", f.bucket.asked[2])
 }
 
-// Until a first copy has arrived the look is repeated every few minutes, which is how a copy that has just been taken is seen.
-func TestWhileNoCopyHasArrivedTheBucketIsLookedInEveryFewMinutes(t *testing.T) {
+// Until a first copy has arrived the look is repeated: every minute in the first quarter of an hour, which is how the copy the
+// installer takes at once is seen when it has arrived, and every few minutes after that, which is how one that K3s takes is.
+func TestWhileNoCopyHasArrivedTheBucketIsLookedInOftenAtFirstAndEveryFewMinutesAfter(t *testing.T) {
 	f := newSnapshotFixture(t, snapshotSpec(), snapshotCredentials("AKIA", "shh"))
 	f.reconcile()
 	f.cluster = f.latest()
 	require.Len(t, f.bucket.asked, 1)
 
+	f.now = f.now.Add(30 * time.Second)
+	wait := f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
+	require.Len(t, f.bucket.asked, 1, "not twice in half a minute")
+	require.InDelta(t, (etcdSnapshotsRetryFirstCopy - 30*time.Second).Seconds(), wait.Seconds(), 1)
+
+	// The installer's copy has arrived. A minute after the first look it is seen, and not five.
+	f.bucket.objects = []cloud.S3Object{{Key: "geass/etcd-snapshot-cp1-100", LastModified: f.now}}
+	f.now = f.now.Add(31 * time.Second)
+	f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
+	require.Len(t, f.bucket.asked, 2)
+	require.Equal(t, platform.EtcdSnapshotsReasonCurrent, f.latest().Status.Conditions[0].Reason)
+}
+
+func TestAfterTheFirstQuarterOfAnHourAMissingFirstCopyIsLookedForEveryFiveMinutes(t *testing.T) {
+	f := newSnapshotFixture(t, snapshotSpec(), snapshotCredentials("AKIA", "shh"))
+	f.reconcile()
+	f.now = f.now.Add(etcdSnapshotsFirstCopySoon + time.Minute)
+	f.reconcile()
+	f.cluster = f.latest()
+	asked := len(f.bucket.asked)
+
 	f.now = f.now.Add(time.Minute)
 	wait := f.r.reconcileEtcdSnapshots(context.Background(), f.cluster)
 
-	require.Len(t, f.bucket.asked, 1)
+	require.Len(t, f.bucket.asked, asked, "a minute on, with the quarter of an hour behind it, is not time to look again")
 	require.InDelta(t, (etcdSnapshotsRetryWaiting - time.Minute).Seconds(), wait.Seconds(), 1)
 }

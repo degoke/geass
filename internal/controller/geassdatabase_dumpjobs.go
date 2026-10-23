@@ -87,11 +87,24 @@ func (in dumpJobInput) isMySQL() bool {
 func (in dumpJobInput) isMariaDB() bool { return in.engine() == geassv1alpha1.DatabaseEngineMariaDB }
 
 // waitForServerScript holds a copy until the database can be reached. A pod's network rules are programmed a moment
-// after it starts, which a MariaDB client does not wait out: its first attempt is dropped and it gives up at once with
-// "Can't connect (115)", where MySQL's client retries the connection and gets through. Seen on K3s, whose network
-// policy controller admits a new pod about a second late.
+// after it starts, and a database client does not wait that out: its first attempt is refused and it gives up at once,
+// MariaDB's with "Can't connect (115)" and MySQL's with "Can't connect (111)", the first copy of every backup Job on a
+// K3s whose network policy controller admits a new pod about half a second late. The Job's one retry starts at once
+// too, so it fails the same way.
 func waitForServerScript(port string) string {
 	return fmt.Sprintf(`for _ in $(seq 1 60); do (exec 3<>"/dev/tcp/$DB_HOST/%s") 2>/dev/null && break; sleep 1; done`, port)
+}
+
+// waitForRqliteScript is waitForServerScript for the image of an rqlite server, whose shell has no /dev/tcp and whose
+// only client is wget. rqlite answers /readyz once it can take a request. It gives up after a minute, so a database
+// that is not there fails the Job with a reason instead of leaving it to its deadline.
+func waitForRqliteScript(port string) string {
+	return fmt.Sprintf(`tries=0
+until wget -q -O /dev/null "http://$DB_HOST:%s/readyz"; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then echo "the database did not answer on port %s" >&2; exit 1; fi
+  sleep 1
+done`, port, port)
 }
 
 // dumpPodSpec is the pod of a backup Job (dump, then upload) or, when restoreKey is set, of a
@@ -177,18 +190,20 @@ mariadb-dump --host="$DB_HOST" --port=%s --user=%s --single-transaction --routin
 				waitForServerScript(in.target.port), in.target.port, user, backupMountPath, dumpBaseName)}
 		}
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
+%s
 mysqldump --host="$DB_HOST" --port=%s --user=%s --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=OFF --databases "$DB_NAME" | gzip -c > %s/%s.sql.gz`,
-			in.target.port, user, backupMountPath, dumpBaseName)}
+			waitForServerScript(in.target.port), in.target.port, user, backupMountPath, dumpBaseName)}
 	}
 	// rqlite serves a consistent copy of its database over HTTP, as SQL text. Its binary SQLite
 	// file cannot be used: loading one back leaves the node reporting "database is closed", and its
 	// command-line shell is interactive and never exits when fed from a pipe. The COMMIT check
 	// catches a dump that was cut short.
 	return []string{"sh", "-c", fmt.Sprintf(`set -eu
+%[4]s
 wget -q -O %[1]s/%[2]s.sql "http://$DB_HOST:%[3]s/db/backup?fmt=sql"
 test -s %[1]s/%[2]s.sql
 grep -q '^COMMIT;' %[1]s/%[2]s.sql
-gzip -f %[1]s/%[2]s.sql`, backupMountPath, dumpBaseName, in.target.port)}
+gzip -f %[1]s/%[2]s.sql`, backupMountPath, dumpBaseName, in.target.port, waitForRqliteScript(in.target.port))}
 }
 
 // loadCommand loads the downloaded copy into the running database.
@@ -199,22 +214,20 @@ func loadCommand(in dumpJobInput) []string {
 		if in.isMariaDB() {
 			client = "mariadb"
 		}
-		wait := ""
-		if in.isMariaDB() {
-			wait = waitForServerScript(in.target.port) + "\n"
-		}
 		return []string{"bash", "-c", fmt.Sprintf(`set -euo pipefail
-%sgunzip -c %s/%s.sql.gz | %s --host="$DB_HOST" --port=%s --user=%s`, wait, backupMountPath, dumpBaseName, client, in.target.port, user)}
+%s
+gunzip -c %s/%s.sql.gz | %s --host="$DB_HOST" --port=%s --user=%s`, waitForServerScript(in.target.port), backupMountPath, dumpBaseName, client, in.target.port, user)}
 	}
 	// rqlite answers a load that failed with HTTP 200 and the error in the body, and wget exits 0
 	// for it, so the response is checked: otherwise a failed restore would be reported as a success.
 	return []string{"sh", "-c", fmt.Sprintf(`set -eu
+%[4]s
 gunzip -f %[1]s/%[2]s.sql.gz
 response=$(wget -q -O - --header 'Content-Type: text/plain' --post-file %[1]s/%[2]s.sql "http://$DB_HOST:%[3]s/db/load")
 echo "$response"
 case "$response" in
   *'"error"'*) echo "the restore reported an error" >&2; exit 1 ;;
-esac`, backupMountPath, dumpBaseName, in.target.port)}
+esac`, backupMountPath, dumpBaseName, in.target.port, waitForRqliteScript(in.target.port))}
 }
 
 // curlS3 is how curl talks to the bucket. The S3 flavour of SigV4 needs the payload header spelled

@@ -20,7 +20,7 @@ For the task-oriented view, see [Backups and restore](/docs/guides/backups-and-r
 | Subresources | `status` |
 | Printer column `Database` | `.spec.database` |
 | Printer column `Last backup` | `.status.lastBackupTime` |
-| Printer column `Delete after` | `.spec.deleteAfter` |
+| Printer column `Delete after` | `.spec.deleteAfter`, printed as the time itself (a date that has not come yet cannot be printed as an age) |
 | Finalizer | None |
 
 ## Example

@@ -1529,7 +1529,7 @@ spec:
       type: date
     - jsonPath: .spec.deleteAfter
       name: Delete after
-      type: date
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:

@@ -75,7 +75,7 @@ There are 17 Geass kinds. Resources that the dashboard creates for you are marke
 | [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/) | Domain, Cloudflare, GitHub App and other cluster-wide settings | The dashboard (**Settings**) |
 | [GeassOrganization](/docs/reference/resources/geass-organization/) | An organization of the identity provider, with its workspaces, whose people see only its projects | A platform administrator (the API, or `kubectl`) |
 | [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/) | A connection to AWS, PlanetScale, or a cloud that creates machines | The dashboard (**Connectors**), or `geass connections add` for machines |
-| [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) | A project's link to GitHub | The dashboard (project **Integrations**) |
+| [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) | A project's link to GitHub | The dashboard (project **GitHub**) |
 | [GeassDeployment](/docs/reference/resources/geass-deployment/) | One recorded deploy of a service | Geass |
 | [GeassBuild](/docs/reference/resources/geass-build/) | One repository build | Geass |
 | [GeassConsoleSession](/docs/reference/resources/geass-console-session/) | An audited terminal in a service | The dashboard (terminal) |

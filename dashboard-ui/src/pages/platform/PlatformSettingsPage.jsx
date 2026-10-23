@@ -67,7 +67,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page !== "tokens" && page !== "alerts" && page !== "registry" && !isPlatformSession(data)) {
     return (
       <SettingsSection title="Settings" flat>
-        <p className="rw-rail-body">These settings belong to the platform's administrators. As an administrator of an organization you manage its API tokens and its alerts here.</p>
+        <p className="rw-rail-body">Only the platform's administrators can change these.</p>
       </SettingsSection>
     );
   }
@@ -127,7 +127,6 @@ export function PlatformSettingsPage({ data, page, reload }) {
   return (
     <>
       <SettingsSection title="General settings" flat>
-        <p className="rw-rail-body">Workspace overview and links to platform configuration.</p>
         <SettingsPanel>
           <KeyValueTable
             items={[

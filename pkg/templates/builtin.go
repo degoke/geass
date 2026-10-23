@@ -16,8 +16,7 @@ func Builtin() []Template {
 			ID:          "gatus",
 			Name:        "Gatus",
 			Description: "A status page and uptime monitor. It checks your endpoints on a schedule and shows how they have been doing.",
-			Notes: "Gatus reads its endpoints from the config.yaml variable on the service's Variables tab. It starts with one check, " +
-				"of itself. Add your own, then deploy the change. Results are kept in memory, so they reset when the service restarts.",
+			Notes:       "Add checks in the config.yaml variable. Results are kept in memory, so they reset when the service restarts.",
 			Resources: []Resource{
 				{
 					Key: "gatus", Kind: KindService, Name: "gatus", Image: "twinproduction/gatus:v5.37.0", Port: 8080,
@@ -30,9 +29,8 @@ func Builtin() []Template {
 			ID:          "infisical",
 			Name:        "Infisical",
 			Description: "Open-source secrets management for teams: store, share and sync secrets and certificates across environments.",
-			Notes: "Add a domain to the infisical service, then set SITE_URL to its address. Geass generated ENCRYPTION_KEY and " +
-				"AUTH_SECRET for you. Keep a copy of ENCRYPTION_KEY: without it the stored secrets cannot be read. " +
-				"The first start runs database migrations and takes a few minutes.",
+			Notes: "Add a domain, then set SITE_URL to its address. Keep a copy of ENCRYPTION_KEY: without it the stored secrets cannot be read. " +
+				"The first start takes a few minutes.",
 			Resources: []Resource{
 				{Key: databaseKey, Kind: KindDatabase, Name: "postgres", Engine: "Postgres"},
 				{Key: redisKey, Kind: KindDatabase, Name: "redis", Engine: "Redis"},
@@ -54,12 +52,9 @@ func Builtin() []Template {
 			ID:          "refhir",
 			Name:        "ReFHIR",
 			Description: "A FHIR R4 server for health data, with a search index, an audit trail and optional SMART App Launch, on a Postgres database.",
-			Notes: "The FHIR packages ship inside the image, so the first start needs no internet access and takes under a minute; " +
-				"GET /readyz answers 503 until then. Keep a copy of REFHIR_AUDIT_KEY: it keys the audit trail, which " +
-				"GET /_audit/verify checks. Until you turn on SMART sign-in, anyone who can reach the service can read and write " +
-				"health data, so add a domain only after you have secured it. Packages are not downloaded unless you add " +
-				"REFHIR_PACKAGE_DOWNLOAD=true, so installing another implementation guide answers 403 until you do, and it then " +
-				"needs internet access. A search without _count returns 100 matches and a next link.",
+			Notes: "The first start takes under a minute. Keep a copy of REFHIR_AUDIT_KEY: it keys the audit trail. Until you turn on SMART " +
+				"sign-in, anyone who can reach the service can read and write health data, so add a domain only after you have secured it. " +
+				"To install another implementation guide, add REFHIR_PACKAGE_DOWNLOAD=true (it needs internet access).",
 			Resources: []Resource{
 				{Key: databaseKey, Kind: KindDatabase, Name: "postgres", Engine: "Postgres"},
 				{
@@ -79,10 +74,9 @@ func Builtin() []Template {
 			ID:          "browserbay",
 			Name:        "browserbay",
 			Description: "Self-hosted browsers for AI agents and automation. Your services ask it for a Chromium and drive it over the DevTools protocol.",
-			Notes: "Add a domain to the browserbay service and serve it over HTTPS before anything outside the cluster uses it: the API key " +
-				"and the tokens for each browser travel to it. Geass generated BROWSERBAY_API_KEY; your services present it to take a browser. " +
-				"It runs up to 5 browsers at once, and five busy pages used about 1.5 GB. A browser can open any address the service can " +
-				"reach, so give browser tokens only to services you trust.",
+			Notes: "Serve it over HTTPS on a domain before anything outside the cluster uses it: the API key and the browser tokens travel to it. " +
+				"It runs up to 5 browsers at once, about 1.5 GB for five busy pages. A browser can open any address the service can reach, " +
+				"so give browser tokens only to services you trust.",
 			Resources: []Resource{
 				{
 					Key: "browserbay", Kind: KindService, Name: "browserbay", Image: "ghcr.io/degoke/browserbay:0.2.2", Port: 8788,

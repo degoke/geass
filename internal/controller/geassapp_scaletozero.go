@@ -311,7 +311,11 @@ func (r *GeassAppReconciler) startProblem(ctx context.Context, wsNS string, depl
 		for _, status := range statuses {
 			if waiting := status.State.Waiting; waiting != nil && slices.Contains(startFailureReasons, waiting.Reason) {
 				// The reason only: the registry's own words are long, and are read as a platform fault by the code that
-				// summarises failures for users. They are on the pod's events.
+				// summarises failures for users. They are on the pod's events. An image that cannot be pulled also says
+				// which one, which is the thing to look at, and is short.
+				if slices.Contains(imagePullReasons, waiting.Reason) {
+					return fmt.Sprintf("%s is %s (image %s)", status.Name, waiting.Reason, podContainerImage(&pods.Items[i], status))
+				}
 				return fmt.Sprintf("%s is %s", status.Name, waiting.Reason)
 			}
 		}

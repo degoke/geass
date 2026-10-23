@@ -385,3 +385,73 @@ func TestAProjectThatCannotBeMadeAgainIsSaidAndDoesNotStopTheOthers(t *testing.T
 	require.NoError(t, c.List(context.Background(), &projects))
 	require.Len(t, projects.Items, 1)
 }
+
+// A copy is a restore point only while the log files it needs are in the bucket: one made before archiving worked is
+// complete there and can never be restored, which a new cluster would find out only when the new database never started.
+func TestACopyWhoseLogFilesAreNotInTheBucketIsNotOfferedForRestore(t *testing.T) {
+	b := &fakeBucket{objects: map[string][]byte{}, modified: map[string]time.Time{}}
+	b.manifestFor(t, "shop", "orders-1a2b3c4d", "orders", geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEnginePostgres, Version: "16", DatabaseName: "app"})
+	b.put("shop/orders-1a2b3c4d/base/20261011T020000/backup.info", "status=DONE\nbegin_wal=000000010000000000000008\nend_wal=000000010000000000000009\nend_time=2026-10-11 02:00:09+00:00\n")
+	b.put("shop/orders-1a2b3c4d/base/20261012T020000/backup.info", "status=DONE\nbegin_wal=00000001000000000000000B\nend_wal=00000001000000000000000B\nend_time=2026-10-12 02:00:11+00:00\n")
+	// The first file of the first copy never reached the bucket.
+	b.put("shop/orders-1a2b3c4d/wals/0000000100000000/000000010000000000000009.gz", "x")
+	b.put("shop/orders-1a2b3c4d/wals/0000000100000000/00000001000000000000000B.gz", "x")
+	srv, c := newRecoveryServer(b)
+
+	rec := recover(srv, recoveryForm)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var archive geassv1alpha1.GeassBackupArchive
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "recovered-orders-1a2b3c4d", Namespace: platform.SystemNamespace}, &archive))
+	require.Len(t, archive.Status.RestorePoints, 1)
+	require.Equal(t, "20261012T020000", archive.Status.RestorePoints[0].ID)
+}
+
+func TestABucketWhoseOnlyCopiesCannotBeRestoredSaysSo(t *testing.T) {
+	b := &fakeBucket{objects: map[string][]byte{}, modified: map[string]time.Time{}}
+	b.manifestFor(t, "shop", "orders-1a2b3c4d", "orders", geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEnginePostgres, Version: "16", DatabaseName: "app"})
+	b.put("shop/orders-1a2b3c4d/base/20261011T020000/backup.info", "status=DONE\nbegin_wal=000000010000000000000008\nend_wal=000000010000000000000008\nend_time=2026-10-11 02:00:09+00:00\n")
+	srv, c := newRecoveryServer(b)
+
+	rec := recover(srv, recoveryForm)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "log files they need never reached the bucket")
+	var archives geassv1alpha1.GeassBackupArchiveList
+	require.NoError(t, c.List(context.Background(), &archives))
+	require.Empty(t, archives.Items)
+}
+
+// The copies of a replicated MariaDB database hold its logins, and a database restored from them cannot start without the
+// password of the server they were taken from, which is random: it travels with the backups.
+func TestThePasswordOfAPhysicalBackupIsKeptWithTheRecoveredArchive(t *testing.T) {
+	b := &fakeBucket{objects: map[string][]byte{}, modified: map[string]time.Time{}}
+	source := geassv1alpha1.GeassBackupSource{Engine: geassv1alpha1.DatabaseEngineMariaDB, Version: "11.8", DatabaseName: "books", HighAvailability: true}
+	archive := &geassv1alpha1.GeassBackupArchive{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{platform.DisplayNameAnnotation: "Books"}},
+		Spec: geassv1alpha1.GeassBackupArchiveSpec{
+			Project: "shop", Environment: "production", Database: "books", DatabaseUID: "uid", ServerName: "books-1a2b3c4d", RetentionDays: 7, Source: source,
+		},
+	}
+	manifest := platform.ManifestOf(archive, "Shop")
+	manifest.Password = "random-password-of-the-server"
+	raw, err := manifest.Encode()
+	require.NoError(t, err)
+	b.objects[platform.ArchiveManifestKey("shop", "books-1a2b3c4d")] = raw
+	b.put("shop/books-1a2b3c4d/physical/physicalbackup-20261011020000.xb.gz", "x")
+	srv, c := newRecoveryServer(b)
+
+	rec := recover(srv, recoveryForm)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var found geassv1alpha1.GeassBackupArchive
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: "recovered-books-1a2b3c4d", Namespace: platform.SystemNamespace}, &found),
+		"the archive was recovered: %s", rec.Body.String())
+	var kept corev1.Secret
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Name: platform.ArchiveCredentialsSecretName(found.Name), Namespace: platform.SystemNamespace}, &kept))
+	require.Equal(t, "random-password-of-the-server", string(kept.Data[platform.ArchiveCredentialsKeyPassword]))
+	require.NotEmpty(t, kept.OwnerReferences, "it goes with the record")
+
+	// Finding the same backups again makes nothing new, and a manifest without a password (older) makes no Secret.
+	require.Equal(t, http.StatusOK, recover(srv, recoveryForm).Code)
+}

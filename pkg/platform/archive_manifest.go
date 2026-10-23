@@ -62,6 +62,24 @@ type ArchiveManifest struct {
 	ServerName    string                          `json:"serverName"`
 	RetentionDays int32                           `json:"retentionDays"`
 	Source        geassv1alpha1.GeassBackupSource `json:"source"`
+	// Password is the password of the server a replicated MariaDB database's physical copies were taken from: the copies
+	// hold its logins, and a database restored from them cannot start without it. It is written only for those, and is
+	// no more than the copies themselves tell anyone who can read the bucket, which hold all the data. A manifest without
+	// one is from before passwords were random, and the password was derived from the database's name.
+	Password string `json:"password,omitempty"`
+}
+
+const (
+	// ArchiveCredentialsSuffix names the Secret that holds an archive's password beside the archive: <archive>-credentials.
+	ArchiveCredentialsSuffix = "-credentials"
+	// ArchiveCredentialsKeyPassword is the key of that password in the Secret.
+	ArchiveCredentialsKeyPassword = "password"
+)
+
+// ArchiveCredentialsSecretName is the Secret, in the system namespace, that holds the password of the server an archive's
+// physical copies were taken from.
+func ArchiveCredentialsSecretName(archive string) string {
+	return archive + ArchiveCredentialsSuffix
 }
 
 // ArchiveManifestKey is where an archive's manifest is.

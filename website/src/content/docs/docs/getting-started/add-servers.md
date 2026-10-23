@@ -233,6 +233,8 @@ For a server you have, Geass then:
 
 :::caution
 Removal of a server you have does not cordon or drain the node. Removing K3s stops its pods, and Kubernetes starts replacements elsewhere once the node object is gone. Data does not move with them. A volume whose only copy is on that node's disk, such as a local-path volume, goes when K3s is uninstalled. A replicated Longhorn volume keeps its replicas on other nodes. Move data off a node before you remove it.
+
+The **Remove server** dialog lists the data that is kept on the server and nowhere else: a database whose only copy is there, a replica of a database that has other copies (Geass builds a new one on another server, a few minutes after the removal), and a volume with a single copy. Read it before you type the name. A replica of a highly available Postgres database is replaced within about three minutes of the removal; see [what Geass does after fifteen minutes](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes).
 :::
 
 A machine that Geass created is treated differently, because it is deleted. Geass cordons the node and asks its pods to leave, through the eviction API so that disruption budgets are honoured, for up to five minutes. It then deletes the Kubernetes node and the machine at the cloud, and releases the object only once the cloud no longer lists the machine as alive. Data on the machine's disk goes with it. If the connection that made the machine has gone for good, annotate the node `geass.dev/abandon-instance=true`: Geass then releases it and leaves the machine at the cloud for you to delete.

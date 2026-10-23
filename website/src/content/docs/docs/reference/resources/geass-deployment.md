@@ -110,6 +110,8 @@ The rule is:
 | Git | Sets `spec.replicas` to the record's replicas and deploys. It does not change the commit or branch, so the code that runs does not change. |
 | Function | Refused with `functions cannot be rolled back; restore the earlier code and deploy again`. |
 
+A rollback puts back only what the table says. A record does not hold the service's variables or its other settings, so those stay as they are now: a variable added after the record was made is still there after a rollback to it.
+
 A rollback is refused with `deployment revision does not belong to app` when the record does not carry the label `geass.dev/app` for that service. That includes `<app>-active`. See the [REST API](/docs/reference/rest-api/) reference and [Users and tokens](/docs/guides/users-and-tokens/) for tokens.
 
 ## Editing by hand

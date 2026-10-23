@@ -70,6 +70,11 @@ type GeassDatabaseReconciler struct {
 	newBackupStorage backupStorageFactory
 	// clock returns the current time; tests replace it. Nil means time.Now.
 	clock func() time.Time
+
+	// walVerdicts remembers the Postgres base copies seen to have every log file they need.
+	walVerdicts walVerdicts
+	// backupLook is which databases have no restore point and are looked at again soon.
+	backupLook backupLookSoon
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch;create;update;patch;delete
@@ -293,7 +298,10 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 	}
 	if !cnpgClusterReady(cluster) {
 		if db.Spec.RestoreFrom != nil && conditionStatus(db.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
-			return r.setNotReady(ctx, db, messageRestoringDatabase)
+			return r.setNotReady(ctx, db, restoringMessage(r.recoveryFailures(ctx, db, wsNS)))
+		}
+		if message := volumeNotPlacedMessage(ctx, r.Client, wsNS, claimsOfPostgres(ctx, r.Client, wsNS, db.Name)...); message != "" {
+			return r.setNotReady(ctx, db, message)
 		}
 		return r.setNotReady(ctx, db, "Postgres database is starting")
 	}
@@ -311,8 +319,12 @@ func (r *GeassDatabaseReconciler) reconcilePostgres(ctx context.Context, db *gea
 	case backupsFailed:
 		result.RequeueAfter = backupRetryInterval
 	case plan != nil:
-		// Backup progress is read from the cluster's status, which this controller does not watch.
+		// Backup progress is read from the cluster's status, which this controller does not watch. A database with no
+		// restore point yet is looked at more often: its first copy is on its way, or being taken again.
 		result.RequeueAfter = platform.BackupStatusRefreshInterval
+		if r.backupLook.wanted(db) {
+			result.RequeueAfter = backupFirstLookInterval
+		}
 	}
 	return result, err
 }
@@ -742,7 +754,11 @@ func (r *GeassDatabaseReconciler) reconcileBootstrapSecret(ctx context.Context, 
 			setSecretStrings(secret, map[string]string{"username": appContainerName})
 		}
 		if secretValue(secret, "password") == "" {
-			setSecretStrings(secret, map[string]string{"password": credentialsOrigin(db) + "-password"})
+			password, err := r.newBootstrapPassword(ctx, db)
+			if err != nil {
+				return err
+			}
+			setSecretStrings(secret, map[string]string{"password": password})
 		}
 		return setSameNamespaceOwner(db, secret, r.Scheme)
 	})
@@ -825,7 +841,10 @@ func (r *GeassDatabaseReconciler) reconcileGeneratedConnectionSecret(ctx context
 		return err
 	}
 	username := firstNonEmpty(secretValue(bootstrap, "username"), appContainerName)
-	password := firstNonEmpty(secretValue(bootstrap, "password"), db.Name+"-password")
+	password := secretValue(bootstrap, "password")
+	if password == "" {
+		return fmt.Errorf("the database's own Secret has no password yet")
+	}
 	return r.writeConnectionSecret(ctx, db, wsNS, host, port, databaseName(db), username, password, scheme)
 }
 

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Braces, Database, Eye, EyeOff, HardDrive, Link2, MoreVertical, Plus, Search, X } from "lucide-react";
 import { action, api, list, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Checkbox, Field, Input, Muted, Select, Switch, Textarea } from "@/components/geass-ui";
 
 const MASK = "••••••••";
@@ -122,7 +122,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
       if (message) alertUser(message);
       return true;
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
       return false;
     } finally {
       setBusy(false);
@@ -132,7 +132,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
   const addVariable = async (event) => {
     event.preventDefault();
     const path = draft.secret ? `/apps/${name}/secrets/set` : `/apps/${name}/config/set`;
-    const ok = await run(path, { key: draft.key.trim(), value: draft.value }, "Variable saved. Deploy to apply it.");
+    const ok = await run(path, { key: draft.key.trim(), value: draft.value }, "Variable saved");
     if (ok) {
       setDraft({ key: "", value: "", secret: false });
       setAdding(false);
@@ -140,18 +140,18 @@ export function ResourceVariables({ item, name, project, data, reload }) {
   };
 
   const saveEdit = async (row) => {
-    const ok = await run(`/apps/${name}/config/set`, { key: row.name, value: editValue }, "Variable saved. Deploy to apply it.");
+    const ok = await run(`/apps/${name}/config/set`, { key: row.name, value: editValue }, "Variable saved");
     if (ok) setEditing("");
   };
 
   const removeRow = (row) => {
-    if (row.kind === "config") return run(`/apps/${name}/config/delete`, { key: row.name }, "Variable removed. Deploy to apply it.");
-    if (row.kind === "secret") return run(`/apps/${name}/secrets/delete`, { key: row.name }, "Secret removed. Deploy to apply it.");
+    if (row.kind === "config") return run(`/apps/${name}/config/delete`, { key: row.name }, "Variable removed");
+    if (row.kind === "secret") return run(`/apps/${name}/secrets/delete`, { key: row.name }, "Secret removed");
     if (row.kind === "shared") {
       const next = (variables.data?.sharedVariableRefs || []).filter((ref) => ref !== row.name);
-      return run(`/apps/${name}/shared-variables/save`, { sharedVariable: next }, "Shared variable detached. Deploy to apply it.");
+      return run(`/apps/${name}/shared-variables/save`, { sharedVariable: next }, "Shared variable removed");
     }
-    return run(`/apps/${name}/env/delete`, { key: row.name }, "Variable removed. Deploy to apply it.");
+    return run(`/apps/${name}/env/delete`, { key: row.name }, "Variable removed");
   };
 
   const openRaw = () => {
@@ -164,10 +164,10 @@ export function ResourceVariables({ item, name, project, data, reload }) {
     try {
       values = parseEnvText(rawText);
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
       return;
     }
-    const ok = await run(`/apps/${name}/config/raw`, { configJSON: JSON.stringify(values) }, "Variables saved. Deploy to apply them.");
+    const ok = await run(`/apps/${name}/config/raw`, { configJSON: JSON.stringify(values) }, "Variables saved");
     if (ok) setRawOpen(false);
   };
 
@@ -177,14 +177,14 @@ export function ResourceVariables({ item, name, project, data, reload }) {
   };
 
   const saveShared = async () => {
-    const ok = await run(`/apps/${name}/shared-variables/save`, { sharedVariable: sharedRefs }, "Shared variables saved. Deploy to apply them.");
+    const ok = await run(`/apps/${name}/shared-variables/save`, { sharedVariable: sharedRefs }, "Shared variables saved");
     if (ok) setSharedOpen(false);
   };
 
   const connect = async () => {
     const [kind, target] = connectTarget.split(":");
     if (!kind || !target) return;
-    const ok = await run(`/apps/${name}/attach`, { kind, name: target }, "Connection added. Deploy to apply it.");
+    const ok = await run(`/apps/${name}/attach`, { kind, name: target }, "Connection added");
     if (ok) setConnectOpen(false);
   };
 
@@ -279,7 +279,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
         {variables.isError ? <Muted size="sm" className="rw-vars-empty">{variables.error.message}</Muted> : null}
         {!variables.isPending && !variables.isError && !visibleRows.length ? (
           <Muted size="sm" className="rw-vars-empty">
-            {rows.length ? "No variables match that filter." : "No variables yet. Add one, or connect a database or bucket."}
+            {rows.length ? "No variables match that filter." : "No variables yet."}
           </Muted>
         ) : null}
         {visibleRows.map((row) => {
@@ -332,12 +332,12 @@ export function ResourceVariables({ item, name, project, data, reload }) {
           );
         })}
       </div>
-      <Muted size="xs" className="rw-vars-foot">Variable changes are applied the next time you deploy. Secret values are never shown.</Muted>
+      <Muted size="xs" className="rw-vars-foot">Changes apply on the next deploy.</Muted>
 
       <Modal opened={rawOpen} onClose={() => setRawOpen(false)} title="Raw Editor" centered size="lg">
         <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            One KEY=value per line. Saving replaces all plain variables for this service. Secrets are managed separately and are not shown here.
+            One KEY=value per line. Saving replaces all plain variables.
           </Text>
           <Textarea rows={12} value={rawText} onChange={(event) => setRawText(event.currentTarget.value)} spellCheck={false} aria-label="Raw variables" />
           <Group justify="flex-end" gap="sm">
@@ -349,7 +349,6 @@ export function ResourceVariables({ item, name, project, data, reload }) {
 
       <Modal opened={sharedOpen} onClose={() => setSharedOpen(false)} title="Shared variables" centered>
         <Stack gap="sm">
-          <Text size="sm" c="dimmed">Reference variables defined in project settings for the {environment} environment.</Text>
           {projectShared.length ? (
             <Checkbox.Group value={sharedRefs} onChange={setSharedRefs}>
               <Stack gap="xs">
@@ -359,7 +358,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
               </Stack>
             </Checkbox.Group>
           ) : (
-            <Muted size="sm">No shared variables in this environment yet. Add them under Project Settings.</Muted>
+            <Muted size="sm">No shared variables yet.</Muted>
           )}
           <Group justify="flex-end" gap="sm">
             <Button variant="outline" onClick={() => setSharedOpen(false)}>Cancel</Button>
@@ -371,7 +370,7 @@ export function ResourceVariables({ item, name, project, data, reload }) {
       <Modal opened={connectOpen} onClose={() => setConnectOpen(false)} title="Add reference" centered>
         <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            Adds the connection as environment variables: DATABASE_URL or REDIS_URL for a database, and S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_BUCKET for a bucket.
+            Adds DATABASE_URL or REDIS_URL for a database, and the S3_* variables for a bucket.
           </Text>
           <Field label="Resource">
             <Select value={connectTarget} onChange={(event) => setConnectTarget(event.currentTarget.value)} aria-label="Resource to connect">

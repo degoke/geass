@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -52,6 +53,31 @@ func podOOMKilled() predicate.Predicate {
 				return false
 			}
 			return platform.LastOOMKill(after).After(platform.LastOOMKill(before))
+		},
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+}
+
+// podStartFailing lets through the change to a pod that is one of its containers coming to be in a state that means it will
+// not start without a change: an image that cannot be pulled, a crash loop. A service finds out from its Deployment
+// otherwise, which looks the same from the first moment to the last, so the reason would wait for the next time the
+// service looks.
+func podStartFailing() predicate.Predicate {
+	failing := func(pod *corev1.Pod) bool {
+		for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+			if waiting := status.State.Waiting; waiting != nil && slices.Contains(startFailureReasons, waiting.Reason) {
+				return true
+			}
+		}
+		return false
+	}
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, okBefore := e.ObjectOld.(*corev1.Pod)
+			after, okAfter := e.ObjectNew.(*corev1.Pod)
+			return okBefore && okAfter && failing(after) && !failing(before)
 		},
 		CreateFunc:  func(event.CreateEvent) bool { return false },
 		DeleteFunc:  func(event.DeleteEvent) bool { return false },

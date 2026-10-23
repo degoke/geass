@@ -139,7 +139,7 @@ A connection for `Compute` is the opposite. It belongs to the cluster, never to 
 | PlanetScale | `organization` | Yes, unless `spec.organization` is set |
 | Each other cloud | The keys that cloud names: see [the table](/docs/guides/connectors/clouds/#the-clouds) | The ones that are not marked optional |
 
-The dashboard and `geass connections add` create the Secret `<name>-credentials`, after the connection. If a Secret with that name already exists, the AWS card keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials). **Edit** under **Cloud connections** and `geass connections update` replace credentials in it. When [organizations are on](/docs/guides/organizations-and-workspaces/), a connection made by an organization is refused instead ("that name is already taken"), so that it cannot adopt a Secret that is not its own.
+The dashboard and `geass connections add` create the Secret `<name>-credentials`, after the connection. If a Secret with that name already exists, the AWS card keeps the old one and ignores new credentials; see [Connect AWS](/docs/guides/connectors/aws/#rotate-aws-credentials). **Edit** on the connection and `geass connections update` replace credentials in it. When [organizations are on](/docs/guides/organizations-and-workspaces/), a connection made by an organization is refused instead ("that name is already taken"), so that it cannot adopt a Secret that is not its own.
 
 ## Status
 
@@ -168,9 +168,9 @@ For a connection that is not for `Compute`, `Ready` means the keys are present, 
 
 | Dashboard | Effect |
 | --- | --- |
-| **Settings** → **Connectors** → **AWS** or **PlanetScale** → **Save connection** | Creates the Secret `<name>-credentials` and the `GeassCloudConnection`, with `spec.project` from **Project scope** and `spec.region` or `spec.organization` from the form. |
-| **Settings** → **Connectors** → **Cloud connections** → **Connect a cloud** | Creates the Secret and a connection with no project and the purpose `Compute` (for AWS also `Storage` and `Database` if you tick them), then asks the cloud. |
-| **Verify now**, **Edit** and **Remove** on a connection in the **Cloud connections** list | Ask the cloud again, change the default region, purposes or credentials, and delete the connection and its Secret. **Remove** refuses only while a pool or a machine uses the connection. It does not look for buckets, backups or databases. |
+| **Settings** → **Connectors** → **AWS** or **PlanetScale** → **Save connection** | Creates the Secret `<name>-credentials` and the `GeassCloudConnection`, with `spec.project` from **Project** and `spec.region` or `spec.organization` from the form. |
+| **Settings** → **Connectors** → **Server clouds** → **Connect a cloud** | Creates the Secret and a connection with no project and the purpose `Compute` (for AWS also `Storage` and `Database` if you tick them), then asks the cloud. |
+| **Verify now**, **Edit** and **Remove** on a connection in the **Server clouds** list, or in the **AWS** or **PlanetScale** drawer | Ask the cloud again, change the default region, purposes or credentials, and delete the connection and its Secret. **Remove** refuses only while a pool or a machine uses the connection. It does not look for buckets, backups or databases. |
 | The connectors list | Shows each connection with its project (`Platform` if empty) and **Ready** or **Pending** from `status.available`. |
 | The **Bucket** and **Database** menus, and project **Settings** → **Backups** | Offer a provider only when the project has a connection of that kind with `status.available` true. |
 
@@ -217,7 +217,7 @@ kubectl -n geass-system get geasscloudconnection hetzner -o jsonpath='{.status.a
 
 **The credentials are wrong but the connection shows `Ready`.** Expected for a connection for buckets, backups or databases, see the note above. Deploy a bucket in a scratch project to test an AWS key.
 
-**New credentials are ignored after I saved the connection again.** The Secret already existed. Edit the Secret, or use **Edit** under **Cloud connections**.
+**New credentials are ignored after I saved the connection again.** The Secret already existed. Edit the Secret, or use **Edit** on the connection.
 
 ## Related
 

@@ -1282,8 +1282,8 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	if platform.ReadyConditionReason(latest.Status.Conditions) == platform.ConditionReasonProvisionFailed {
-		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.ProvisionFailedUserMessage)
-		r.reportToGitHub(ctx, latest, githubapp.DeploymentFailure, platform.ProvisionFailedUserMessage, false)
+		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.TerminalMessage(message))
+		r.reportToGitHub(ctx, latest, githubapp.DeploymentFailure, platform.TerminalMessage(message), false)
 	}
 	return result, nil
 }
@@ -1334,7 +1334,7 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(deploymentScaleChanged())).
 		// A copy that is stopped for memory and started again leaves the Deployment as it was, so the service has
 		// to hear of it from the pod. The pod carries the same labels as the Deployment.
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(podOOMKilled())).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(predicate.Or(podOOMKilled(), podStartFailing()))).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.appsForProject), builder.WithPredicates(readyOrSpecChanged())).
 		// Where an organization's services run follows its region and required node tags.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.appsForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).

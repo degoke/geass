@@ -46,7 +46,7 @@ private key in PEM form. You can also supply the same values to the operator as 
 
 ## Link a project
 
-In a project, open **Settings** → **Integrations** and choose **Connect to GitHub** (or add a GitHub repository
+In a project, open **Settings** → **GitHub** and choose **Connect to GitHub** (or add a GitHub repository
 service, which does the same). GitHub asks which account and repositories the app may use, then returns to Geass.
 Geass creates the connection `<project id>-github` and the Secret `<project id>-github-token` with the installation
 token, the installation ID and the account. The token is short-lived: Geass asks GitHub for a fresh one with the app's

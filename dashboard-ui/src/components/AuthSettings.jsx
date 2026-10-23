@@ -110,7 +110,7 @@ export function AuthSettings({ mutable }) {
 
   const save = async (event) => {
     event.preventDefault();
-    const stored = await run("save", "/settings/auth/save", { ...form, keepSecret: keepSecret ? "on" : undefined }, "Identity provider saved. Test it before turning it on.");
+    const stored = await run("save", "/settings/auth/save", { ...form, keepSecret: keepSecret ? "on" : undefined }, "Saved");
     // A secret that was typed has been stored; it is not kept in the field.
     if (stored) setForm((current) => ({ ...current, clientSecret: "" }));
   };
@@ -126,12 +126,6 @@ export function AuthSettings({ mutable }) {
 
   return (
     <div className="rw-tokens">
-      <p className="rw-rail-body">
-        By default the people who can sign in are the users in a Secret, with a password each. To invite people by email, sign them in with
-        a code or a link, and keep organizations and teams, connect an identity provider that speaks OpenID Connect (Better Auth, Keycloak,
-        Authentik, Zitadel, Auth0, Okta and others). It owns the people; Geass only reads their role from the token it signs.
-      </p>
-
       <Group gap="sm" mb="md">
         <Text fw={600} size="sm">Signing in now</Text>
         <Badge tone={external ? "success" : "neutral"}>{external ? `Through ${name}` : "With passwords from the Secret"}</Badge>
@@ -139,12 +133,9 @@ export function AuthSettings({ mutable }) {
 
       {external ? (
         <Stack gap="xs" mb="md">
-          <Muted size="sm">
-            People are signing in through {name}, with the role it gives them (an admin or a viewer). A user in the Secret who has a password and is
-            an admin can still sign in, in case the provider is down. To change the provider's settings, switch back to passwords first.
-          </Muted>
+          <Muted size="sm">Switch back to passwords to change these settings.</Muted>
           <div>
-            <Button type="button" variant="outline" loading={busy === "mode"} disabled={Boolean(busy)} onClick={() => run("mode", "/settings/auth/mode", { mode: "local" }, "People sign in with passwords again.")}>
+            <Button type="button" variant="outline" loading={busy === "mode"} disabled={Boolean(busy)} onClick={() => run("mode", "/settings/auth/mode", { mode: "local" }, "Switched to passwords")}>
               Switch back to passwords
             </Button>
           </div>
@@ -153,17 +144,17 @@ export function AuthSettings({ mutable }) {
 
       <form onSubmit={save}>
         <Stack gap="sm">
-          <Field label="Name" description="What the sign-in button calls it: Sign in with …">
+          <Field label="Name">
             <Input value={form.displayName} disabled={external} aria-label="Provider name" placeholder="Acme" onChange={set("displayName")} />
           </Field>
-          <Field label="Issuer URL" description="https, exactly as the provider's discovery document names itself. For Better Auth that includes /api/auth.">
+          <Field label="Issuer URL" description="https, exactly as the provider names itself. For Better Auth, include /api/auth.">
             <Input required value={form.issuer} disabled={external} aria-label="Issuer URL" placeholder="https://auth.example.com/api/auth" onChange={set("issuer")} />
           </Field>
           <Group grow align="flex-start">
             <Field label="Client ID">
               <Input required value={form.clientID} disabled={external} aria-label="Client ID" autoComplete="off" onChange={set("clientID")} />
             </Field>
-            <Field label="Client secret" description="Leave it empty for a public client that uses PKCE alone.">
+            <Field label="Client secret" description="Leave empty for a public client.">
               <Input
                 type="password"
                 value={form.clientSecret}
@@ -175,38 +166,37 @@ export function AuthSettings({ mutable }) {
               />
             </Field>
           </Group>
-          <Field label="Role claim" description="The claim of the ID token that holds the person's role, such as org_role. A dotted path reaches into nested claims. With organizations the role is read from each organization instead, and this can stay empty when the organizations claim below is set.">
+          <Field label="Role claim" description="A dotted path reaches nested claims. Not needed when the organizations claim is set.">
             <Input required={!form.orgsClaim.trim()} value={form.roleClaim} disabled={external} aria-label="Role claim" placeholder="org_role" onChange={set("roleClaim")} />
           </Field>
-          <Field label="Organizations claim" description="Optional. For organizations and workspaces: the claim that lists them, one entry for each organization. It is saved with the provider so that no role claim is needed. Leave it empty for one organization, or to set it up later under Organizations.">
+          <Field label="Organizations claim" description="Optional. Leave empty for a single organization.">
             <Input value={form.orgsClaim} disabled={external || Boolean(saved.tenancy?.enabled)} aria-label="Organizations claim saved with the provider" placeholder="orgs" onChange={set("orgsClaim")} />
           </Field>
-          <Field label="Roles" description="One per line: the provider's role, then =admin or =viewer. Someone whose roles are none of these cannot sign in.">
+          <Field label="Roles" description="One per line, as role=admin or role=viewer. Other roles cannot sign in.">
             <Textarea required rows={3} value={form.roleMap} disabled={external} aria-label="Role mapping" placeholder={"owner=admin\nadmin=admin\nmember=viewer"} onChange={set("roleMap")} />
           </Field>
-          <Field label="Only people with" description="Optional, one per line as claim=value. For example organization_id=org_123 lets in only the members of that organization.">
+          <Field label="Only people with" description="Optional. One per line, as claim=value.">
             <Textarea rows={2} value={form.requireClaim} disabled={external} aria-label="Required claims" placeholder="organization_id=org_123" onChange={set("requireClaim")} />
           </Field>
           <Group grow align="flex-start">
-            <Field label="Scopes" description="Asked for besides openid. Empty means email and profile.">
+            <Field label="Scopes" description="Besides openid. Empty means email and profile.">
               <Input value={form.scopes} disabled={external} aria-label="Scopes" placeholder="email profile" onChange={set("scopes")} />
             </Field>
-            <Field label="Session length (minutes)" description="Then the person goes back to the provider, which is how a changed role or a removed person is noticed.">
+            <Field label="Session length (minutes)">
               <Input type="number" min={5} max={720} value={form.sessionMinutes} disabled={external} aria-label="Session length in minutes" onChange={set("sessionMinutes")} />
             </Field>
           </Group>
           <Group grow align="flex-start">
-            <Field label="Check people again every (minutes)" description="Optional. Geass asks the provider again, this often, whether each person is still its own and what it says of them, so a changed role or a removed person is noticed in minutes, not when the session ends. Needs a provider that gives refresh tokens (offline_access). Empty is never.">
+            <Field label="Check people again every (minutes)" description="Optional. Needs refresh tokens (offline_access). Empty means never.">
               <Input type="number" min={5} max={1440} value={form.refreshMinutes} disabled={external} aria-label="Check people again every" placeholder="Never" onChange={set("refreshMinutes")} />
             </Field>
-            <Field label="Keep a session when the provider is down for (minutes)" description="Sessions that could not be checked are ended after this. Empty means 120.">
+            <Field label="Keep a session when the provider is down for (minutes)" description="Empty means 120.">
               <Input type="number" min={5} max={1440} value={form.staleGraceMinutes} disabled={external || !form.refreshMinutes} aria-label="Keep a session when the provider is down for" onChange={set("staleGraceMinutes")} />
             </Field>
           </Group>
           {unrestricted && !external ? (
             <Muted size="sm">
-              Nothing restricts who gets in: anyone the provider signs in with one of these roles becomes that role here. If anyone can sign up at
-              the provider, or create their own organization there, add a claim under "Only people with" (for example organization_slug=acme).
+              Nothing restricts who gets in. If anyone can sign up at the provider, add a claim under "Only people with".
             </Muted>
           ) : null}
           {!external ? (
@@ -222,33 +212,29 @@ export function AuthSettings({ mutable }) {
 
       <Stack gap="xs" mt="lg">
         <Text fw={600} size="sm">Register Geass with the provider</Text>
-        <Muted size="sm">Add these when you create the client there. The provider only sends people back to an address it was given.</Muted>
         <Field label="Redirect URI"><Code block aria-label="Redirect URI">{saved.callbackURL}</Code></Field>
-        <Field label="Back-channel logout URI" description="Optional. The provider calls it when someone signs out or is removed, and Geass ends their sessions and, with the switch below on, revokes the tokens they made. Providers need it to be an https address they can reach.">
+        <Field label="Back-channel logout URI" description="Optional. Must be an https address the provider can reach.">
           <Code block aria-label="Back-channel logout URI">{saved.backchannelLogoutURL}</Code>
         </Field>
         <Switch
           checked={saved.revokeTokensOnLogout !== false}
           disabled={!saved.configured || Boolean(busy)}
           label="Also revoke the tokens and deploy hooks they made"
-          description="When someone signs out at the provider or is removed there, their sessions here always end. With this on, so do the API tokens and deploy hooks they made. The provider cannot say which of the two happened, so a CI token made from the account of someone who signs out stops working: make those from an account that does not, or turn this off and revoke tokens by hand when someone leaves."
+          description="A CI token made from the account of someone who signs out stops working."
           onChange={(event) => run("policy", "/settings/auth/logout-policy", { revokeTokens: event.currentTarget.checked ? "on" : "off" }, "Saved")}
         />
       </Stack>
 
       <Stack gap="xs" mt="lg">
         <Text fw={600} size="sm">Test, then turn on</Text>
-        <Muted size="sm">
-          The test signs you in through the provider, as someone who would be an admin here, and shows what it found. It does not sign anyone in, and
-          it is of the settings as they are saved. Turning the provider on needs a test from the last half hour.
-        </Muted>
+        <Muted size="sm">Turning the provider on needs a test from the last half hour.</Muted>
         {test ? (
           <Stack gap={4}>
             <Group gap="sm"><Badge tone={test.ok ? "success" : "danger"}>{test.ok ? "Test passed" : "Test failed"}</Badge>
               {test.email ? <Text size="sm">{test.email}{test.role ? ` · ${test.role}` : ""}</Text> : null}
             </Group>
             {!test.ok && test.detail ? <Muted size="sm">{test.detail}</Muted> : null}
-            {test.platformAdmin ? <Muted size="sm">The token makes this person an administrator of the platform.</Muted> : null}
+            {test.platformAdmin ? <Muted size="sm">The token makes this person a platform administrator.</Muted> : null}
             {(test.orgs || []).length ? (
               <Stack gap={2}>
                 {test.orgs.map((org) => (
@@ -270,7 +256,7 @@ export function AuthSettings({ mutable }) {
           ) : null}
         </Group>
         {!external && saved.configured && !saved.hasPasswordAdmin ? (
-          <Muted size="sm">Keep an admin who signs in with a password first: it is the way back in when the provider is down.</Muted>
+          <Muted size="sm">Keep an admin who signs in with a password: it is the way back in if the provider is down.</Muted>
         ) : null}
       </Stack>
 
@@ -278,23 +264,22 @@ export function AuthSettings({ mutable }) {
 
       <Modal opened={confirming === "enable"} onClose={() => { if (!busy) setConfirming(""); }} title={`Sign in through ${name}?`} centered>
         <Text size="sm" mb="md">
-          From now on people sign in through {name}, with the role it gives them. Users who are not admins and have only a password can no longer sign in,
-          and their sessions end. An admin with a password still can. You can switch back at any time.
+          Users who are not admins and have only a password can no longer sign in, and their sessions end.
         </Text>
         {unrestricted ? (
           <Text size="sm" mb="md" c="red.4">
-            Nothing restricts who gets in. If anyone can sign up at {name}, anyone who does becomes whichever role it gives them. Add a claim under "Only people with" first.
+            Nothing restricts who gets in. If anyone can sign up at {name}, they get the role it gives them. Add a claim under "Only people with" first.
           </Text>
         ) : null}
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={Boolean(busy)} onClick={() => setConfirming("")}>Cancel</Button>
-          <Button loading={busy === "mode"} onClick={() => run("mode", "/settings/auth/mode", { mode: "external" }, `People now sign in through ${name}.`)}>Turn on</Button>
+          <Button loading={busy === "mode"} onClick={() => run("mode", "/settings/auth/mode", { mode: "external" }, "Turned on")}>Turn on</Button>
         </Group>
       </Modal>
 
       <Modal opened={confirming === "clear"} onClose={() => { if (!busy) setConfirming(""); }} title="Remove the identity provider?" centered>
         <Text size="sm" mb="md">
-          Geass forgets the provider and its client secret, and people sign in with passwords from the Secret again. Nothing changes at the provider.
+          Geass forgets the provider and its client secret, and people sign in with passwords again.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={Boolean(busy)} onClick={() => setConfirming("")}>Cancel</Button>
@@ -329,11 +314,11 @@ function TenancySettings({ saved, busy, run }) {
   const set = (field) => (event) => setForm({ ...form, [field]: event.currentTarget.value });
   const save = (event) => {
     event.preventDefault();
-    return run("tenancy", "/settings/auth/tenancy", form, "Saved. Test the sign-in again before turning organizations on.");
+    return run("tenancy", "/settings/auth/tenancy", form, "Saved");
   };
   const saveAuto = (event) => {
     event.preventDefault();
-    return run("tenancy-auto", "/settings/auth/tenancy", { autoProvision: auto.mode, autoProvisionAllow: auto.allow, autoProvisionMax: auto.max }, "Saved.");
+    return run("tenancy-auto", "/settings/auth/tenancy", { autoProvision: auto.mode, autoProvisionAllow: auto.allow, autoProvisionMax: auto.max }, "Saved");
   };
 
   return (
@@ -342,21 +327,17 @@ function TenancySettings({ saved, busy, run }) {
         <Text fw={600} size="sm">Organizations</Text>
         <Badge tone={on ? "success" : "neutral"}>{on ? "On" : "Off"}</Badge>
       </Group>
-      <Muted size="sm">
-        Keep each organization's projects apart: the people the provider puts in an organization see only its projects, and only the
-        platform's administrators see the rest. Set the organizations up under Settings → Organizations, then say here which claim of the token
-        lists them, test the sign-in, and turn them on. Everyone signs in again when they are turned on or off.
-      </Muted>
+      <Muted size="sm">Everyone signs in again when organizations are turned on or off.</Muted>
       <form onSubmit={save}>
         <Stack gap="sm">
-          <Field label="Organizations claim" description="A list in the token, one entry for each organization: {id, role, workspaces}. A dotted path reaches into nested claims.">
+          <Field label="Organizations claim" description="A list of {id, role, workspaces}, one per organization. A dotted path reaches nested claims.">
             <Input value={form.orgsClaim} disabled={on} aria-label="Organizations claim" placeholder="orgs" onChange={set("orgsClaim")} />
           </Field>
           <Group grow align="flex-start">
-            <Field label="Platform administrator claim" description="Optional. A claim whose value makes someone an administrator of the whole platform.">
+            <Field label="Platform administrator claim" description="Optional.">
               <Input value={form.platformClaim} disabled={on} aria-label="Platform administrator claim" placeholder="geass_platform" onChange={set("platformClaim")} />
             </Field>
-            <Field label="Values" description="Any of these, separated by spaces.">
+            <Field label="Values" description="Separate with spaces.">
               <Input value={form.platformValues} disabled={on} aria-label="Platform administrator values" placeholder="operator" onChange={set("platformValues")} />
             </Field>
           </Group>
@@ -369,11 +350,11 @@ function TenancySettings({ saved, busy, run }) {
       </form>
       <Group gap="sm">
         {on ? (
-          <Button type="button" variant="outline" loading={busy === "tenancy-off"} disabled={Boolean(busy)} onClick={() => run("tenancy-off", "/settings/auth/tenancy", { enabled: "off" }, "Organizations are off. Everyone signs in again.")}>
+          <Button type="button" variant="outline" loading={busy === "tenancy-off"} disabled={Boolean(busy)} onClick={() => run("tenancy-off", "/settings/auth/tenancy", { enabled: "off" }, "Organizations turned off")}>
             Turn organizations off
           </Button>
         ) : (
-          <Button type="button" loading={busy === "tenancy-on"} disabled={Boolean(busy) || Boolean(tenancy.enableProblem)} onClick={() => run("tenancy-on", "/settings/auth/tenancy", { enabled: "on" }, "Organizations are on. Everyone signs in again.")}>
+          <Button type="button" loading={busy === "tenancy-on"} disabled={Boolean(busy) || Boolean(tenancy.enableProblem)} onClick={() => run("tenancy-on", "/settings/auth/tenancy", { enabled: "on" }, "Organizations turned on")}>
             Turn organizations on
           </Button>
         )}
@@ -382,11 +363,7 @@ function TenancySettings({ saved, busy, run }) {
       <form onSubmit={saveAuto}>
         <Stack gap="sm" mt="md">
           <Text fw={600} size="sm">Organizations made by sign-in</Text>
-          <Muted size="sm">
-            Let the first sign-in of an organization&apos;s administrator make the organization here, instead of refusing them. Use it only with a provider that
-            people you trust make organizations in. They have to administer the organization at the provider and have a verified address. Pending makes it
-            suspended until you approve it under Organizations; Open makes it ready at once, for the ids you list.
-          </Muted>
+          <Muted size="sm">Use only with a provider where people you trust make organizations.</Muted>
           <Group grow align="flex-start">
             <Field label="Make organizations">
               <Select value={auto.mode} aria-label="Make organizations" onChange={(event) => setAuto({ ...auto, mode: event.currentTarget.value })}>
@@ -395,11 +372,11 @@ function TenancySettings({ saved, busy, run }) {
                 <option value="open">At once, for the ids listed</option>
               </Select>
             </Field>
-            <Field label="Most to make" description="In all. Empty means 20.">
+            <Field label="Most to make" description="Empty means 20.">
               <Input type="number" min="1" max="500" value={auto.max} aria-label="Most organizations to make" disabled={auto.mode === "off"} onChange={(event) => setAuto({ ...auto, max: event.currentTarget.value })} />
             </Field>
           </Group>
-          <Field label="Only these ids" description="The provider's ids, or the start of one followed by *, separated by spaces. Open needs it; pending without it makes any that asks.">
+          <Field label="Only these ids" description="Separate with spaces. End an id with * to match a prefix. Open needs it.">
             <Input value={auto.allow} aria-label="Ids that may be made" disabled={auto.mode === "off"} placeholder="org_partner_*" onChange={(event) => setAuto({ ...auto, allow: event.currentTarget.value })} />
           </Field>
           <SettingsFormActions>
@@ -408,9 +385,7 @@ function TenancySettings({ saved, busy, run }) {
         </Stack>
       </form>
       {!on && !tenancy.enableProblem && tenancy.orgsClaim ? (
-        <Muted size="sm">
-          Projects that belong to no organization will be seen by the platform's administrators only. Give each to an organization in its settings first.
-        </Muted>
+        <Muted size="sm">Projects without an organization will be seen by platform administrators only.</Muted>
       ) : null}
     </Stack>
   );

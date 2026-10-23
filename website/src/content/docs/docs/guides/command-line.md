@@ -419,6 +419,12 @@ geass rollback web web-abc12 --wait       # a deployment you choose
 Rolling back deploys at once. It records a new deployment, so running `geass rollback web` a second time goes to the
 entry before that one. Pass an id to pick. Functions cannot be rolled back: restore the earlier code and deploy again.
 
+A rollback puts back only what a deployment records: the image of a service that runs one, and the number of copies.
+Variables, the port and every other setting stay as they are now. A variable you added after the deployment you go back
+to is still there, so an older image that does not know it ignores it, and one that needs a variable you have since
+removed fails to start. To go back to older variables too, set them back with `geass env set` and `geass env unset`.
+A service that is built from a repository keeps running the code it has: pin the commit to run older code.
+
 ## Functions and schedules
 
 A function runs code you give it (see [Functions](/docs/guides/functions/)). Create one from a file, add schedules and

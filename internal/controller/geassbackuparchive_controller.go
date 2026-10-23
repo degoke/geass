@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,6 +38,9 @@ import (
 const (
 	// archiveManifestRetry is how soon to try again to write the record of what an archive's backups are of.
 	archiveManifestRetry = 15 * time.Minute
+	// archivePasswordRetry is how soon to look again for the password a live archive waits for, which the database puts
+	// beside it a moment after the archive is made.
+	archivePasswordRetry = time.Minute
 	// archivePurgedCondition is False while backups past their deadline could not be removed.
 	archivePurgedCondition = "Purged"
 	// archivePurgeRetryInterval is how long to wait before trying to remove backups again.
@@ -186,6 +190,18 @@ func (r *GeassBackupArchiveReconciler) ensureManifest(ctx context.Context, archi
 		projectName = project.Spec.DisplayName
 	}
 	manifest := platform.ManifestOf(archive, projectName)
+	if platform.LayoutOf(archive.Spec.Source) == platform.LayoutPhysical {
+		// The copies hold the logins of the server they were taken from, and a database restored from them cannot start
+		// without its password. A live archive waits for the database to have put it in the Secret that goes with the archive.
+		password, found, err := r.archivePassword(ctx, archive)
+		if err != nil {
+			return archiveManifestRetry
+		}
+		if !found && archive.Spec.DeleteAfter == nil {
+			return archivePasswordRetry
+		}
+		manifest.Password = password
+	}
 	hash := manifest.Hash()
 	if hash == "" || archive.Annotations[platform.AnnotationArchiveManifest] == hash {
 		return 0
@@ -216,4 +232,18 @@ func (r *GeassBackupArchiveReconciler) ensureManifest(ctx context.Context, archi
 		return archiveManifestRetry
 	}
 	return 0
+}
+
+// archivePassword is the password kept with an archive, and whether there is one.
+func (r *GeassBackupArchiveReconciler) archivePassword(ctx context.Context, archive *geassv1alpha1.GeassBackupArchive) (string, bool, error) {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{Name: platform.ArchiveCredentialsSecretName(archive.Name), Namespace: platform.SystemNamespace}, secret)
+	switch {
+	case apierrors.IsNotFound(err):
+		return "", false, nil
+	case err != nil:
+		return "", false, err
+	}
+	password := string(secret.Data[platform.ArchiveCredentialsKeyPassword])
+	return password, password != "", nil
 }

@@ -65,9 +65,7 @@ export function UsagePanel({ projectName, title = "Usage by project" }) {
   return (
     <PageSection
       title={title}
-      description={actual
-        ? "Reserved is what a project's services ask for. The first figure is what they are using right now."
-        : "Reserved is what a project's services ask for. Live use appears once monitoring is installed."}
+      description={actual ? "Current use of what each project reserves." : "Reserved only. Live use needs monitoring."}
     >
       <p className="rw-rail-body">
         The cluster has {formatCPU(report?.cpuAllocatableMillis)} and {formatBytes(report?.memoryAllocatableBytes)} of memory across {report?.nodes ?? 0} {report?.nodes === 1 ? "node" : "nodes"}.
