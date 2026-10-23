@@ -494,6 +494,31 @@ spec:
                   dashboard at geass.<rootDomain> after DNS verification.
                 pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
                 type: string
+              tenancy:
+                description: |-
+                  Tenancy hardens a cluster that organizations who do not trust each other share, such as by keeping the platform's
+                  registry login from their builds. Unset means nothing changes.
+                properties:
+                  registry:
+                    description: |-
+                      Registry keeps the platform's registry login out of organizations' builds and namespaces, and each organization's
+                      images apart from the platform's and from every other organization's. Unset means builds use the registry they did
+                      before: an organization without a registry of its own builds with the platform's login.
+                    properties:
+                      policy:
+                        default: requireOwnRegistry
+                        description: |-
+                          Policy is what an organization's builds may push with. requireOwnRegistry: an organization's build is never given the
+                          platform's registry login, its namespaces never hold a copy of it, and its builds push to the organization's own
+                          registry (spec.registry on its GeassOrganization) under <repository>/<project>/<service>; a build of an organization
+                          that has none does not start. An organization's services may not run an image that is in the platform's repository
+                          or in another organization's registry. A registry that authorizes each organization for a path of its own (Harbor,
+                          zot) is how one registry is shared: each organization is given a login for its own path as its registry.
+                        enum:
+                        - requireOwnRegistry
+                        type: string
+                    type: object
+                type: object
               traefikAccessLogs:
                 properties:
                   enabled:
