@@ -136,14 +136,28 @@ func ProjectIsolationPolicy(project *geassv1alpha1.GeassProject, namespace strin
 // It is one policy, with the node addresses in the same exception list, because policies add up: a second
 // policy that excepted the nodes would be cancelled by this one allowing them.
 func CloudMetadataPolicy(project, namespace string, nodes *NodeNetwork) *networkingv1.NetworkPolicy {
+	return TenantCloudMetadataPolicy(project, namespace, nodes, nil)
+}
+
+// TenantCloudMetadataPolicy is CloudMetadataPolicy for an environment of an organization's project, with the
+// organization's outbound limits (see PlanEgress) in its rule for the outside world. Without limits, or with limits that
+// close nothing, it is CloudMetadataPolicy exactly. The pods of the cluster stay reachable on every port, and what the
+// policy closes (the metadata range, and the nodes) stays closed whatever the limits allow.
+func TenantCloudMetadataPolicy(project, namespace string, nodes *NodeNetwork, limits *EgressPlan) *networkingv1.NetworkPolicy {
 	except := []string{cloudMetadataCIDR}
 	if nodes != nil {
 		except = append(except, nodes.Blocked...)
 	}
-	egress := []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{
-		{NamespaceSelector: &metav1.LabelSelector{}},
-		{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: except}},
-	}}}
+	pods := networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{}}
+	var egress []networkingv1.NetworkPolicyEgressRule
+	if limits == nil || limits.closesNothing() {
+		egress = []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{
+			pods,
+			{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: except}},
+		}}}
+	} else {
+		egress = append([]networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{pods}}}, limits.rules(except)...)
+	}
 	if nodes != nil && len(nodes.APIAddresses) > 0 {
 		api := make([]networkingv1.NetworkPolicyPeer, 0, len(nodes.APIAddresses))
 		for _, address := range nodes.APIAddresses {
