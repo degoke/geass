@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -95,6 +96,10 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	egress, err := r.organizationEgress(ctx, &project)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	desired := make(map[string]string, len(project.Spec.Environments))
 	for _, env := range project.Spec.Environments {
@@ -117,7 +122,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			}
 			return ctrl.Result{}, err
 		}
-		if err := r.reconcileProjectNetwork(ctx, &project, namespace, nodes); err != nil {
+		if err := r.reconcileProjectNetwork(ctx, &project, namespace, nodes, egress); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileProjectQuota(ctx, &project, namespace, quotaUsage, orgCaps); err != nil {
@@ -156,6 +161,11 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		platform.ClearReconcileRetry(&retryState)
 		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
 		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
+		if status, reason, message, ok := egress.condition(&cluster); ok {
+			latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionEgressLimitsApplied, status, reason, message)
+		} else {
+			meta.RemoveStatusCondition(&latest.Status.Conditions, platform.ConditionEgressLimitsApplied)
+		}
 	})
 	return ctrl.Result{}, err
 }
@@ -242,9 +252,11 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 			}
 			return requests
-		}), builder.WithPredicates(readyOrSpecChanged())).
-		// What an organization requires of its projects (node tags, region, quota) is acted on in each of them.
+		}), builder.WithPredicates(predicate.Or(readyOrSpecChanged(), networkPolicyEnforcementChanged()))).
+		// What an organization requires of its projects (node tags, region, quota, outbound limits) is acted on in each of them.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, projectItself)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// So are the outbound limits the platform gives every organization.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(projectsWithOrganizations(r.Client)), builder.WithPredicates(tenantEgressChanged())).
 		// A network policy that is edited or deleted by hand is put back.
 		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
 		// A project that blocks the cluster's machines names each one in its policy, so it follows the nodes.

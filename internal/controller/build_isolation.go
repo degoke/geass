@@ -58,26 +58,27 @@ func (r *GeassBuildReconciler) buildNamespaceFor(ctx context.Context, build *gea
 }
 
 // ensureOrgBuildNamespace makes an organization's build namespace, with the policy and quota that close and bound it, or
-// accepts the one that is there when Geass made it for the organization.
-func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org string) error {
-	name := platform.OrgBuildNamespace(org)
+// accepts the one that is there when Geass made it for the organization. The policy holds the organization's outbound
+// limits.
+func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org *geassv1alpha1.GeassOrganization) error {
+	name := platform.OrgBuildNamespace(org.Name)
 	ns := &corev1.Namespace{}
 	switch err := r.Get(ctx, client.ObjectKey{Name: name}, ns); {
 	case err == nil:
-		if ns.Labels[platform.LabelOrgBuild] != org {
+		if ns.Labels[platform.LabelOrgBuild] != org.Name {
 			return fmt.Errorf("%w: namespace %q", errBuildNamespaceNotOwned, name)
 		}
 	case apierrors.IsNotFound(err):
-		if err := r.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: platform.OrgBuildNamespaceLabels(org)}}); err != nil && !apierrors.IsAlreadyExists(err) {
+		if err := r.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: platform.OrgBuildNamespaceLabels(org.Name)}}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 	default:
 		return err
 	}
-	if err := applyNetworkPolicy(ctx, r.Client, platform.OrgBuildPolicy(name, org, nil)); err != nil {
+	if err := applyOrgBuildPolicy(ctx, r.Client, org); err != nil {
 		return err
 	}
-	quota := platform.OrgBuildQuota(name, org)
+	quota := platform.OrgBuildQuota(name, org.Name)
 	current := &corev1.ResourceQuota{ObjectMeta: quota.ObjectMeta}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
 		current.Labels = quota.Labels
@@ -91,7 +92,7 @@ func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org 
 // owned by the build, which is in another namespace, so it carries labels that say whose it is, and the controller watches
 // Jobs by them.
 func (r *GeassBuildReconciler) isolateJob(ctx context.Context, build *geassv1alpha1.GeassBuild, job *batchv1.Job, org *geassv1alpha1.GeassOrganization, namespace string) error {
-	if err := r.ensureOrgBuildNamespace(ctx, org.Name); err != nil {
+	if err := r.ensureOrgBuildNamespace(ctx, org); err != nil {
 		return err
 	}
 	job.Namespace = namespace
