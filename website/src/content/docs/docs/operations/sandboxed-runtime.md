@@ -45,20 +45,28 @@ make the RuntimeClass. A node without the runtime cannot start a sandboxed pod: 
 without it only with `skipOnReservedNodes` and only while its rule holds (see [Reserved nodes](#reserved-nodes)): when it
 stops holding, that organization's pods are sandboxed and cannot start there.
 
-These steps are for gVisor on K3s, which runs its own containerd. They follow the gVisor and K3s documentation and were
-not run here; check them against the [gVisor installation guide](https://gvisor.dev/docs/user_guide/install/) and K3s's
-[containerd configuration](https://docs.k3s.io/advanced#configuring-containerd) for your releases.
+These steps are for gVisor on K3s, which runs its own containerd. They were run once, on K3s v1.36.4+k3s1 (a K3s server in
+a Docker container on an Ubuntu 24.04 host) with gVisor `release-20261019.0`: an organization's service then ran under
+the `gvisor` RuntimeClass, with `dmesg` inside its pod printing `Starting gVisor...` and `uname` saying `4.19.0-gvisor`
+where the host says its own kernel. Check them against the [gVisor installation
+guide](https://gvisor.dev/docs/user_guide/install/) and K3s's [containerd
+configuration](https://docs.k3s.io/advanced#configuring-containerd) for your releases: gVisor has changed how it ships
+before.
 
 1. **Install `runsc` and its containerd shim** on each node:
 
    ```bash title="Install gVisor"
    ARCH=$(uname -m)
    URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
-   wget ${URL}/runsc ${URL}/runsc.sha512 ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
-   sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512
-   chmod a+rx runsc containerd-shim-runsc-v1
-   sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin
+   wget ${URL}/gvisor.tar.bz2 ${URL}/gvisor.tar.bz2.sha512
+   sha512sum -c gvisor.tar.bz2.sha512
+   tar -xjf gvisor.tar.bz2
+   # The tarball has runsc, containerd-shim-runsc-v1 and a gvisor-bin directory of helpers that runsc needs beside it.
+   sudo mv runsc containerd-shim-runsc-v1 gvisor-bin /usr/local/bin
    ```
+
+   (An earlier layout had `runsc` and the shim as separate files under the same address; a release now is the tarball,
+   and a `.zstd` one if you prefer it. If the address answers 404, list `gs://gvisor/releases/release/` for what is there.)
 
 2. **Tell K3s's containerd about it.** K3s writes its containerd configuration itself on every start, from a template
    you can extend. Recent K3s releases ship containerd 2, whose file is `config-v3.toml.tmpl`; an older one with
