@@ -52,6 +52,13 @@ func (f *forwardReplays) first(key string, now time.Time) bool {
 	return true
 }
 
+// forget drops a signature, for an event that was not done after all.
+func (f *forwardReplays) forget(key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.seen, key)
+}
+
 // githubEventName is the shape of an X-GitHub-Event: GitHub's names are lowercase words joined by underscores.
 func githubEventName(event string) bool {
 	if event == "" || len(event) > 64 {
@@ -137,11 +144,6 @@ func (s *Server) handleForwardedGitHubWebhook(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid webhook signature", http.StatusUnauthorized)
 		return
 	}
-	if !s.forwarded.first(name+"|"+strings.TrimSpace(header), now) {
-		logger.Info("Refused forwarded GitHub webhook that was already taken")
-		http.Error(w, "this forwarded event was already taken", http.StatusConflict)
-		return
-	}
 	if event != "ping" {
 		var named struct {
 			Installation struct {
@@ -166,6 +168,30 @@ func (s *Server) handleForwardedGitHubWebhook(w http.ResponseWriter, r *http.Req
 		}
 		logger = logger.WithValues("installation", named.Installation.ID)
 	}
+	key := name + "|" + strings.TrimSpace(header)
+	if !s.forwarded.first(key, now) {
+		logger.Info("Refused forwarded GitHub webhook that was already taken")
+		http.Error(w, "this forwarded event was already taken", http.StatusConflict)
+		return
+	}
 	ctx = ctrllog.IntoContext(withInstallationRequired(ctx), logger)
-	s.dispatchGitHubEvent(ctx, w, event, delivery, body)
+	answer := &statusRecorder{ResponseWriter: w}
+	s.dispatchGitHubEvent(ctx, answer, event, delivery, body)
+	if answer.status >= http.StatusInternalServerError {
+		// It was not done, so the same request sent again is not a copy of one that was.
+		s.forwarded.forget(key)
+	}
+}
+
+// statusRecorder notes the status a handler answered with.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+	r.ResponseWriter.WriteHeader(status)
 }

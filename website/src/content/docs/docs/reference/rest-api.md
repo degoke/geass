@@ -394,7 +394,8 @@ headers:
 | `X-Geass-Signature` | `t=<unix seconds>,v1=<hex>`, where `<hex>` is HMAC-SHA256, keyed with the connection's webhook secret, of `<t>.<X-GitHub-Event>.<body>`. Several `v1=` values (up to four) are accepted, so a provider changing the secret can sign with both |
 
 Geass compares in constant time, refuses a `t` more than five minutes from its own clock (only once the signature has matched),
-remembers the signatures it took for ten minutes and answers `409` to the same one again, and reads at most 2 MiB (`413` beyond).
+remembers the signatures of the events it did for ten minutes and answers `409` to the same one again (one it answered `5xx`
+is not remembered, so it may be sent again as it was; each dashboard process remembers its own), and reads at most 2 MiB (`413` beyond).
 It answers `401` alike for a connection that does not exist, one without a webhook secret and a signature that does not match. Once it is
 verified, the event is handled exactly as one from GitHub's own webhook (`ping`, `push` and `pull_request`, others ignored), with one
 difference: the event must name an installation the connection lists (`422` otherwise, and `{"accepted": true, "ignored": true}` for

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -313,4 +314,39 @@ func TestTheForwardedWebhookIsPublicAndTakesOnlyPost(t *testing.T) {
 	rec := forward(handler, httptest.NewRequest(http.MethodGet, "/webhooks/github/forwarded/rungeass", nil))
 
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+// failingAppLists is a cluster whose API server fails to list services while fail is set.
+type failingAppLists struct {
+	client.Client
+	fail *bool
+}
+
+func (f failingAppLists) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, apps := list.(*geassv1alpha1.GeassAppList); apps && *f.fail {
+		return errors.New("the API server is unwell")
+	}
+	return f.Client.List(ctx, list, opts...)
+}
+
+// A forwarded event Geass could not do (it answered 5xx) may be sent again as it was: only what was done is remembered.
+func TestAForwardedEventThatFailedMayBeSentAgainAsItWas(t *testing.T) {
+	app := gitApp()
+	_, base := forwardedServer(t, operatorBuild(app, "api-build", time.Hour, geassv1alpha1.GeassBuildSucceeded))
+	fail := true
+	srv := &Server{Client: failingAppLists{Client: base, fail: &fail}}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	body, err := json.Marshal(pushPayload())
+	require.NoError(t, err)
+	signature := githubapp.SignForwarded(testForwardingSecret, time.Now().Unix(), "push", body)
+
+	failed := forward(mux, forwardedRequest("push", body, signature))
+	require.Equal(t, http.StatusInternalServerError, failed.Code, failed.Body.String())
+
+	fail = false
+	again := forward(mux, forwardedRequest("push", body, signature))
+	require.Equal(t, http.StatusOK, again.Code, again.Body.String())
+	require.Contains(t, again.Body.String(), `"triggered":1`)
+	require.Equal(t, http.StatusConflict, forward(mux, forwardedRequest("push", body, signature)).Code, "once it was done, a copy is refused")
 }
