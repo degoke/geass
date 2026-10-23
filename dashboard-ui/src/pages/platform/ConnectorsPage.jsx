@@ -72,9 +72,11 @@ export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
             name="GitHub"
             status={githubStatus}
             description={
-              githubConnected
-                ? "Repository deploys and webhooks use your GitHub App."
-                : "Register a GitHub App for repository deploys."
+              githubInfo?.external
+                ? `Repository deploys use the GitHub App ${githubInfo.external.provider} runs.`
+                : githubConnected
+                  ? "Repository deploys and webhooks use your GitHub App."
+                  : "Register a GitHub App for repository deploys."
             }
             actionLabel="Configure"
             onConfigure={() => setActive("github")}
