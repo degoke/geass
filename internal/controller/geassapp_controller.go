@@ -40,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -80,6 +81,8 @@ type GeassAppReconciler struct {
 	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
 	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
 	AsyncReports bool
+	// Recorder records the events of a service, such as one the registry policy holds back. Nil records none.
+	Recorder events.EventRecorder
 
 	retries reportRetries
 	reports reportDispatcher
@@ -104,6 +107,8 @@ type GeassAppReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassbuilds,verbs=get;list;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs;geassorganizations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	result, err := r.reconcileApp(ctx, req)
@@ -166,10 +171,8 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 
-	if app.Spec.Source.Git != nil {
-		if result, stop, err := r.resolveGitImage(ctx, &app, wsNS); stop {
-			return result, err
-		}
+	if result, stop, err := r.resolveImage(ctx, &app, wsNS); stop {
+		return result, err
 	}
 
 	if !app.Spec.Deploy.Enabled {
@@ -843,6 +846,22 @@ func appImagePullSecret(app *geassv1alpha1.GeassApp) *corev1.LocalObjectReferenc
 	return app.Spec.Source.Image.PullSecret
 }
 
+// resolveImage decides what a service runs, before anything of it is written. An organization's service under
+// spec.tenancy.registry builds only into its own registry, never with the platform's login, and runs no image of the
+// platform's or of another organization's: held back, it writes nothing new. A Git service is pointed at the image of its
+// build. stop is true when the reconcile pass is over for now; result and err are then what the pass returns.
+func (r *GeassAppReconciler) resolveImage(ctx context.Context, app *geassv1alpha1.GeassApp, wsNS string) (result ctrl.Result, stop bool, err error) {
+	if app.Spec.Deploy.Enabled {
+		if result, stop, err := r.holdForRegistry(ctx, app, wsNS); stop {
+			return result, true, err
+		}
+	}
+	if app.Spec.Source.Git == nil {
+		return ctrl.Result{}, false, nil
+	}
+	return r.resolveGitImage(ctx, app, wsNS)
+}
+
 // resolveGitImage points a Git service at the image of its build. stop is true when the reconcile pass is over
 // for now, because the service is not deployed yet, or has no registry to build into, or its build has not
 // succeeded; result and err are then what the pass returns.
@@ -863,7 +882,12 @@ func (r *GeassAppReconciler) resolveGitImage(ctx context.Context, app *geassv1al
 	app.Status.CurrentBuild = build.Name
 	if !ready {
 		r.dispatchReport(ctx, app, r.syncPullRequestComment)
-		result, err = r.setNotReady(ctx, app, "Git source is waiting for a successful build")
+		message := "Git source is waiting for a successful build"
+		// A build that the registry policy refused says why, and so does the service that waits for it.
+		if refused := buildRegistryWait(build); refused != "" {
+			message = refused
+		}
+		result, err = r.setNotReady(ctx, app, message)
 		return result, true, err
 	}
 	image, err := builtImageReference(build)
@@ -878,8 +902,16 @@ func (r *GeassAppReconciler) resolveGitImage(ctx context.Context, app *geassv1al
 
 // buildRegistry is where a service's builds push their image, and the credential they push with. A service's
 // own registry is used when it names one, with its own credential. Otherwise the platform's is, and so is its
-// credential unless the service names one.
+// credential unless the service names one. Under spec.tenancy.registry a service of an organization never falls back
+// to the platform's registry or credential (see platform.RegistryIsolation.BuildRegistry).
 func (r *GeassAppReconciler) buildRegistry(ctx context.Context, app *geassv1alpha1.GeassApp) (string, *corev1.LocalObjectReference, error) {
+	isolation, err := platform.ResolveRegistryIsolation(ctx, r.Client, app.Spec.Project)
+	if err != nil {
+		return "", nil, err
+	}
+	if isolation != nil {
+		return isolation.BuildRegistry(ctx, r.Client, app)
+	}
 	registry := app.Spec.Build.Registry.Repository
 	credentialRef := app.Spec.Build.Registry.CredentialRef
 	if registry != "" {
@@ -1336,8 +1368,11 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// to hear of it from the pod. The pod carries the same labels as the Deployment.
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(podOOMKilled())).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.appsForProject), builder.WithPredicates(readyOrSpecChanged())).
-		// Where an organization's services run follows its region and required node tags.
-		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.appsForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Where an organization's services run follows its region and required node tags, and under the registry policy
+		// its registry is a part of a registry that no other organization's service may use.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.appsForOrganization), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// The registry policy turned on, off or to another platform registry reaches every service.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.allApps), builder.WithPredicates(registryPolicyChanged())).
 		// A service tolerates the taint of nodes that must not hold data only while such nodes exist, so that a cluster
 		// without them never restarts a service for it. The first pool or server of that kind, and the last one going,
 		// reach every service so that it is rolled to match.
