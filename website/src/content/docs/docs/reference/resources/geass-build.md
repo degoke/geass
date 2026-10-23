@@ -74,7 +74,7 @@ The operator copies these from the service. Changing a field of the service chan
 | `spec.connectionRef` | LocalObjectReference | none | none | The [GeassGitHubConnection](/docs/reference/resources/geass-github-connection/) of the project. Needed to resolve a branch and to read check runs. |
 | `spec.gitCredentialRef` | LocalObjectReference | the connection's Secret | none | The Secret whose `token` key is used to clone. The operator sets it to the connection's `secretRef`. |
 | `spec.registry` | string | none | none | The full image reference Kaniko pushes to (`--destination`), used exactly as written. Required: Geass has no registry of its own, so a build without one fails with `no container registry is set for builds`, and the operator makes no build for a service that has none. |
-| `spec.credentialRef` | LocalObjectReference | none | none | A Secret with the key `.dockerconfigjson`, mounted for Kaniko as `/kaniko/.docker/config.json`. |
+| `spec.credentialRef` | LocalObjectReference | none | none | A Secret with the key `.dockerconfigjson`, mounted for Kaniko as `/kaniko/.docker/config.json`. Under the platform's `spec.tenancy.registry`, a build of an organization's project whose Secret is the platform's login (by name, or holding the same login) or another organization's fails instead. |
 | `spec.cache` | boolean | `false` | none | Pass `--cache=true` to Kaniko. |
 | `spec.logStoreRef` | LocalObjectReference | none | none | A [GeassObjectStore](/docs/reference/resources/geass-object-store/) that receives the build log. |
 
@@ -99,7 +99,7 @@ The operator copies these from the service. Changing a field of the service chan
 | `status.completedAt` | time | When the build succeeded. A build that failed has none. |
 | `status.cancelRequested` | boolean | Set to stop the build. |
 | `status.lastLogLine` | string | Shown in the dashboard's build log if set. Nothing sets it. |
-| `status.conditions` | list | Nothing writes conditions for this kind. |
+| `status.conditions` | list | `RegistryIsolated`, only on a build of an organization's project while the platform's `spec.tenancy.registry` is set: `True` `Isolated` when its login and the repository it pushes to are the organization's, `False` with `PlatformCredential` (its login is the platform's, or another organization's) or `ForeignRepository` (it would push into a part of a registry that is the platform's or another organization's) when it was refused, with a `Warning` event `RegistryRefused`. See [Registry isolation for organizations](/docs/operations/registry-isolation/). Nothing else writes conditions for this kind. |
 
 ### Phases
 
@@ -109,7 +109,7 @@ The operator copies these from the service. Changing a field of the service chan
 | `WaitingForCI` | Waiting for check runs of the commit, or for GitHub to answer. | Checked again every 15 seconds. A commit with no check runs waits forever. |
 | `Running` | The Kaniko Job exists. | Checked every 5 seconds. |
 | `Succeeded` | The Job finished and a digest was found. | The service deploys the digest. The build is not looked at again, unless it has a log store and its log is not archived yet. |
-| `Failed` | The Job failed (`kaniko Job failed`), GitHub refused a request, a check run did not succeed (`GitHub check "x" concluded failure`), no digest was found (`Kaniko completed without an immutable image digest`), or the build cannot run as written (no registry, or a path that leaves the repository). | A GitHub error or a failed check is retried every 30 seconds, until the Job has been created. A build whose Job ran stays failed until a push, a rebuild or a reset runs it again. |
+| `Failed` | The Job failed (`kaniko Job failed`), GitHub refused a request, a check run did not succeed (`GitHub check "x" concluded failure`), no digest was found (`Kaniko completed without an immutable image digest`), or the build cannot run as written (no registry, or a path that leaves the repository). Also a build of an organization's project that the platform's `spec.tenancy.registry` refused (`Registry isolation: …`), before its Job was made or, for one that was running with the platform's login when the setting was turned on, after its Job was deleted. | A GitHub error or a failed check is retried every 30 seconds, until the Job has been created. A build whose Job ran stays failed until a push, a rebuild or a reset runs it again. A refused build is looked at again on each of its events, and runs if what refused it has changed. |
 | `Cancelled` | `status.cancelRequested` was set. | The Job is deleted. |
 
 The Job runs two containers in order. The init container `git` (image `alpine/git:latest`) clones the branch with the token, using an `Authorization` header, and checks out the commit. The container `kaniko` (image `gcr.io/kaniko-project/executor:v1.23.2`) builds the Dockerfile and pushes. The Job allows two retries (`backoffLimit: 2`).

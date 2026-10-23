@@ -598,7 +598,10 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 12. Run `geass mcp --listen` only on `127.0.0.1`, or behind TLS and a firewall.
 13. Put sensitive values in secrets, not plain configuration, because observer tokens and agents can read plain configuration.
 14. Watch the operator log and your servers' logs.
-15. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
+15. If organizations that do not trust each other share the cluster, set
+    [registry isolation](/docs/operations/registry-isolation/) so their builds are never given the platform's registry login,
+    give each a registry login of its own, and turn on `AlwaysPullImages`.
+16. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
 
 ## What stays your responsibility

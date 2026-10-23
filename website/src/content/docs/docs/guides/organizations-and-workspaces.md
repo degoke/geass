@@ -200,6 +200,7 @@ So a build of an organization cannot reach the platform's secrets. It does still
 
 - **Set the organization's registry** under **Settings** → **Registry** (an administrator of the whole organization), or with `POST /api/registry/save` (`repository`, `username`, `password`). Its builds then push there, with that login, and the platform's login is never in the organization's namespace. A service that names a registry of its own keeps it.
 - Because the build namespace reaches only public addresses, the registry has to be one that is reachable on the internet.
+- **On a cluster shared by organizations that do not trust each other**, a platform administrator sets [registry isolation](/docs/operations/registry-isolation/) (`spec.tenancy.registry`): no organization's build is ever given the platform's login, an organization without a registry of its own does not build, each service gets a repository of its own under the organization's (`<repository>/<project>/<service>`), and no organization's service may run an image from the platform's repository or another organization's registry.
 
 ## Shared things an organization owns
 
