@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -67,6 +68,7 @@ func isolationReconciler(t *testing.T, objects ...client.Object) (*GeassBuildRec
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
 	require.NoError(t, networkingv1.AddToScheme(scheme))
+	require.NoError(t, admissionv1.AddToScheme(scheme))
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&geassv1alpha1.GeassBuild{}, &batchv1.Job{}).Build()
 	return &GeassBuildReconciler{Client: c, Scheme: scheme, HTTPClient: &http.Client{Transport: &requestCounter{}}}, c
 }

@@ -58,40 +58,44 @@ func (r *GeassBuildReconciler) buildNamespaceFor(ctx context.Context, build *gea
 }
 
 // ensureOrgBuildNamespace makes an organization's build namespace, with the policy and quota that close and bound it, or
-// accepts the one that is there when Geass made it for the organization.
-func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org string) error {
-	name := platform.OrgBuildNamespace(org)
+// accepts the one that is there when Geass made it for the organization. The organization's limits are written there too,
+// and returned for the build's own containers.
+func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org *geassv1alpha1.GeassOrganization) (*geassv1alpha1.GeassTenantLimits, error) {
+	name := platform.OrgBuildNamespace(org.Name)
 	ns := &corev1.Namespace{}
 	switch err := r.Get(ctx, client.ObjectKey{Name: name}, ns); {
 	case err == nil:
-		if ns.Labels[platform.LabelOrgBuild] != org {
-			return fmt.Errorf("%w: namespace %q", errBuildNamespaceNotOwned, name)
+		if ns.Labels[platform.LabelOrgBuild] != org.Name {
+			return nil, fmt.Errorf("%w: namespace %q", errBuildNamespaceNotOwned, name)
 		}
 	case apierrors.IsNotFound(err):
-		if err := r.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: platform.OrgBuildNamespaceLabels(org)}}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return err
+		if err := r.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: platform.OrgBuildNamespaceLabels(org.Name)}}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return nil, err
 		}
 	default:
-		return err
+		return nil, err
 	}
-	if err := applyNetworkPolicy(ctx, r.Client, platform.OrgBuildPolicy(name, org, nil)); err != nil {
-		return err
+	if err := applyNetworkPolicy(ctx, r.Client, platform.OrgBuildPolicy(name, org.Name, nil)); err != nil {
+		return nil, err
 	}
-	quota := platform.OrgBuildQuota(name, org)
+	quota := platform.OrgBuildQuota(name, org.Name)
 	current := &corev1.ResourceQuota{ObjectMeta: quota.ObjectMeta}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
 		current.Labels = quota.Labels
 		current.Spec.Hard = quota.Spec.Hard
 		return nil
-	})
-	return err
+	}); err != nil {
+		return nil, err
+	}
+	return reconcileOrgBuildLimits(ctx, r.Client, org)
 }
 
 // isolateJob moves a build's Job into the organization's build namespace, with copies of what it needs. The Job cannot be
 // owned by the build, which is in another namespace, so it carries labels that say whose it is, and the controller watches
 // Jobs by them.
 func (r *GeassBuildReconciler) isolateJob(ctx context.Context, build *geassv1alpha1.GeassBuild, job *batchv1.Job, org *geassv1alpha1.GeassOrganization, namespace string) error {
-	if err := r.ensureOrgBuildNamespace(ctx, org.Name); err != nil {
+	limits, err := r.ensureOrgBuildNamespace(ctx, org)
+	if err != nil {
 		return err
 	}
 	job.Namespace = namespace
@@ -100,6 +104,16 @@ func (r *GeassBuildReconciler) isolateJob(ctx context.Context, build *geassv1alp
 	}
 	job.Labels[platform.LabelBuild], job.Labels[platform.LabelBuildNamespace] = build.Name, build.Namespace
 	pod := &job.Spec.Template.Spec
+	// A build asks for nothing of its own. Where the organization's limits give a container a most, the build is given it,
+	// and not the default limit a service is: a build needs far more for the few minutes it runs.
+	if resources := platform.BuildResources(limits); resources != nil {
+		for i := range pod.InitContainers {
+			pod.InitContainers[i].Resources = *resources.DeepCopy()
+		}
+		for i := range pod.Containers {
+			pod.Containers[i].Resources = *resources.DeepCopy()
+		}
+	}
 
 	if build.Spec.CredentialRef != nil {
 		copied, err := r.copyBuildSecret(ctx, build, namespace, build.Spec.CredentialRef.Name, build.Name+"-registry", map[string]string{corev1.DockerConfigJsonKey: corev1.DockerConfigJsonKey}, corev1.SecretTypeDockerConfigJson)

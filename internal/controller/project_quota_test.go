@@ -166,7 +166,7 @@ func TestAQuotasUsageDoesNotWakeTheProjectButAnEditDoes(t *testing.T) {
 	require.True(t, predicate.Delete(event.DeleteEvent{Object: before}))
 	require.False(t, predicate.Create(event.CreateEvent{Object: before}))
 
-	defaultsBefore := platform.ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4")})
+	defaultsBefore := platform.ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4")}, nil)
 	defaultsEdited := defaultsBefore.DeepCopy()
 	defaultsEdited.Spec.Limits[0].DefaultRequest[corev1.ResourceCPU] = resource.MustParse("4")
 	require.True(t, predicate.Update(event.UpdateEvent{ObjectOld: defaultsBefore, ObjectNew: defaultsEdited}))
