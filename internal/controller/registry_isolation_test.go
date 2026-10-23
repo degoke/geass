@@ -322,6 +322,11 @@ func TestUnderTheRegistryPolicyAnOrganizationsServiceBuildsAndPullsWithItsOwnReg
 	build := builds.Items[0]
 	require.Equal(t, "ghcr.io/acme/builds/shop/web", build.Spec.Registry, "pushed under the organization's repository, a service at a time")
 	require.Equal(t, platform.OrgRegistrySecretName(isolatedOrg), build.Spec.CredentialRef.Name)
+	// The build the service makes is one the build controller runs: what holdBuildForRegistry checks.
+	isolation, err := platform.ResolveRegistryIsolation(ctx, c, build.Spec.Project)
+	require.NoError(t, err)
+	require.NoError(t, isolation.CheckCredential(ctx, c, build.Namespace, build.Spec.CredentialRef))
+	require.NoError(t, isolation.CheckDestination(build.Spec.Registry))
 
 	build.Status.Phase, build.Status.Image, build.Status.ImageDigest = geassv1alpha1.GeassBuildSucceeded, build.Spec.Registry, digestOne
 	require.NoError(t, c.Update(ctx, &build))
