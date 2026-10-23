@@ -25,14 +25,17 @@ import (
 // maxNamedInRefusal is how many databases a refusal names before it says how many more there are.
 const maxNamedInRefusal = 5
 
-// handleSharedDatabaseRoutes serves the platform's changes to a shared server other than making one.
+// handleSharedDatabaseRoutes serves the platform's changes to shared servers: making one, and giving one to an owner.
 func (s *Server) handleSharedDatabaseRoutes(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/shared-databases/"), "/"), "/")
-	if len(parts) == 2 && parts[1] == "org" {
+	switch {
+	case len(parts) == 1 && parts[0] == verbCreate:
+		s.handleSharedDatabaseCreate(w, r)
+	case len(parts) == 2 && parts[1] == "org":
 		s.handleSharedDatabaseOrg(w, r, parts[0])
-		return
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 }
 
 // handleSharedDatabaseOrg serves POST /api/shared-databases/{name}/org: it gives a shared server to an organization (org),
