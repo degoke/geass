@@ -221,5 +221,4 @@ repository, or both are contested.
 
 - [Organizations and workspaces](/docs/guides/organizations-and-workspaces/#builds-and-the-registry)
 - [GitHub and builds](/docs/guides/github-and-builds/)
-- [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/)
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
