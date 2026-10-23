@@ -37,6 +37,7 @@ import (
 
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
+	"github.com/degoke/geass/pkg/metering"
 	"github.com/degoke/geass/pkg/migrations"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -179,6 +180,13 @@ func TestControllersOnlyAddsNoDashboardAndTheDashboardSharesWhatTheControllersBu
 	require.True(t, hasRunnable[*controller.PodUsageTracker](mgr))
 	require.True(t, hasRunnable[*controller.NetworkPolicyChecker](mgr))
 	require.True(t, hasRunnable[*controller.ProblemExporter](mgr))
+	require.True(t, hasRunnable[*metering.Meter](mgr), "the usage meter runs with the controllers, and is off until it is turned on")
+	for _, r := range mgr.runnables {
+		if meter, ok := r.(*metering.Meter); ok {
+			require.True(t, meter.NeedLeaderElection(), "only the operator that holds the lease meters")
+			require.NotNil(t, meter.Reader)
+		}
+	}
 	require.NotNil(t, shared.webhooks)
 	require.NotNil(t, shared.compute)
 

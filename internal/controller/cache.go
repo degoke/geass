@@ -3,8 +3,12 @@ package controller
 import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
 // helmReleaseSecretType is the type of the Secrets Helm keeps a release in. Each holds the whole rendered
@@ -26,13 +30,22 @@ const helmReleaseSecretType = "helm.sh/release.v1"
 //
 // Deployments and ConfigMaps are left whole. Controllers create or update them from a Get, so a cache
 // that hid part of an object would make every reconcile think it had changed, or a label selector would
-// hide an object that exists and turn the update into a failing create.
+// hide an object that exists and turn the update into a failing create. The one exception is the
+// ConfigMaps the usage meter keeps its hours in (pkg/metering): up to 62 days of them, one an hour, which
+// nothing reads through the cache. The meter and the usage API read them from the API server.
 func CacheOptions() cache.Options {
+	notUsageHours, err := labels.NewRequirement(platform.LabelUsageHour, selection.DoesNotExist, nil)
+	if err != nil {
+		panic(err)
+	}
 	return cache.Options{
 		DefaultTransform: cache.TransformStripManagedFields(),
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Secret{}: {
 				Field: fields.OneTermNotEqualSelector("type", helmReleaseSecretType),
+			},
+			&corev1.ConfigMap{}: {
+				Label: labels.NewSelector().Add(*notUsageHours),
 			},
 			&corev1.Pod{}: {
 				Field:     fields.OneTermNotEqualSelector("status.phase", string(corev1.PodSucceeded)),

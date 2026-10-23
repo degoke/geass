@@ -53,6 +53,7 @@ import (
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	"github.com/degoke/geass/pkg/metering"
 	"github.com/degoke/geass/pkg/migrations"
 	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
@@ -511,6 +512,12 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		Reader:   mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnodepool")
+		os.Exit(1)
+	}
+	// What each organization reserves, hour by hour, for billing. It does nothing until spec.usage.enabled is set, and it
+	// is here, with the controllers, so that a dashboard-only process never meters.
+	if err := mgr.Add(&metering.Meter{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
+		setupLog.Error(err, "Failed to add the usage meter")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
