@@ -224,6 +224,14 @@ ci-e2e: test-e2e ## Run the CI e2e job (requires Docker and Kind).
 dashboard-build: ## Build the Vite/React dashboard bundle.
 	cd dashboard-ui && pnpm install --frozen-lockfile && pnpm build
 
+.PHONY: dashboard-test
+dashboard-test: ## Run the dashboard's tests (vitest).
+	cd dashboard-ui && pnpm install --frozen-lockfile && pnpm test
+
+.PHONY: dashboard-lib
+dashboard-lib: ## Build the dashboard as a library, dashboard-ui/dist-lib (see docs/development.md).
+	cd dashboard-ui && pnpm install --frozen-lockfile && pnpm build:lib
+
 .PHONY: build
 build: dashboard-build manifests generate fmt vet ## Build manager binary.
 	go build -ldflags "$(GEASS_LDFLAGS)" -o bin/manager cmd/main.go

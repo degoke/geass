@@ -21,7 +21,7 @@ func (s *Server) handleSessionScope(w http.ResponseWriter, r *http.Request) {
 	fail := func(status int, message string) {
 		writeJSON(w, status, map[string]string{dashboardLiteralError: message})
 	}
-	if tokenFromRequest(r) != nil {
+	if credentialIsBearer(r) {
 		fail(http.StatusBadRequest, "a token works in the place it was made for")
 		return
 	}

@@ -584,7 +584,7 @@ func (s *Server) runOnTagsFromForm(w http.ResponseWriter, r *http.Request, fallb
 	if !formHasValue(r, "runOnTags") {
 		return nil, false, true
 	}
-	if tokenFromRequest(r) != nil {
+	if credentialIsBearer(r) {
 		redirectFormError(w, r, fallback, "Only a dashboard admin can choose which nodes a resource runs on")
 		return nil, true, false
 	}

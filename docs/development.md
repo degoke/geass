@@ -130,6 +130,88 @@ operator embeds; that directory is committed so that `go build` works without No
 image by the Dockerfile. If you change the dashboard, rebuild and commit the bundle with the source. Design tokens live in
 [`geass-brand/tokens`](../geass-brand) and the rules in [design.md](design.md).
 
+### The dashboard as a library
+
+The same sources also build as a package, `@geass/dashboard-ui`, that another React app mounts as a component. The app
+the operator embeds is unchanged: it is `vite.config.js` and `src/main.jsx`, as before. The library is `vite.lib.config.js`
+and `src/index.js`.
+
+```bash
+cd dashboard-ui
+pnpm build:lib   # dist-lib/index.js and dist-lib/style.css (not committed); `make dashboard-lib` does the same
+pnpm test        # vitest: the transport, the hide options, and the component mounted under a base path; `make dashboard-test`
+pnpm pack        # a tarball with dist-lib and the type definitions
+```
+
+Another repository can use it from a pnpm workspace (`"@geass/dashboard-ui": "workspace:*"`, after `pnpm build:lib`), from a
+tarball (`pnpm pack`, then `"file:../geass-dashboard-ui-0.1.0.tgz"`), or from git: `pnpm add "github:degoke/geass#<commit>&path:/dashboard-ui"`.
+Installing from git makes pnpm install the dashboard's own dependencies and run `prepack`, which builds the library (a minute or so),
+and pnpm 10 and later refuse to run that build until the host lists the package in `allowBuilds` in its `pnpm-workspace.yaml`, under the
+full name pnpm prints (`@geass/dashboard-ui@git+https://github.com/degoke/geass.git#<commit>&path:/dashboard-ui: true`). A tarball
+built in CI is simpler for a build that runs often. The package is private, so nothing publishes it by accident. React, Mantine,
+TanStack Router and Query are peer dependencies: the host provides one of each, and the library build leaves them as imports.
+
+```jsx
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
+import "@geass/dashboard-ui/style.css";
+import { MantineProvider } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
+import { GeassDashboard, geassTheme, SELF_HOSTED_ONLY } from "@geass/dashboard-ui";
+
+// A route of the host such as /$org/clusters/$id/$ (a splat), so that the page stays mounted while the dashboard navigates.
+function ClusterPage({ org, id }) {
+  return (
+    <GeassDashboard
+      basePath={`/${org}/clusters/${id}`}
+      history={router.history}              // the host's TanStack Router history: both routers see every change
+      apiBaseUrl={`/api/clusters/${id}/geass`}  // the host's proxy to the cluster's Geass API
+      getToken={() => tokenFor(id)}         // sent as `Authorization: Bearer <token>`
+      hide={SELF_HOSTED_ONLY}
+      style={{ height: "calc(100vh - 56px)" }}
+    />
+  );
+}
+
+<MantineProvider theme={geassTheme}>
+  <Notifications />
+  <RouterProvider router={router} />
+</MantineProvider>
+```
+
+How it works, so that a change keeps it working:
+
+- **The router.** `GeassDashboard` makes a router of its own with `basepath` set (`createDashboardRouter` in `src/router.jsx`), so
+  every link and navigation in the pages stays below the host's path with no change to them. Pass the host router's
+  `history` so that the two routers share one address; without it the dashboard uses the browser's, and the host's router does not hear
+  of its navigation. Each router gets a fresh route tree, and a new `basePath` or `history` mounts the dashboard again.
+- **Requests.** Everything that talks to Geass goes through `src/lib/transport.js`: `fetch` calls, the stream of changes and the log
+  stream (read with `fetch` when there is a token, since `EventSource` cannot send a header), and the terminal's WebSocket
+  (a browser cannot set a header on one, so the token is offered as the subprotocol `geass.bearer.<token>`, which the server reads
+  for a terminal's upgrade only). A new call to the API must use `api`, `action` or the helpers there, never `fetch`, `EventSource` or
+  `WebSocket` directly, or it breaks when the dashboard is hosted. A 401 asks `getToken({ forceRefresh: true })` and tries once more, and
+  then the page offers a *Reconnect* button that calls `onUnauthorized`. Without `getToken` the cookie is used, so a host whose proxy adds
+  the credential can leave it out, and `fetch` and `credentials` replace how the request is made.
+- **Theme.** The host owns the `MantineProvider` (one provider means one colour scheme, and a Mantine portal in the host's body is not
+  styled by two themes): give it `geassTheme`, or merge it into the host's theme, since the pages use the `signal` colour and square
+  corners. The library brings no provider and no `Notifications`; the host mounts the latter. The stylesheet is the same `styles.css` as
+  the app's, with every rule placed under `.geass-dashboard` at build time (`scopeUnder` in `vite.lib.config.js`) so that it does not
+  restyle the host's own Buttons, and `src/embedded.css` makes the element fill the box the host gives it. Menus, dialogs and drawers
+  open inside that element (a `Portal` target set on a nested theme), where the scoped styles reach them. Dark and light follow the
+  `data-mantine-color-scheme` the host's Mantine puts on `<html>`.
+- **What can be left out.** `hide` takes names from `HIDEABLE` (`src/lib/options.jsx`): `upgrade`, `servers`, `signin`, `domain`, `tokens`,
+  `alerts`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
+  says *Not available here*. `tokens` also takes away a project's Tokens section and a service's Deploy hook, which are made with tokens. `tokens`, `alerts` and `registry` are hidden because the server answers those only to a signed-in admin, never
+  to a token (`requireSessionAdmin`), so with a token they would only fail. A new page that a host cannot use belongs in that list.
+- **People.** The query cache is dropped when `apiBaseUrl` or `sessionKey` changes, so pass `sessionKey` (a user id) when one host page can sign
+  another person in to the same cluster without a reload. Menus open with a fixed position (a nested theme sets `floatingStrategy`), since the
+  dashboard's element clips what overflows it.
+- **Sizes.** The dashboard fills its element, which must have a height. Only one `GeassDashboard` can show at a time: the way requests are
+  made is a setting of the page.
+
+To try it against a real Geass, build the package, install the tarball in a scratch Vite app that has a TanStack Router route like the
+one above, and proxy `/api/clusters/<id>/geass` to a dashboard with `make dashboard-backend`, with a token made in *Settings, Tokens*.
+
 ## The website
 
 ```bash

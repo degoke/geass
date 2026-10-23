@@ -17,6 +17,23 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
+  signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
+  token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the
+  `geass.bearer.<token>` subprotocol. It maps to a session exactly as an ID token does, records the person as the actor, is
+  refused the routes that manage sign-in and tokens, and ends a stream when the token expires. Off by default.
+- **Dashboard and controllers apart.** `--controllers=false` runs only the dashboard and API, and `--dashboard=false`
+  only the controllers; both stay on by default, so installed clusters are unchanged. A dashboard-only process runs no
+  reconciler, migration or check, never takes the leader election lease, and refuses to start (and stops, if the data
+  moves) unless the cluster's data is at the schema level it reads. `config/dashboard-only` is the ClusterRole it
+  needs, and `GEASS_PROMETHEUS_URL`, `GEASS_ALERTMANAGER_URL` and `GEASS_LOGS_URL` point it at the add-ons when it runs
+  outside the cluster. The operator's `--kubeconfig` flag is now read, as it was parsed after the client configuration.
+- **Hosted control plane.** A cluster whose K3s server runs outside its nodes (with `--disable-agent`, as rungeass
+  runs it) has no control plane node, and Geass now works there: workers install the release the API server's
+  `/version` reports, machines from node pools let the operator's SSH in from the nodes and its outbound address,
+  the K3s upgrade waits for the hosted server and says who upgrades it, the network policy check runs on any node,
+  and `config/external-control-plane` runs the operator on any node from `ghcr.io/degoke/geass`, which each release
+  now publishes.
 - **Installer.** One command installs K3s, the Geass operator and the dashboard on a fresh Linux server (amd64 or
   arm64), and running a newer installer updates the cluster in place: it keeps the data, takes an etcd snapshot first,
   checks that the custom resource definitions stay compatible with what is stored, runs data migrations, refuses a
@@ -203,6 +220,15 @@ The first public release, open source under the Apache License 2.0.
   observer 21 and a viewer 18.
 - **API.** `/api/v1/compute/providers`, `/compute/sizes`, `/connections`, `/pools` and `/servers`, and `pool` and
   `ephemeral` on `/nodes`.
+- **The dashboard as a library.** `dashboard-ui` also builds as the package `@geass/dashboard-ui`, whose `GeassDashboard`
+  component another React app (Mantine, TanStack Router and Query) can mount under a path of its own. The host says where
+  the Geass API is (`apiBaseUrl`) and how a request signs in (`getToken`, an API token sent as `Authorization: Bearer`,
+  also on the stream of changes, the log stream and the terminal), instead of the dashboard's cookie, and can leave out
+  the pages a self-hosted cluster is set up through (`hide`). The dashboard the operator embeds is built as before. See
+  [docs/development.md](docs/development.md#the-dashboard-as-a-library).
+- **Terminal with an API token from a browser.** A browser cannot set `Authorization` on a WebSocket, so the terminal's
+  WebSocket also takes the token as the subprotocol `geass.bearer.<token>`, next to `geass.v1`. It is checked as the
+  header is, and read for no other request.
 
 ### Changed
 

@@ -191,6 +191,18 @@ func Parse(token string) (id, secret, scope string, ok bool) {
 	return parts[1], parts[2], scope, true
 }
 
+// LooksLike reports whether a presented credential is shaped as one of Geass's own tokens: it starts with the prefix of
+// a kind of token ("gsw_", "gsp_", "gsh_"). A credential that is not is somebody else's, and is not looked up here.
+func LooksLike(token string) bool {
+	token = strings.TrimSpace(token)
+	for _, prefix := range []string{workspacePrefix, projectPrefix, servicePrefix} {
+		if strings.HasPrefix(token, prefix+"_") {
+			return true
+		}
+	}
+	return false
+}
+
 // Matches reports whether secret is the secret this record was created with.
 func (r Record) Matches(secret string) bool {
 	want, err := hex.DecodeString(r.Hash)

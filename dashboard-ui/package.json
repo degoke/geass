@@ -1,14 +1,55 @@
 {
-  "name": "geass-dashboard-ui",
+  "name": "@geass/dashboard-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "The Geass dashboard: the app the operator serves, and a React component another app can mount.",
+  "license": "Apache-2.0",
+  "main": "./dist-lib/index.js",
+  "module": "./dist-lib/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist-lib/index.js",
+      "default": "./dist-lib/index.js"
+    },
+    "./style.css": "./dist-lib/style.css",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "files": [
+    "dist-lib",
+    "types"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:lib": "vite build --config vite.lib.config.js",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "prepack": "pnpm build:lib"
+  },
+  "peerDependencies": {
+    "@mantine/code-highlight": "^8.3.0",
+    "@mantine/core": "^8.3.0",
+    "@mantine/hooks": "^8.3.0",
+    "@mantine/notifications": "^8.3.0",
+    "@tanstack/react-query": "^5.0.0",
+    "@tanstack/react-router": "^1.0.0",
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "latest",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/space-grotesk": "^5.3.0",
@@ -18,15 +59,14 @@
     "@mantine/notifications": "^8.3.18",
     "@tanstack/react-query": "^5.104.2",
     "@tanstack/react-router": "^1.170.42",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
     "@vitejs/plugin-react": "latest",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "clsx": "^2.1.1",
-    "lucide-react": "latest",
+    "jsdom": "^26.1.0",
     "react": "latest",
     "react-dom": "latest",
-    "tailwind-merge": "^3.7.0",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "^5.0.5"
   }
 }

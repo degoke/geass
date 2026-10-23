@@ -36,7 +36,7 @@ const (
 // the dashboard, so a token that could change it could always get back in as a person after it was revoked. The same
 // reason keeps tokens from minting tokens.
 func (s *Server) requireSessionAdmin(w http.ResponseWriter, r *http.Request, what string) bool {
-	if tokenFromRequest(r) != nil || !s.sessionCanMutate(r) {
+	if credentialIsBearer(r) || !s.sessionCanMutate(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: what + " " + sessionAdminOnly})
 		return false
 	}
@@ -90,10 +90,14 @@ type authSettingsView struct {
 	CallbackURL       string `json:"callbackURL"`
 	LogoutURL         string `json:"backchannelLogoutURL"`
 	// RevokeTokensOnLogout is whether a logout from the provider also revokes the tokens the person made.
-	RevokeTokensOnLogout bool           `json:"revokeTokensOnLogout"`
-	Test                 *ssoTestResult `json:"test"`
-	HasPasswordAdmin     bool           `json:"hasPasswordAdmin"`
-	CanEnable            bool           `json:"canEnable"`
+	RevokeTokensOnLogout bool `json:"revokeTokensOnLogout"`
+	// AccessTokens is whether the provider's access tokens work as a bearer credential, and AccessTokenAudience the audience
+	// they must name (the client ID when empty). Both are set in the platform configuration, not on the settings page.
+	AccessTokens        bool           `json:"accessTokens"`
+	AccessTokenAudience string         `json:"accessTokenAudience"`
+	Test                *ssoTestResult `json:"test"`
+	HasPasswordAdmin    bool           `json:"hasPasswordAdmin"`
+	CanEnable           bool           `json:"canEnable"`
 	// Tenancy is how the token names organizations, and whether they are on.
 	Tenancy tenancyView `json:"tenancy"`
 }
@@ -120,8 +124,8 @@ func (s *Server) handleAPIAuthSettings(w http.ResponseWriter, r *http.Request) {
 		RoleMap: settings.Config.RoleMap, RequireClaim: settings.Config.RequireClaim, SessionMinutes: settings.SessionMinutes,
 		RefreshMinutes: settings.RefreshMinutes, StaleGraceMinutes: int(settings.StaleGrace / time.Minute),
 		CallbackURL: ssoRedirectURL(r, settings.DashboardURL), LogoutURL: strings.TrimSuffix(ssoRedirectURL(r, settings.DashboardURL), oidcCallbackPath) + oidcLogoutPath,
-		RevokeTokensOnLogout: settings.RevokeTokensOnLogout,
-		Test:                 s.ssoTest(fingerprint), HasPasswordAdmin: hasPasswordAdmin,
+		RevokeTokensOnLogout: settings.RevokeTokensOnLogout, AccessTokens: settings.AccessTokens, AccessTokenAudience: settings.AccessTokenAudience,
+		Test: s.ssoTest(fingerprint), HasPasswordAdmin: hasPasswordAdmin,
 		CanEnable: settings.Configured() && hasPasswordAdmin && s.ssoTestedOK(fingerprint, time.Now()),
 	}
 	if view.Scopes == nil {
@@ -263,6 +267,8 @@ func (s *Server) handlePlatformAuthSave(w http.ResponseWriter, r *http.Request) 
 	// What a logout does to the tokens is set on its own (see handlePlatformAuthLogoutPolicy), so saving the provider keeps it.
 	if previous != nil {
 		spec.RevokeTokensOnLogout = previous.RevokeTokensOnLogout
+		// Whether access tokens are accepted is set in the configuration, and saving the provider keeps it.
+		spec.AccessTokens = previous.AccessTokens
 	}
 
 	// A secret that was just written is put back as it was if the configuration cannot be saved, so the two agree.

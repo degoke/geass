@@ -610,7 +610,8 @@ func TestAMachineIsNeverJoinedWithoutItsPinnedHostKey(t *testing.T) {
 }
 
 // An empty list of control plane addresses means "from anywhere" to every provider, so a machine is not made while
-// the list is unknown.
+// the list is unknown. With the control plane node gone and no other node, the cluster reads as one whose control
+// plane is hosted elsewhere, and there is no address of that kind either.
 func TestNoMachineIsMadeWhileTheControlPlanesAddressesAreUnknown(t *testing.T) {
 	f := newCloudFixture(t, geassv1alpha1.NodeStorageNone)
 	require.NoError(t, f.c.Delete(context.Background(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "cp"}}))
@@ -621,7 +622,7 @@ func TestNoMachineIsMadeWhileTheControlPlanesAddressesAreUnknown(t *testing.T) {
 	}
 
 	require.Empty(t, f.cloud.Created, "a machine with an open firewall is never made")
-	require.Contains(t, f.node().Status.Message, "control plane")
+	require.Contains(t, f.node().Status.Message, "the machine's firewall cannot say where SSH may come from")
 }
 
 // failingPodList is an API server whose pod list fails, which is how a drain meets an error.

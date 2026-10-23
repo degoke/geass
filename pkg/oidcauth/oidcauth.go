@@ -170,6 +170,8 @@ type Provider struct {
 	config   Config
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
+	// keys are the provider's signing keys, which verify access tokens as well (see VerifyAccessToken).
+	keys *keySet
 	// client makes every request to the provider, and keeps its connections between sign-ins.
 	client *http.Client
 }
@@ -190,11 +192,13 @@ func Discover(ctx context.Context, config Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	keys := newKeySet(keysURL, client)
 	return &Provider{
 		config:   config,
 		client:   client,
 		provider: provider,
-		verifier: oidc.NewVerifier(config.Issuer, newKeySet(keysURL, client), &oidc.Config{ClientID: config.ClientID, SupportedSigningAlgs: signingAlgorithms}),
+		keys:     keys,
+		verifier: oidc.NewVerifier(config.Issuer, keys, &oidc.Config{ClientID: config.ClientID, SupportedSigningAlgs: signingAlgorithms}),
 	}, nil
 }
 
@@ -368,8 +372,21 @@ const OfflineAccessScope = "offline_access"
 // address is theirs, whether it is a person this installation lets in, and the role. It returns a *Denied when it
 // is not.
 func (c Config) Authorize(claims map[string]any) (*Identity, error) {
+	return c.authorize(claims, true)
+}
+
+// AuthorizeAccessToken applies the configuration to the claims of a verified access token, by the same rules as Authorize:
+// a person it lets in as an ID token would, with the role, the organizations and the platform claim an ID token's would
+// give, and nothing more. The one difference is the email: an access token need not carry it (a provider puts only what
+// it is asked to into one), so a token without it is let in, with an empty Identity.Email, and the caller names the person
+// by their subject. A token that does carry an address the provider says is not verified is refused all the same.
+func (c Config) AuthorizeAccessToken(claims map[string]any) (*Identity, error) {
+	return c.authorize(claims, false)
+}
+
+func (c Config) authorize(claims map[string]any, emailRequired bool) (*Identity, error) {
 	email := strings.ToLower(strings.TrimSpace(stringClaim(claims, "email")))
-	if email == "" {
+	if email == "" && emailRequired {
 		return nil, &Denied{DeniedNoEmail, "the ID token has no email claim; ask the provider to include the email scope"}
 	}
 	// A provider that does not say leaves it at that; one that says anything but yes is believed, whatever type it

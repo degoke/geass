@@ -5,6 +5,7 @@ import { Copy, KeyRound, MoreVertical, Plus } from "lucide-react";
 import { action, api, resourceDisplayName, resourceName } from "@/lib/api";
 import { dashboardSession, isPlatformSession, sessionScopes } from "@/lib/dashboard";
 import { alertUser, alertError } from "@/lib/notify";
+import { publicOrigin } from "@/lib/transport";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Field, Input, Muted, Select } from "@/components/geass-ui";
 
@@ -160,7 +161,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
     );
   };
 
-  const origin = typeof window === "undefined" ? "https://geass.example.com" : window.location.origin;
+  const origin = publicOrigin() || "https://geass.example.com";
   const usage = created?.item?.scope === "project"
     ? `export GEASS_TOKEN=${created.token}\ncurl -X POST -H "Authorization: Bearer $GEASS_TOKEN" ${origin}/api/token/deploy`
     : `export GEASS_TOKEN=${created?.token}\ncurl -H "Authorization: Bearer $GEASS_TOKEN" ${origin}/api/bootstrap`;

@@ -68,6 +68,9 @@ type GeassK3sUpgradeReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	SSH    ssh.Provisioner
+	// ServerVersion asks the API server which release it runs: what a control plane hosted outside the cluster's nodes
+	// runs, since no node reports it (see hosted_control_plane.go).
+	ServerVersion ServerVersionFunc
 
 	// now is the clock; tests replace it.
 	now func() time.Time
@@ -106,6 +109,13 @@ func (r *GeassK3sUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	controlPlane := controlPlaneOf(k8sNodes.Items)
 	observed := oldestK3sVersion(controlPlane)
+	hosted, err := hostedServerVersion(ctx, controlPlane, r.ServerVersion)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if hosted != "" {
+		observed = hosted
+	}
 
 	target := cluster.Spec.K3s.Version
 	current := cluster.Status.K3s.Upgrade
@@ -177,6 +187,9 @@ func (r *GeassK3sUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if hosted != "" {
+		view.controlPlane, view.hosted = hosted, true
+	}
 	return r.advance(ctx, &cluster, view, observed, current)
 }
 
@@ -189,6 +202,9 @@ type clusterView struct {
 	// than the target, in name order.
 	controlPlanes       int
 	controlPlanesBehind []string
+	// hosted says that the control plane is not one of the cluster's nodes: it runs elsewhere, controlPlane is what
+	// its API server reports, and whoever hosts it is the one who upgrades it.
+	hosted bool
 	// workers are the nodes that Geass manages and can reach over SSH, in name order.
 	workers []managedWorker
 	// unmanaged are worker nodes that have no GeassNode, so there is no way to reach them: they are left to be
@@ -202,6 +218,10 @@ type clusterView struct {
 // server the installer does it. With several it upgrades only the server it runs on, and the others are upgraded by hand,
 // so naming them is what tells a person where to go.
 func (v clusterView) waitingForControlPlane() string {
+	if v.hosted {
+		return fmt.Sprintf("the control plane runs %s, and workers are not moved ahead of it. It is hosted outside this "+
+			"cluster's nodes, so nothing here can upgrade it: whoever hosts it moves it to %s, and the workers follow", v.controlPlane, v.target)
+	}
 	if v.controlPlanes <= 1 {
 		return fmt.Sprintf("the control plane runs %s, and workers are not moved ahead of it. Upgrade it first: "+
 			"run the installer on the control plane machine with --k3s-version %s", v.controlPlane, v.target)
@@ -565,7 +585,7 @@ func (r *GeassK3sUpgradeReconciler) upgradeOverSSH(
 	if err != nil {
 		return fmt.Errorf("join token: %w", err)
 	}
-	in, err := workerJoinInput(ctx, r.Client, node, cluster, creds, token)
+	in, err := workerJoinInput(ctx, r.Client, r.ServerVersion, node, cluster, creds, token)
 	if err != nil {
 		return err
 	}

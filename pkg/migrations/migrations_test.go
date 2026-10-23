@@ -216,3 +216,48 @@ func TestAnEmptyRecordIsAFreshCluster(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.To)
 }
+
+func TestCheckPassesOnlyAtTheExactLevelAndWritesNothing(t *testing.T) {
+	var r recorder
+	two := []Migration{r.migration(1), r.migration(2)}
+
+	c := fake.NewClientBuilder().Build()
+	err := Check(context.Background(), c, ns, two)
+	require.True(t, IsBehind(err), "a cluster nobody has migrated is behind, not fresh: only the controllers migrate")
+	var behind *ErrSchemaBehind
+	require.ErrorAs(t, err, &behind)
+	require.Equal(t, 0, behind.Stored)
+	require.Equal(t, 2, behind.Supported)
+	require.Contains(t, err.Error(), "controllers")
+	require.Empty(t, r.ran, "a check runs no migration")
+	require.True(t, apierrors.IsNotFound(c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: ConfigMapName}, &corev1.ConfigMap{})),
+		"a check does not create the record")
+
+	seedRecord(t, c, map[string]string{keySchemaVersion: "1", keyRelease: "v0.1.0"})
+	require.True(t, IsBehind(Check(context.Background(), c, ns, two)))
+	require.Equal(t, "1", recordOf(t, c).Data[keySchemaVersion], "a check leaves the record as it found it")
+
+	require.NoError(t, c.Update(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: ConfigMapName, ResourceVersion: recordOf(t, c).ResourceVersion},
+		Data:       map[string]string{keySchemaVersion: "2", keyRelease: "v0.2.0"},
+	}))
+	require.NoError(t, Check(context.Background(), c, ns, two))
+
+	require.NoError(t, c.Update(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: ConfigMapName, ResourceVersion: recordOf(t, c).ResourceVersion},
+		Data:       map[string]string{keySchemaVersion: "3", keyRelease: "v0.3.0"},
+	}))
+	err = Check(context.Background(), c, ns, two)
+	require.True(t, IsTooNew(err), "data ahead of the binary is refused as the operator refuses it")
+	require.False(t, IsBehind(err))
+}
+
+func TestCheckRefusesARecordItCannotRead(t *testing.T) {
+	var r recorder
+	c := fake.NewClientBuilder().Build()
+	seedRecord(t, c, map[string]string{keySchemaVersion: "two"})
+	err := Check(context.Background(), c, ns, []Migration{r.migration(1)})
+	require.Error(t, err)
+	require.False(t, IsBehind(err))
+	require.False(t, IsTooNew(err))
+}

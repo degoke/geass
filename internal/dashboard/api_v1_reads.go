@@ -161,6 +161,9 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 			me["expiresAt"] = caller.token.ExpiresAt
 		}
 	}
+	if bearer := oidcBearerFromRequest(r); bearer != nil {
+		me["authentication"], me["expiresAt"] = "oidc", bearer.Expires
+	}
 	writeJSON(w, http.StatusOK, me)
 }
 

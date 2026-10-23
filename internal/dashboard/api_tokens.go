@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,14 +68,40 @@ func tokenSession(record *apitokens.Record) *dashboardSessionInfo {
 	}
 }
 
-// bearerToken returns the credential of an "Authorization: Bearer" header. presented is true when the
-// header names the Bearer scheme at all, even with an empty credential, so a bad token is never
-// silently ignored in favour of a cookie.
+const (
+	// websocketProtocol is the subprotocol the terminal speaks. A browser that offers the API token as one (below) must be
+	// answered with one of the protocols it offered, or it closes the connection, so this is the one the server picks.
+	websocketProtocol = "geass.v1"
+	// websocketBearerPrefix marks the subprotocol that carries an API token. A browser cannot set Authorization on a
+	// WebSocket, so a page that works with a token (an embedded dashboard does) offers it as
+	// `geass.bearer.<token>` next to websocketProtocol.
+	websocketBearerPrefix = "geass.bearer."
+)
+
+// websocketBearer returns the API token a WebSocket upgrade carries as a subprotocol. It reads nothing from any other
+// request, so a token cannot be passed this way to a route that is not a terminal's socket, and the terminal is
+// reached under the same rules as with an Authorization header (a viewer's token is refused it, and a revoked one stops
+// a socket that is open).
+func websocketBearer(r *http.Request) (token string, presented bool) {
+	if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/ws") || !websocket.IsWebSocketUpgrade(r) {
+		return "", false
+	}
+	for _, protocol := range websocket.Subprotocols(r) {
+		if token, found := strings.CutPrefix(protocol, websocketBearerPrefix); found {
+			return token, true
+		}
+	}
+	return "", false
+}
+
+// bearerToken returns the credential of an "Authorization: Bearer" header, or of the subprotocol of a terminal's
+// WebSocket (see websocketBearer). presented is true when the header names the Bearer scheme at all, even with an
+// empty credential, so a bad token is never silently ignored in favour of a cookie.
 func bearerToken(r *http.Request) (token string, presented bool) {
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	const scheme = "bearer"
 	if len(header) < len(scheme) || !strings.EqualFold(header[:len(scheme)], scheme) {
-		return "", false
+		return websocketBearer(r)
 	}
 	rest := header[len(scheme):]
 	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
@@ -436,7 +463,7 @@ func (s *Server) handleAPITokenDeploy(w http.ResponseWriter, r *http.Request) {
 
 // requireTokenAdmin allows only a signed-in admin. Tokens, even admin tokens, cannot mint or list tokens.
 func (s *Server) requireTokenAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if tokenFromRequest(r) != nil || !s.sessionCanMutate(r) {
+	if credentialIsBearer(r) || !s.sessionCanMutate(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{dashboardLiteralError: errTokensViewOnly.Error()})
 		return false
 	}
