@@ -241,7 +241,7 @@ func PlanEgress(egress *geassv1alpha1.GeassTenantEgress) (*EgressPlan, error) {
 		}
 	}
 	if len(plan.open) == 0 {
-		return nil, errors.New("the limits leave no port open to addresses outside the cluster: allowedPorts lists only ports that are closed")
+		return nil, errors.New("the limits leave no port open to addresses outside the cluster, which is not what they are for: open at least one, in allowedPorts or by closing fewer")
 	}
 	for _, allowance := range egress.Allow {
 		prefix, _ := allowancePrefix(allowance.CIDR)

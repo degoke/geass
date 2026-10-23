@@ -394,6 +394,8 @@ func TestLimitsThatCannotBeAppliedAreRefusedWithEveryReason(t *testing.T) {
 			[]string{"allowedPorts is an empty list, which would close every port"}},
 		"nothing left open": {geassv1alpha1.GeassTenantEgress{AllowedPorts: []geassv1alpha1.GeassEgressPortRange{tcp(25), tcp(587)}},
 			[]string{"leave no port open"}},
+		"everything blocked": {geassv1alpha1.GeassTenantEgress{BlockedPorts: []geassv1alpha1.GeassEgressPortRange{tcpRange(1, 65535), {Port: 1, EndPort: utilptr.To(int32(65535)), Protocol: corev1.ProtocolUDP}}},
+			[]string{"leave no port open"}},
 		"not a range": {geassv1alpha1.GeassTenantEgress{Allow: []geassv1alpha1.GeassEgressAllowance{{CIDR: "relay.example.com", Ports: []geassv1alpha1.GeassEgressPortRange{tcp(25)}}}},
 			[]string{`allow[0].cidr: "relay.example.com" is not a range of IPv4 addresses`}},
 		"IPv6": {geassv1alpha1.GeassTenantEgress{Allow: []geassv1alpha1.GeassEgressAllowance{{CIDR: "2001:db8::/32", Ports: []geassv1alpha1.GeassEgressPortRange{tcp(25)}}}},
