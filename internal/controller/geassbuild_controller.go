@@ -109,7 +109,7 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	if build.Spec.Repository != "" && !build.Status.CancelRequested && !started {
 		ready, err := r.refreshGitHubState(ctx, build)
 		if err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, phaseForGitHubError(err), nil, err)
 		}
 		if !ready {
 			return ctrl.Result{RequeueAfter: 15 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildWaitingForCI, nil, nil)
@@ -117,7 +117,7 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	}
 	if build.Spec.GitCredentialRef != nil && !jobRan {
 		if err := r.refreshGitCredentialToken(ctx, build); err != nil {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, phaseForGitHubError(err), nil, err)
 		}
 	}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobNameOf(build), Namespace: jobNamespaceOf(build)}}
@@ -578,6 +578,16 @@ func (r *GeassBuildReconciler) refreshGitHubState(ctx context.Context, build *ge
 	}
 	build.Status.CIState = "success"
 	return true, nil
+}
+
+// phaseForGitHubError is what a build that could not ask GitHub is left as. Waiting for the token of an external App's
+// installation passes once its provider gives one, so the build waits, with the reason in failureReason, and is not
+// failed for a renewal that is late; anything else fails it, as it always did. Both are tried again.
+func phaseForGitHubError(err error) geassv1alpha1.GeassBuildPhase {
+	if errors.Is(err, githubapp.ErrTokenUnavailable) {
+		return geassv1alpha1.GeassBuildPending
+	}
+	return geassv1alpha1.GeassBuildFailed
 }
 
 func (r *GeassBuildReconciler) githubTokenResolver() *githubapp.TokenResolver {
