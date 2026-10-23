@@ -28,6 +28,7 @@ Choose a dedicated database when the data matters enough to need backups and poi
 - For a high-availability server the cluster needs at least three healthy nodes, and you must have run the readiness check. See [Instances and high availability](/docs/guides/databases/#instances-and-high-availability).
 - If your cluster uses regions, a server serves only projects in its own region. A project without a region of its own uses the cluster's default region. A server or project with no region at all can be paired with any. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 - If a project requires compliance node tags, it can use a server only when the server runs on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
+- If the cluster has [organizations](/docs/guides/organizations-and-workspaces/), a server holds the databases of one organization only. While organizations are on, a project of an organization uses a server of its organization, and the platform's own servers are for the projects of no organization. See [Organizations](#organizations).
 
 ## Set up a shared server
 
@@ -170,6 +171,82 @@ Two limits follow from the server having no project:
 
 A **Logical database** on one of the project's own dedicated servers needs none of this, because that server is placed with the project's tags.
 
+## Organizations
+
+A shared server holds the data of every project that has a database on it, so with [organizations](/docs/guides/organizations-and-workspaces/) a server holds the databases of one organization only. One organization's data never sits on a server beside another organization's, or beside the platform's own projects'.
+
+| Server | Who may take databases on it |
+| --- | --- |
+| An organization's (`spec.org` set) | That organization's projects only, whether organizations are on or off |
+| The platform's (no `spec.org`) | While organizations are on, the projects of no organization only. While they are off, every project, as before |
+
+A project's own dedicated server is its project's, wherever the project goes, and none of this applies to it.
+
+### Where it is checked
+
+- **Creating a database.** `POST /api/logical-databases/create` is refused for a project of an organization on the platform's server, with `400` and "That server is the platform's and the project is in the organization org-1a2b3c4d, but with organizations on a shared database server holds the databases of one organization only. Choose a server of org-1a2b3c4d, or set one up for it with POST /api/shared-databases/create and org=org-1a2b3c4d". Only a platform administrator sees this: an organization's people never see the platform's server, so they are told "That database server does not exist". Geass does not make a server for an organization by itself. A server costs CPU, memory and disk, and setting one up is the platform's decision.
+- **Moving a project.** `POST /api/projects/{project}/assign` is refused with `409` when the project has databases on a server of another organization, or, while organizations are on, on the platform's server when it is given to an organization: "the project has databases on the platform's database server cluster-postgres, and with organizations on a shared database server holds the databases of one organization only: move their data to a server of the organization, or delete them, first". Moving a project to another workspace of the organization it is in is never refused, and neither is taking a project out of its organization when that ends a mixing.
+- **Giving a server to an organization.** `POST /api/shared-databases/{name}/org` with `org=<organization>`, or `org=` empty for the platform, changes whose a shared server is. It is refused with `409` while the server holds a database whose project is not that organization's (for the platform while organizations are on, one that is any organization's), and the message names up to five of them, for example "orders (project shop, the organization org-1a2b3c4d)". A platform administrator only.
+- **In the operator.** However the objects were written (with `kubectl`, a script, or before this check existed), the operator does not make a logical database that breaks the rule while organizations are on. No Job runs on the server and no login is created. `Ready` is `False` with a message that names both owners, for example "The database server cluster-postgres belongs to the platform and the project shop to the organization org-1a2b3c4d, but a shared database server holds the databases of one organization only. It is not made: …". This does not count as a failure, so Geass does not give up on it: once the platform gives the server or the project to one organization, the database is made within seconds. The logical database also gets the condition `OrganizationIsolated`, `False`, with the reason `MixedOrganizations`, and a `Warning` event with the same reason, once.
+
+### Databases that were there before
+
+A logical database that is already on its server when the rule finds it, because it was made before organizations were on or before this check, or through `kubectl`, is **kept as it is and still served**. Geass deletes, drops and moves nothing, `Ready` stays as it was, and the project's services keep connecting. It is reported instead:
+
+- the condition `OrganizationIsolated` (`False`, `MixedOrganizations`), whose message names both owners and ends "It was made before this was checked, so it is kept as it is and still served, and listed for the platform's administrators to move";
+- a `Warning` event `MixedOrganizations` on the logical database, when it is first found;
+- the list below.
+
+The condition goes when the server and the project belong to one owner again, or when organizations are turned off. "Already on its server" means it has a connection Secret (`status.connectionSecret`). One that never got that far is refused as above.
+
+The condition's message is seen by the people of the project's organization, like the rest of the logical database, and so names the other organization by its resource ID (`org-…`), never by its display name.
+
+### List the databases that mix
+
+```bash
+curl https://geass.example.com/api/shared-databases/mixed \
+  -H "Authorization: Bearer $GEASS_TOKEN" \
+  -H "Accept: application/json"
+```
+
+or `geass api GET /shared-databases/mixed`. A platform administrator only. The reply:
+
+```json
+{
+  "enforced": true,
+  "items": [
+    {"name": "orders", "project": "shop", "environment": "production", "projectOrg": "org-1a2b3c4d",
+     "server": "cluster-postgres", "serverOrg": "", "made": true,
+     "message": "The database server cluster-postgres belongs to the platform and the project shop to the organization org-1a2b3c4d, but a shared database server holds the databases of one organization only"}
+  ],
+  "servers": [
+    {"name": "cluster-postgres", "org": "", "owners": [{"org": "", "databases": 3}, {"org": "org-1a2b3c4d", "databases": 1}]}
+  ]
+}
+```
+
+`items` are the logical databases whose server is not their project's organization's, as it is while organizations are on. `made` says it is on the server already (kept and served) or not (refused). `servers` are the servers that hold one of them, with whose all their databases are: `""` is the projects of no organization. The list applies the rule even while organizations are off, so it shows what turning them on will report; `enforced` says whether they are on.
+
+From the cluster:
+
+```bash
+kubectl -n geass-system get events --field-selector reason=MixedOrganizations
+kubectl -n geass-system get geasslogicaldatabases -o json \
+  | jq -r '.items[] | select(any(.status.conditions[]?; .type=="OrganizationIsolated")) | "\(.metadata.name) \(.spec.serverRef)"'
+```
+
+### An install that already has a mixed server
+
+This is the case of a cluster that used the platform's server for every project and then gave projects to organizations. Do it before turning organizations on if you can: while they are off, projects are assigned as they always were.
+
+1. List them with `GET /api/shared-databases/mixed`.
+2. For each server in `servers`:
+   - **All its databases are one organization's** (`owners` has one entry, an organization's): give the server to it with `POST /api/shared-databases/<server>/org` and `org=<organization>`. Nothing moves. The organization's people now see the server, and its administrators can delete it once no database is on it.
+   - **It holds the databases of more than one owner:** choose who keeps it. For each database of another owner, set up a server of that owner's organization (`POST /api/shared-databases/create` with `org=`), create a logical database on it, copy the data across with `pg_dump` and `psql` (or `mysqldump` and `mysql`), point the services at the new connection Secret, and delete the old logical database, which drops its data from the old server. Geass has no tool for the copy, and this sequence has not been run end to end on a real cluster.
+3. Turn organizations on, if they are not. Whatever is left is served and reported, not broken.
+
+While organizations are on, the order matters. A project of no organization that has databases on the platform's server cannot be given to an organization, and the server cannot be given to the organization while the project is of none. Move the project's data first, or, as a platform administrator who accepts the short time in between, set the project's `spec.org` with `kubectl` and then give the server: until the server is given, the operator keeps serving the project's databases and reports them.
+
 ## What a project can and cannot do
 
 - A login reaches only its own logical database. Geass revokes `PUBLIC` access to each logical database and grants it to that login alone. It changes nothing on the server's other databases, such as the `postgres` maintenance database, which keep the server's default access.
@@ -218,6 +295,7 @@ The connection call needs a workspace token with Full access. It shows the host,
 - **High availability is chosen at setup.** The dashboard has a switch only when you create the server.
 - **Regions.** When a server and a project both have a region, the two must match, so no query crosses regions. A project without a region uses the cluster's default region, and a side with no region at all is not checked.
 - **No migration tool.** To move a project's data between a dedicated database and a shared one, dump and load it yourself.
+- **One organization per server, and no server made for you.** While organizations are on, an organization's project needs a server of its organization, which a platform administrator sets up. Geass never splits a server or moves data between servers. The **Add resource** dialog of a platform administrator who is not in an organization lists every shared server in the project's region, including those of other owners, which the API then refuses.
 - **The server's own login.** Like every database Geass creates, the server has an application login named `app` whose password is derived from the server's resource ID. It owns no logical database, and each logical database is closed to every login but its own. Treat the server's address as reachable from every project.
 
 ## What happens under the hood
@@ -271,6 +349,18 @@ The login reached its connection limit, 20 by default. Raise it on the server wi
 
 **Removing the server is blocked.**
 Projects still have databases on it. The message gives the count. Delete those logical databases first.
+
+**"That server is the platform's and the project is in the organization …".**
+Organizations are on, and the platform's server is for the projects of no organization. Choose a server of the project's organization, or set one up for it with `org=`. See [Organizations](#organizations).
+
+**"… but a shared database server holds the databases of one organization only. It is not made: …".**
+The logical database was written past the dashboard on a server of another owner. Nothing was made on the server. Delete it and create it on a server of the project's organization, or have a platform administrator give the server, or the project, to one organization. It is made once they have.
+
+**"… It was made before this was checked, so it is kept as it is and still served …".**
+The database was on the server before the rule found it. It works, and is listed by `GET /api/shared-databases/mixed`. See [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
+
+**Giving a project to an organization, or a server, is refused with 409.**
+The project, or the server, has databases that would then share a server with another owner's. The message names them. Move their data or delete them first, in the order under [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
 
 ## Related
 

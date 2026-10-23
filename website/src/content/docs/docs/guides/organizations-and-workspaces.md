@@ -203,11 +203,11 @@ So a build of an organization cannot reach the platform's secrets. It does still
 
 ## Shared things an organization owns
 
-- **Database servers.** A platform administrator can make a shared Postgres or MySQL server for an organization (`POST /api/shared-databases/create` with `org=`). Only that organization's projects take databases on it, and only its people see it. It runs where the organization requires its work to (its region and tags). Its administrators can delete it when no database is on it. A platform's own server, which every project shared before, is still not available to organizations.
+- **Database servers.** A platform administrator can make a shared Postgres or MySQL server for an organization (`POST /api/shared-databases/create` with `org=`), or give it a server the platform made (`POST /api/shared-databases/{name}/org`). Only that organization's projects take databases on it, and only its people see it. It runs where the organization requires its work to (its region and tags). Its administrators can delete it when no database is on it. A shared server holds the databases of one organization only: the platform's own server, which every project shared before organizations, is for the projects of no organization while they are on. See [Shared database servers and organizations](/docs/guides/shared-database-servers/#organizations).
 - **Cloud connections.** A connection made without a project, for an organization (`org=`, or by an administrator of the whole organization for their own), can be used by every project of that organization and by no other. Any project of the organization can use its credentials, so keep an organization's connections to what its projects may all touch.
 - **Object storage.** An organization's buckets in the cluster are made on the platform's object storage server, which each bucket reaches with a login of its own. The server is the platform's to set up.
 
-An organization cannot be deleted while it owns a database server or a connection, and a project cannot be given to another organization while it has databases on a server that belongs to one.
+An organization cannot be deleted while it owns a database server or a connection. A project cannot be given to another organization while it has databases on a server that belongs to one, nor, while organizations are on, to an organization while it has databases on the platform's server.
 
 ## An organization's own identity provider
 
