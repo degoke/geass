@@ -69,7 +69,8 @@ An installation token is short lived. When Geass uses the connection it asks Git
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `status.ready` | boolean | Required in the status object. `true` when the Secret named in `spec.secretRef` exists and, if `spec.webhookSecretRef` is set, that Secret exists too. |
-| `status.conditions` | list | The `Ready` condition, and `GitHubReporting` once Geass has tried to report to GitHub with this connection. |
+| `status.conditions` | list | The `Ready` condition, and `GitHubReporting` once Geass has tried to report to GitHub with this connection. For a provider's App, also `TokensReady`; see [The connection of a provider's App](#the-connection-of-a-providers-app). |
+| `status.installations` | list | For a provider's App only: the state of each installation's token. |
 
 ### Conditions
 
@@ -97,7 +98,84 @@ all its tries is not forgotten: it is sent again after ten minutes, and the stat
 until it has been. The condition does not affect `status.ready` or any build or deploy. See
 [Reporting back to GitHub](/docs/guides/github-and-builds/#reporting-back-to-github).
 
-The operator checks that the Secrets exist. It does not check that the token is valid or that GitHub accepts it. It also does not watch Secrets, so the condition changes when the connection object changes or the operator restarts, and not at the moment a Secret appears or disappears. Dashboard actions do not depend on `status.ready`. They read the Secret directly.
+The operator checks that the Secrets exist. It does not check that the token is valid or that GitHub accepts it. It also does not watch a project connection's Secrets, so the condition changes when the connection object changes or the operator restarts, and not at the moment a Secret appears or disappears. (It does watch the Secrets of a provider's App, which are labelled.) Dashboard actions do not depend on `status.ready`. They read the Secret directly.
+
+## The connection of a provider's App
+
+A `GeassGitHubConnection` with `spec.external` is not a project's: it is the connection of a GitHub App that a provider outside the
+cluster runs, such as rungeass, made and changed through the
+[API](/docs/reference/rest-api/#github-an-app-a-provider-runs) and not by hand. See
+[GitHub through a provider](/docs/guides/connectors/github/#github-through-a-provider). Its name does not end in `-github`, so no
+organization sees it; its projects' connections are ordinary `<project>-github` ones.
+
+```yaml title="rungeass.yaml"
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassGitHubConnection
+metadata:
+  name: rungeass
+  namespace: geass-system
+spec:
+  secretRef:
+    name: github-app-rungeass-webhook
+  webhookSecretRef:
+    name: github-app-rungeass-webhook
+  external:
+    provider: rungeass
+    appSlug: rungeass
+    installURL: https://app.rungeass.app/github/install
+    installations:
+      - id: 42
+        account: acme
+        accountType: Organization
+        org: org-acme
+status:
+  ready: true
+  installations:
+    - id: 42
+      tokenState: Valid
+      tokenExpiresAt: "2026-10-23T13:00:00Z"
+```
+
+| Field | Type | Validation | Meaning |
+| --- | --- | --- | --- |
+| `spec.external.provider` | string | Required, 1 to 63 characters | Who runs the App, as the dashboard names it. |
+| `spec.external.appSlug` | string | Optional, a GitHub App slug | The App's name in its GitHub address. Reports are made as `<appSlug>[bot]`, and the comment Geass keeps on a pull request is found by it. |
+| `spec.external.installURL` | string | Optional, `https://` | Where a person installs the App. |
+| `spec.external.installations[]` | list | At most 1000, each `id` once | The installations of the App that belong to the cluster. |
+| `spec.external.installations[].id` | integer | Required, at least 1 | GitHub's installation id. |
+| `spec.external.installations[].account` | string | Required, at most 100 characters | The GitHub user or organization the App is installed on. |
+| `spec.external.installations[].accountType` | string | Optional | `User`, `Organization` or `Enterprise`. |
+| `spec.external.installations[].org` | string | Optional | The [organization](/docs/guides/organizations-and-workspaces/) whose projects may connect to it. Empty is the platform's own: projects of no organization. |
+
+`spec.secretRef` and `spec.webhookSecretRef` both name the Secret `github-app-<name>-webhook`, whose key `webhook_secret` is the
+secret the provider signs forwarded events with. The token of each installation is in the Secret
+`github-app-<name>-installation-<id>`, with the keys `token`, `expires_at` and `updated_at` (RFC 3339), labelled
+`geass.dev/github-connection: <name>` and `geass.dev/github-installation: <id>`, and owned by the connection, so they go with it.
+Geass never asks GitHub for a token of these installations and holds no App private key for them.
+
+| Status field | Meaning |
+| --- | --- |
+| `status.ready` | `true` when the webhook secret is stored, so forwarded events are taken. |
+| `status.installations[].tokenState` | `Valid`; `ExpiringSoon` (less than ten minutes left, still used); `Expired` (expired, or less than a minute left, not used); `Missing` (none given yet, or one without an expiry). |
+| `status.installations[].tokenExpiresAt` | When the token Geass holds stops working. |
+
+The condition `TokensReady` sums them up:
+
+| Status | Reason | Meaning |
+| --- | --- | --- |
+| `True` | `TokensValid` | Every installation has a token with at least ten minutes left. |
+| `True` | `NoInstallations` | No installation is recorded yet. |
+| `False` | `TokenExpiringSoon` | A token has less than ten minutes left. It is still used; nothing waits. |
+| `False` | `TokenMissing` | An installation has no token. What needs it waits. |
+| `False` | `TokenExpired` | A token has expired. What needs it waits. |
+
+The message names at most five installations, by id and account, and never a token. The operator looks at the connection again when
+the next token is due for renewal or lapses, and whenever one of its Secrets changes. The API works the same state out at the moment
+it is asked, so it is right even before the operator has written it.
+
+A project connected through it has the usual `<project>-github` connection. Its Secret `<project>-github-token` holds
+`installation_id`, `account`, `account_type`, and `external_connection` (the provider's connection), and Geass copies the token in use
+into its `token` key, with `token_expires_at`, because that is where a build's clone reads it.
 
 ## How the dashboard maps to this resource
 

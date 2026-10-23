@@ -502,6 +502,12 @@ The field is left out when GitHub sent no ID, or one with characters that an ID 
 ID to skip anything. A delivery that you **Redeliver** from the app's settings keeps its ID, and it is handled as the
 new event it is: a redelivered push runs the builds again.
 
+**Through a provider.** When the cluster's GitHub App is one a provider runs (see
+[GitHub through a provider](/docs/guides/connectors/github/#github-through-a-provider)), GitHub calls the provider, and the
+provider forwards each event to `<dashboard URL>/webhooks/github/forwarded/<connection>`, signed with a secret only it and the
+cluster know. Geass handles it as above, and only for the projects connected to the installation the event names. The signature
+and the answers are in [Forwarded GitHub events](/docs/reference/rest-api/#forwarded-github-events).
+
 ### From your CI to Geass
 
 If your CI can send a header, use an API token. Create a **project token** under the project's **Settings** → **Tokens**, limited to one
