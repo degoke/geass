@@ -40,7 +40,10 @@ import (
 
 // Server serves the Geass dashboard API and embedded React application.
 type Server struct {
-	Client     client.Client
+	Client client.Client
+	// APIReader reads from the API server what the cache leaves out: the usage meter's hours. It is not limited to a
+	// tenant, so only routes that are the platform's use it. Nil reads through Client.
+	APIReader  client.Reader
 	Cache      cache.Cache
 	Addr       string
 	Metrics    MetricsClient

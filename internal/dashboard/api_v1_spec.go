@@ -47,6 +47,7 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/openapi.json", "This description of the API", accessViewer, tagService, nil, false},
 	{http.MethodGet, "/events", "A stream that says when anything changes, so a caller need not poll", accessViewer, tagService, nil, true},
 	{http.MethodGet, "/usage", "Resource use across the cluster", accessViewer, tagService, nil, false},
+	{http.MethodGet, "/usage/hours", "What each organization reserved, hour by hour, for billing (spec.usage.enabled). Send ?from= and ?to= (RFC 3339) and optionally ?org=. The platform's administrators only", accessAdmin, tagService, nil, false},
 
 	// ---- signing in ----
 	{http.MethodPost, "/auth/device", "Start a sign-in from a program. Returns a code for the person to approve", accessPublic, tagAuth,

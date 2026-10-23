@@ -543,7 +543,9 @@ func addDashboard(mgr ctrl.Manager, restConfig *rest.Config, addr string, shared
 	}
 	return mgr.Add(&dashboard.Server{
 		// Everything the dashboard reads and writes goes through the client that limits it to the caller's tenant.
-		Client:    dashboard.ScopeClient(mgr.GetClient()),
+		Client: dashboard.ScopeClient(mgr.GetClient()),
+		// What the cache does not keep: the usage meter's hours. Only the platform's own reads use it.
+		APIReader: mgr.GetAPIReader(),
 		Cache:     mgr.GetCache(),
 		Addr:      addr,
 		Kube:      kubernetes.NewForConfigOrDie(restConfig),
