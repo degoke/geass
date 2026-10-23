@@ -111,6 +111,11 @@ type GeassOrganizationSpec struct {
 	// lowest of them.
 	// +optional
 	Quota *GeassProjectQuota `json:"quota,omitempty"`
+	// Limits are the organization's own noisy-neighbour limits, in place of the platform's (spec.tenantLimits.defaults on
+	// the GeassPlatformConfig): each field set here replaces the platform's for that field. They are held in each of the
+	// organization's namespaces, while its quota is the total over all of them.
+	// +optional
+	Limits *GeassTenantLimits `json:"limits,omitempty"`
 	// Region is where the organization's projects run when they name none of their own: only nodes in the region
 	// are used. Without it they use the cluster's default region.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
