@@ -110,25 +110,22 @@ var overviewMetrics = []metricCard{
 }
 
 // metricsClient is the client the dashboard reads metrics with: the one a test set, the metrics store outside the cluster
-// that the platform configuration names, or Prometheus. A store outside the cluster is read whoever asks, since it is
-// all a dashboard outside the cluster has; the platform's own Prometheus URL only when readPlatformConfig says so.
+// that the platform configuration names, the platform's own Prometheus URL, or the cluster's Prometheus. Without
+// readPlatformConfig (a viewer's overview numbers) the platform configuration is not read at all, and that is the
+// cluster's Prometheus.
 func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) MetricsClient {
 	if s.Metrics != nil {
 		return s.Metrics
 	}
-	var config *geassv1alpha1.GeassPlatformConfig
-	if s.Client != nil {
-		found := &geassv1alpha1.GeassPlatformConfig{}
-		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, found); err == nil {
-			config = found
-		}
-	}
-	if external := s.externalMetricsClient(ctx, config); external != nil {
-		return external
-	}
 	prometheusURL := ""
-	if readPlatformConfig && config != nil {
-		prometheusURL = config.Spec.PrometheusURL
+	if readPlatformConfig && s.Client != nil {
+		config := &geassv1alpha1.GeassPlatformConfig{}
+		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
+			if external := s.externalMetricsClient(ctx, config); external != nil {
+				return external
+			}
+			prometheusURL = config.Spec.PrometheusURL
+		}
 	}
 	return &PrometheusClient{BaseURL: prometheusURL}
 }
