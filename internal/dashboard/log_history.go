@@ -297,14 +297,14 @@ func (s *Server) handleAPIProjectLogHistory(w http.ResponseWriter, r *http.Reque
 	if params.level != "" {
 		fetch = min(params.limit*historyLevelOverfetch, historyOverfetchMax)
 	}
-	if source.reader == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": serviceNames(owners),
-			"message": source.unavailableMessage(source.unusable)})
-		return
+	// A store outside the cluster that cannot be used has no reader, and is reported the way one that fails is.
+	var stored []storedLine
+	err = source.unusable
+	if source.reader != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), historyTimeout)
+		defer cancel()
+		stored, err = source.reader.QueryLogs(ctx, historyQuery(namespaces, params.service, owners, params.search, params.since, fetch), fetch)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), historyTimeout)
-	defer cancel()
-	stored, err := source.reader.QueryLogs(ctx, historyQuery(namespaces, params.service, owners, params.search, params.since, fetch), fetch)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": serviceNames(owners),
 			"message": source.unavailableMessage(err)})
