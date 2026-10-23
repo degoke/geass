@@ -107,16 +107,16 @@ func TestTheTokensConditionFollowsTheClock(t *testing.T) {
 		"after it expired":            {expires.Add(time.Hour), metav1.ConditionFalse, "TokenExpired", time.Time{}},
 		"at the moment it is renewed": {expires.Add(-githubapp.TokenRenewalWindow), metav1.ConditionFalse, "TokenExpiringSoon", expires.Add(-githubapp.TokenUsableMargin)},
 	} {
-		report := externalTokens(app, held, tc.at)
-		require.Equal(t, tc.status, report.status, name)
-		require.Equal(t, tc.reason, report.reason, name)
-		require.Equal(t, tc.next, report.next, name)
-		require.NotContains(t, report.message, "ghs_x", name)
+		report := githubapp.JudgeTokens(app, held, tc.at)
+		require.Equal(t, tc.status, report.Status, name)
+		require.Equal(t, tc.reason, report.Reason, name)
+		require.Equal(t, tc.next, report.Next, name)
+		require.NotContains(t, report.Message, "ghs_x", name)
 	}
-	soon := externalTokens(app, held, expires.Add(-5*time.Minute))
-	require.Contains(t, soon.message, "nothing waits yet", "a late renewal is said to be harmless while the token lasts")
-	gone := externalTokens(app, held, expires.Add(time.Hour))
-	require.Contains(t, gone.message, "wait until rungeass gives a new one")
+	soon := githubapp.JudgeTokens(app, held, expires.Add(-5*time.Minute))
+	require.Contains(t, soon.Message, "nothing waits yet", "a late renewal is said to be harmless while the token lasts")
+	gone := githubapp.JudgeTokens(app, held, expires.Add(time.Hour))
+	require.Contains(t, gone.Message, "wait until rungeass gives a new one")
 }
 
 func TestAnExternalConnectionWithNoInstallationsIsFine(t *testing.T) {

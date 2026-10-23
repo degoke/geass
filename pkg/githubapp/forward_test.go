@@ -86,9 +86,6 @@ func TestASignatureWithTheOldAndTheNewSecretIsAcceptedWhileAProviderChangesIt(t 
 	require.NoError(t, VerifyForwarded(forwardSecret, both, "push", body, now))
 	require.NoError(t, VerifyForwarded("old-secret", both, "push", body, now))
 
-	many := both
-	for range maxForwardSignatures {
-		many += "," + current[strings.Index(current, "v1="):]
-	}
+	many := both + strings.Repeat(","+current[strings.Index(current, "v1="):], maxForwardSignatures)
 	require.ErrorIs(t, VerifyForwarded(forwardSecret, many, "push", body, now), ErrForwardSignatureInvalid, "the number of values is bounded")
 }

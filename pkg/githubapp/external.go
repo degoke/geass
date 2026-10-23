@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -33,9 +34,9 @@ const (
 	externalExpiresAtKey = "expires_at"
 	externalUpdatedAtKey = "updated_at"
 
-	// connectionExternalKey, in a project's token Secret, names the external connection whose installation the project
+	// SecretKeyExternalConnection, in a project's token Secret, names the external connection whose installation the project
 	// uses. A project connected that way never falls back to minting a token, or to a token it was given long ago.
-	connectionExternalKey = "external_connection"
+	SecretKeyExternalConnection = "external_connection"
 	// connectionTokenExpiresAtKey, in a project's token Secret, is when the token copied into it expires.
 	connectionTokenExpiresAtKey = "token_expires_at"
 
@@ -196,7 +197,7 @@ func ExternalConnectionOf(secret *corev1.Secret) string {
 	if secret == nil {
 		return ""
 	}
-	return strings.TrimSpace(string(secret.Data[connectionExternalKey]))
+	return strings.TrimSpace(string(secret.Data[SecretKeyExternalConnection]))
 }
 
 // SetExternalConnection records in a project's token Secret the external connection and installation it uses.
@@ -205,7 +206,7 @@ func SetExternalConnection(secret *corev1.Secret, connection string, installatio
 		secret.Data = map[string][]byte{}
 	}
 	secret.Data[connectionInstallationKey] = []byte(strconv.FormatInt(installation.ID, 10))
-	secret.Data[connectionExternalKey] = []byte(connection)
+	secret.Data[SecretKeyExternalConnection] = []byte(connection)
 	secret.Data["account"] = []byte(installation.Account)
 	secret.Data["account_type"] = []byte(installation.AccountType)
 	// A token from an App this project used before is not this installation's.
@@ -301,4 +302,102 @@ func (r *TokenResolver) persistExternalToken(ctx context.Context, secret *corev1
 	latest.Data[connectionTokenExpiresAtKey] = []byte(held.ExpiresAt.UTC().Format(time.RFC3339))
 	delete(latest.Data, connectionTokenAtKey)
 	return r.Client.Update(ctx, latest)
+}
+
+// HeldTokens reads the token Geass holds for each installation of an external connection. An installation it holds
+// none for (no Secret, or one without a token and an expiry) is not in the map.
+func HeldTokens(ctx context.Context, c client.Client, connection *geassv1alpha1.GeassGitHubConnection) (map[int64]*InstallationToken, error) {
+	held := map[int64]*InstallationToken{}
+	if connection.Spec.External == nil {
+		return held, nil
+	}
+	for _, installation := range connection.Spec.External.Installations {
+		secret := &corev1.Secret{}
+		err := c.Get(ctx, client.ObjectKey{Name: ExternalTokenSecretName(connection.Name, installation.ID), Namespace: connection.Namespace}, secret)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if token, ok := TokenFromExternalSecret(secret); ok {
+			held[installation.ID] = &token
+		}
+	}
+	return held, nil
+}
+
+// TokenReport is what the tokens of an external App's installations come to at a moment: the state of each, the
+// TokensReady condition, and the next moment one of them changes state by itself (zero when none will).
+type TokenReport struct {
+	Installations []geassv1alpha1.GeassGitHubInstallationStatus
+	Status        metav1.ConditionStatus
+	Reason        string
+	Message       string
+	Next          time.Time
+}
+
+// JudgeTokens judges the tokens of an App's installations at a moment. The operator records it on the connection; the
+// API answers it at once, so a provider that has just given a token is told what Geass makes of it.
+func JudgeTokens(app *geassv1alpha1.GeassGitHubExternalApp, held map[int64]*InstallationToken, now time.Time) TokenReport {
+	report := TokenReport{Installations: make([]geassv1alpha1.GeassGitHubInstallationStatus, 0, len(app.Installations))}
+	var missing, expired, soon []string
+	for _, installation := range app.Installations {
+		token := held[installation.ID]
+		state := TokenState(token, now)
+		entry := geassv1alpha1.GeassGitHubInstallationStatus{ID: installation.ID, TokenState: state}
+		name := fmt.Sprintf("%d (%s)", installation.ID, installation.Account)
+		if token != nil {
+			entry.TokenExpiresAt = &metav1.Time{Time: token.ExpiresAt}
+			for _, at := range []time.Time{token.ExpiresAt.Add(-TokenRenewalWindow), token.ExpiresAt.Add(-TokenUsableMargin)} {
+				if at.After(now) && (report.Next.IsZero() || at.Before(report.Next)) {
+					report.Next = at
+				}
+			}
+		}
+		switch state {
+		case TokenMissing:
+			missing = append(missing, name)
+		case TokenExpired:
+			expired = append(expired, name)
+		case TokenExpiringSoon:
+			soon = append(soon, name+" expires at "+token.ExpiresAt.UTC().Format(time.RFC3339))
+		}
+		report.Installations = append(report.Installations, entry)
+	}
+	provider := app.Provider
+	switch {
+	case len(app.Installations) == 0:
+		report.Status, report.Reason = metav1.ConditionTrue, "NoInstallations"
+		report.Message = fmt.Sprintf("No installation of the GitHub App belongs to this cluster yet; %s lists them", provider)
+	case len(missing) > 0 || len(expired) > 0:
+		report.Status, report.Reason = metav1.ConditionFalse, "TokenExpired"
+		if len(expired) == 0 {
+			report.Reason = "TokenMissing"
+		}
+		var parts []string
+		if len(missing) > 0 {
+			parts = append(parts, "no token for installation "+fewOf(missing))
+		}
+		if len(expired) > 0 {
+			parts = append(parts, "an expired token for installation "+fewOf(expired))
+		}
+		report.Message = fmt.Sprintf("Geass has %s. Builds, repository lists and reports for them wait until %s gives a new one", strings.Join(parts, ", and "), provider)
+	case len(soon) > 0:
+		report.Status, report.Reason = metav1.ConditionFalse, "TokenExpiringSoon"
+		report.Message = fmt.Sprintf("The token for installation %s and is due to be renewed by %s. It is still used, so nothing waits yet", fewOf(soon), provider)
+	default:
+		report.Status, report.Reason = metav1.ConditionTrue, "TokensValid"
+		report.Message = fmt.Sprintf("Geass holds a token for each of the %d installations, good for at least %s more", len(app.Installations), TokenRenewalWindow)
+	}
+	return report
+}
+
+// fewOf names a few of many, so a condition's message stays short however many installations there are.
+func fewOf(names []string) string {
+	const shown = 5
+	if len(names) <= shown {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:shown], ", "), len(names)-shown)
 }

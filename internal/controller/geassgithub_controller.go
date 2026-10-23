@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -79,16 +78,6 @@ func (r *GeassGitHubConnectionReconciler) now() time.Time {
 	return time.Now()
 }
 
-// externalTokenReport is what the tokens of an external App's installations come to: the status of each, the
-// TokensReady condition, and the next moment one of them changes state by itself.
-type externalTokenReport struct {
-	installations []geassv1alpha1.GeassGitHubInstallationStatus
-	status        metav1.ConditionStatus
-	reason        string
-	message       string
-	next          time.Time
-}
-
 // reconcileExternal records what Geass holds for an external App: whether the secret its provider signs forwarded events
 // with is there (Ready), and for each installation whether there is a token and until when (TokensReady). A token runs
 // out on its own, so the connection is looked at again when the next one is due for renewal or lapses, besides when a
@@ -104,20 +93,11 @@ func (r *GeassGitHubConnectionReconciler) reconcileExternal(ctx context.Context,
 			return ctrl.Result{}, err
 		}
 	}
-	held := map[int64]*githubapp.InstallationToken{}
-	for _, installation := range connection.Spec.External.Installations {
-		secret := &corev1.Secret{}
-		err := r.Get(ctx, client.ObjectKey{Name: githubapp.ExternalTokenSecretName(connection.Name, installation.ID), Namespace: connection.Namespace}, secret)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-		if err == nil {
-			if token, ok := githubapp.TokenFromExternalSecret(secret); ok {
-				held[installation.ID] = &token
-			}
-		}
+	held, err := githubapp.HeldTokens(ctx, r.Client, connection)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	report := externalTokens(connection.Spec.External, held, now)
+	report := githubapp.JudgeTokens(connection.Spec.External, held, now)
 
 	latest := &geassv1alpha1.GeassGitHubConnection{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(connection), latest); err != nil {
@@ -129,81 +109,17 @@ func (r *GeassGitHubConnectionReconciler) reconcileExternal(ctx context.Context,
 	}
 	if err := r.writeStatus(ctx, latest, func() {
 		latest.Status.Ready = ready
-		latest.Status.Installations = report.installations
+		latest.Status.Installations = report.Installations
 		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, githubConditionStatus(ready), reason, message)
-		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, githubapp.ConditionTokensReady, report.status, report.reason, report.message)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, githubapp.ConditionTokensReady, report.Status, report.Reason, report.Message)
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	if report.next.IsZero() {
+	if report.Next.IsZero() {
 		return ctrl.Result{}, nil
 	}
 	// A second past the moment, so the pass that runs then sees the new state.
-	return ctrl.Result{RequeueAfter: report.next.Sub(now) + time.Second}, nil
-}
-
-// externalTokens judges the tokens of an App's installations at a moment.
-func externalTokens(app *geassv1alpha1.GeassGitHubExternalApp, held map[int64]*githubapp.InstallationToken, now time.Time) externalTokenReport {
-	report := externalTokenReport{installations: make([]geassv1alpha1.GeassGitHubInstallationStatus, 0, len(app.Installations))}
-	var missing, expired, soon []string
-	for _, installation := range app.Installations {
-		token := held[installation.ID]
-		state := githubapp.TokenState(token, now)
-		entry := geassv1alpha1.GeassGitHubInstallationStatus{ID: installation.ID, TokenState: state}
-		name := fmt.Sprintf("%d (%s)", installation.ID, installation.Account)
-		if token != nil {
-			entry.TokenExpiresAt = &metav1.Time{Time: token.ExpiresAt}
-			for _, at := range []time.Time{token.ExpiresAt.Add(-githubapp.TokenRenewalWindow), token.ExpiresAt.Add(-githubapp.TokenUsableMargin)} {
-				if at.After(now) && (report.next.IsZero() || at.Before(report.next)) {
-					report.next = at
-				}
-			}
-		}
-		switch state {
-		case githubapp.TokenMissing:
-			missing = append(missing, name)
-		case githubapp.TokenExpired:
-			expired = append(expired, name)
-		case githubapp.TokenExpiringSoon:
-			soon = append(soon, name+" expires at "+token.ExpiresAt.UTC().Format(time.RFC3339))
-		}
-		report.installations = append(report.installations, entry)
-	}
-	provider := app.Provider
-	switch {
-	case len(app.Installations) == 0:
-		report.status, report.reason = metav1.ConditionTrue, "NoInstallations"
-		report.message = fmt.Sprintf("No installation of the GitHub App belongs to this cluster yet; %s lists them", provider)
-	case len(missing) > 0 || len(expired) > 0:
-		report.status, report.reason = metav1.ConditionFalse, "TokenExpired"
-		if len(expired) == 0 {
-			report.reason = "TokenMissing"
-		}
-		var parts []string
-		if len(missing) > 0 {
-			parts = append(parts, "no token for installation "+listOf(missing))
-		}
-		if len(expired) > 0 {
-			parts = append(parts, "an expired token for installation "+listOf(expired))
-		}
-		report.message = fmt.Sprintf("Geass has %s. Builds, repository lists and reports for them wait until %s gives a new one", strings.Join(parts, ", and "), provider)
-	case len(soon) > 0:
-		report.status, report.reason = metav1.ConditionFalse, "TokenExpiringSoon"
-		report.message = fmt.Sprintf("The token for installation %s and is due to be renewed by %s. It is still used, so nothing waits yet", listOf(soon), provider)
-	default:
-		report.status, report.reason = metav1.ConditionTrue, "TokensValid"
-		report.message = fmt.Sprintf("Geass holds a token for each of the %d installations, good for at least %s more", len(app.Installations), githubapp.TokenRenewalWindow)
-	}
-	return report
-}
-
-// listOf names a few of many, so a condition's message stays short however many installations there are.
-func listOf(names []string) string {
-	const shown = 5
-	if len(names) <= shown {
-		return strings.Join(names, ", ")
-	}
-	return fmt.Sprintf("%s and %d more", strings.Join(names[:shown], ", "), len(names)-shown)
+	return ctrl.Result{RequeueAfter: report.Next.Sub(now) + time.Second}, nil
 }
 
 func githubConditionStatus(ready bool) metav1.ConditionStatus {

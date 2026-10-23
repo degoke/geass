@@ -3,6 +3,7 @@ package githubapp
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"testing"
 	"time"
@@ -47,9 +48,7 @@ func installationToken(id int64, token string, expires time.Time) *corev1.Secret
 func externalFixture(t *testing.T, projectData map[string][]byte, objects ...client.Object) (*TokenResolver, *corev1.Secret) {
 	t.Helper()
 	data := map[string][]byte{"installation_id": []byte("42"), "token": []byte("left-from-long-ago")}
-	for key, value := range projectData {
-		data[key] = value
-	}
+	maps.Copy(data, projectData)
 	project := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "payments-github-token", Namespace: platform.SystemNamespace}, Data: data}
 	scheme := runtime.NewScheme()
 	require.NoError(t, geassv1alpha1.AddToScheme(scheme))
@@ -64,7 +63,7 @@ func acme() geassv1alpha1.GeassGitHubInstallation {
 
 func TestAnExternalInstallationUsesTheTokenTheProviderGaveAndKeepsItWhereTheCloneReadsIt(t *testing.T) {
 	expires := time.Now().Add(50 * time.Minute).UTC().Truncate(time.Second)
-	resolver, project := externalFixture(t, map[string][]byte{connectionExternalKey: []byte("rungeass")},
+	resolver, project := externalFixture(t, map[string][]byte{SecretKeyExternalConnection: []byte("rungeass")},
 		externalConnection(acme()), installationToken(42, "ghs_fromtheprovider", expires))
 
 	token, err := resolver.ConnectionToken(context.Background(), project)
@@ -111,7 +110,7 @@ func TestAnExternalInstallationWithoutAUsableTokenWaitsAndSaysWhy(t *testing.T) 
 			if tc.token != nil {
 				objects = append(objects, tc.token)
 			}
-			resolver, project := externalFixture(t, map[string][]byte{connectionExternalKey: []byte("rungeass")}, objects...)
+			resolver, project := externalFixture(t, map[string][]byte{SecretKeyExternalConnection: []byte("rungeass")}, objects...)
 
 			token, err := resolver.ConnectionToken(context.Background(), project)
 
@@ -133,7 +132,7 @@ func TestAProjectWhoseExternalInstallationWasTakenAwayIsToldToConnectAgain(t *te
 		"the connection is gone":               {installationToken(42, "ghs_stale", time.Now().Add(time.Hour))},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resolver, project := externalFixture(t, map[string][]byte{connectionExternalKey: []byte("rungeass")}, objects...)
+			resolver, project := externalFixture(t, map[string][]byte{SecretKeyExternalConnection: []byte("rungeass")}, objects...)
 
 			_, err := resolver.ConnectionToken(context.Background(), project)
 
