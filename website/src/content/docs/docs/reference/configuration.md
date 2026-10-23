@@ -285,6 +285,7 @@ There is one, named `platform`, in `geass-system`. See [GeassPlatformConfig](/do
 | `prometheusURL` | Where to query metrics | `kubectl` only |
 | `defaultClusterRef` | The cluster new projects use when there are several | `kubectl` only |
 | `registry.repository`, `registry.credentialRef` | The image destination and login for repository builds when a service sets none. The login is also what the nodes pull the built image with | The REST API (`/api/settings/registry/save`) or `kubectl`. The dashboard has no form for it yet |
+| `tenancy.sandbox.runtimeClassName`, `.skipOnReservedNodes` | Run organizations' services, schedules and builds under a sandboxed runtime (gVisor, Kata); see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) | `kubectl` only |
 | `defaultDomain`, `traefikAccessLogs` | Present in the schema; no code reads them | Not used |
 
 :::caution
