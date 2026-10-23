@@ -207,11 +207,18 @@ func (r *GeassAppReconciler) reconcileFunctionTriggers(ctx context.Context, app 
 	if err != nil {
 		return err
 	}
+	// A schedule's pod is an organization's like the service's are, and runs under the same sandboxed runtime. Without the
+	// runtime no schedule is written.
+	sandbox, err := platform.ResolveSandbox(ctx, r.Client, app.Spec.Project, placement.NodeSelector())
+	if err != nil {
+		return err
+	}
 	keep := map[string]bool{}
 	for _, trigger := range fn.Triggers {
 		cron := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: triggerCronJobName(app, trigger.Name), Namespace: wsNS}}
 		keep[cron.Name] = true
 		spec := triggerCronJobSpec(app, wsNS, plan, placement, trigger)
+		sandbox.Apply(&spec.JobTemplate.Spec.Template.Spec)
 		encoded, err := json.Marshal(spec)
 		if err != nil {
 			return err

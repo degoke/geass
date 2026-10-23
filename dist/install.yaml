@@ -7678,6 +7678,13 @@ rules:
   - update
   - watch
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - geass.geass.dev
   resources:
   - geassapps
@@ -7856,6 +7863,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - node.k8s.io
+  resources:
+  - runtimeclasses
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - postgresql.cnpg.io
