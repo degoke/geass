@@ -37,6 +37,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/helmchart"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/observability"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -241,6 +242,14 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 		if err != nil {
 			return false, false, err
 		}
+		// A metrics store outside the cluster gets every sample too. Without one the values are unchanged.
+		metrics, err := r.externalMetricsSink(ctx)
+		if err != nil {
+			return false, false, err
+		}
+		if values, err = withRemoteWrite(values, metrics); err != nil {
+			return false, false, err
+		}
 		spec := helmv1.HelmChartSpec{
 			Chart:           platform.MonitoringReleaseChart,
 			Repo:            platform.MonitoringChartRepo,
@@ -259,6 +268,8 @@ func (r *GeassClusterReconciler) reconcileAddons(ctx context.Context, cluster *g
 			log.Info("Waiting for monitoring add-on")
 		}
 	} else if err := helmchart.Delete(ctx, r.Client, platform.MonitoringChartName); err != nil && !apierrors.IsNotFound(err) {
+		return false, false, err
+	} else if err := r.removeCredentialsCopy(ctx, platform.MonitoringTargetNS, observability.MetricsCredentialsSecret); err != nil {
 		return false, false, err
 	}
 
@@ -366,6 +377,10 @@ func (r *GeassClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// The same goes for the object storage server being placed on tagged nodes.
 		Watches(&geassv1alpha1.GeassObjectStore{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(objectStoreServerPlaced())).
+		// The stores outside the cluster that metrics and logs are sent to are named in the platform configuration, and
+		// their credentials are Secrets that are copied beside the add-ons that send.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.clustersForNodeChange), builder.WithPredicates(externalObservabilityChanged())).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.clustersForExternalCredentials)).
 		Named("geasscluster").
 		Build(r)
 	if err != nil {

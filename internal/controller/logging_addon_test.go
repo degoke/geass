@@ -40,7 +40,7 @@ func TestLogStoreIsBoundedByAgeDiskAndMemory(t *testing.T) {
 }
 
 func TestLogShipperRunsOnEveryNodeAndStaysSmall(t *testing.T) {
-	values := chartValues(t, logShipperValues(nil))
+	values := chartValues(t, logShipperValues(nil, nil))
 
 	tolerations := values["tolerations"].([]any)
 	require.Equal(t, map[string]any{"operator": "Exists"}, tolerations[0], "a reserved node's logs are collected too")
@@ -49,7 +49,7 @@ func TestLogShipperRunsOnEveryNodeAndStaysSmall(t *testing.T) {
 }
 
 func TestLogShipperSendsToTheStoreWithEveryFieldTheDashboardQueriesBy(t *testing.T) {
-	config := chartValues(t, logShipperValues(nil))["config"].(map[string]any)
+	config := chartValues(t, logShipperValues(nil, nil))["config"].(map[string]any)
 	outputs := config["outputs"].(string)
 
 	require.Contains(t, outputs, platform.LogStoreServiceName+"."+platform.LoggingTargetNS+".svc")
@@ -61,13 +61,13 @@ func TestLogShipperSendsToTheStoreWithEveryFieldTheDashboardQueriesBy(t *testing
 }
 
 func TestLogShipperReadsExistingLogsOnceAndRemembersItsPlace(t *testing.T) {
-	input := chartValues(t, logShipperValues(nil))["config"].(map[string]any)["inputs"].(string)
+	input := chartValues(t, logShipperValues(nil, nil))["config"].(map[string]any)["inputs"].(string)
 	require.Contains(t, input, "Read_from_Head On", "history appears when the add-on is installed, not only what is written after")
 	require.Contains(t, input, "DB /var/log/flb_geass.db", "without remembered offsets, reading from the head would send everything again after every restart")
 }
 
 func TestPlatformNamespacesAreNotCollected(t *testing.T) {
-	input := chartValues(t, logShipperValues(nil))["config"].(map[string]any)["inputs"].(string)
+	input := chartValues(t, logShipperValues(nil, nil))["config"].(map[string]any)["inputs"].(string)
 	for _, namespace := range []string{"kube-system", "monitoring", "longhorn-system", "cnpg-system", "cert-manager", platform.LoggingTargetNS} {
 		require.Contains(t, input, "_"+namespace+"_", namespace)
 	}
@@ -146,7 +146,7 @@ func getHelmChartNamed(c client.Client, name string) (*helmv1.HelmChart, error) 
 }
 
 func TestLogsOfProjectsThatRequireTagsAreNotShipped(t *testing.T) {
-	input := chartValues(t, logShipperValues([]string{"clinic-production", "clinic-pr-4"}))["config"].(map[string]any)["inputs"].(string)
+	input := chartValues(t, logShipperValues([]string{"clinic-production", "clinic-pr-4"}, nil))["config"].(map[string]any)["inputs"].(string)
 
 	require.Contains(t, input, "/var/log/containers/*_clinic-production_*.log")
 	require.Contains(t, input, "/var/log/containers/*_clinic-pr-4_*.log")
