@@ -206,7 +206,8 @@ spec:
               installations:
                 description: |-
                   Installations is, for an external App, what Geass holds for each of its installations: whether it has a token
-                  for it and when that token stops working. The token itself is only ever in a Secret.
+                  for it and when that token stops working. The token itself is only ever in a Secret. One entry per installation of
+                  spec.external, so it has the same bound.
                 items:
                   description: GeassGitHubInstallationStatus is the state of the token
                     Geass holds for one installation of an external App.
@@ -227,6 +228,7 @@ spec:
                   - id
                   - tokenState
                   type: object
+                maxItems: 1000
                 type: array
               ready:
                 type: boolean

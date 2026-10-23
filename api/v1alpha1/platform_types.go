@@ -292,7 +292,9 @@ type GeassGitHubConnectionStatus struct {
 	Ready      bool               `json:"ready"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// Installations is, for an external App, what Geass holds for each of its installations: whether it has a token
-	// for it and when that token stops working. The token itself is only ever in a Secret.
+	// for it and when that token stops working. The token itself is only ever in a Secret. One entry per installation of
+	// spec.external, so it has the same bound.
+	// +kubebuilder:validation:MaxItems=1000
 	// +optional
 	Installations []GeassGitHubInstallationStatus `json:"installations,omitempty"`
 }
