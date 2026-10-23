@@ -128,6 +128,13 @@ func (r *Resolver) Resolve(ctx context.Context, project, connection, repository 
 			target.BotLogin = cfg.Slug + "[bot]"
 		}
 	}
+	// An installation of an App a provider runs reports as that App, not as the cluster's own.
+	if slug, external := tokens.ExternalAppSlug(ctx, secret); external {
+		target.AppSlug, target.BotLogin = slug, ""
+		if slug != "" {
+			target.BotLogin = slug + "[bot]"
+		}
+	}
 	return target, nil
 }
 
