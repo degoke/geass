@@ -593,6 +593,10 @@ type GeassPlatformConfigSpec struct {
 	// that is down, backups that are failing, a node that is not ready.
 	// +optional
 	Alerting *GeassAlertingSpec `json:"alerting,omitempty"`
+	// Tenancy hardens a cluster that organizations who do not trust each other share: what their pods may reach outside
+	// the cluster. Unset means nothing changes.
+	// +optional
+	Tenancy *GeassPlatformTenantIsolationSpec `json:"tenancy,omitempty"`
 }
 
 // GeassPlatformAuthSpec says whose word Geass takes for who a person is.

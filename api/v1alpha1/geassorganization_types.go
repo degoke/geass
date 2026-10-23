@@ -111,6 +111,12 @@ type GeassOrganizationSpec struct {
 	// lowest of them.
 	// +optional
 	Quota *GeassProjectQuota `json:"quota,omitempty"`
+	// Egress is the organization's own limits on what its pods may reach outside the cluster, in place of the platform's
+	// (spec.tenancy.egress on the GeassPlatformConfig): each field set here replaces the platform's for that field, which is
+	// how one organization is let send mail that the others may not, say. Setting it limits the organization even when the
+	// platform sets nothing. Like the rest of this spec it is the platform's to write: no route of the dashboard changes it.
+	// +optional
+	Egress *GeassTenantEgress `json:"egress,omitempty"`
 	// Region is where the organization's projects run when they name none of their own: only nodes in the region
 	// are used. Without it they use the cluster's default region.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
