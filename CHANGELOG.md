@@ -17,6 +17,16 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Metrics and logs in stores outside the cluster.** `spec.observability.external` on the platform configuration names a
+  metrics store (Prometheus remote write, and a Prometheus-compatible query API, with a tenant header, `X-Scope-OrgID`
+  unless another is named) and a log store (VictoriaLogs, with the `AccountID` and `ProjectID` tenant), each with a
+  bearer token or a username and password from a Secret. Prometheus remote-writes every sample to the one, Fluent Bit
+  sends every line it collects to the other as well, and the dashboard reads metrics and log history from them instead
+  of the cluster's own stores, so a dashboard that runs outside the cluster (`--controllers=false`) shows them too. The
+  credentials are copied beside the add-ons that send, never into their settings. A store that is named wrongly is
+  logged and left out, and one that does not answer or refuses the credentials is shown as unavailable. Off unless set;
+  alerts still read Alertmanager in the cluster, and Loki is not supported. Tested against fakes of the stores, not a
+  running Mimir, VictoriaMetrics or VictoriaLogs.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

@@ -283,6 +283,7 @@ There is one, named `platform`, in `geass-system`. See [GeassPlatformConfig](/do
 | `cloudflareConnectionRef`, `cloudflareZoneID` | The Cloudflare Secret and DNS zone | **Settings** → **Connectors** → Cloudflare |
 | `githubAppRef` | The Secret holding the GitHub App | **Settings** → **Connectors** → GitHub |
 | `prometheusURL` | Where to query metrics | `kubectl` only |
+| `observability.external` | Metrics and log stores outside the cluster: Prometheus remote-writes to one and Fluent Bit sends to the other, each with a tenant and credentials from a Secret, and the dashboard reads metrics and log history from them. See [Send metrics and logs outside the cluster](/docs/guides/observability/#send-metrics-and-logs-outside-the-cluster) | `kubectl` only |
 | `defaultClusterRef` | The cluster new projects use when there are several | `kubectl` only |
 | `registry.repository`, `registry.credentialRef` | The image destination and login for repository builds when a service sets none. The login is also what the nodes pull the built image with | The REST API (`/api/settings/registry/save`) or `kubectl`. The dashboard has no form for it yet |
 | `defaultDomain`, `traefikAccessLogs` | Present in the schema; no code reads them | Not used |
@@ -430,6 +431,8 @@ Postgres runs the `ghcr.io/cloudnative-pg/postgresql` image at the major version
 | `<project>-webhooks`, `<project>-shared-secrets` | Webhook signing secrets, and secret shared variables |
 | `<app>-secrets` | A service's own secrets |
 | `<project>-github`, `<project>-github-token` | A project's GitHub link (`<project>-github` is a connection resource; the token is its Secret) |
+
+The credentials of the metrics and log stores outside the cluster stay in the Secret that `observability.external` names in `geass-system`. Geass copies the keys they use into `geass-external-metrics` in `monitoring` and `geass-external-logs` in `geass-logging`, for Prometheus and Fluent Bit to read, and removes the copies with the setting.
 
 The `AlertmanagerConfig` `geass-alerts` in `geass-system` is made from the alert channels in the platform configuration: see [Alerts](/docs/guides/alerts/#how-it-works). Saved templates are ConfigMaps named `template-<id>` with the label `geass.dev/template=true`. A function's schedule token is the Secret
 `<app>-trigger`, which lives in the service's environment namespace, not in `geass-system`.
