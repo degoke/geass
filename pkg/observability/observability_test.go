@@ -85,11 +85,11 @@ func TestAddressesMustBePlainHTTPOrHTTPS(t *testing.T) {
 func TestTheMetricsTenantGoesInXScopeOrgIDUnlessAnotherHeaderIsNamed(t *testing.T) {
 	headers, err := MetricsHeaders(&geassv1alpha1.GeassExternalMetricsSpec{Tenant: "rg-acme"})
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"X-Scope-Orgid": "rg-acme"}, headers, "canonical, as Go sends it; header names are not case sensitive")
+	require.Equal(t, map[string]string{"X-Scope-OrgID": "rg-acme"}, headers)
 
 	headers, err = MetricsHeaders(&geassv1alpha1.GeassExternalMetricsSpec{Tenant: "rg-acme", TenantHeader: "THANOS-TENANT"})
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"Thanos-Tenant": "rg-acme"}, headers)
+	require.Equal(t, map[string]string{"THANOS-TENANT": "rg-acme"}, headers, "as written")
 
 	headers, err = MetricsHeaders(&geassv1alpha1.GeassExternalMetricsSpec{TenantHeader: "THANOS-TENANT"})
 	require.NoError(t, err)

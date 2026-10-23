@@ -116,7 +116,8 @@ func MetricsHeaders(spec *geassv1alpha1.GeassExternalMetricsSpec) (map[string]st
 	if slices.Contains(reservedHeaders, strings.ToLower(name)) {
 		return nil, fmt.Errorf("%s cannot carry the tenant: Prometheus or Geass sets it", name)
 	}
-	return map[string]string{http.CanonicalHeaderKey(name): spec.Tenant}, nil
+	// The name is kept as written: Prometheus sends it so, and a header's name is the same whatever its case.
+	return map[string]string{name: spec.Tenant}, nil
 }
 
 // LogsHeaders are the headers every line sent to and every query of the log store carries: the VictoriaLogs tenant.

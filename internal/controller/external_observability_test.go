@@ -83,7 +83,7 @@ func TestWithoutAnExternalStoreTheMonitoringValuesAreUnchangedByteForByte(t *tes
 
 func TestPrometheusRemoteWritesWithTheTenantHeaderAndATokenByReference(t *testing.T) {
 	sink := &externalSink{
-		url: "https://metrics.rungeass.test/api/v1/push", headers: map[string]string{"X-Scope-Orgid": "rg-acme"},
+		url: "https://metrics.rungeass.test/api/v1/push", headers: map[string]string{"X-Scope-OrgID": "rg-acme"},
 		auth: observability.AuthBearer, secret: observability.MetricsCredentialsSecret, secretVersion: "7",
 	}
 	values, err := withRemoteWrite(monitoringLiteValues, sink)
@@ -94,7 +94,7 @@ func TestPrometheusRemoteWritesWithTheTenantHeaderAndATokenByReference(t *testin
 	require.Equal(t, map[string]any{
 		"name":    "geass-external",
 		"url":     "https://metrics.rungeass.test/api/v1/push",
-		"headers": map[string]any{"X-Scope-Orgid": "rg-acme"},
+		"headers": map[string]any{"X-Scope-OrgID": "rg-acme"},
 		"authorization": map[string]any{"type": "Bearer", "credentials": map[string]any{
 			"name": observability.MetricsCredentialsSecret, "key": observability.KeyToken,
 		}},
@@ -202,7 +202,7 @@ func TestAnExternalStoreIsSentToWithItsCredentialsCopiedBesideTheAddOns(t *testi
 	writes := remoteWritesOf(t, monitoring.Spec.ValuesContent)
 	require.Len(t, writes, 1)
 	require.Equal(t, "https://metrics.rungeass.test/api/v1/push", writes[0]["url"])
-	require.Equal(t, map[string]any{"X-Scope-Orgid": "rg-acme"}, writes[0]["headers"])
+	require.Equal(t, map[string]any{"X-Scope-OrgID": "rg-acme"}, writes[0]["headers"])
 	require.NotContains(t, monitoring.Spec.ValuesContent, testMetricsToken, "the token is never in the chart's values")
 
 	shipper, err := getHelmChartNamed(c, platform.LogShipperChartName)
