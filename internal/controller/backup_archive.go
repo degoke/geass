@@ -45,6 +45,24 @@ func awsBackupStorageFactory(httpClient *http.Client) backupStorageFactory {
 // build made for testing against one (see backup_standin.go). A bucket is always AWS's in a release.
 var standInS3Endpoint string
 
+// standInS3URL is the stand-in's address as the Postgres operator is told it, and "" in a release, where the operator
+// uses AWS's own.
+func standInS3URL() string {
+	if standInS3Endpoint == "" {
+		return ""
+	}
+	return "http://" + standInS3Endpoint
+}
+
+// backupObjectBaseURL is the address a snapshot's key is appended to: AWS's, or in a build made for testing the
+// stand-in's, which is addressed by path.
+func backupObjectBaseURL(bucket, region string) string {
+	if url := standInS3URL(); url != "" {
+		return url + "/" + bucket
+	}
+	return platform.BackupObjectBaseURL(bucket, region)
+}
+
 // awsConnection is a project's AWS credentials, resolved from one of its cloud connections.
 type awsConnection struct {
 	accessKey, secretKey, region string

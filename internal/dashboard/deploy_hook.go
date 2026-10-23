@@ -168,7 +168,7 @@ func (s *Server) handleDeployHook(w http.ResponseWriter, r *http.Request) {
 	if s.rejectIfNoCapacityForPlacement(w, r, "/", appDeployEstimate(app), s.appPlacement(ctx, app)) {
 		return
 	}
-	if err := s.deployApp(ctx, app); err != nil {
+	if err := s.deployApp(withDeployOrigin(ctx, deployOriginHook, record.Name), app); err != nil {
 		writeDashboardUnavailable(w)
 		return
 	}
@@ -194,4 +194,33 @@ func (s *Server) deleteAPITokensForApp(ctx context.Context, app string) {
 	if err != nil {
 		ctrllog.FromContext(ctx).Error(err, "Could not revoke deploy hooks", "service", app)
 	}
+}
+
+const (
+	deployOriginDashboard = "Dashboard"
+	deployOriginHook      = "Deploy hook"
+	deployOriginToken     = "API token"
+)
+
+type deployOriginContextKey struct{}
+
+// deployOrigin is what the record of a deploy says started it.
+type deployOrigin struct{ source, actor string }
+
+// withDeployOrigin says, for the deploys made with the context, what started them.
+func withDeployOrigin(ctx context.Context, source, actor string) context.Context {
+	return context.WithValue(ctx, deployOriginContextKey{}, deployOrigin{source: source, actor: actor})
+}
+
+// deployOriginOf is what started a deploy, as its record says it: what was said with withDeployOrigin (a deploy hook), or the
+// API token that made the request, or the dashboard, which is every deploy that is neither. A deploy made by a hook or a
+// token said "Dashboard" in its history, which is where nobody had been.
+func deployOriginOf(ctx context.Context) (source, actor string) {
+	if origin, ok := ctx.Value(deployOriginContextKey{}).(deployOrigin); ok {
+		return origin.source, origin.actor
+	}
+	if record, _ := ctx.Value(apiTokenContextKey{}).(*apitokens.Record); record != nil {
+		return deployOriginToken, record.Name
+	}
+	return deployOriginDashboard, deployOriginDashboard
 }

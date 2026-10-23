@@ -1334,7 +1334,7 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(deploymentScaleChanged())).
 		// A copy that is stopped for memory and started again leaves the Deployment as it was, so the service has
 		// to hear of it from the pod. The pod carries the same labels as the Deployment.
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(podOOMKilled())).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(predicate.Or(podOOMKilled(), podStartFailing()))).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.appsForProject), builder.WithPredicates(readyOrSpecChanged())).
 		// Where an organization's services run follows its region and required node tags.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.appsForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).

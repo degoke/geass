@@ -6,7 +6,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { ArrowLeft, Box, Database, HardDrive, RefreshCw, X } from "lucide-react";
 import { action, api, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { EditableResourceTitle } from "@/components/EditableResourceTitle";
-import { canMutate } from "@/lib/dashboard";
+import { canMutate, databaseVersion } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { outOfMemoryNotice, pendingChangeCopy, provisionFailed, resourceStatus, retryProvisionPathForKind, usesDeployWorkflow, userFacingReadyMessage } from "@/lib/services";
 import { sizeSummary } from "@/lib/capacity";
@@ -86,7 +86,7 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
   const ranOutOfMemory = outOfMemoryNotice(item);
   const pending = pendingChangeCopy(item);
   const databaseSummary = isDatabase
-    ? [[item.spec?.engine, item.spec?.version].filter(Boolean).join(" "), item.spec?.storageSize].filter(Boolean).join(" · ")
+    ? [[item.spec?.engine, databaseVersion(data, item)].filter(Boolean).join(" "), item.spec?.storageSize].filter(Boolean).join(" · ")
     : "";
   const drawerSubtitle = databaseSummary || sourceSummary;
   const pageSubtitle = statusDetail && status !== "True" && status !== "Ready" ? statusDetail : sourceSummary;

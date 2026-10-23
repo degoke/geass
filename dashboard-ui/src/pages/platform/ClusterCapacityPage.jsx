@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { action } from "@/lib/api";
+import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser, notify } from "@/lib/notify";
 import { useRefreshCompute } from "@/lib/compute";
@@ -58,6 +58,45 @@ function NetworkPolicySection({ data }) {
       <Badge tone={tone}>{label}</Badge>
       <Muted size="sm">{condition.message}</Muted>
     </PageSection>
+  );
+}
+
+/** What is on a server and nowhere else, which is lost with it. Read when the dialog opens, from the cluster's volumes. */
+function ServerImpact({ name }) {
+  // null while it is being read, false when it could not be.
+  const [impact, setImpact] = useState(null);
+  useEffect(() => {
+    let current = true;
+    setImpact(null);
+    api(`/api/servers/${encodeURIComponent(name)}/impact`)
+      .then((answer) => { if (current) setImpact(answer); })
+      .catch(() => { if (current) setImpact(false); });
+    return () => { current = false; };
+  }, [name]);
+
+  if (impact === null) return <Muted size="sm">Checking what is stored on this server…</Muted>;
+  if (impact === false) {
+    return <Callout tone="danger">Geass could not check what is stored on this server. Data that is kept only here is lost when it is removed.</Callout>;
+  }
+  const volumes = impact.volumes || [];
+  if (!volumes.length) return <Muted size="sm">Nothing is stored only on this server.</Muted>;
+  return (
+    <div className="cp-callout is-danger">
+      Stored on this server and nowhere else, so it is lost with it:
+      <ul>
+        {volumes.map((volume) => (
+          <li key={`${volume.namespace}/${volume.name}`}>
+            <strong>{volume.name}</strong> <Muted size="sm" component="span">({volume.namespace})</Muted>
+            {" "}
+            {!volume.database
+              ? "is a volume with one copy, and it is on this server."
+              : volume.otherCopies > 0
+                ? `has a copy here. Its ${volume.otherCopies === 1 ? "other copy stays" : `${volume.otherCopies} other copies stay`} on other servers, and Geass builds a new one there within a few minutes.`
+                : "is a database whose only copy is on this server. Restore it from a backup afterwards."}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -238,8 +277,9 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
           This removes the server <strong>{removing?.name}</strong> from the cluster. Its services move to other nodes, or wait for room.
           A server that Geass created at a cloud has its machine deleted there. One you added yourself is not deleted, only taken out of the cluster.
         </p>
+        {removing ? <ServerImpact name={removing.name} /> : null}
         <Callout tone="danger">
-          Nodes of a pool and the control plane cannot be removed here. Data on this server may be lost if it was the only place that held it.
+          Nodes of a pool and the control plane cannot be removed here.
         </Callout>
       </ConfirmDelete>
     </>

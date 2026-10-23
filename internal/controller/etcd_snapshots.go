@@ -44,6 +44,13 @@ const (
 	etcdSnapshotsRetryFast = time.Minute
 	// etcdSnapshotsRetryWaiting is how often to look while no copy has arrived yet.
 	etcdSnapshotsRetryWaiting = 5 * time.Minute
+	// etcdSnapshotsRetryFirstCopy is how often to look in the first minutes after copies were asked for. The installer takes
+	// one at once (so does `etcd-snapshots enable`), and it is in the bucket within seconds: looking every five minutes
+	// left the dashboard saying "Waiting for the first copy" for as long as that after it had arrived.
+	etcdSnapshotsRetryFirstCopy = time.Minute
+	// etcdSnapshotsFirstCopySoon is how long after the destination was set a copy is expected to come from the installer.
+	// After it, a copy comes at K3s's own pace, twice a day, and five minutes is often enough to look.
+	etcdSnapshotsFirstCopySoon = 15 * time.Minute
 
 	etcdSnapshotsErrorLimit = 300
 	// etcdSnapshotsMinInterval is the least time between two looks in the bucket, however often the cluster is reconciled. The
@@ -149,7 +156,7 @@ func (r *GeassClusterReconciler) reconcileEtcdSnapshots(ctx context.Context, clu
 	// said to wait. A look writes when it was made, which wakes the cluster's reconciler once more at once, so what this
 	// returns while it waits has to be the whole of the wait and not a short one that would look again every few minutes.
 	if last := cluster.Status.EtcdSnapshots; !changed && last != nil && last.CheckedAt != nil {
-		if wait := etcdSnapshotsLookInterval(cluster) - r.snapshotClock().Sub(last.CheckedAt.Time); wait > 0 {
+		if wait := r.etcdSnapshotsLookInterval(cluster, since) - r.snapshotClock().Sub(last.CheckedAt.Time); wait > 0 {
 			return wait
 		}
 	}
@@ -170,6 +177,9 @@ func (r *GeassClusterReconciler) reconcileEtcdSnapshots(ctx context.Context, clu
 	r.recordEtcdSnapshots(ctx, key, assessment)
 	switch assessment.Reason {
 	case platform.EtcdSnapshotsReasonWaiting:
+		if r.snapshotClock().Sub(since) < etcdSnapshotsFirstCopySoon {
+			return etcdSnapshotsRetryFirstCopy
+		}
 		return etcdSnapshotsRetryWaiting
 	case platform.EtcdSnapshotsReasonNoCopy, platform.EtcdSnapshotsReasonStale:
 		return etcdSnapshotsRetryWaiting
@@ -178,8 +188,8 @@ func (r *GeassClusterReconciler) reconcileEtcdSnapshots(ctx context.Context, clu
 }
 
 // etcdSnapshotsLookInterval is how long after a look the next one is made when nothing has changed: as long as the look
-// said to wait, and never less than the least time between two looks.
-func etcdSnapshotsLookInterval(cluster *geassv1alpha1.GeassCluster) time.Duration {
+// said to wait, and never less than the least time between two looks. since is when the destination was set.
+func (r *GeassClusterReconciler) etcdSnapshotsLookInterval(cluster *geassv1alpha1.GeassCluster, since time.Time) time.Duration {
 	condition := meta.FindStatusCondition(cluster.Status.Conditions, platform.ConditionEtcdSnapshotsCurrent)
 	if condition == nil {
 		return etcdSnapshotsMinInterval
@@ -187,7 +197,13 @@ func etcdSnapshotsLookInterval(cluster *geassv1alpha1.GeassCluster) time.Duratio
 	switch condition.Reason {
 	case platform.EtcdSnapshotsReasonCurrent:
 		return platform.EtcdSnapshotsRecheck
-	case platform.EtcdSnapshotsReasonWaiting, platform.EtcdSnapshotsReasonNoCopy, platform.EtcdSnapshotsReasonStale:
+	case platform.EtcdSnapshotsReasonWaiting:
+		// The first copy is expected soon after the destination was set.
+		if r.snapshotClock().Sub(since) < etcdSnapshotsFirstCopySoon {
+			return etcdSnapshotsRetryFirstCopy
+		}
+		return etcdSnapshotsRetryWaiting
+	case platform.EtcdSnapshotsReasonNoCopy, platform.EtcdSnapshotsReasonStale:
 		return etcdSnapshotsRetryWaiting
 	}
 	return etcdSnapshotsMinInterval

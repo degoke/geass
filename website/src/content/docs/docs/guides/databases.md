@@ -179,7 +179,7 @@ kubectl get secret orders-connection -n "$NS" -o jsonpath='{.data.uri}' | base64
 Then replace the host in that string with `localhost`. To read the host, port, database and login without `kubectl`, see [Command line and AI agents](#command-line-and-ai-agents).
 
 :::caution
-Geass does not generate a random password for in-cluster databases. The password for the `app` login is the resource ID followed by `-password`, for example `orders-password`. For MySQL the root password has the same value. Geass creates it once, in the `<ID>-bootstrap` Secret, and does not rotate it. Databases are reachable only inside the cluster, so what protects them is network reachability. Keep project network isolation on, and do not rely on the password as the only barrier. See [Network isolation](/docs/guides/network-isolation/).
+Geass makes a random password for the `app` login of an in-cluster database (48 hexadecimal characters). For MySQL the root password has the same value. Geass creates it once, in the `<ID>-bootstrap` Secret, and does not rotate it. Read it from the connection Secret, not from the name of the database. A database that was made by an earlier release keeps the password it has, which is the resource ID followed by `-password` (for example `orders-password`): Geass does not change the password of a database that is running, because everything that connects to it would have to change with it. Databases are reachable only inside the cluster, and what protects an older one is network reachability, so keep project network isolation on. See [Network isolation](/docs/guides/network-isolation/).
 :::
 
 ## The database panel

@@ -154,6 +154,8 @@ type BackupHealth struct {
 	Archiving   *bool
 	LastSuccess *time.Time
 	LastFailure *time.Time
+	// Unrestorable says that backups exist in storage but none can be restored, and why, in plain language.
+	Unrestorable string
 }
 
 // DatabaseBackupState turns backup health into the state and message shown in the dashboard.
@@ -167,6 +169,9 @@ func DatabaseBackupState(health BackupHealth) (geassv1alpha1.GeassDatabaseBackup
 	}
 	if health.Archiving != nil && !*health.Archiving {
 		return geassv1alpha1.BackupStateAtRisk, "Recent changes are not being saved to backup storage"
+	}
+	if health.Unrestorable != "" {
+		return geassv1alpha1.BackupStateAtRisk, health.Unrestorable
 	}
 	if health.LastFailure != nil && (health.LastSuccess == nil || health.LastFailure.After(*health.LastSuccess)) {
 		return geassv1alpha1.BackupStateAtRisk, "The latest backup failed"

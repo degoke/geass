@@ -120,7 +120,7 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 
 func dumpInputFor(db *geassv1alpha1.GeassDatabase, archive *geassv1alpha1.GeassBackupArchive, credentialsSecret string, target dumpTarget) dumpJobInput {
 	return dumpJobInput{
-		db: db, target: target, objectBase: platform.BackupObjectBaseURL(archive.Spec.Storage.Bucket, archive.Spec.Storage.Region),
+		db: db, target: target, objectBase: backupObjectBaseURL(archive.Spec.Storage.Bucket, archive.Spec.Storage.Region),
 		prefix:            platform.DumpObjectPrefix(archive.Spec.Project, archive.Spec.ServerName),
 		credentialsSecret: credentialsSecret,
 	}
@@ -441,7 +441,7 @@ func (r *GeassDatabaseReconciler) reconcileDumpRestore(ctx context.Context, db *
 		return "", err
 	}
 	in := dumpJobInput{
-		db: db, target: *target, objectBase: platform.BackupObjectBaseURL(archive.Spec.Storage.Bucket, region), prefix: prefix,
+		db: db, target: *target, objectBase: backupObjectBaseURL(archive.Spec.Storage.Bucket, region), prefix: prefix,
 		credentialsSecret: secretName, restoreKey: prefix + id + "." + platform.DumpFileExtension,
 	}
 	if err := client.IgnoreAlreadyExists(r.Create(ctx, r.newBackupJob(db, wsNS, name, roleRestore, in))); err != nil {

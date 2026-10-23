@@ -364,10 +364,10 @@ the Cloudflare token, the GitHub App key, app secrets and shared secrets, functi
 - **In transit.** Inside the cluster, traffic to the dashboard is plain HTTP. Publish it over HTTPS.
 
 :::caution
-The password of an in-cluster database that Geass creates is not random. Geass derives it from the database's resource name (`<name>-password`), and the
-MySQL root password is the same value. Anyone who knows or can guess a database's name and can reach its port has its password. What protects these
-databases is [network isolation](/docs/guides/network-isolation/) and not publishing their ports. Do not turn isolation off for a project that has
-databases, and see [GeassDatabase](/docs/reference/resources/geass-database/#connection-secret).
+The password of an in-cluster database that Geass creates is random, and the MySQL root password is the same value. A database made by an earlier release
+keeps the password it was started with, which Geass derived from the database's resource name (`<name>-password`). Anyone who knows the name of such a
+database and can reach its port has its password. What protects these databases is [network isolation](/docs/guides/network-isolation/) and not publishing
+their ports. Do not turn isolation off for a project that has databases, and see [GeassDatabase](/docs/reference/resources/geass-database/#connection-secret).
 :::
 
 ### Who can read them
@@ -579,8 +579,8 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
    could pay for, and leave `orphanPolicy` on `Report` until you have checked what it would delete.
 6. Restrict 6443, 10250 and the overlay port to your node addresses in your provider's firewall. Open 80 and 443 to the
    internet only if you publish services (certificates need 80), and limit 22 to the addresses you use.
-7. Keep project network isolation on (`Project`, the default), and open a project up only on purpose. In-cluster database passwords are predictable,
-   so isolation is their main protection.
+7. Keep project network isolation on (`Project`, the default), and open a project up only on purpose. In-cluster databases made by an earlier release have a
+   password that can be guessed from their name, so isolation is their main protection.
 8. Encrypt the control plane's disk, and keep the server token (`/var/lib/rancher/k3s/server/token`) and your etcd snapshots
    somewhere outside the cluster and protected. The installer turns on K3s secrets encryption, but K3s keeps the key on the
    server's disk, and a restore needs the token (see [Go back](/docs/operations/upgrading/#go-back)). If you run K3s you

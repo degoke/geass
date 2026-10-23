@@ -374,7 +374,7 @@ Once the database is ready, Geass writes a Secret named `<name>-connection` in t
 The login is `app`. Geass first writes the credentials to a Secret named `<name>-bootstrap` and the connection Secret copies them.
 
 :::caution
-Geass derives the generated password from the resource name: it is `<name>-password`. For MySQL the root password is the same value. The password is not random, so do not count on it being secret. Rely on [network isolation](/docs/guides/network-isolation/) and keep the database off the public internet.
+Geass makes the generated password at random, once, when it makes the database: 48 hexadecimal characters, kept in the `<name>-bootstrap` Secret. For MySQL the root password is the same value. A database made by an earlier release keeps the password it was started with, which is `<name>-password`, and it is not secret: rely on [network isolation](/docs/guides/network-isolation/) for it and keep it off the public internet. A database restored from a physical backup of MariaDB (a copy of the server's files) takes the password of the database the backup came from, because the copy holds that server's logins; Geass keeps that password with the backup.
 :::
 
 ## Backups

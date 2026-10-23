@@ -65,6 +65,13 @@ spec:
             properties:
               backupId:
                 type: string
+              beginWal:
+                description: |-
+                  BeginWal and EndWal are the first and last write-ahead log files the base copy needs: a copy can be restored only
+                  while every file from the first to the last is in the archive.
+                type: string
+              endWal:
+                type: string
               error:
                 type: string
               phase:

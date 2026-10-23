@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -257,4 +258,46 @@ func keysOf(m map[string][]byte) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// The copies of a replicated MariaDB database hold its logins, and a database restored from them cannot start without the
+// password of the server they came from. It is in the record, so that a cluster that finds the bucket can restore them.
+func TestTheRecordOfAPhysicalBackupCarriesThePasswordOfItsServerOnceItIsKnown(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+	live := env.archive(archive.Name)
+	live.Spec.Source.Engine, live.Spec.Source.HighAvailability = geassv1alpha1.DatabaseEngineMariaDB, true
+	require.NoError(t, env.client.Update(context.Background(), live))
+	key := testBackupBucket + "/" + platform.ArchiveManifestKey(archive.Spec.Project, archive.Spec.ServerName)
+
+	// The database has not yet put the password beside the archive: nothing is written, and it is asked for again soon.
+	after := reconcileArchive(t, r, archive)
+	require.Equal(t, archivePasswordRetry, after)
+	require.NotContains(t, env.storage.puts, key, "a record without it would be one a restore could not use")
+
+	require.NoError(t, env.client.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: platform.ArchiveCredentialsSecretName(archive.Name), Namespace: platform.SystemNamespace},
+		Data:       map[string][]byte{platform.ArchiveCredentialsKeyPassword: []byte("random-password-of-the-server")},
+	}))
+	reconcileArchive(t, r, archive)
+	manifest, err := platform.ParseArchiveManifest(env.storage.puts[key], archive.Spec.Project, archive.Spec.ServerName)
+	require.NoError(t, err)
+	require.Equal(t, "random-password-of-the-server", manifest.Password)
+}
+
+func TestTheRecordOfABackupOfAnotherKindCarriesNoPasswordAndAnOldOneIsNotWaitedFor(t *testing.T) {
+	env, r, archive := archiveEnv(t)
+	reconcileArchive(t, r, archive)
+	key := testBackupBucket + "/" + platform.ArchiveManifestKey(archive.Spec.Project, archive.Spec.ServerName)
+	manifest, err := platform.ParseArchiveManifest(env.storage.puts[key], archive.Spec.Project, archive.Spec.ServerName)
+	require.NoError(t, err)
+	require.Empty(t, manifest.Password, "a Postgres database is restored with a password of its own")
+
+	// An archive whose database is gone, from before passwords were random, has no password to wait for.
+	physical := env.archive(archive.Name)
+	physical.Spec.Source.Engine, physical.Spec.Source.HighAvailability = geassv1alpha1.DatabaseEngineMariaDB, true
+	physical.Spec.DeleteAfter = timePtr(metav1.NewTime(time.Now().Add(48 * time.Hour)))
+	require.NoError(t, env.client.Update(context.Background(), physical))
+	delete(env.storage.puts, key)
+	require.NotEqual(t, archivePasswordRetry, reconcileArchive(t, r, archive))
+	require.Contains(t, env.storage.puts, key)
 }

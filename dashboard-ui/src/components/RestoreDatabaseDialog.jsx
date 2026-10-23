@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Group, Modal, Stack, Text } from "@mantine/core";
 import { useNavigate } from "@tanstack/react-router";
 import { action, list, resourceName } from "@/lib/api";
-import { alertUser, notify } from "@/lib/notify";
+import { notify } from "@/lib/notify";
 import {
   archiveDisplayName,
   formatDateTime,
@@ -110,7 +110,9 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
         });
       }
     } catch (error) {
-      alertUser(error.message);
+      // In the dialog, where the person is looking: the cluster refuses a restore it has no room for, and says why, and a
+      // notice that opens behind the dialog is not seen.
+      setProblem(error.message);
     } finally {
       setBusy(false);
     }

@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
-import { canMutate } from "@/lib/dashboard";
+import { canMutate, databaseVersion } from "@/lib/dashboard";
 import { alertUser } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { ceilingOf, databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
@@ -178,7 +178,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const save = (event) => {
     event.preventDefault();
     const values = { project: item.spec?.project, environment: item.spec?.environment };
-    if (kind === "databases") values.version = version;
+    if (kind === "databases" && item.spec?.engine === "Postgres") values.version = version;
     if (kind === "apps") {
       Object.assign(values, {
         cpu,
@@ -392,16 +392,27 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
             {show("database") && (
               <ResourceSettingsSection id="database" icon={Database} title="Database">
                 <FormStack className="rw-rail-form" onSubmit={save}>
-                  <ResourceSettingsBlock
-                    title="Version"
-                    description="Database engine version applied on the next deploy."
-                  >
-                    <SettingsPanel>
-                      <Field label="Version">
-                        <Input value={version} onChange={(event) => setVersion(event.target.value)} />
-                      </Field>
-                    </SettingsPanel>
-                  </ResourceSettingsBlock>
+                  {item.spec?.engine === "Postgres" ? (
+                    <ResourceSettingsBlock
+                      title="Version"
+                      description="Database engine version applied on the next deploy."
+                    >
+                      <SettingsPanel>
+                        <Field label="Version">
+                          <Input value={version} onChange={(event) => setVersion(event.target.value)} />
+                        </Field>
+                      </SettingsPanel>
+                    </ResourceSettingsBlock>
+                  ) : databaseVersion(data, item) ? (
+                    <ResourceSettingsBlock
+                      title="Version"
+                      description="Geass picks the version of this engine, and changes it only when Geass itself is updated."
+                    >
+                      <SettingsPanel>
+                        <Muted size="sm">{item.spec?.engine} {databaseVersion(data, item)}</Muted>
+                      </SettingsPanel>
+                    </ResourceSettingsBlock>
+                  ) : null}
                   {inCluster && (
                     <ResourceSettingsBlock title="Resources" description="CPU and memory for the database workload.">
                       <SettingsPanel>

@@ -119,6 +119,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageOutOfMemory)) {
 		return false
 	}
+	// A volume that no disk has room for is placed when a server or disk space is added, which changes nothing about the
+	// database.
+	if strings.Contains(msg, strings.ToLower(MessageVolumeNotPlaced)) {
+		return false
+	}
 	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
 		return false
 	}
@@ -256,7 +261,7 @@ func ApplyNotReady(conditions []metav1.Condition, retry ReconcileRetryState, gen
 	if terminal {
 		retry.FailureGeneration = generation
 		return NotReadyOutcome{
-			Conditions: SetCondition(conditions, ConditionReady, metav1.ConditionFalse, ConditionReasonProvisionFailed, ProvisionFailedUserMessage),
+			Conditions: SetCondition(conditions, ConditionReady, metav1.ConditionFalse, ConditionReasonProvisionFailed, terminalMessage(message)),
 			Retry:      retry,
 			Terminal:   true,
 		}
@@ -267,4 +272,15 @@ func ApplyNotReady(conditions []metav1.Condition, retry ReconcileRetryState, gen
 		Retry:        retry,
 		RequeueAfter: RequeueAfterDefault,
 	}
+}
+
+// terminalMessage is what a resource says when it is given up on. It is the general one, "failed after repeated errors",
+// unless what is wrong is something to be fixed in the resource itself and is said in words that mean something to the person
+// who owns it: a service whose copy cannot start, or a database or service whose image cannot be pulled. Those say which, so
+// that a failure does not read as one the platform has.
+func terminalMessage(message string) string {
+	if strings.Contains(message, StartFailureMarker) || IsImagePullFailure(message) {
+		return strings.TrimSpace(message)
+	}
+	return ProvisionFailedUserMessage
 }

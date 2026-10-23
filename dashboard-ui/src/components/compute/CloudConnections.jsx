@@ -39,6 +39,9 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
   const [error, setError] = useState("");
   const refresh = useRefreshCompute();
   const provider = providerOf(providers, providerId);
+  // The form has one place for the connection's default region, whatever the cloud. A cloud that also keeps its region among its
+  // credentials (Amazon does) would show a second box for it with the same name; the region the connection names is the one used.
+  const credentialFields = (provider?.fields || []).filter((field) => field.key !== "region");
 
   // A new connection is named after its cloud until someone types a name of their own.
   useEffect(() => {
@@ -62,7 +65,7 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
       return;
     }
     const typed = {};
-    provider.fields.forEach((field) => {
+    credentialFields.forEach((field) => {
       const value = String(credentials[field.key] || "").trim();
       if (value) typed[field.key] = value;
     });
@@ -72,7 +75,7 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
         setError(problem);
         return;
       }
-      const missing = provider.fields.filter((field) => !field.optional && !typed[field.key]);
+      const missing = credentialFields.filter((field) => !field.optional && !typed[field.key]);
       if (missing.length) {
         setError(`${provider.label} needs ${missing.map((field) => field.label).join(", ")}.`);
         return;
@@ -162,7 +165,7 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
               aria-label="Default region"
             />
           </Field>
-          {provider.fields.map((field) => (
+          {credentialFields.map((field) => (
             <Field
               key={field.key}
               label={<>{field.label}{field.optional || editing ? <Optional /> : <Required />}</>}

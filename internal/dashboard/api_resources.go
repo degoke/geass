@@ -60,6 +60,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIOrgRegistry(w, r)
 	case r.URL.Path == "/api/planetscale/cluster-sizes":
 		s.handleAPIPlanetScaleClusterSizes(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/servers/") && strings.HasSuffix(r.URL.Path, "/impact"):
+		s.handleAPIServerImpact(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
 	case strings.Contains(r.URL.Path, "/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -209,6 +211,7 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 	classes := s.storageClasses(ctx)
 	info.StorageExpandable = classes.newVolumeExpandable()
 	info.DefaultStorage = platform.DatabaseStorageDefaults()
+	info.EngineVersions = platform.EngineVersions()
 	// The cluster's object storage server has a volume too, which is sized the same way.
 	info.DefaultStorage["objectstore"] = platform.ObjectStoreServerVolumeSize
 	for i := range data.Databases.Items {
