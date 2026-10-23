@@ -293,6 +293,33 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/cluster/metrics", "What services use across the cluster, and what the machines are doing", accessViewer, tagNodes, nil, false},
 	{http.MethodGet, "/operator/metrics", "How the operator is doing", accessViewer, tagNodes, nil, false},
 
+	// ---- GitHub through an App a provider runs (external mode) ----
+	{http.MethodGet, "/github/connections", "The connections of GitHub Apps that a provider outside the cluster runs, each with its installations and the state of their tokens. The platform's administrators only", accessViewer, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}", "Make or change the connection of a GitHub App a provider runs: Geass then never mints a token or holds the App's key. The webhook secret is kept in a Secret and never shown again. The platform's administrators only", accessAdmin, tagGitHub, []v1Field{
+		{formProvider, jsonString, "Who runs the App, as the dashboard names it. Required when the connection is made", false},
+		{formAppSlug, jsonString, "The App's slug on GitHub (github.com/apps/<appSlug>)", false},
+		{formInstallURL, jsonString, "An https address where a person installs the App; connecting a project with no installation sends them there", false},
+		{formWebhookSecret, jsonString, "The secret the provider signs forwarded events with, 32 to 512 characters. Required when the connection is made; send it again to change it", false},
+	}, false},
+	{http.MethodGet, "/github/connections/{name}", "One connection of a GitHub App a provider runs. The platform's administrators only", accessViewer, tagGitHub, nil, false},
+	{http.MethodDelete, "/github/connections/{name}", "Remove a connection of a GitHub App a provider runs, with its tokens. Refused while a project is connected through it", accessAdmin, tagGitHub, []v1Field{fieldConfirm}, false},
+	{http.MethodGet, "/github/connections/{name}/installations", "The installations of the App that belong to this cluster, with the state and expiry of each one's token", accessViewer, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}/installations/{id}", "Record an installation of the App as this cluster's, and the organization whose projects may connect to it", accessAdmin, tagGitHub, []v1Field{
+		{formAccount, jsonString, "The login of the GitHub user or organization the App is installed on", true},
+		{formAccountType, jsonString, "User, Organization or Enterprise", false},
+		{formOrg, jsonString, "The organization whose projects may connect to it. Empty is the platform's: projects of no organization", false},
+	}, false},
+	{http.MethodDelete, "/github/connections/{name}/installations/{id}", "Remove an installation and its token. The projects connected through it are named in the answer, and stop building from GitHub until connected again", accessAdmin, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}/installations/{id}/token", "Give Geass the installation's access token, which it uses for everything it does on GitHub for that installation. Stored in a Secret, never returned", accessAdmin, tagGitHub, []v1Field{
+		{formToken, jsonString, "The installation access token GitHub issued", true},
+		{formExpiresAt, jsonString, "When it expires (RFC 3339), as GitHub said with it", true},
+	}, false},
+	{http.MethodPost, "/projects/{name}/github/install", "Connect a project to GitHub. With the cluster's own App, the answer is where to install it; with a provider's, the project is connected to an installation of it (the only one its organization has, or the one sent)", accessAdmin, kindProjects, []v1Field{
+		{formEnvironment, jsonString, "The environment the person came from", false},
+		{formInstallation, jsonInteger, "With a provider's App: the installation to connect to", false},
+	}, false},
+	{http.MethodGet, "/projects/{name}/github/installations", "With a provider's App: the GitHub accounts a project can be connected to", accessAdmin, kindProjects, nil, false},
+
 	// ---- templates ----
 	{http.MethodGet, "/templates", "Catalog and saved templates", accessObserver, tagTemplates, nil, false},
 	{http.MethodPost, "/templates/{id}/deploy", "Deploy a template into an environment", accessAdmin, tagTemplates, []v1Field{fieldProject, fieldEnv}, false},

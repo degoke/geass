@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,6 +45,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleDashboardEvents(w, r)
 	case r.URL.Path == "/api/settings/github":
 		s.handleAPIGitHubSettings(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/installations"):
+		s.handleProjectGitHubInstallations(w, r)
 	case r.URL.Path == "/api/settings/cloudflare":
 		s.handleAPICloudflareSettings(w, r)
 	case r.URL.Path == "/api/settings/registry":
@@ -115,7 +118,8 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 	info := s.dashboardPlatformFromInventory(ctx, data)
 	if readiness, err := s.platformReadiness(ctx); err == nil {
 		info.HasDashboardURL = readiness.HasDashboardURL
-		info.HasGitHubApp = readiness.HasGitHubApp
+		info.HasGitHubApp = readiness.HasGitHubApp || readiness.GitHubProvider != ""
+		info.GitHubProvider = readiness.GitHubProvider
 		info.HasCloudflare = readiness.HasCloudflare
 		info.RegistryRepository = readiness.Config.Spec.Registry.Repository
 		info.CloudflareReady = readiness.CloudflareReady
@@ -154,6 +158,10 @@ func releaseOf(clusters []geassv1alpha1.GeassCluster) dashboardRelease {
 
 func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
 	info := dashboardPlatform{}
+	// Whose GitHub App the cluster uses is not how the platform is set up: an organization's projects connect through it.
+	if connections, err := s.externalGitHubConnections(ctx); err == nil && len(connections) > 0 {
+		info.HasGitHubApp, info.GitHubProvider = true, connections[0].Spec.External.Provider
+	}
 	for _, report := range data.HAReadiness.Items {
 		if report.Status.HealthyNodes > info.HealthyNodes {
 			info.HealthyNodes = report.Status.HealthyNodes
@@ -246,6 +254,33 @@ func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request)
 		"hasGitHubApp":    readiness.HasGitHubApp,
 		"dashboardURL":    readiness.DashboardURL,
 	}
+	// A provider's App is shown as it stands, in place of the steps that set up an App of the cluster's own.
+	connections, err := s.externalGitHubConnections(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+		return
+	}
+	if len(connections) > 0 {
+		projects, err := s.projectsByInstallation(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+			return
+		}
+		views := make([]externalGitHubView, 0, len(connections))
+		for i := range connections {
+			view, err := s.externalView(r.Context(), &connections[i], projects)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+				return
+			}
+			views = append(views, view)
+		}
+		payload["hasGitHubApp"] = true
+		payload["external"] = views[0]
+		payload["externalConnections"] = views
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
 	if readiness.DashboardURL != "" {
 		base := strings.TrimRight(readiness.DashboardURL, "/")
 		payload["callbackURL"] = base + "/github/callback"
@@ -273,6 +308,12 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
+	if errors.Is(err, githubapp.ErrTokenUnavailable) {
+		// The provider of the cluster's GitHub App has not given a token yet: the message says which installation and
+		// whose App, and nothing of any token.
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{dashboardLiteralError: err.Error()})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return

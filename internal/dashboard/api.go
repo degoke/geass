@@ -31,7 +31,10 @@ type dashboardBootstrap struct {
 type dashboardPlatform struct {
 	HasDashboardURL bool `json:"hasDashboardURL"`
 	HasGitHubApp    bool `json:"hasGitHubApp"`
-	HasCloudflare   bool `json:"hasCloudflare"`
+	// GitHubProvider names who runs the cluster's GitHub App when it is not the cluster's own (rungeass). Projects
+	// then connect to the installations it gave the cluster, and there is nothing to set up.
+	GitHubProvider string `json:"githubProvider,omitempty"`
+	HasCloudflare  bool   `json:"hasCloudflare"`
 	// RegistryRepository is where repository builds push their images when a service names no registry.
 	// Empty means builds wait for one to be set.
 	RegistryRepository   string `json:"registryRepository,omitempty"`
@@ -172,12 +175,10 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformDomainSave(w, mutation)
 	case mutation.URL.Path == "/settings/domain/verify":
 		s.handlePlatformDomainVerify(w, mutation)
-	case mutation.URL.Path == "/settings/github/save":
-		s.handlePlatformGitHubSettingsSave(w, mutation)
-	case mutation.URL.Path == "/settings/github/test":
-		s.handlePlatformGitHubTest(w, mutation)
-	case mutation.URL.Path == "/settings/github/clear":
-		s.handlePlatformGitHubClear(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/settings/github/"):
+		s.handlePlatformGitHubRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/github/connections/"):
+		s.handleGitHubConnectionRoutes(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/save":
 		s.handlePlatformCloudflareSettingsSave(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/clear":

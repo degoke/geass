@@ -4,8 +4,25 @@ import (
 	"net/http"
 )
 
+// handlePlatformGitHubRoutes serves the settings of the cluster's own GitHub App: /settings/github/save, test and clear.
+func (s *Server) handlePlatformGitHubRoutes(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/settings/github/save":
+		s.handlePlatformGitHubSettingsSave(w, r)
+	case "/settings/github/test":
+		s.handlePlatformGitHubTest(w, r)
+	case "/settings/github/clear":
+		s.handlePlatformGitHubClear(w, r)
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
+	}
+}
+
 func (s *Server) handlePlatformGitHubSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if !requireMutation(w, r, "/settings/github") || !parseFormOrRedirect(w, r, "/settings/github") {
+		return
+	}
+	if s.refuseInExternalMode(w, r, "/settings/github") {
 		return
 	}
 	readiness, err := s.platformReadiness(r.Context())

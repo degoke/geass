@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -96,10 +97,12 @@ func writeWebhookAnswer(w http.ResponseWriter, delivery string, answer map[strin
 	_ = json.NewEncoder(w).Encode(answer)
 }
 
-func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
-	if !requirePost(w, r) {
-		return
-	}
+// githubWebhookMaxBody bounds the body of a webhook that is read, GitHub's own or one a provider forwards.
+const githubWebhookMaxBody = 2 << 20
+
+// githubWebhookContext is the event and delivery a webhook request names, and the context and logger that carry them
+// through everything the handler does.
+func githubWebhookContext(r *http.Request) (string, string, logr.Logger, context.Context) {
 	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
 	delivery := webhookDelivery(r)
 	// Everything the handler logs, and everything it calls with the request's context, carries the delivery.
@@ -107,8 +110,15 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if delivery != "" {
 		logger = logger.WithValues("delivery", delivery)
 	}
-	ctx := ctrllog.IntoContext(r.Context(), logger)
-	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	return event, delivery, logger, ctrllog.IntoContext(r.Context(), logger)
+}
+
+func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
+	event, delivery, logger, ctx := githubWebhookContext(r)
+	body, err := io.ReadAll(io.LimitReader(r.Body, githubWebhookMaxBody))
 	if err != nil {
 		logger.Info("Could not read GitHub webhook body")
 		http.Error(w, "invalid webhook body", http.StatusBadRequest)
@@ -126,6 +136,14 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid webhook signature", http.StatusUnauthorized)
 		return
 	}
+	s.dispatchGitHubEvent(ctx, w, event, delivery, body)
+}
+
+// dispatchGitHubEvent does what a GitHub event asks of Geass, once whoever sent it has been shown to be GitHub, or the
+// provider of the App, which forwards GitHub's events as they came. It logs with the logger of the context, which names
+// the event and the delivery.
+func (s *Server) dispatchGitHubEvent(ctx context.Context, w http.ResponseWriter, event, delivery string, body []byte) {
+	logger := ctrllog.FromContext(ctx)
 	if event == "ping" {
 		logger.Info("Accepted GitHub webhook")
 		writeWebhookAnswer(w, delivery, map[string]any{"event": "ping"})
@@ -174,6 +192,23 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	writeWebhookAnswer(w, delivery, map[string]any{"triggered": triggered})
 }
 
+// installationRequiredKey marks the context of an event that only counts for the projects connected to the installation
+// it names, whatever organizations are: every forwarded event, since the App it comes from is shared by many clusters.
+type installationRequiredKey struct{}
+
+func withInstallationRequired(ctx context.Context) context.Context {
+	return context.WithValue(ctx, installationRequiredKey{}, true)
+}
+
+// eventNeedsInstallation is whether an event must name the installation of a project for it to count for that project:
+// with organizations on (two of them can build repositories of the same name), and for a forwarded event.
+func (s *Server) eventNeedsInstallation(ctx context.Context) bool {
+	if required, _ := ctx.Value(installationRequiredKey{}).(bool); required {
+		return true
+	}
+	return s.tenancyOn(ctx)
+}
+
 func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhookPayload) (int, error) {
 	if payload.Deleted {
 		return 0, nil
@@ -183,7 +218,7 @@ func (s *Server) triggerWebhookBuilds(ctx context.Context, payload githubWebhook
 		return 0, err
 	}
 	changed := payload.changedFiles()
-	requireInstallation := s.tenancyOn(ctx)
+	requireInstallation := s.eventNeedsInstallation(ctx)
 	triggered := 0
 	var failures []error
 	for i := range apps.Items {

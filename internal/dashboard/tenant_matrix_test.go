@@ -439,6 +439,8 @@ func TestAnOrganizationCannotReachThePlatformsOwnRoutes(t *testing.T) {
 		{http.MethodGet, "/api/orgs"}, {http.MethodPost, "/api/orgs/create"}, {http.MethodPost, "/api/settings/auth/tenancy"},
 		{http.MethodGet, "/api/cluster/metrics"}, {http.MethodGet, "/api/operator/metrics"}, {http.MethodGet, "/api/v1/nodes"},
 		{http.MethodGet, "/api/object-stores/" + platform.ClusterObjectStoreName + "/logs"},
+		{http.MethodGet, "/api/v1/github/connections"}, {http.MethodPost, "/api/github/connections/rungeass/save"},
+		{http.MethodPost, "/api/github/connections/rungeass/installations/42/token"},
 		{http.MethodGet, "/api/something-nobody-classified"},
 	} {
 		// Each is tried on a cluster of its own: what the platform's administrator does to the settings (turning
