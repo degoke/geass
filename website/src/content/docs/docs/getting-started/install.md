@@ -40,10 +40,10 @@ Each step prints `→ <name>` when it starts and `✓ <name>` when it finishes. 
 `latest` resolves to the newest release on GitHub. To install a specific release, use that release's `install.sh` and set `GEASS_VERSION` to the same tag. `sudo` clears most of the environment, so pass the variable through `env`:
 
 ```bash
-curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh | sudo env GEASS_VERSION=v0.1.0 sh
+curl -sfL https://github.com/degoke/geass/releases/download/v0.0.1/install.sh | sudo env GEASS_VERSION=v0.0.1 sh
 ```
 
-Replace `v0.1.0` with a tag from the project's Releases page. The cluster records the release that its operator runs: `sudo k3s kubectl -n geass-system get geasscluster` shows it in the `RELEASE` column, and the update refuses to go to an older one. See [Upgrade Geass](/docs/operations/upgrading/).
+Replace `v0.0.1` with a tag from the project's Releases page. The cluster records the release that its operator runs: `sudo k3s kubectl -n geass-system get geasscluster` shows it in the `RELEASE` column, and the update refuses to go to an older one. See [Upgrade Geass](/docs/operations/upgrading/).
 
 To build the cluster on a specific K3s release instead of the current stable one, pass `GEASS_K3S_VERSION` (the full name, such as `v1.36.5+k3s1`):
 
@@ -56,7 +56,7 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
 Every release has a `SHA256SUMS` file listing the installer, the command line and the two install scripts, which the scripts check for you. Each file also has signed build provenance, which shows which workflow run and commit built it. To check a file yourself, from the release page or with the GitHub CLI:
 
 ```bash
-gh release download v0.1.0 --repo degoke/geass --pattern 'geass-linux-amd64' --pattern SHA256SUMS
+gh release download v0.0.1 --repo degoke/geass --pattern 'geass-linux-amd64' --pattern SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 gh attestation verify geass-linux-amd64 --repo degoke/geass
 ```

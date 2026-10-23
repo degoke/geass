@@ -13,6 +13,8 @@ new version.
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-10-22
+
 The first public release, open source under the Apache License 2.0.
 
 ### Added
@@ -321,4 +323,5 @@ The first public release, open source under the Apache License 2.0.
   variables, stay readable in the datastore. A restore on another machine needs the cluster's server token and the same
   setting; the Upgrading page of the documentation says how.
 
-[Unreleased]: https://github.com/degoke/geass/commits/main
+[Unreleased]: https://github.com/degoke/geass/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/degoke/geass/releases/tag/v0.0.1

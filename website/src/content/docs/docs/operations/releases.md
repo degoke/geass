@@ -49,7 +49,7 @@ The [changelog](https://github.com/degoke/geass/blob/main/CHANGELOG.md) lists ea
 The install scripts check the installer and the command line against `SHA256SUMS` and refuse to run anything that does not match. You can check a file yourself, and also check where it was built. Every file has signed build provenance: a GitHub attestation of the workflow run and the commit that produced it.
 
 ```bash
-gh release download v0.1.0 --repo degoke/geass --pattern 'geass-cli-linux-amd64' --pattern SHA256SUMS
+gh release download v0.0.1 --repo degoke/geass --pattern 'geass-cli-linux-amd64' --pattern SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 gh attestation verify geass-cli-linux-amd64 --repo degoke/geass
 ```

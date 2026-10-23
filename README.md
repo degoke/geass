@@ -70,8 +70,8 @@ Geass: the operator image is inside the installer.
 For HTTPS certificates give it an email address for Let's Encrypt, and pin a release for repeatable installs:
 
 ```bash
-curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh \
-  | sudo env GEASS_VERSION=v0.1.0 GEASS_ACME_EMAIL=you@yourdomain.com sh
+curl -sfL https://github.com/degoke/geass/releases/download/v0.0.1/install.sh \
+  | sudo env GEASS_VERSION=v0.0.1 GEASS_ACME_EMAIL=you@yourdomain.com sh
 ```
 
 Then [sign in to the dashboard](https://rungeass.com/docs/getting-started/sign-in/), [add servers](https://rungeass.com/docs/getting-started/add-servers/) (ones you have, or machines at a cloud) and
