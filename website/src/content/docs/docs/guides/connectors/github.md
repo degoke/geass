@@ -118,6 +118,12 @@ are, and the API takes the one to use as `installation`; with none, it sends the
 with the project and environment in the address. A project can only connect to an installation of its own organization, and an
 installation cannot be moved to another organization while one of its projects is connected to it.
 
+:::note
+This mode is tested against a fake GitHub and a fake provider: the routes, the signature, the tokens and their expiry, and that
+forwarded events do what GitHub's own do. It has not yet been run with a real GitHub App, real installation tokens or real
+forwarded deliveries.
+:::
+
 ### Tokens and their expiry
 
 An installation token lasts an hour. The provider renews it before then; Geass does not. The connection says where each stands,
