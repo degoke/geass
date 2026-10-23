@@ -236,6 +236,20 @@ The first public release, open source under the Apache License 2.0.
   why it cannot start instead of "Provisioning failed after repeated errors". A service hears of a pod that cannot start
   when it happens. A database whose volume Longhorn has no disk for says so and what to do, and does not count that
   as a failure.
+- The dashboard says less. Intro paragraphs, hints that repeat a label, footnotes and toasts that give instructions are gone
+  from every page, and the notes on the catalog templates are shorter. A success toast reads "Saved" or "Added gatus".
+- Settings, Connectors is grouped by what each connects: **Code and domains** (GitHub, Cloudflare), **Server clouds** (the
+  connections that create servers, which belong to the cluster) and **Storage and databases** (AWS and PlanetScale, each
+  saved for one project or an organization). A project's connections are listed, with Verify, Edit and Remove, in the AWS
+  and PlanetScale drawers. A connection is shown as for Servers, Buckets or Databases, and its project by name.
+  The project's **Integrations** page is now **GitHub**: it held only the project's link to GitHub and a pointer to
+  Connectors.
+- The alert channel and mail server forms open in the side drawer, like the other settings forms.
+- Adding a database asks first whether it is a **Database server** or a **Logical database**. The servers a database
+  can go on, the project's own and the shared ones, are listed together instead of below the engines.
+- The projects allowed to reach a project are shown by name, not by id.
+- `GET /api/v1/connections` says which organization a connection belongs to (`org`), and the AWS and PlanetScale drawers list the
+  connections of that provider that hold buckets or databases, including a cluster one that also creates servers.
 - The first etcd copy is looked for every minute for the first quarter of an hour, so the **Usage** panel stops saying
   "Waiting for the first copy" soon after the installer has taken it.
 - A deploy made by a deploy hook is recorded as the hook's, and one made with an API token as the token's, where both

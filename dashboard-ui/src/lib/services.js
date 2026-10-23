@@ -15,9 +15,9 @@ export function settingsSavedMessage(result) {
     case "none":
       return "Nothing to save";
     case "live":
-      return "Saved. Applied now";
+      return "Saved and applied";
     case "deploy":
-      return result.liveChanged ? "Saved. Some changes are live; deploy to apply the rest" : "Saved. Deploy to apply them";
+      return "Saved";
     case "deployed":
       return "Saved and deployed";
     default:
@@ -504,7 +504,7 @@ export function resourcePendingChangeLines(item) {
 
   for (const kind of kinds) {
     if (kind === "created") {
-      pushChange(lines, "New resource — waiting for first deploy");
+      pushChange(lines, "New resource, not deployed yet");
       continue;
     }
     if (kind === "variables") {
@@ -530,12 +530,12 @@ export function resourcePendingChangeLines(item) {
           pushChange(lines, "Service settings saved");
         }
       } else {
-        pushChange(lines, "Settings updated — deploy to apply");
+        pushChange(lines, "Settings updated");
       }
     }
   }
 
-  return lines.length ? lines : ["Configuration saved — deploy to apply"];
+  return lines.length ? lines : ["Configuration saved"];
 }
 
 export function projectPendingItems(data, projectName, environment) {
@@ -669,18 +669,18 @@ function genericUnavailableMessage(item) {
   if (isObjectStore(item)) {
     return `This ${noun} can't be provisioned until object storage is set up in Platform settings.`;
   }
-  return `This ${noun} isn't available yet. Check Platform settings or your configuration.`;
+  return `This ${noun} isn't available yet.`;
 }
 
 function genericProvisioningMessage(item) {
   const noun = notReadyNoun(item);
-  return `This ${noun} is still being set up. This usually takes a few minutes.`;
+  return `This ${noun} is still being set up.`;
 }
 
 /** Plain-language Ready condition text for headers and overview (never operator or infra internals). */
 export function userFacingReadyMessage(item) {
   if (isResourceDeleting(item)) {
-    return "This resource is being removed. It will disappear from the canvas when shutdown finishes.";
+    return "This resource is being removed.";
   }
   const raw = readyConditionMessage(item);
   const reason = readyConditionReason(item);
@@ -688,44 +688,44 @@ export function userFacingReadyMessage(item) {
     const detail = latestProvisionFailureDetail(item);
     if (detail) {
       // The operator writes its messages without a full stop.
-      return `Provisioning failed: ${/[.!?]$/.test(detail) ? detail : `${detail}.`} Update settings or platform configuration, then use Retry or deploy again.`;
+      return `Provisioning failed: ${/[.!?]$/.test(detail) ? detail : `${detail}.`} Update settings or platform configuration, then retry.`;
     }
-    return "Provisioning failed. Update settings or platform configuration, then use Retry or deploy again.";
+    return "Provisioning failed. Update settings or platform configuration, then retry.";
   }
   if (!raw) return "";
   if (ranOutOfMemory(raw) || couldNotPullImage(raw)) return raw;
   if (/waiting for deployment/i.test(raw)) {
-    return "Finish configuration, then deploy to provision this resource.";
+    return "Waiting for its first deploy.";
   }
   if (/configure the bucket name/i.test(raw)) {
     return "Add a bucket name in Settings, then deploy.";
   }
   if (/set up object storage/i.test(raw)) {
-    return "Set up object storage in Platform settings, then try again.";
+    return "Set up object storage in Platform settings.";
   }
   if (/object storage credentials/i.test(raw)) {
-    return "Object storage isn't configured yet. Check Platform settings.";
+    return "Object storage isn't configured.";
   }
   if (/aws connection|external buckets require|aws credentials|access key and secret/i.test(raw)) {
-    return "Connect your cloud account in Platform settings to use an external bucket.";
+    return "Connect a cloud account in Platform settings.";
   }
   if (/installing.*chart/i.test(raw)) {
-    return "Platform setup is still in progress. This can take a few minutes.";
+    return "Platform setup is in progress.";
   }
   if (/object storage is starting|service is starting/i.test(raw)) {
-    return "Object storage is starting. Try again in a few minutes.";
+    return "Object storage is starting.";
   }
   if (/storage is starting/i.test(raw)) {
-    return "Storage is starting. This can take a few minutes.";
+    return "Storage is starting.";
   }
   if (/storage is unavailable/i.test(raw)) {
-    return `Storage for this ${notReadyNoun(item)} is unavailable, so it can't start. Check that your cluster's nodes are healthy.`;
+    return `Storage for this ${notReadyNoun(item)} is unavailable. Check your cluster's nodes.`;
   }
   if (/scale up the cluster|not enough capacity|cannot be scheduled/i.test(raw)) {
-    return "There isn't enough capacity for this size. Choose a smaller size or add capacity in Platform settings.";
+    return "Not enough capacity for this size. Choose a smaller one or add capacity.";
   }
   if (/failed to start|service failed/i.test(raw)) {
-    return `This ${notReadyNoun(item)} couldn't start. Review settings or try again later.`;
+    return `This ${notReadyNoun(item)} couldn't start.`;
   }
   if (resourceNotReadyKind(item) === "unavailable") {
     return genericUnavailableMessage(item);

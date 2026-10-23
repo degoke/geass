@@ -5,7 +5,7 @@ import { Kbd, TextInput } from "@mantine/core";
 import { Box, ChevronDown, Database, HardDrive, Plus, Search } from "lucide-react";
 import { action, isReady, list, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertError } from "@/lib/notify";
 import { projectResources } from "@/lib/project-resources";
 import { defaultRegion, hasRegionChoice, platformRegions } from "@/lib/placement";
 import { Button, Select } from "@/components/geass-ui";
@@ -38,7 +38,7 @@ export function ProjectsPage({ data }) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] });
       navigate({ to: result.project ? `/projects/${result.project}` : "/projects" });
     },
-    onError: (error) => alertUser(error.message),
+    onError: (error) => alertError(error.message),
   });
   const projects = useMemo(() => {
     const rows = list(data, "projects").filter((project) => {

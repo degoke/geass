@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Title } from "@mantine/core";
 import { action } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertError } from "@/lib/notify";
 
 export function EditableResourceTitle({ kind, name, value, canEdit, onSaved }) {
   const [editing, setEditing] = useState(false);
@@ -24,7 +24,7 @@ export function EditableResourceTitle({ kind, name, value, canEdit, onSaved }) {
       .then(() => onSaved?.())
       .catch((error) => {
         setDraft(value);
-        alertUser(error.message);
+        alertError(error.message);
       });
   };
 

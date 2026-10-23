@@ -102,7 +102,7 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
       const result = await action("/databases/restore", values);
       await Promise.resolve(reload?.()).catch(() => {});
       onClose();
-      notify("Restore started. Your original database is untouched.", "success");
+      notify("Restore started", "success");
       if (result?.name) {
         navigate({
           to: `/projects/${archive.spec.project}/databases/${result.name}`,
@@ -193,7 +193,7 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
               </Field>
             ) : null}
 
-            <Text size="sm">This creates a new database from the backup. Your current database is not changed.</Text>
+            <Text size="sm">Creates a new database. Your current one is not changed.</Text>
             {problem ? <Text size="sm" c="red">{problem}</Text> : null}
             <Group justify="flex-end" gap="sm">
               <Button type="button" variant="outline" disabled={busy} onClick={close}>Cancel</Button>

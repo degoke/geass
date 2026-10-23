@@ -46,7 +46,10 @@ func TestACopyWhoseLogFilesNeverReachedTheArchiveIsNotARestorePoint(t *testing.T
 	require.NoError(t, env.r.reconcileBackupLifecycle(context.Background(), env.db, env.wsNS, cluster, plan))
 
 	require.Equal(t, []string{"20260310T040000"}, restorePointIDs(env.archive(plan.archive.Name)), "only the copy that can be restored is listed")
-	require.Equal(t, geassv1alpha1.BackupStateProtected, env.reload().Status.Backup.State)
+	status := env.reload().Status.Backup
+	require.Equal(t, geassv1alpha1.BackupStateProtected, status.State)
+	require.NotNil(t, status.RecoveryWindowStart)
+	require.True(t, status.RecoveryWindowStart.Time.Equal(now.Add(-30*time.Minute)), "the window starts at the copy that can be restored, not the one that cannot")
 }
 
 func TestWithNoCopyThatCanBeRestoredTheDashboardDoesNotSayProtected(t *testing.T) {

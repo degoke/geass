@@ -603,7 +603,7 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDatabase) (*corev1.Pod, error) {
 	selectors := []string{
 		"app.kubernetes.io/name=" + db.Name,
-		"cnpg.io/cluster=" + db.Name,
+		platform.CNPGLabelCluster + "=" + db.Name,
 		// A MOCO cluster's replicas refuse writes, so the console goes to the primary.
 		"app.kubernetes.io/instance=" + db.Name + "," + mocoRoleLabel + "=primary",
 		// The same for a MariaDB the operator replicates.

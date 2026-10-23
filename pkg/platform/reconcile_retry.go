@@ -261,7 +261,7 @@ func ApplyNotReady(conditions []metav1.Condition, retry ReconcileRetryState, gen
 	if terminal {
 		retry.FailureGeneration = generation
 		return NotReadyOutcome{
-			Conditions: SetCondition(conditions, ConditionReady, metav1.ConditionFalse, ConditionReasonProvisionFailed, terminalMessage(message)),
+			Conditions: SetCondition(conditions, ConditionReady, metav1.ConditionFalse, ConditionReasonProvisionFailed, TerminalMessage(message)),
 			Retry:      retry,
 			Terminal:   true,
 		}
@@ -274,11 +274,11 @@ func ApplyNotReady(conditions []metav1.Condition, retry ReconcileRetryState, gen
 	}
 }
 
-// terminalMessage is what a resource says when it is given up on. It is the general one, "failed after repeated errors",
+// TerminalMessage is what a resource says when it is given up on. It is the general one, "failed after repeated errors",
 // unless what is wrong is something to be fixed in the resource itself and is said in words that mean something to the person
 // who owns it: a service whose copy cannot start, or a database or service whose image cannot be pulled. Those say which, so
 // that a failure does not read as one the platform has.
-func terminalMessage(message string) string {
+func TerminalMessage(message string) string {
 	if strings.Contains(message, StartFailureMarker) || IsImagePullFailure(message) {
 		return strings.TrimSpace(message)
 	}

@@ -60,20 +60,19 @@ func TestAVolumeLonghornPlacedOrHasNotLookedAtYetIsNotUnplaced(t *testing.T) {
 	require.Empty(t, volumeNotPlacedMessage(context.Background(), c, "app-prod", all.Items...))
 }
 
-func TestTheClaimsOfAStatefulSetAreTheOnesNamedForItAndItsPods(t *testing.T) {
+func TestTheClaimOfAServerIsTheOneNamedForItAndItsPod(t *testing.T) {
 	c := lostNodeClient(t, &deletions{},
 		claimBoundTo("data-geass-mysql-orders-0", "app-prod", "", nil),
-		claimBoundTo("data-geass-mysql-orders-1", "app-prod", "", nil),
-		claimBoundTo("data-geass-mysql-orders-backup-0", "app-prod", "", nil), // another set
-		claimBoundTo("data-geass-mysql-orders-extra", "app-prod", "", nil),    // not a pod's number
+		claimBoundTo("data-main-geass-mysql-orders-0", "app-prod", "", nil), // another set whose name ends with this one's
 		claimBoundTo("data-geass-mysql-orders-0", "elsewhere", "", nil),
 	)
+	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data"}}
 
-	found := claimsOfStatefulSet(context.Background(), c, "app-prod", "geass-mysql-orders")
-	names := make([]string, 0, len(found))
-	for _, claim := range found {
-		names = append(names, claim.Name)
-	}
+	found := claimsOfServer(context.Background(), c, "app-prod", serverSpec{name: "geass-mysql-orders", claim: claim})
 
-	require.ElementsMatch(t, []string{"data-geass-mysql-orders-0", "data-geass-mysql-orders-1"}, names)
+	require.Len(t, found, 1)
+	require.Equal(t, "data-geass-mysql-orders-0", found[0].Name)
+	require.Equal(t, "app-prod", found[0].Namespace)
+	require.Empty(t, claimsOfServer(context.Background(), c, "app-prod", serverSpec{name: "geass-mysql-orders"}), "a server that keeps nothing on disk has no volume")
+	require.Empty(t, claimsOfServer(context.Background(), c, "app-prod", serverSpec{name: "geass-mysql-absent", claim: claim}), "one whose claim is not made yet is not an error")
 }

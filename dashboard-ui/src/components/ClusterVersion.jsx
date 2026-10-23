@@ -48,7 +48,7 @@ export function ClusterVersion({ data }) {
   const rows = versionRows(data?.platform?.release);
   if (!rows.length) return null;
   return (
-    <PageSection title="Version" description="What the cluster runs. Update Geass by running the installer of a newer release on the control plane.">
+    <PageSection title="Version" description="Update by running a newer installer on the control plane.">
       <DataTable
         columns={[
           { label: "Component", key: "component" },

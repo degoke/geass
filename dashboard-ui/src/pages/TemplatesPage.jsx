@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Database, SquareFunction, Trash2 } from "lucide-react";
 import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Empty, Muted } from "@/components/geass-ui";
 import { TemplateDeployDialog } from "@/components/TemplateDeployDialog";
 
@@ -64,14 +64,13 @@ export function TemplatesPage({ data }) {
     action(`/templates/${deleting.id}/delete`)
       .then(() => queryClient.invalidateQueries({ queryKey: ["templates"] }))
       .then(() => { setDeleting(null); alertUser("Template deleted"); })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setBusy(false));
   };
 
   return (
     <div className="rw-templates-page">
       <h1>Templates</h1>
-      <p className="rw-templates-lead">Deploy self-hosted software in one step, or save your own stack. Everything is added as drafts, so you review it before it runs.</p>
       {!mutable ? (
         <Muted size="sm">Your viewer role cannot browse templates.</Muted>
       ) : templates.isPending ? (

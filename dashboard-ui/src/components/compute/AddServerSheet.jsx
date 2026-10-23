@@ -115,7 +115,7 @@ function AddServerForm({ providers, connections, onDone, onCancel }) {
     try {
       const result = await action("/servers/create", body);
       await refresh();
-      notify(source === "cloud" ? `Creating the server ${result?.name || ""} at ${providerName}. It joins the cluster when it is ready.` : `Adding the server ${result?.name || trimmed}. It joins the cluster when Geass has set it up.`, "success");
+      notify(source === "cloud" ? `Creating ${result?.name || "server"}` : `Adding ${result?.name || trimmed}`, "success");
       onDone();
     } catch (failure) {
       setError(failure.message);
@@ -135,20 +135,20 @@ function AddServerForm({ providers, connections, onDone, onCancel }) {
               selected={source === "cloud"}
               onClick={() => setSource("cloud")}
               title="A cloud machine"
-              description="Geass creates one machine at a cloud and joins it to the cluster."
+              description="Geass creates one machine at a cloud."
             />
             <Choice
               selected={source === "existing"}
               onClick={() => setSource("existing")}
               title="A server I have"
-              description="Geass reaches it over SSH and joins it to the cluster."
+              description="Geass reaches it over SSH."
             />
           </div>
         </Field>
 
         <Field
           label={<>Name{source === "existing" ? <Required /> : <Optional />}</>}
-          description={source === "cloud" ? "Lowercase letters, numbers and hyphens. Made up for you when left empty." : "Lowercase letters, numbers and hyphens. It is the node's name once it joins."}
+          description={source === "cloud" ? "Lowercase letters, numbers and hyphens. Generated if left empty." : "Lowercase letters, numbers and hyphens."}
         >
           <Input value={name} onChange={(event) => setName(event.currentTarget.value.toLowerCase())} maxLength={55} autoComplete="off" spellCheck={false} placeholder={source === "cloud" ? "server-x7k2m" : "storage-1"} aria-label="Server name" data-autofocus />
         </Field>
@@ -166,42 +166,42 @@ function AddServerForm({ providers, connections, onDone, onCancel }) {
                 </Select>
               ) : (
                 <Callout>
-                  No cloud is connected yet. <Link to="/settings/connectors">Connect a cloud</Link> in Connectors first, or add a server you have.
+                  No cloud is connected yet. <Link to="/settings/connectors">Connect a cloud</Link>.
                 </Callout>
               )}
             </Field>
-            <Field label={<>Region<Optional /></>} description={descriptor?.regionHelp || "The cloud's own region or location."}>
+            <Field label={<>Region<Optional /></>} description={descriptor?.regionHelp}>
               <Input value={region} onChange={(event) => setRegion(event.currentTarget.value)} placeholder={connectionInfo?.region || "Cloud's choice"} autoComplete="off" spellCheck={false} aria-label="Region" />
             </Field>
-            <SizePicker inputId="cp-server-size" label="Machine size" required value={size} onChange={setSize} query={sizes} connection={connection} hint="The cloud's name for a size. Choose one from the list, or type it." />
-            <Field label={<>Image<Optional /></>} description="The operating system image. Default: the cloud's Ubuntu 24.04.">
+            <SizePicker inputId="cp-server-size" label="Machine size" required value={size} onChange={setSize} query={sizes} connection={connection} />
+            <Field label={<>Image<Optional /></>} description="Default: the cloud's Ubuntu 24.04.">
               <Input value={image} onChange={(event) => setImage(event.currentTarget.value)} autoComplete="off" spellCheck={false} aria-label="Image" />
             </Field>
             <ProviderSettingsFields descriptor={descriptor} values={settingValues} rows={settingRows} onValues={setSettingValues} onRows={setSettingRows} />
           </>
         ) : (
           <>
-            <Field label={<>Address<Required /></>} description="Where Geass reaches the server over SSH.">
+            <Field label={<>Address<Required /></>}>
               <Input value={address} onChange={(event) => setAddress(event.currentTarget.value)} placeholder="198.51.100.10" autoComplete="off" spellCheck={false} aria-label="Address" />
             </Field>
             <div className="cp-row">
-              <Field label={<>SSH user<Required /></>} description="A user that is root, or can use sudo without a password.">
+              <Field label={<>SSH user<Required /></>} description="Root, or a user with passwordless sudo.">
                 <Input value={sshUser} onChange={(event) => setSshUser(event.currentTarget.value)} autoComplete="off" spellCheck={false} aria-label="SSH user" />
               </Field>
               <Field label="SSH port">
                 <Input value={sshPort} inputMode="numeric" onChange={(event) => setSshPort(event.currentTarget.value)} autoComplete="off" aria-label="SSH port" />
               </Field>
             </div>
-            <Field label={<>SSH private key<Required /></>} description="Paste the whole key. It is stored in a Secret that only the Geass operator reads, and is never shown again.">
+            <Field label={<>SSH private key<Required /></>} description="Paste the whole key. It is never shown again.">
               <Textarea className="cp-textarea-mono" rows={6} value={sshKey} onChange={(event) => setSshKey(event.currentTarget.value)} placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----"} autoComplete="off" spellCheck={false} aria-label="SSH private key" />
             </Field>
-            <Field label={<>Host keys<Optional /></>} description="The server's host keys, in known_hosts form, to pin it. Without them Geass does not check which server it is talking to.">
+            <Field label={<>Host keys<Optional /></>} description="In known_hosts form. Without them, Geass does not check which server it is talking to.">
               <Textarea className="cp-textarea-mono" rows={3} value={knownHosts} onChange={(event) => setKnownHosts(event.currentTarget.value)} autoComplete="off" spellCheck={false} aria-label="Host keys" />
             </Field>
           </>
         )}
 
-        <Field label="Data on this server" description={storage === "Allow" ? "Allow (the default for a single server): databases, buckets and volumes may run on it." : "None keeps databases, buckets and volumes off it. Only services run on it."}>
+        <Field label="Data on this server" description={storage === "Allow" ? "Databases, buckets and volumes may run on it." : "Keeps databases, buckets and volumes off it."}>
           <Select value={storage} onChange={(event) => setStorage(event.currentTarget.value)} aria-label="Data on this server">
             <option value="Allow">Allow</option>
             <option value="None">None</option>
@@ -211,18 +211,17 @@ function AddServerForm({ providers, connections, onDone, onCancel }) {
         <details className="cp-details">
           <summary>Placement</summary>
           <div className="cp-details-body">
-            <p className="cp-fieldset-note">Where the node sits and what it is for. Left empty, it carries no region or tags.</p>
             <PlacementFields region={placement.region} zone={placement.zone} tags={placement.tags} reserved={placement.reserved} onChange={(patch) => setPlacement({ ...placement, ...patch })} />
           </div>
         </details>
 
         {source === "cloud" ? (
           <Callout tone="cost">
-            <strong>This spends money.</strong> Geass creates one machine in your account at {providerName || "the cloud"}, and the cloud bills you for it
+            <strong>This spends money.</strong> {providerName || "The cloud"} bills you for the machine
             {price > 0 ? <> at {formatPrice(price, sizeInfo.currency)}</> : null} until you remove the server.
           </Callout>
         ) : (
-          <Callout>Nothing is bought. Geass installs what the cluster needs on the server over SSH and joins it to the cluster.</Callout>
+          <Callout>Nothing is bought. Geass installs what the cluster needs on the server.</Callout>
         )}
         {error ? <Alert tone="danger">{error}</Alert> : null}
         <SettingsFormActions>
@@ -239,7 +238,7 @@ export function AddServerSheet({ opened, onClose }) {
   const connections = useConnections();
   const loading = providersQuery.isPending || connections.isPending;
   return (
-    <SettingsSheet opened={opened} onClose={onClose} title="Add a server" description="Add one server to the cluster, on its own and not part of a pool. You can remove it again later.">
+    <SettingsSheet opened={opened} onClose={onClose} title="Add a server">
       {opened ? (
         loading ? (
           <Muted size="sm">Loading…</Muted>

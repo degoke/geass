@@ -64,25 +64,18 @@ func longhornVolumeUnplaced(volume *unstructured.Unstructured) bool {
 	return false
 }
 
-// claimsOfStatefulSet are the volumes a StatefulSet made for its pods, which are named after the set and the pod's number
-// (data-mysql-0), and carry no label of their own to find them by.
-func claimsOfStatefulSet(ctx context.Context, c client.Reader, namespace, set string) []corev1.PersistentVolumeClaim {
-	var all corev1.PersistentVolumeClaimList
-	if err := c.List(ctx, &all, client.InNamespace(namespace)); err != nil {
+// claimsOfServer is the volume of a database server's one pod. The StatefulSet names it from the claim template and the
+// pod (data-mysql-0), so it is read by that name and not looked for: a set whose name ends another's is not mistaken for it.
+// A server that keeps its data in memory has none, and a claim that is not made yet is not an error.
+func claimsOfServer(ctx context.Context, c client.Reader, namespace string, srv serverSpec) []corev1.PersistentVolumeClaim {
+	if srv.claim == nil {
 		return nil
 	}
-	var claims []corev1.PersistentVolumeClaim
-	for i := range all.Items {
-		name := all.Items[i].Name
-		at := strings.LastIndex(name, "-"+set+"-")
-		if at < 0 {
-			continue
-		}
-		if ordinal := name[at+len(set)+2:]; ordinal != "" && strings.Trim(ordinal, "0123456789") == "" {
-			claims = append(claims, all.Items[i])
-		}
+	var claim corev1.PersistentVolumeClaim
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: srv.claim.Name + "-" + srv.name + "-0"}, &claim); err != nil {
+		return nil
 	}
-	return claims
+	return []corev1.PersistentVolumeClaim{claim}
 }
 
 // claimsOfPostgres are the volumes of a Postgres database's instances, which CloudNativePG labels with the database.

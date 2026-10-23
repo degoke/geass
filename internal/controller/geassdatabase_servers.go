@@ -356,7 +356,7 @@ func (r *GeassDatabaseReconciler) serverNotReadyMessage(ctx context.Context, wsN
 		}
 	}
 	// A pod that waits for a volume that no disk has room for is ContainerCreating, like one that is pulling.
-	if message := volumeNotPlacedMessage(ctx, r.Client, wsNS, claimsOfStatefulSet(ctx, r.Client, wsNS, srv.name)...); message != "" {
+	if message := volumeNotPlacedMessage(ctx, r.Client, wsNS, claimsOfServer(ctx, r.Client, wsNS, srv)...); message != "" {
 		return message
 	}
 	return messageServiceStarting

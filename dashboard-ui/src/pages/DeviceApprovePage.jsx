@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Stack, Text } from "@mantine/core";
 import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertError } from "@/lib/notify";
 import { PlatformPage } from "@/layout/PlatformPage";
 import { Button, Empty, Field, Input, Muted, Select } from "@/components/geass-ui";
 
@@ -48,10 +48,10 @@ export function DeviceApprovePage({ data, code: initialCode }) {
     setBusy(true);
     try {
       await action("/auth/device/approve", { userCode: code, role, expiresInDays: expires, deny: deny ? "on" : undefined });
-      setResult(deny ? "Refused. The command line was told no." : "Approved. You can close this page: the command line is signed in.");
+      setResult(deny ? "Refused" : "Approved");
       setRequest(null);
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setBusy(false);
     }
@@ -59,23 +59,23 @@ export function DeviceApprovePage({ data, code: initialCode }) {
 
   if (!mutable) {
     return (
-      <Empty title="Only an admin can approve this" description="Sign in as an admin to approve a command-line sign-in." />
+      <Empty title="Only an admin can approve this" />
     );
   }
 
   return (
-    <PlatformPage title="Sign in the command line" description="Approve the code your command line is showing, and it will be handed an API token. Only approve a code you started yourself.">
+    <PlatformPage title="Sign in the command line" description="Only approve a code you started yourself.">
       <Stack gap="md" maw={520}>
-        <Field label="Code" description="The code shown by the command line, such as BCDF-GHJK.">
+        <Field label="Code">
           <Input value={code} onChange={(event) => { setCode(event.currentTarget.value); setResult(""); }} placeholder="BCDF-GHJK" aria-label="Code" autoFocus />
         </Field>
-        {missing ? <Muted size="sm">No sign-in request has that code. It may have expired: start again from the command line.</Muted> : null}
+        {missing ? <Muted size="sm">No sign-in request has that code. It may have expired.</Muted> : null}
         {result ? <Text size="sm" fw={500}>{result}</Text> : null}
         {request ? (
           <Stack gap="sm">
             <Text size="sm">
-              <strong>{request.clientName}</strong> is asking for access. Check that the code on your command line is
-              <strong> {request.userCode}</strong> before you approve.
+              <strong>{request.clientName}</strong> is asking for access. Check that your command line shows
+              <strong> {request.userCode}</strong>.
             </Text>
             <Field label="Access">
               <Select value={role} onChange={(event) => setRole(event.target.value)} aria-label="Access">

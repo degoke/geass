@@ -29,7 +29,7 @@ export function DashboardScreen({ mode }) {
   if (error?.status === 401) return <LoginPage onSuccess={() => refetch()} />;
   if (error) {
     const devHint = error.status === 404
-      ? "From the repo root, run make dashboard-backend (API on :8085) while pnpm dev runs the UI on :5176, or use make run for both."
+      ? "Run make dashboard-backend, or make run for UI and API."
       : null;
     return (
       <Center mih="100vh" px="md">
@@ -99,7 +99,7 @@ export function DashboardScreen({ mode }) {
       </PlatformSettingsLayout>
     );
   } else {
-    content = <Empty title="Page not found" description="The requested dashboard page does not exist." action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
+    content = <Empty title="Page not found" action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
   }
   return (
     <AppLayout>{content}</AppLayout>

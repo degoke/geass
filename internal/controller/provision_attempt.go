@@ -16,7 +16,7 @@ func recordProvisionOnNotReady(provision *geassv1alpha1.GeassProvisionStatus, me
 		if !counted {
 			platform.RecordProvisionAttemptError(provision, message, true)
 		}
-		platform.CompleteActiveProvisionAttempt(provision, geassv1alpha1.ProvisionAttemptFailed, platform.ProvisionFailedUserMessage)
+		platform.CompleteActiveProvisionAttempt(provision, geassv1alpha1.ProvisionAttemptFailed, platform.TerminalMessage(message))
 	}
 }
 

@@ -88,6 +88,24 @@ func TestRemovingAServerSaysWhichDataIsOnlyThere(t *testing.T) {
 	}, impact.Volumes, "the replica has a copy on w2, the other database has none, and a volume that is not a database is named as it is")
 }
 
+func TestACopyThatIsStrandedOrNotMadeYetIsNotACopyThatSurvives(t *testing.T) {
+	objects := slices.Concat(
+		[]client.Object{serverNamed("w1"), hostnameNode("w1"), hostnameNode("w2")},
+		volumeOnHost("w1", "orders-1", "shop", pgClaim("orders", "orders-1")),
+		// The other instance's volume can only be used from a machine that is not in the cluster any more.
+		volumeOnHost("w3", "orders-2", "shop", pgClaim("orders", "orders-2")),
+		// And a third has a claim that no volume is bound to yet.
+		[]client.Object{&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "orders-3", Namespace: "shop", Labels: pgClaim("orders", "orders-3")}}},
+	)
+	srv := &Server{Client: newFakeClient(objects...)}
+
+	rec, impact := getServerImpact(t, srv, "w1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, []serverVolume{{Name: "orders", Namespace: "shop", Database: true, OtherCopies: 0}}, impact.Volumes,
+		"the only copy that can be used is the one on this server")
+}
+
 func TestRemovingAServerThatHoldsNothingAloneSaysSo(t *testing.T) {
 	objects := slices.Concat(
 		[]client.Object{serverNamed("w1"), hostnameNode("w1"), hostnameNode("w2")},

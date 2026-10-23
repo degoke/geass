@@ -361,7 +361,7 @@ The bucket is still a draft, or has not been deployed. Set its **Name** in **Set
 **"bucket name ... is too long: on the cluster's object storage it is stored as ...".**
 An in-cluster bucket is stored behind its project ID and environment, and the two together have to fit in 63 characters. The message says how many characters the name can have. Shorten the name in **Settings**, **Bucket** and save.
 
-**"Set up object storage in cluster settings first" or "Set up object storage in Platform settings, then try again."**
+**"Set up object storage in cluster settings first" or "Set up object storage in Platform settings."**
 There is no cluster object storage server. Set it up under **Settings**, **Object storage** and wait for **Active**. "Object storage is starting" means the server exists and is not ready yet.
 
 **"Configure the bucket name in settings, then deploy" or "set a bucket name in settings before you deploy".**
@@ -385,7 +385,7 @@ The server's volume is on a storage class that cannot grow, such as the default 
 **The object storage server shows "Waiting for capacity".**
 The cluster has no node with room for its CPU and memory. Choose a smaller size under **Manage**, or add capacity. See [Usage and capacity](/docs/guides/usage-and-capacity/).
 
-**"An AWS connection is required for external buckets" or "Connect your cloud account in Platform settings to use an external bucket."**
+**"An AWS connection is required for external buckets" or "Connect a cloud account in Platform settings."**
 The bucket has no AWS connection, or the connection is missing credentials. Choose a connection in **Settings**, **Bucket**. It must belong to the same project.
 
 **An AWS bucket fails with an access-denied error.**

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { action } from "@/lib/api";
 import { notify } from "@/lib/notify";
@@ -16,10 +15,19 @@ import {
   useRefreshCompute,
 } from "@/lib/compute";
 import { Badge, Button, Checkbox, Field, FormStack, Input, Muted, Select, Textarea } from "@/components/geass-ui";
-import { Alert, Callout, ConfirmDelete, Optional, Required } from "@/components/compute/ComputeBits";
+import { Alert, ConfirmDelete, Optional, Required } from "@/components/compute/ComputeBits";
 import { SettingsFormActions, SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 
 const EXTRA_PURPOSES = ["Storage", "Database"];
+
+/** What a connection is for, as people say it. The API's words are Compute, Storage and Database. */
+const PURPOSE_LABEL = { Compute: "Servers", Storage: "Buckets", Database: "Databases" };
+
+/** The cloud's name. Amazon's machine driver is called Amazon EC2, which a connection for buckets and databases is not. */
+function cloudLabel(providers, connection) {
+  if (connection.provider === "AWS" && !(connection.purposes || []).includes("Compute")) return "AWS";
+  return providerLabel(providers, connection.provider);
+}
 
 /**
  * Connect a cloud, or change a connection. The form is made from what the provider says it needs: its credentials, one field
@@ -115,18 +123,8 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
 
   return (
     <FormStack onSubmit={submit} className="cp-form">
-      {editing ? (
-        <p className="rw-rail-body">
-          Change the default region or replace credentials. Leave a credential empty to keep the one that is stored: only what you type is sent.
-        </p>
-      ) : (
-        <p className="rw-rail-body">
-          Geass uses a connection to create machines at the cloud, so pools can add nodes and servers can be made from the dashboard. Machines are created in
-          your account and the cloud bills you for them.
-        </p>
-      )}
       {!editing ? (
-        <Field label={<>Cloud<Required /></>} description={provider?.summary || "Choose the cloud to create machines at."}>
+        <Field label={<>Cloud<Required /></>} description={provider?.summary}>
           <Select
             value={providerId}
             onChange={(event) => { setProviderId(event.currentTarget.value); setCredentials({}); setError(""); }}
@@ -141,7 +139,7 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
         <p className="cp-subtitle">{provider?.label || connection.provider}. {provider?.summary || ""}</p>
       )}
       {!editing ? (
-        <Field label={<>Name<Required /></>} description="Lowercase letters, numbers and hyphens. Pools and servers refer to the connection by this name.">
+        <Field label={<>Name<Required /></>} description="Lowercase letters, numbers and hyphens.">
           <Input
             value={name}
             onChange={(event) => { setName(event.currentTarget.value); setNameTouched(true); }}
@@ -194,19 +192,15 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
                   aria-label={field.label}
                 />
               )}
-              {field.secret ? <span className="cp-credential-note">Stored in a Secret that only the Geass operator reads. It is never shown again.</span> : null}
             </Field>
           ))}
           {allowsExtra ? (
-            <Field
-              label="Use this connection for"
-              description="It always creates machines. For AWS it can also hold buckets (Storage) and databases (Database)."
-            >
+            <Field label="Also use for">
               <div className="cp-check">
                 {EXTRA_PURPOSES.map((purpose) => (
                   <Checkbox
                     key={purpose}
-                    label={purpose}
+                    label={PURPOSE_LABEL[purpose]}
                     checked={extra.includes(purpose)}
                     onChange={(event) => setExtra(event.currentTarget.checked ? [...extra, purpose] : extra.filter((item) => item !== purpose))}
                   />
@@ -226,7 +220,7 @@ function ConnectionForm({ providers, connection, existingNames, onDone, onCancel
 }
 
 /** One connection: what it is, whether the cloud accepts it, what depends on it, and what can be done to it. */
-function ConnectionCard({ connection, providers, mutable, canEdit, verifying, onVerify, onEdit, onRemove }) {
+function ConnectionCard({ connection, providers, scope, mutable, canEdit, verifying, onVerify, onEdit, onRemove }) {
   const warnings = connectionWarnings(connection);
   const checking = !connection.verifiedAt && !connection.message;
   const use = connectionUse(connection);
@@ -235,8 +229,8 @@ function ConnectionCard({ connection, providers, mutable, canEdit, verifying, on
       <div className="cp-conn-head">
         <div className="cp-conn-title">
           <strong>{connection.name}</strong>
-          <span className="cp-conn-cloud">{providerLabel(providers, connection.provider)}</span>
-          {(connection.purposes || []).map((purpose) => <Badge key={purpose}>{purpose}</Badge>)}
+          <span className="cp-conn-cloud">{cloudLabel(providers, connection)}</span>
+          {(connection.purposes || []).map((purpose) => <Badge key={purpose}>{PURPOSE_LABEL[purpose] || purpose}</Badge>)}
         </div>
         {checking ? (
           <Badge tone="neutral">Checking</Badge>
@@ -245,7 +239,7 @@ function ConnectionCard({ connection, providers, mutable, canEdit, verifying, on
         )}
       </div>
       <p className="cp-conn-line">
-        {connection.project ? `Project ${connection.project}` : "Whole cluster"}
+        {scope || (connection.project ? connection.project : "Whole cluster")}
         {connection.region ? ` · default region ${connection.region}` : ""}
         {connection.account ? ` · account ${connection.account}` : ""}
         {connection.verifiedAt ? <> · {connection.available ? "checked" : "last accepted"} <span title={absoluteTime(connection.verifiedAt)}>{relativeTime(connection.verifiedAt)}</span></> : null}
@@ -270,24 +264,25 @@ function ConnectionCard({ connection, providers, mutable, canEdit, verifying, on
   );
 }
 
-/** Connections to clouds: what each is for, whether the cloud accepts it, what depends on it. */
-export function CloudConnections({ mutable }) {
-  const connections = useConnections();
+/**
+ * The connections in `rows`, each with what can be done to it: asking the cloud again, changing its credentials, removing it.
+ * `scopeOf` says whose a connection is when that is not the whole cluster.
+ */
+export function ConnectionList({ rows, mutable, scopeOf, empty }) {
   const providersQuery = useProviders();
   const providers = providersQuery.data || [];
   const refresh = useRefreshCompute();
-  const [sheet, setSheet] = useState(null);
+  const [editing, setEditing] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState("");
   const [verifying, setVerifying] = useState("");
-  const rows = connections.data || [];
 
   const verify = async (connection) => {
     setVerifying(connection.name);
     try {
       await action(`/connections/${connection.name}/verify`);
-      notify(`Asking the cloud about ${connection.name} again`, "success");
+      notify(`Checking ${connection.name}`, "success");
       await refresh({ again: true });
     } catch (failure) {
       notify(failure.message, "error");
@@ -301,7 +296,7 @@ export function CloudConnections({ mutable }) {
     setRemoveError("");
     try {
       await action(`/connections/${removing.name}/delete`, { confirmName: removing.name });
-      notify(`Removed the connection ${removing.name}`, "success");
+      notify(`Removed ${removing.name}`, "success");
       setRemoving(null);
       await refresh();
     } catch (failure) {
@@ -311,64 +306,41 @@ export function CloudConnections({ mutable }) {
     }
   };
 
-  const canRotate = (connection) => Boolean(providerOf(providers, connection.provider));
   const use = removing ? connectionUse(removing) : "";
 
   return (
     <>
-      <SettingsSection
-        title="Cloud connections"
-        flat
-        actions={mutable ? (
-          <Button type="button" leftSection={<Plus size={15} />} onClick={() => setSheet({ mode: "create" })} disabled={providersQuery.isPending}>
-            Connect a cloud
-          </Button>
-        ) : null}
-      >
-        <p className="rw-rail-body">
-          Connections to clouds. Geass creates machines at a cloud with a connection, for the <Link to="/pools">pools</Link> that add nodes when the cluster is
-          full and for servers added one at a time. The credentials are kept in a Secret that only the operator reads.
-        </p>
-        {connections.isError ? <Alert tone="danger">{connections.error.message}</Alert> : null}
-        {connections.isPending ? <Muted size="sm">Loading connections…</Muted> : rows.length ? (
-          <ul className="cp-conn-list">
-            {rows.map((row) => (
-              <ConnectionCard
-                key={row.name}
-                connection={row}
-                providers={providers}
-                mutable={mutable}
-                canEdit={canRotate(row)}
-                verifying={verifying === row.name}
-                onVerify={() => verify(row)}
-                onEdit={() => setSheet({ mode: "edit", connection: row })}
-                onRemove={() => { setRemoveError(""); setRemoving(row); }}
-              />
-            ))}
-          </ul>
-        ) : (
-          <p className="cp-empty">
-            No cloud is connected. {mutable ? "Connect one to let Geass create machines and add nodes when the cluster is full." : "An admin can connect one."}
-          </p>
-        )}
-      </SettingsSection>
+      {rows.length ? (
+        <ul className="cp-conn-list">
+          {rows.map((row) => (
+            <ConnectionCard
+              key={row.name}
+              connection={row}
+              providers={providers}
+              scope={scopeOf ? scopeOf(row) : undefined}
+              mutable={mutable}
+              canEdit={Boolean(providerOf(providers, row.provider))}
+              verifying={verifying === row.name}
+              onVerify={() => verify(row)}
+              onEdit={() => setEditing(row)}
+              onRemove={() => { setRemoveError(""); setRemoving(row); }}
+            />
+          ))}
+        </ul>
+      ) : <p className="cp-empty">{empty}</p>}
 
-      <SettingsSheet
-        opened={Boolean(sheet)}
-        onClose={() => setSheet(null)}
-        title={sheet?.mode === "edit" ? `Edit ${sheet.connection.name}` : "Connect a cloud"}
-      >
-        {sheet ? (
+      <SettingsSheet opened={Boolean(editing)} onClose={() => setEditing(null)} title={editing ? `Edit ${editing.name}` : ""}>
+        {editing ? (
           providersQuery.isError ? (
             <Alert tone="danger">{providersQuery.error.message}</Alert>
           ) : (
             <ConnectionForm
-              key={sheet.mode === "edit" ? sheet.connection.name : "new"}
+              key={editing.name}
               providers={providers}
-              connection={sheet.connection}
+              connection={editing}
               existingNames={rows.map((row) => row.name)}
-              onDone={() => setSheet(null)}
-              onCancel={() => setSheet(null)}
+              onDone={() => setEditing(null)}
+              onCancel={() => setEditing(null)}
             />
           )
         ) : null}
@@ -381,20 +353,58 @@ export function CloudConnections({ mutable }) {
         confirmLabel="Remove connection"
         busy={removeBusy}
         error={removeError}
-        blocked={use ? `${removing.name} is used by ${use}. Delete those first, so that their machines are deleted at the cloud while the connection can still do it.` : ""}
+        blocked={use ? `${removing.name} is used by ${use}. Delete those first, so their machines and data are not left behind.` : ""}
         onClose={() => setRemoving(null)}
         onConfirm={remove}
       >
         <p>
-          Removing <strong>{removing?.name}</strong> deletes the connection and the credentials stored for it. Geass can no longer create
-          machines there. It cannot be undone, but you can connect the cloud again.
+          Remove <strong>{removing?.name}</strong> and its stored credentials.
         </p>
-        {!use ? (
-          <Callout>
-            A connection is refused while a pool or a machine uses it: the machines could no longer be deleted at the cloud, and would keep billing you.
-          </Callout>
-        ) : null}
       </ConfirmDelete>
+    </>
+  );
+}
+
+/** Server clouds: the connections that let Geass create machines. They belong to the cluster. */
+export function CloudConnections({ mutable }) {
+  const connections = useConnections();
+  const providersQuery = useProviders();
+  const providers = providersQuery.data || [];
+  const [creating, setCreating] = useState(false);
+  const rows = (connections.data || []).filter((row) => (row.purposes || []).includes("Compute"));
+
+  return (
+    <>
+      <SettingsSection
+        title="Server clouds"
+        flat
+        actions={mutable ? (
+          <Button type="button" leftSection={<Plus size={15} />} onClick={() => setCreating(true)} disabled={providersQuery.isPending}>
+            Connect a cloud
+          </Button>
+        ) : null}
+      >
+        {connections.isError ? <Alert tone="danger">{connections.error.message}</Alert> : null}
+        {connections.isPending ? <Muted size="sm">Loading connections…</Muted> : (
+          <ConnectionList rows={rows} mutable={mutable} empty="No server cloud connected." />
+        )}
+      </SettingsSection>
+
+      <SettingsSheet opened={creating} onClose={() => setCreating(false)} title="Connect a server cloud">
+        {creating ? (
+          providersQuery.isError ? (
+            <Alert tone="danger">{providersQuery.error.message}</Alert>
+          ) : (
+            <ConnectionForm
+              key="new"
+              providers={providers}
+              existingNames={(connections.data || []).map((row) => row.name)}
+              onDone={() => setCreating(false)}
+              onCancel={() => setCreating(false)}
+            />
+          )
+        ) : null}
+      </SettingsSheet>
     </>
   );
 }

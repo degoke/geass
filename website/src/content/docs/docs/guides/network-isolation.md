@@ -46,8 +46,8 @@ An ingress controller that you install in another namespace is not on the list, 
 The allow list belongs to the project that **receives** the calls. To let a front end project call an API project, change the API project.
 
 1. Open the API project and choose **Settings**, then **Network**.
-2. Under **Projects allowed to reach this one**, tick the front end project. The list shows every other project, by display name and ID.
-3. Choose **Save**. The dashboard shows "Network settings saved". The change applies at once and needs no redeploy.
+2. Under **Projects allowed to reach this one**, tick the front end project. The list shows every other project by its name.
+3. Choose **Save**. The dashboard shows "Saved". The change applies at once and needs no redeploy.
 
 The front end then calls the API on its private address. A service's address is on its **Settings** page, in the **Networking** section under **Private networking**:
 

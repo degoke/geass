@@ -3,6 +3,7 @@ package platform
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -82,13 +83,18 @@ func WalDirectory(segment string) string {
 	return strings.ToUpper(segment[:16]) + "/"
 }
 
+// walExtensions are what can follow a file's 24 character name in the archive: nothing, or its compression's extension.
+// A name followed by anything else is not the file: 000000010000000000000008.partial is a segment that was never finished,
+// and 000000010000000000000008.00000028.backup is a record of a copy, not a log file.
+var walExtensions = []string{"", ".gz", ".bz2", ".snappy", ".zst", ".lz4", ".xz"}
+
 // MissingWalSegments says which of the files a copy needs are not among the keys of one folder of the archive. A file is
 // stored with its compression's extension (000000010000000000000008.gz) and the name alone when it is not compressed.
 func MissingWalSegments(segments, keys []string) []string {
 	have := map[string]bool{}
 	for _, key := range keys {
 		name := path.Base(key)
-		if len(name) >= walNameLength && validWalName(name[:walNameLength]) && (len(name) == walNameLength || name[walNameLength] == '.') {
+		if len(name) >= walNameLength && validWalName(name[:walNameLength]) && slices.Contains(walExtensions, name[walNameLength:]) {
 			have[strings.ToUpper(name[:walNameLength])] = true
 		}
 	}

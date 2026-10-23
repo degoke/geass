@@ -1282,8 +1282,8 @@ func (r *GeassAppReconciler) setNotReady(ctx context.Context, app *geassv1alpha1
 		return ctrl.Result{}, err
 	}
 	if platform.ReadyConditionReason(latest.Status.Conditions) == platform.ConditionReasonProvisionFailed {
-		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.ProvisionFailedUserMessage)
-		r.reportToGitHub(ctx, latest, githubapp.DeploymentFailure, platform.ProvisionFailedUserMessage, false)
+		r.notifyDeployOutcome(ctx, latest, webhooks.EventDeploymentFailed, platform.TerminalMessage(message))
+		r.reportToGitHub(ctx, latest, githubapp.DeploymentFailure, platform.TerminalMessage(message), false)
 	}
 	return result, nil
 }

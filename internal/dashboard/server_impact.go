@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	cnpgClusterLabel  = "cnpg.io/cluster"
-	cnpgInstanceLabel = "cnpg.io/instanceName"
+	cnpgClusterLabel  = platform.CNPGLabelCluster
+	cnpgInstanceLabel = platform.CNPGLabelInstance
 )
 
 // serverVolume is data that is kept on one server and on no other. It is a database when CloudNativePG put the volume
@@ -86,9 +86,15 @@ func volumesOnlyOnServer(nodeName string, nodes []corev1.Node, volumes []corev1.
 	for _, volume := range platform.VolumesOnlyOn(nodeName, nodes, volumes) {
 		onlyHere[volume.Name] = true
 	}
-	// A Postgres database has one claim per instance: the instances that are not on this server are copies.
+	volumeByName := make(map[string]*corev1.PersistentVolume, len(volumes))
+	for i := range volumes {
+		volumeByName[volumes[i].Name] = &volumes[i]
+	}
+	// A Postgres database has one claim per instance: the instances that are not on this server are copies, when every
+	// volume of theirs is bound and can still be used from a server of the cluster. One whose machine is gone, or whose
+	// volume is not made yet, is not a copy that survives.
 	type instance struct{ namespace, database, instance string }
-	instances := map[instance]bool{}
+	survives := map[instance]bool{}
 	here := map[instance]bool{}
 	for i := range claims {
 		claim := &claims[i]
@@ -97,7 +103,12 @@ func volumesOnlyOnServer(nodeName string, nodes []corev1.Node, volumes []corev1.
 			continue
 		}
 		key := instance{claim.Namespace, database, claim.Labels[cnpgInstanceLabel]}
-		instances[key] = true
+		volume := volumeByName[claim.Spec.VolumeName]
+		usable := volume != nil && platform.VolumeReachableFrom(volume, nodes)
+		if before, seen := survives[key]; seen {
+			usable = usable && before
+		}
+		survives[key] = usable
 		if onlyHere[claim.Spec.VolumeName] {
 			here[key] = true
 		}
@@ -114,8 +125,8 @@ func volumesOnlyOnServer(nodeName string, nodes []corev1.Node, volumes []corev1.
 		item := serverVolume{Name: claim.Name, Namespace: claim.Namespace}
 		if database := claim.Labels[cnpgClusterLabel]; database != "" {
 			item.Name, item.Database = database, true
-			for key := range instances {
-				if key.namespace == claim.Namespace && key.database == database && !here[key] {
+			for key, usable := range survives {
+				if usable && key.namespace == claim.Namespace && key.database == database && !here[key] {
 					item.OtherCopies++
 				}
 			}

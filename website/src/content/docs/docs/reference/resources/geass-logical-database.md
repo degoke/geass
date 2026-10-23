@@ -120,12 +120,12 @@ The messages you can see:
 
 | Where | What it does |
 | --- | --- |
-| **+ Add resource** > **Database** > **Logical database** | Creates a `GeassLogicalDatabase` on the first Postgres or MySQL server of the project environment. The entry is disabled with `Create a database server first` when there is none. |
-| **+ Add resource** > **Database** > the shared server, shown as `<name> (shared)` | Creates one on that shared server. The entry is disabled until the server is `Ready`. Only servers in the project's region, or with no region, are listed. |
+| **+ Add resource** > **Database** > **Logical database** > one of the project environment's own Postgres or MySQL servers | Creates a `GeassLogicalDatabase` on that server. The **Logical database** row is disabled with "No server yet" when there is no server to use. |
+| **+ Add resource** > **Database** > **Logical database** > a shared server | Creates one on that shared server. The entry is disabled until the server is `Ready`. Only servers in the project's region, or with no region, are listed. |
 | Resource panel, **Settings** tab, **Logical DB** section | Shows **Server** and **Database name**. It is read-only. |
 | **Retry** | Resets a `ProvisionFailed` resource. |
 
-The dashboard fills in a generated name, `spec.databaseName: app` and the server you chose. It has no field for `connectionLimit`: set it with `kubectl` or the REST API. The success message says `Logical database saved as a draft`, but there is no deploy step. Geass starts at once.
+The dashboard fills in a generated name, `spec.databaseName: app` and the server you chose. It has no field for `connectionLimit`: set it with `kubectl` or the REST API. The success message says `Added database`, and there is no deploy step. Geass starts at once.
 
 The dashboard refuses a request that cannot work, with these messages: `That database server does not exist`, `A database can only be created on a Postgres or MySQL server`, `That server belongs to another project or environment`, `This server runs in the <a> region, but the project runs in the <b> region. Every query would cross regions`, `The connection limit must be a whole number from 1 to 1000` and `logical database already exists`. It does not check required node tags: a shared server is offered when it is `Ready` and in the project's region, and the tag check happens afterwards in the controller (see the messages above).
 

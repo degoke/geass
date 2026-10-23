@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Group, Modal, Text } from "@mantine/core";
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { backupSpec, supportsBackups } from "@/lib/backups";
 import { isResourceDeleting } from "@/lib/services";
-import { Button, Field, Input, Muted } from "@/components/geass-ui";
+import { Button, Field, Input } from "@/components/geass-ui";
 import { ResourceSettingsBlock, ResourceSettingsSection } from "@/layout/ResourceSettingsLayout";
 import { SettingsAlert, SettingsFormActions } from "@/layout/SettingsShell";
 
@@ -21,7 +21,7 @@ const BACKED_UP_STATES = ["Protected", "AtRisk", "Starting"];
 /** What deleting a Postgres database does to its data, depending on whether it is backed up. */
 function deleteBackupNote(item) {
   if (backupSpec(item).enabled && BACKED_UP_STATES.includes(item.status?.backup?.state)) {
-    return "Geass takes a final backup first and keeps it for 7 days, so you can restore this database from Project settings → Backups.";
+    return "Geass takes a final backup first and keeps it for 7 days (Project settings → Backups).";
   }
   return "This database has no backups. Deleting it permanently destroys its data.";
 }
@@ -57,7 +57,7 @@ export function ResourceDangerSection({ item, kind, name, project, reload, navig
         returnToWorkspace();
         alertUser("Resource deleted");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSubmitting(false));
   };
 
@@ -66,8 +66,8 @@ export function ResourceDangerSection({ item, kind, name, project, reload, navig
       <ResourceSettingsBlock>
         <SettingsAlert tone="danger">
           {terminating
-            ? "Deletion is in progress. This resource will disappear from the project when cleanup finishes."
-            : `Deleting this ${kindLabel} permanently removes it from Geass. Deployed workloads and data may be removed depending on the resource type. This cannot be undone.`}
+            ? "Deletion in progress."
+            : `Deleting this ${kindLabel} is permanent and may remove its workloads and data.`}
         </SettingsAlert>
         {!terminating ? (
           <>
@@ -76,7 +76,7 @@ export function ResourceDangerSection({ item, kind, name, project, reload, navig
               label={`Type ${name} to delete`}
               description={
                 displayLabel !== name
-                  ? `Use the resource ID (${name}), not the display name (${displayLabel}).`
+                  ? `Use the ID, not the display name (${displayLabel}).`
                   : undefined
               }
             >
@@ -100,9 +100,7 @@ export function ResourceDangerSection({ item, kind, name, project, reload, navig
               </Button>
             </SettingsFormActions>
           </>
-        ) : (
-          <Muted size="sm">No further action is required while deletion runs.</Muted>
-        )}
+        ) : null}
         <Modal
           opened={modalOpen}
           onClose={() => { if (!submitting) setModalOpen(false); }}
@@ -111,10 +109,9 @@ export function ResourceDangerSection({ item, kind, name, project, reload, navig
           classNames={{ content: "rw-danger-modal" }}
         >
           <Text size="sm" mb="md">
-            This will permanently delete the {kindLabel} <strong>{displayLabel}</strong> ({name}) from project{" "}
+            This permanently deletes the {kindLabel} <strong>{displayLabel}</strong> ({name}) from project{" "}
             <strong>{item.spec?.project}</strong>
-            {item.spec?.environment ? ` (${item.spec?.environment})` : ""}. Deployed workloads and data may be removed
-            depending on the resource type. This action cannot be undone.
+            {item.spec?.environment ? ` (${item.spec?.environment})` : ""}, and may remove its workloads and data.
           </Text>
           <Group justify="flex-end" gap="sm">
             <Button type="button" variant="outline" disabled={submitting} onClick={() => setModalOpen(false)}>

@@ -54,30 +54,26 @@ export function RecoverBackups({ mutable }) {
   };
 
   return (
-    <PageSection
-      title="Recover databases from a bucket"
-      description="For a cluster that is new, or that was rebuilt without its records: find the backups that Geass made and offer them to restore."
-    >
+    <PageSection title="Recover databases from a bucket">
       {!open && !report ? (
         <Button variant="outline" onClick={() => setOpen(true)}>Find backups in a bucket</Button>
       ) : null}
       {open && !report ? (
         <FormStack onSubmit={find}>
-          <Field label="Bucket" description="The one that holds the backups. Each database's are in a folder named for its project.">
+          <Field label="Bucket">
             <Input value={form.bucket} onChange={set("bucket")} required aria-label="Bucket" spellCheck={false} />
           </Field>
           <Field label="Region">
             <Input value={form.region} onChange={set("region")} aria-label="Region" placeholder="eu-north-1" spellCheck={false} />
           </Field>
-          <Field label="AWS access key ID" description="The key that Geass used for backups. It makes a restricted user for the bucket from it, as it does for every project.">
+          <Field label="AWS access key ID" description="The key Geass used for backups.">
             <Input value={form.accessKey} onChange={set("accessKey")} required aria-label="AWS access key ID" autoComplete="off" spellCheck={false} />
           </Field>
           <Field label="AWS secret access key">
             <Input type="password" value={form.secretKey} onChange={set("secretKey")} required aria-label="AWS secret access key" autoComplete="new-password" spellCheck={false} />
           </Field>
           <Muted size="sm">
-            A project that the backups belong to is made again here, with the name they are filed under, if this cluster does not have it. Nothing in the bucket is
-            changed or deleted, and the databases are not started: you restore each one.
+            Missing projects are created again. Nothing in the bucket is changed or deleted.
           </Muted>
           <div>
             <Button type="submit" disabled={busy}>Find backups</Button>
@@ -91,7 +87,7 @@ export function RecoverBackups({ mutable }) {
           <Text size="sm">
             {report.databases.length
               ? `Found backups of ${report.databases.length} ${report.databases.length === 1 ? "database" : "databases"}.`
-              : "No backups were found that can be restored."}
+              : "No backups found."}
             {report.projects?.length ? ` Made again: ${report.projects.join(", ")}.` : ""}
           </Text>
           {report.databases.length ? (
@@ -123,8 +119,7 @@ export function RecoverBackups({ mutable }) {
             </Stack>
           ) : null}
           <Muted size="sm">
-            To restore one, open its project, then <strong>Settings</strong> and <strong>Backups</strong>, and choose <strong>Restore</strong> on it. They are offered for 30 days,
-            and what is in the bucket is not deleted when that ends.
+            Offered for 30 days. Nothing in the bucket is deleted when that ends.
           </Muted>
           <div>
             <Button variant="outline" onClick={() => { setReport(null); setOpen(false); }}>Done</Button>

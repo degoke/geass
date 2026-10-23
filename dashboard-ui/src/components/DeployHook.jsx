@@ -3,7 +3,7 @@ import { Group, Modal, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Webhook } from "lucide-react";
 import { action, api } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Muted } from "@/components/geass-ui";
 import { SettingsPanel } from "@/layout/SettingsShell";
@@ -31,7 +31,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
     try {
       return await work();
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
       return null;
     } finally {
       setBusy(false);
@@ -53,7 +53,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
     if (done) {
       setDeleting(false);
       await tokens.refetch();
-      alertUser("Deploy hook deleted. The old URL no longer works.");
+      alertUser("Deleted deploy hook");
     }
   };
 
@@ -68,9 +68,9 @@ export function DeployHook({ project, environment, app, gitSource }) {
       <Stack gap="xs">
         <Muted size="sm">
           {gitSource
-            ? "Calling the URL builds this service again from the head of its branch, and it rolls out when the build succeeds."
-            : "Calling the URL deploys this service's pending changes, like Deploy changes does here."}
-          {" "}Use it from a tool that can call a URL but cannot send a header. Anyone who has the URL can deploy this service, so keep it secret.
+            ? "Calling the URL rebuilds this service from its branch."
+            : "Calling the URL deploys this service's pending changes."}
+          {" "}Anyone who has the URL can deploy this service, so keep it secret.
         </Muted>
         {tokens.isLoading ? (
           <Muted size="sm">Loading…</Muted>
@@ -87,7 +87,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
             <Group gap="sm">
               <Button type="button" variant="outline" disabled={busy} onClick={() => setDeleting(true)}>Delete hook</Button>
             </Group>
-            <Muted size="sm">The URL is shown only when the hook is made. To get a new one, delete this hook and make another.</Muted>
+            <Muted size="sm">The URL is shown only once, when the hook is made.</Muted>
           </>
         ) : (
           <Group gap="sm">
@@ -98,7 +98,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
 
       <Modal opened={Boolean(created)} onClose={() => setCreated(null)} title="Your deploy hook" centered size="lg">
         <Stack gap="sm">
-          <Text size="sm">Copy this URL now. It is shown only once; if you lose it, delete the hook and make another.</Text>
+          <Text size="sm">Copy this URL now. It is shown only once.</Text>
           <div className="rw-webhook-secret">
             <code>{url}</code>
             <button type="button" className="rw-icon-btn" aria-label="Copy deploy hook URL" onClick={() => copy(url)}>
@@ -112,7 +112,7 @@ export function DeployHook({ project, environment, app, gitSource }) {
       </Modal>
 
       <Modal opened={deleting} onClose={() => { if (!busy) setDeleting(false); }} title="Delete this deploy hook?" centered>
-        <Text size="sm" mb="md">Anything that calls the current URL stops working immediately. This cannot be undone.</Text>
+        <Text size="sm" mb="md">Anything that calls the current URL stops working immediately.</Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={busy} onClick={() => setDeleting(false)}>Cancel</Button>
           <Button variant="danger" loading={busy} onClick={remove}>Delete hook</Button>

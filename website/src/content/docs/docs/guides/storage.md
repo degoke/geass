@@ -153,7 +153,7 @@ You can make a deployed database's disk larger. You cannot make it smaller.
 
 The size is per instance. A high-availability PostgreSQL database has three volumes, and each one grows to the new size. Through the REST API you can send any quantity of 1Gi or more as `storageSize`, for example `20Gi`. See [Databases](/docs/guides/databases/#size-storage-and-resizing).
 
-The field is locked, and the dashboard shows "This database's storage can't be resized, so its size is fixed", when the database's pinned class does not allow expansion, for example a database on local storage. Resizing is judged per database, so one cluster can hold resizable and fixed databases at the same time. Other messages you may see:
+The field is locked, and the dashboard shows "This storage can't be resized", when the database's pinned class does not allow expansion, for example a database on local storage. Resizing is judged per database, so one cluster can hold resizable and fixed databases at the same time. Other messages you may see:
 
 | Message | Meaning |
 | --- | --- |

@@ -11,7 +11,7 @@ export function DomainSetupBanner() {
   return (
     <StripBanner
       lead="Dashboard domain"
-      message="Set a public host so Geass can verify HTTPS and finish platform setup."
+      message="Set a public host to finish setup."
       href="/settings/domain"
       actionLabel="Configure domain"
     />

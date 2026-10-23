@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { action } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { FUNCTION_RUNTIMES, functionRuntime } from "@/lib/functions";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Input, Muted, Select } from "@/components/geass-ui";
 
 const INDENT = "  ";
@@ -42,8 +42,8 @@ export function FunctionEditor({ item, name, data, reload }) {
     if (!dirty || saving || !mutable) return;
     setSaving(true);
     action(`/apps/${name}/update`, { functionRuntime: runtime, functionCode: code, functionMode: mode })
-      .then(() => { reload?.(); alertUser("Code saved. Deploy to apply it."); })
-      .catch((error) => alertUser(error.message))
+      .then(() => { reload?.(); alertUser("Code saved"); })
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
@@ -105,12 +105,11 @@ export function FunctionEditor({ item, name, data, reload }) {
       <Muted size="xs">
         {mode === "event" ? (
           <>
-            Export a <code>handler(event)</code> that returns the response. The event is <code>{"{ method, path, query, headers, body, trigger }"}</code>; return an object, text, or <code>{"{ statusCode, headers, body }"}</code>.
+            Export <code>handler(event)</code>. The event is <code>{"{ method, path, query, headers, body, trigger }"}</code>; return an object, text, or <code>{"{ statusCode, headers, body }"}</code>.
           </>
         ) : (
-          <>Your code must serve HTTP on the port in the <code>PORT</code> environment variable.</>
-        )}{" "}
-        Changes apply on the next deploy. {mutable ? "Press ⌘/Ctrl+S to save." : ""}
+          <>Serve HTTP on the port in <code>PORT</code>.</>
+        )}
       </Muted>
       <FunctionTriggers item={item} name={name} reload={reload} />
     </div>
@@ -139,15 +138,15 @@ function FunctionTriggers({ item, name, reload }) {
       name: triggerName, schedule, ...(path ? { path } : {}), ...(payload ? { payload } : {}),
     }));
     action(`/apps/${name}/update`, { functionTriggers: clean.length ? JSON.stringify(clean) : "" })
-      .then(() => { reload?.(); alertUser("Schedules saved. Deploy to start them."); })
-      .catch((error) => alertUser(error.message))
+      .then(() => { reload?.(); alertUser("Schedules saved"); })
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
   return (
     <div className="rw-code-triggers">
       <h4>Schedules</h4>
-      <Muted size="xs">Call this function on a schedule (cron, in UTC). A function that is asleep is woken first. Schedules start with the next deploy.</Muted>
+      <Muted size="xs">Cron, in UTC.</Muted>
       {triggers.map((trigger, index) => (
         <div className="rw-code-trigger" key={index}>
           <Input value={trigger.name} onChange={(event) => change(index, "name", event.currentTarget.value)} aria-label="Schedule name" placeholder="nightly" />

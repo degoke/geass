@@ -147,6 +147,13 @@ export function ProjectLogsPage({ project, data, environment }) {
   const failure = !streaming && snapshot.isError ? snapshot.error.message : "";
   const historyUnavailable = history && snapshot.data && snapshot.data.available === false ? snapshot.data.message : "";
   const logging = loggingEnabled(data);
+  const footnote = streamError || (streaming
+    ? "Following live."
+    : history
+      ? (snapshot.data?.note || "")
+      : snapshot.data?.truncated
+        ? "Showing the newest lines."
+        : "");
 
   return (
     <ProjectChrome>
@@ -209,7 +216,7 @@ export function ProjectLogsPage({ project, data, environment }) {
           </Button>
         </div>
         {!services.length ? (
-          <Muted size="sm" className="rw-logs-empty">Deploy a service to see its logs here.</Muted>
+          <Muted size="sm" className="rw-logs-empty">Deploy a service to see its logs.</Muted>
         ) : !mutable ? (
           <Muted size="sm" className="rw-logs-empty">Your viewer role cannot read logs.</Muted>
         ) : (
@@ -223,15 +230,7 @@ export function ProjectLogsPage({ project, data, environment }) {
                 </div>
               )) : "No logs match."}
             </div>
-            <Muted size="xs">
-              {streamError || (streaming
-                ? "Following live. Showing the most recent lines, then new ones as they arrive."
-                : history
-                  ? (snapshot.data?.note || "Logs the cluster kept, including from pods that are gone.")
-                  : snapshot.data?.truncated
-                    ? "Showing the newest lines. Narrow the search or time range to see more."
-                    : "These are the logs the nodes still hold. Output from pods that have been replaced is not kept, except the run before a restart.")}
-            </Muted>
+            {footnote ? <Muted size="xs">{footnote}</Muted> : null}
           </>
         )}
       </div>

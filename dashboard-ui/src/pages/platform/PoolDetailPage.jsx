@@ -9,7 +9,6 @@ import {
   ageOf,
   formatSizeSummary,
   nodeIsStuck,
-  PHASE_HELP,
   poolCost,
   poolCostCap,
   poolPhase,
@@ -39,14 +38,6 @@ function Stat({ label, children, detail, title }) {
   );
 }
 
-/** What the pool says it is doing. A paused pool's own message repeats its alert, with a time in a form nobody reads. */
-function statusText(pool, phase) {
-  if (phase === "Paused") {
-    return `Stopped adding machines after repeated failures.${pool.pausedUntil ? ` It tries again ${relativeTime(pool.pausedUntil)}.` : ""}`;
-  }
-  return pool.message || PHASE_HELP[phase];
-}
-
 function When({ value, never = "Never" }) {
   if (!value) return never;
   return <span title={absoluteTime(value)}>{relativeTime(value)}</span>;
@@ -71,7 +62,7 @@ export function PoolDetailPage({ name, data }) {
       <ComputePage>
         <Empty
           title="Pool not found"
-          description={`There is no pool called ${name}. It may have been deleted.`}
+          description={`There is no pool called ${name}.`}
           action={<Link to="/pools" className="cp-name-link">Back to pools</Link>}
         />
       </ComputePage>
@@ -104,7 +95,7 @@ export function PoolDetailPage({ name, data }) {
     setDeleteError("");
     try {
       await action(`/pools/${pool.name}/delete`, { confirmName: pool.name });
-      notify(`Deleted the pool ${pool.name}`, "success");
+      notify(`Deleted ${pool.name}`, "success");
       setDeleting(false);
       await refresh();
       navigate({ to: "/pools" });
@@ -139,17 +130,17 @@ export function PoolDetailPage({ name, data }) {
         <PoolProblems pools={[pool]} mutable={mutable} onResume={resume} resuming={resuming} linkToPool={false} />
         {pool.suspended ? (
           <Alert tone="warning" title="Scaling is suspended">
-            <p className="cp-alert-text">The pool adds and removes no nodes. The nodes it has stay, and keep costing what they cost.{mutable ? " Switch scaling on again in the settings below." : ""}</p>
+            <p className="cp-alert-text">The pool keeps its nodes, and they keep costing.</p>
           </Alert>
         ) : null}
 
         <PageSection title="Status">
-          <p className="rw-rail-body">{statusText(pool, phase)}</p>
+          {pool.message && phase !== "Paused" && phase !== "Degraded" ? <p className="rw-rail-body">{pool.message}</p> : null}
           <dl className="cp-grid">
             <Stat label="Nodes" detail={`${pool.nodes} exist · ${pool.minNodes} to ${pool.maxNodes} allowed · ${pool.autoscaling?.enabled ? "autoscaling" : "fixed size"}`}>
               {pool.readyNodes} ready of {pool.desiredNodes} wanted
             </Stat>
-            <Stat label="Pods waiting for room" detail="Pods that could start on this pool's nodes, and cannot yet">
+            <Stat label="Pods waiting for room">
               {pool.pendingPods}
             </Stat>
             {cloud ? (
@@ -166,7 +157,7 @@ export function PoolDetailPage({ name, data }) {
               <Stat
                 label="Size in use"
                 detail={poolUsesFallback(pool)
-                  ? `A fallback is in use (step ${pool.fallbackStep}), not the first size and region you asked for. It goes back to the first choice an hour later.`
+                  ? `A fallback is in use (step ${pool.fallbackStep}). It goes back to the first choice after an hour.`
                   : formatSizeSummary(pool.activeSize)}
               >
                 {poolSize(pool) || "—"}
@@ -184,7 +175,7 @@ export function PoolDetailPage({ name, data }) {
 
         <PageSection
           title="Nodes"
-          description={members.length ? undefined : "The pool has no nodes now. It adds them when pods cannot start."}
+          description={members.length ? undefined : "No nodes now."}
           plain={!members.length}
         >
           {members.length ? (
@@ -223,8 +214,8 @@ export function PoolDetailPage({ name, data }) {
           <PageSection title="Delete pool">
             <p className="cp-danger-note">
               {cloud
-                ? `Deleting the pool deletes its ${pool.nodes} ${pool.nodes === 1 ? "node" : "nodes"} and their machines at the cloud. Services running on them move to other nodes, or wait for room.`
-                : `Deleting the pool removes its ${pool.nodes} ${pool.nodes === 1 ? "node" : "nodes"} from the cluster. Geass does not delete your servers. Services running on them move to other nodes, or wait for room.`}
+                ? `Deletes the pool's ${pool.nodes} ${pool.nodes === 1 ? "node" : "nodes"} and their machines at the cloud.`
+                : `Removes the pool's ${pool.nodes} ${pool.nodes === 1 ? "node" : "nodes"} from the cluster. Your servers are not deleted.`}
             </p>
             <Button variant="danger" leftSection={<Trash2 size={15} />} onClick={() => { setDeleteError(""); setDeleting(true); }}>Delete pool</Button>
           </PageSection>
@@ -243,12 +234,12 @@ export function PoolDetailPage({ name, data }) {
       >
         <p>
           This deletes the pool <strong>{pool.name}</strong> and its {pool.nodes} {pool.nodes === 1 ? "node" : "nodes"}
-          {cloud ? ", and deletes their machines at the cloud" : ""}. It cannot be undone.
+          {cloud ? " and their machines at the cloud" : ""}. This can't be undone.
         </p>
         <Callout tone="danger">
           {cloud
-            ? "A deleted machine and everything on its disk is gone. Make sure nothing on these nodes is needed: services are restarted elsewhere if there is room."
-            : "Services on these nodes are restarted elsewhere if there is room, and wait if there is not."}
+            ? "Everything on the machines' disks is lost."
+            : "Services on these nodes restart elsewhere if there is room."}
         </Callout>
       </ConfirmDelete>
     </ComputePage>

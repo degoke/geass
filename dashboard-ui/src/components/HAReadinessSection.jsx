@@ -9,7 +9,7 @@ export function HAReadinessSection({ data }) {
   const report = list(data, "haReadiness")[0];
   const healthy = report?.status?.healthyNodes ?? data?.platform?.healthyNodes ?? 0;
   return (
-    <PageSection title="HA readiness" description="High availability databases need at least three healthy nodes.">
+    <PageSection title="HA readiness" description="Needs at least three healthy nodes.">
       <KeyValueTable
         items={[
           { label: "Healthy nodes", value: String(healthy) },

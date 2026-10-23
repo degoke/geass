@@ -118,6 +118,9 @@ func (r *GeassDatabaseReconciler) verifyArchivedWal(ctx context.Context, plan *b
 	observed.lastSuccess = nil
 	if len(usable) == 0 {
 		observed.first = nil
+	} else if oldest := usable[len(usable)-1].Time.Time; observed.first != nil && observed.first.Before(oldest) {
+		// Nothing can be restored from before the oldest copy that is left, so the window starts there.
+		observed.first = &oldest
 	}
 	log.Info("Backups that cannot be restored were left out of the restore points", "database", plan.archive.Spec.Source.DatabaseName, "backups", len(observed.unusable))
 }

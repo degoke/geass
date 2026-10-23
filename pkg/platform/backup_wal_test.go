@@ -37,6 +37,11 @@ func TestMissingWalSegmentsReadsTheArchivesFileNames(t *testing.T) {
 	require.Empty(t, MissingWalSegments(WalSegments("000000010000000000000009", "00000001000000000000000B"), keys))
 	require.Equal(t, []string{"00000001000000000000000D"}, MissingWalSegments([]string{"00000001000000000000000D"}, keys))
 	require.Equal(t, segments, MissingWalSegments(segments, nil))
+	require.Equal(t, []string{"00000001000000000000000C"}, MissingWalSegments([]string{"00000001000000000000000C"}, keys),
+		"the record of a copy is not the log file it is named after")
+	require.Equal(t, []string{"00000001000000000000000E"},
+		MissingWalSegments([]string{"00000001000000000000000E"}, []string{"proj/db-1/wals/0000000100000000/00000001000000000000000E.partial.gz"}),
+		"a segment that was never finished is not the segment")
 }
 
 func TestWalDirectoryIsTheTimelineAndLogId(t *testing.T) {

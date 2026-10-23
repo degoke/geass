@@ -20,7 +20,7 @@ import {
   Sun,
 } from "lucide-react";
 import { action, list, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertError } from "@/lib/notify";
 import { canMutate, currentScope, dashboardSession, isPlatformSession, scopeLabel, sessionScopes, useBootstrap } from "@/lib/dashboard";
 import { openResourceDialog } from "@/lib/services";
 import {
@@ -110,7 +110,7 @@ function ScopeSwitcher({ data }) {
       .then(() => window.location.assign("/projects"))
       .catch((error) => {
         setBusy(false);
-        alertUser(error.message);
+        alertError(error.message);
       });
   };
   return (
@@ -173,7 +173,7 @@ export function AppLayout({ children }) {
   const signOut = () => {
     action("/logout")
       .then(() => window.location.reload())
-      .catch((error) => alertUser(error.message));
+      .catch((error) => alertError(error.message));
   };
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Modal, Stack, Text } from "@mantine/core";
 import { action } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { parseTagList, platformRegions, platformTags } from "@/lib/placement";
 import { Button, Field, Input, Muted, Switch } from "@/components/geass-ui";
 
@@ -54,7 +54,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
       alertUser("Node updated");
       onClose();
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setBusy(false);
     }
@@ -65,7 +65,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
       {node ? (
         <form onSubmit={submit}>
           <Stack gap="sm">
-            <Field label="Region" description="Projects pinned to a region only run on nodes in it. Leave empty for no region.">
+            <Field label="Region" description="Projects pinned to a region only run on nodes in it.">
               <Input
                 value={region}
                 onChange={(event) => setRegion(event.currentTarget.value)}
@@ -77,10 +77,10 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
                 {knownRegions.map((name) => <option key={name} value={name} />)}
               </datalist>
             </Field>
-            <Field label="Site" description="The provider or site inside the region, such as aws-us-east-1.">
+            <Field label="Site">
               <Input value={zone} onChange={(event) => setZone(event.currentTarget.value)} placeholder="aws-us-east-1" aria-label="Site" />
             </Field>
-            <Field label="Tags" description="What this node is for, separated by commas: storage, compute, gpu.">
+            <Field label="Tags" description="Separate with commas.">
               <Input value={tagText} onChange={(event) => setTagText(event.currentTarget.value)} placeholder="storage, compute" aria-label="Tags" />
             </Field>
             {knownTags.length ? <Muted size="xs">Tags in use elsewhere: {knownTags.join(", ")}</Muted> : null}
@@ -89,7 +89,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
               <Stack gap={6}>
                 <Text size="sm" fw={500}>Reserve for a tag</Text>
                 <Muted size="xs">
-                  A reserved node only runs workloads that ask for that tag. Everything else stays off it.
+                  Reserved nodes run only workloads that ask for the tag.
                 </Muted>
                 {tags.map((name) => (
                   <Switch
@@ -104,8 +104,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
               <Stack gap={6}>
                 <Text size="sm" fw={500}>Compliance tags</Text>
                 <Muted size="xs">
-                  A compliance tag, such as hipaa, is always reserved. Projects that require it run only on nodes
-                  that carry it, and nothing else runs on those nodes. Tags a project already requires stay compliance tags.
+                  Compliance tags are always reserved. Projects that require one run only on nodes that carry it.
                 </Muted>
                 {tags.map((name) => (
                   <Switch
@@ -119,7 +118,7 @@ export function NodePlacementDialog({ node, data, reload, onClose }) {
               </>
             ) : null}
             <Muted size="xs">
-              Workloads that are running are not moved. One that restarts only returns to a node that matches.
+              Running workloads are not moved.
             </Muted>
             <Button type="submit" loading={busy}>Save</Button>
           </Stack>

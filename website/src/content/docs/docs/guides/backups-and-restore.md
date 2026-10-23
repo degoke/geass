@@ -37,7 +37,7 @@ You choose storage once per project. Every database in the project uses it. Geas
 
 1. Open the project and select **Settings**, then **Backups**.
 2. Under **Backup storage**, choose an **AWS connection**. If the project has none, the page says "Connect an AWS account first" and links to **Connectors**.
-3. Select **Use this connection**. The dashboard confirms with "Backup storage saved".
+3. Select **Use this connection**. The dashboard confirms with "Saved".
 
 The same chooser appears on a database's **Backups** tab, under **Choose where backups are stored**, whenever the database needs storage. After you save, the page shows the **AWS connection**, **Bucket** and, if one was set, **Region**, with **Change** and **Remove** buttons.
 
@@ -150,7 +150,7 @@ A restore creates a new database. The original is not changed. You check the new
    - MySQL, SQLite and MariaDB as one server: **Restore latest backup**, or a **Restore** button beside a restore point.
    - MariaDB with high availability: the same choices as PostgreSQL.
 3. In the **Restore to a new database** dialog, confirm. If the original environment no longer exists, choose another **Environment**.
-4. Select **Restore**. The dashboard says "Restore started. Your original database is untouched." and opens the new database's **Deployments** tab.
+4. Select **Restore**. The dashboard says "Restore started" (your original database is untouched) and opens the new database's **Deployments** tab.
 
 The panel lists the five newest restore points with **Show all N restore points** for the rest. It says "Restore points appear after the first backup finishes" until one exists. A restore point stays available until retention removes it.
 

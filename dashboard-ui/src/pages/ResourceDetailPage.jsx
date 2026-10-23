@@ -7,7 +7,7 @@ import { ArrowLeft, Box, Database, HardDrive, RefreshCw, X } from "lucide-react"
 import { action, api, list, resourceDisplayName, resourceName } from "@/lib/api";
 import { EditableResourceTitle } from "@/components/EditableResourceTitle";
 import { canMutate, databaseVersion } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { outOfMemoryNotice, pendingChangeCopy, provisionFailed, resourceStatus, retryProvisionPathForKind, usesDeployWorkflow, userFacingReadyMessage } from "@/lib/services";
 import { sizeSummary } from "@/lib/capacity";
 import { backupSpec, isSnapshotDatabase, supportsBackups } from "@/lib/backups";
@@ -156,13 +156,13 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
               {provisionFailed(item) && canMutate(data) && (
                 <Button
                   variant="outline"
-                  onClick={() => action(retryProvisionPathForKind(kind, name)).then(() => { reload(); alertUser("Retrying provisioning"); }).catch((error) => alertUser(error.message))}
+                  onClick={() => action(retryProvisionPathForKind(kind, name)).then(() => { reload(); alertUser("Retry requested"); }).catch((error) => alertError(error.message))}
                 >
                   Retry
                 </Button>
               )}
               {isApp && !pendingChangeCopy(item) && item.spec?.deploy?.enabled && canMutate(data) && (
-                <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alertUser("Redeploy requested"); }).catch((error) => alertUser(error.message))}>Redeploy</Button>
+                <Button variant="outline" onClick={() => action(`/apps/${name}/deploy`).then(() => { reload(); alertUser("Redeploy requested"); }).catch((error) => alertError(error.message))}>Redeploy</Button>
               )}
               {embedded ? (
                 <Button variant="outline" size="icon" aria-label="Close resource panel" onClick={backToProject}>
@@ -202,7 +202,6 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
       {view === "logs" && (
         <PageSection
           title="Logs"
-          description="Recent container output for this service."
           actions={<Button variant="outline" size="sm" onClick={() => logs.refetch()} leftSection={<RefreshCw size={14} />}>Refresh</Button>}
         >
           <CodePanel code={logs.data?.lines} language="bash" empty="No logs yet." />
@@ -221,11 +220,11 @@ export function ResourceDetailPage({ project, data, kind, name, reload, embedded
         <ServiceConsole item={item} name={name} data={data} />
       )}
       {view === "console" && !isApp && (
-        <PageSection title="Query" description="Run SQL against this database.">
+        <PageSection title="Query">
           {!canMutate(data) ? (
             <Muted size="sm">Your viewer role cannot run queries.</Muted>
           ) : (
-            <FormStack onSubmit={(event) => { event.preventDefault(); action(`/databases/${name}/query`, { query }).then((result) => setOutput(result.output || "")).catch((error) => alertUser(error.message)); }}>
+            <FormStack onSubmit={(event) => { event.preventDefault(); action(`/databases/${name}/query`, { query }).then((result) => setOutput(result.output || "")).catch((error) => alertError(error.message)); }}>
               <Field label="Query"><Textarea rows={6} value={query} onChange={(event) => setQuery(event.target.value)} /></Field>
               <Button type="submit">Run query</Button>
               {output && <CodePanel code={output} language="sql" />}

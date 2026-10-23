@@ -68,8 +68,8 @@ const (
 	// are reachable once it is back.
 	strandedVolumeAfter = 3 * time.Minute
 
-	cnpgClusterLabel  = "cnpg.io/cluster"
-	cnpgInstanceLabel = "cnpg.io/instanceName"
+	cnpgClusterLabel  = platform.CNPGLabelCluster
+	cnpgInstanceLabel = platform.CNPGLabelInstance
 	// cnpgJobRoleLabel is on the pods of CloudNativePG's jobs (initdb, join), which belong to a Job and not to the database.
 	cnpgJobRoleLabel = "cnpg.io/jobRole"
 	// cnpgFullRecoveryRole is the job that rebuilds a restored database from its backup.
@@ -557,22 +557,20 @@ func (r *GeassClusterReconciler) forceDeletePod(ctx context.Context, pod *corev1
 	return true
 }
 
-// postgresInstanceTroubled lets through the changes to a Postgres instance's pod that the pass for lost nodes has to hear
-// of: a pod that is made (it is not ready yet), one that is removed, one that cannot be scheduled, and one that stops being
-// ready. The pass is otherwise run for the changes to nodes and volumes, and removing a server leaves nothing of the kind
-// after the node itself: the instance on it is made again by the Postgres operator, cannot be placed, and stays that way, so
-// the pass that found the database whole a moment before did not run again until something else woke the cluster, which a
-// live run on K3s showed: the instance waited for eight minutes where it is meant to wait three. Pods of the operator's jobs
-// (initdb, join) are not instances, and are left out.
+// postgresInstanceTroubled lets through the one change to a Postgres instance's pod that the pass for lost nodes has to hear
+// of: the pod cannot be scheduled. The pass is otherwise run for the changes to nodes and volumes, and removing a server
+// leaves nothing of the kind after the node itself: the instance on it is made again by the Postgres operator, cannot be
+// placed, and stays that way, so the pass that found the database whole a moment before did not run again until something
+// else woke the cluster, which a live run on K3s showed: the instance waited for eight minutes where it is meant to wait
+// three. The pass then asks to be run again when the wait is over. Pods that are only made, removed or not ready are left
+// out, because a drain or a rolling update changes hundreds of them and each would run every pass of the cluster again; so
+// are the operator's jobs (initdb, join), which are not instances.
 func postgresInstanceTroubled() predicate.Predicate {
-	instance := func(obj client.Object) (*corev1.Pod, bool) {
+	unschedulable := func(obj client.Object) bool {
 		pod, ok := obj.(*corev1.Pod)
 		if !ok || pod.Labels[cnpgClusterLabel] == "" || pod.Labels[cnpgJobRoleLabel] != "" {
-			return nil, false
+			return false
 		}
-		return pod, true
-	}
-	unschedulable := func(pod *corev1.Pod) bool {
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
 				return true
@@ -581,22 +579,11 @@ func postgresInstanceTroubled() predicate.Predicate {
 		return false
 	}
 	return predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			pod, ok := instance(e.Object)
-			return ok && !podConditionsReady(*pod)
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			_, ok := instance(e.Object)
-			return ok
-		},
+		CreateFunc: func(e event.CreateEvent) bool { return unschedulable(e.Object) },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			before, okBefore := instance(e.ObjectOld)
-			after, okAfter := instance(e.ObjectNew)
-			if !okBefore || !okAfter {
-				return false
-			}
-			return (unschedulable(after) && !unschedulable(before)) || (podConditionsReady(*before) && !podConditionsReady(*after))
+			return unschedulable(e.ObjectNew) && !unschedulable(e.ObjectOld)
 		},
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 }

@@ -13,6 +13,12 @@ const BOOTSTRAP_KEY = ["dashboard", "bootstrap"];
 
 const itemsOf = (data) => data?.items || [];
 
+/**
+ * Whether a connection holds buckets or databases, whatever else it does. A connection that also creates servers
+ * (an AWS one can be used for both) is listed with the servers' clouds and here.
+ */
+export const isDataConnection = (purposes = []) => purposes.length === 0 || purposes.some((purpose) => purpose !== "Compute");
+
 export function useProviders() {
   return useQuery({
     queryKey: [...COMPUTE_KEY, "providers"],
@@ -109,10 +115,10 @@ export function connectionWarnings(connection, now = Date.now()) {
   const warnings = [...(connection.warnings || [])];
   if (connection.expiresAt) {
     const left = new Date(connection.expiresAt).getTime() - now;
-    if (left <= 0) warnings.push("The credentials have expired. Replace them.");
+    if (left <= 0) warnings.push("The credentials have expired.");
     else if (left < 14 * DAY) {
       const days = Math.max(1, Math.ceil(left / DAY));
-      warnings.push(`The credentials expire in ${days} ${days === 1 ? "day" : "days"}. Replace them before then.`);
+      warnings.push(`The credentials expire in ${days} ${days === 1 ? "day" : "days"}.`);
     }
   }
   return warnings;

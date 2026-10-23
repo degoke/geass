@@ -628,11 +628,11 @@ func TestThePassForLostNodesHearsOfAPostgresInstanceThatCannotStart(t *testing.T
 		return postgresInstanceTroubled().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after})
 	}
 
-	require.True(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(false, corev1.ConditionUnknown)}), "an instance is made, and is not ready")
-	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(true, corev1.ConditionTrue)}), "one that is made ready is not trouble")
-	require.True(t, postgresInstanceTroubled().Delete(event.DeleteEvent{Object: instance(true, corev1.ConditionTrue)}), "one that is removed, as the pod of a removed server is")
+	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(false, corev1.ConditionUnknown)}), "an instance that is made has not failed to be placed yet")
+	require.True(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(false, corev1.ConditionFalse)}), "one that is already known not to fit")
+	require.False(t, postgresInstanceTroubled().Delete(event.DeleteEvent{Object: instance(true, corev1.ConditionTrue)}), "a removed pod is not trouble: its replacement is, when it cannot be placed")
 	require.True(t, update(instance(false, corev1.ConditionUnknown), instance(false, corev1.ConditionFalse)), "it cannot be placed")
-	require.True(t, update(instance(true, corev1.ConditionTrue), instance(false, corev1.ConditionTrue)), "it stops being ready")
+	require.False(t, update(instance(true, corev1.ConditionTrue), instance(false, corev1.ConditionTrue)), "stopping being ready is what a drain does to hundreds of pods")
 	require.False(t, update(instance(false, corev1.ConditionFalse), instance(false, corev1.ConditionFalse)), "nor again for each change that follows while it waits")
 	require.False(t, update(instance(false, corev1.ConditionTrue), instance(true, corev1.ConditionTrue)), "getting ready is not trouble")
 
@@ -640,5 +640,5 @@ func TestThePassForLostNodesHearsOfAPostgresInstanceThatCannotStart(t *testing.T
 	job.Labels[cnpgJobRoleLabel] = "initdb"
 	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: job}), "the operator's own jobs are not instances")
 	other := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "app-prod"}}
-	require.False(t, postgresInstanceTroubled().Delete(event.DeleteEvent{Object: other}), "and a pod of no database is of no interest")
+	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: other}), "and a pod of no database is of no interest")
 }

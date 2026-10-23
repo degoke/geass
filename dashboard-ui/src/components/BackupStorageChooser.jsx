@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Group, Modal, Text } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
 import { action, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { Button, Field, Muted, Select } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
@@ -35,9 +35,9 @@ export function BackupStorageChooser({ project, data, reload, mutable = true }) 
       .then(() => {
         reload?.();
         setEditing(false);
-        alertUser("Backup storage saved");
+        alertUser("Saved");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setBusy(false));
   };
 
@@ -48,9 +48,9 @@ export function BackupStorageChooser({ project, data, reload, mutable = true }) 
         reload?.();
         setRemoving(false);
         setEditing(false);
-        alertUser("Backup storage removed");
+        alertUser("Storage removed");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setBusy(false));
   };
 
@@ -85,8 +85,8 @@ export function BackupStorageChooser({ project, data, reload, mutable = true }) 
         ) : null}
         <Modal opened={removing} onClose={() => { if (!busy) setRemoving(false); }} title="Remove backup storage?" centered>
           <Text size="sm" mb="md">
-            Backups that are already stored stay where they are. Databases that do not have backups yet cannot start
-            them until you choose storage again.
+            Stored backups stay where they are. Databases without backups cannot start them until you choose storage
+            again.
           </Text>
           <Group justify="flex-end" gap="sm">
             <Button type="button" variant="outline" disabled={busy} onClick={() => setRemoving(false)}>Cancel</Button>
@@ -98,16 +98,15 @@ export function BackupStorageChooser({ project, data, reload, mutable = true }) 
   }
 
   if (!mutable) {
-    return <Muted size="sm">Only people who can edit this project can see or change where backups are stored.</Muted>;
+    return <Muted size="sm">Only people who can edit this project can see or change this.</Muted>;
   }
 
   if (!connections.length) {
     return (
       <div className="rw-backup-storage">
         <p className="rw-rail-body">
-          <strong>Connect an AWS account first.</strong> Backups are stored in your own AWS account. Add an AWS
-          connection for this project in <Link to="/settings/connectors" className="rw-settings-text-btn">Connectors</Link>,
-          then choose it here.
+          <strong>Connect an AWS account first.</strong> Add an AWS connection in{" "}
+          <Link to="/settings/connectors" className="rw-settings-text-btn">Connectors</Link>.
         </p>
         {editing ? (
           <SettingsFormActions>
@@ -122,14 +121,14 @@ export function BackupStorageChooser({ project, data, reload, mutable = true }) 
     <form className="rw-rail-form rw-backup-storage" onSubmit={save}>
       <Field
         label="AWS connection"
-        description={current ? "Databases that already have backups keep using their current storage." : undefined}
+        description={current ? "Databases with backups keep their current storage." : undefined}
       >
         <Select value={selected} onChange={(event) => setChoice(event.currentTarget.value)} aria-label="AWS connection">
           {names.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
         </Select>
       </Field>
       <p className="rw-rail-body">
-        Geass will create a private bucket in this AWS account and a user that can only access it.
+        Creates a private bucket in this account and a user limited to it.
       </p>
       <SettingsFormActions>
         <Button type="submit" loading={busy}>Use this connection</Button>

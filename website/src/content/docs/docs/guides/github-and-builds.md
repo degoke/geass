@@ -40,11 +40,11 @@ A push to the branch repeats the cycle. See [Build a new commit](#build-a-new-co
 
 Each project is linked to GitHub separately, so each project can use a different GitHub account.
 
-1. Open the project's **Settings** → **Integrations**.
+1. Open the project's **Settings** → **GitHub**.
 2. On the **GitHub** card choose **Connect to GitHub**. If the card says "GitHub is not set up for this cluster yet",
    choose **Set up GitHub** and ask an admin to register the app first.
 3. GitHub asks where to install the app. Choose the account or organization and the repositories the app may read.
-4. GitHub returns you to the project with the repository list open. On **Integrations**, the card now reads "Connected.
+4. GitHub returns you to the project with the repository list open. On **GitHub**, the card now reads "Connected.
    Repositories can be deployed as services, and pushes build automatically." See
    [Build a new commit](#build-a-new-commit). **Disconnect** unlinks the project. Services already created keep their
    settings, and a project that is unlinked ignores GitHub's `push` and `pull_request` events.
@@ -456,7 +456,7 @@ An app that Geass registers from now on asks for all of them when it is created,
 
 ### Turn it off
 
-Reporting is on for every project by default. To turn it off for one, open the project's **Settings** → **Integrations**
+Reporting is on for every project by default. To turn it off for one, open the project's **Settings** → **GitHub**
 and switch **Report to GitHub** off. That stops all three reports for the project: no commit statuses, no deployments
 and no pull request comment. Builds, deploys and pull request environments are not affected. A read-only user does not
 see the setting.
@@ -706,7 +706,7 @@ kubectl -n geass-system get geassgithubconnection proj-1a2b3c4d-github -o jsonpa
 registered. An admin registers it under **Settings** → **Connectors** → **GitHub** (see
 [Connect GitHub](/docs/guides/connectors/github/)).
 
-**"Link this project to GitHub first".** The project has no installation. Use **Settings** → **Integrations** →
+**"Link this project to GitHub first".** The project has no installation. Use **Settings** → **GitHub** →
 **Connect to GitHub**.
 
 **A repository is missing from the list.** The installation cannot see it. Change the app's repository access in GitHub,
@@ -728,7 +728,7 @@ See [Wait for CI](#wait-for-ci).
 **No `geass/build/<service>` status or GitHub Deployment appears.** Work down this list:
 
 - The service must be built from a repository. Image services and functions are not reported.
-- **Report to GitHub** must be on for the project, under **Settings** → **Integrations**, and the project must be linked to
+- **Report to GitHub** must be on for the project, under **Settings** → **GitHub**, and the project must be linked to
   GitHub.
 - Look at the connection: `kubectl -n geass-system get geassgithubconnection <project ID>-github -o yaml`. A
   `GitHubReporting` condition that is `False` with the reason `PermissionMissing` means GitHub refused. Its message
