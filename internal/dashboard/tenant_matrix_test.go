@@ -438,6 +438,7 @@ func TestAnOrganizationCannotReachThePlatformsOwnRoutes(t *testing.T) {
 		{http.MethodPost, "/api/templates/create"}, {http.MethodPost, "/api/templates/x/delete"},
 		{http.MethodGet, "/api/orgs"}, {http.MethodPost, "/api/orgs/create"}, {http.MethodPost, "/api/settings/auth/tenancy"},
 		{http.MethodGet, "/api/cluster/metrics"}, {http.MethodGet, "/api/operator/metrics"}, {http.MethodGet, "/api/v1/nodes"},
+		{http.MethodGet, "/api/v1/usage/hours"},
 		{http.MethodGet, "/api/object-stores/" + platform.ClusterObjectStoreName + "/logs"},
 		{http.MethodGet, "/api/something-nobody-classified"},
 	} {
