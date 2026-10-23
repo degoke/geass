@@ -285,6 +285,7 @@ There is one, named `platform`, in `geass-system`. See [GeassPlatformConfig](/do
 | `prometheusURL` | Where to query metrics | `kubectl` only |
 | `defaultClusterRef` | The cluster new projects use when there are several | `kubectl` only |
 | `registry.repository`, `registry.credentialRef` | The image destination and login for repository builds when a service sets none. The login is also what the nodes pull the built image with | The REST API (`/api/settings/registry/save`) or `kubectl`. The dashboard has no form for it yet |
+| `usage.enabled` | Meter what each organization reserves, hour by hour, for billing; see [Usage by organization](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing) | `kubectl` only |
 | `defaultDomain`, `traefikAccessLogs` | Present in the schema; no code reads them | Not used |
 
 :::caution

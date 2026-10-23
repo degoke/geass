@@ -213,6 +213,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /openapi.json` | Any | none | The OpenAPI document |
 | `GET /events` | Any | none | A server-sent event stream that says when something changed; see [Events](#events) |
 | `GET /usage` | Any | none | What each project reserves and uses; see [Usage](#usage) |
+| `GET /usage/hours` | Admin acting for the platform (a platform administrator or an install-wide admin token; not an organization's caller, a viewer, an observer or a project token) | `?from=`, `?to=` (RFC 3339), `?org=` | What each organization reserved, hour by hour, once `spec.usage.enabled` is on; see [Usage by organization](#usage-by-organization) |
 
 #### Sign-in and tokens
 
@@ -370,6 +371,73 @@ explains a `pending` or `failed` state. `details` depends on the kind: a functio
 sleeps when idle has `scaleToZero` (`idleSeconds`, `maxReplicas`, and whether it is `active`), a project has `environments`, `region`
 and `requiredTags`, a database has `engine`, `highAvailability`, `placement` and `version`, a logical database has `server` and
 `database`. A caller who cannot change things gets the same redactions as in the dashboard, so a viewer sees an empty `engine`.
+
+### Usage by organization
+
+`GET /api/v1/usage/hours` is what the usage meter kept: for each hour (UTC), what the projects of each organization reserved, by
+workspace. It is for billing the organizations of a shared cluster, so it is the platform's alone: an organization's people and tokens
+get `403` (their own organization's figures included), and so do viewers, observers and project tokens. The meter runs only while
+`spec.usage.enabled` is on in the [platform configuration](/docs/reference/resources/geass-platform-config/); what it measures, and
+what it does not, is in [Usage by organization, for billing](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing).
+
+| Query | Default | Meaning |
+| --- | --- | --- |
+| `from` | 24 hours before `to` | The first hour, as an RFC 3339 time. It is taken back to the start of its hour, and to the oldest hour that is kept (`retainedFrom`, 62 days back) when it is older |
+| `to` | the end of the hour going on | The answer holds the hours that start before it. A later time is the end of the hour going on: no hour is answered that has not begun |
+| `org` | every organization | One organization's name. The answer then has only its entries, and no `unassigned` or `platform` |
+
+`from` must be before `to`, and the range at most 744 hours (31 days); otherwise `400`. Every hour of the range is answered, those the
+meter never wrote as empty, so an hour is never missing.
+
+```json title="GET /api/v1/usage/hours?from=2026-10-23T09:00:00Z (one hour shown)"
+{
+  "enabled": true,
+  "source": "requests",
+  "from": "2026-10-23T09:00:00Z",
+  "to": "2026-10-23T11:00:00Z",
+  "next": "2026-10-23T10:00:00Z",
+  "retainedFrom": "2026-08-22T10:00:00Z",
+  "egress": { "available": false, "reason": "Geass does not meter traffic that leaves the cluster. ..." },
+  "hours": [
+    {
+      "start": "2026-10-23T09:00:00Z",
+      "end": "2026-10-23T10:00:00Z",
+      "closed": true,
+      "meteredSeconds": 3600,
+      "orgs": [
+        { "org": "org-a", "workspace": "", "cpuCoreHours": 0.25, "memoryGiBHours": 0.5, "storageGiBHours": 0, "egressBytes": null,
+          "cpuMilliSeconds": 900000, "memoryByteSeconds": 1932735283200, "storageByteSeconds": 0 },
+        { "org": "org-a", "workspace": "ws-aaaaaa", "cpuCoreHours": 0.5, "memoryGiBHours": 1, "storageGiBHours": 10, "egressBytes": null,
+          "cpuMilliSeconds": 1800000, "memoryByteSeconds": 3865470566400, "storageByteSeconds": 38654705664000 }
+      ],
+      "unassigned": { "cpuCoreHours": 0.1, "memoryGiBHours": 0.125, "storageGiBHours": 0, "egressBytes": null,
+        "cpuMilliSeconds": 360000, "memoryByteSeconds": 483183820800, "storageByteSeconds": 0 },
+      "platform": { "cpuCoreHours": 0.2, "memoryGiBHours": 0.25, "storageGiBHours": 0, "egressBytes": null,
+        "cpuMilliSeconds": 720000, "memoryByteSeconds": 966367641600, "storageByteSeconds": 0 }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Whether the meter is on now. Hours it stored before it was turned off are still answered |
+| `source` | `requests`: the figures are what pods asked for (their CPU and memory requests) and the size of bound volumes, not what was used |
+| `from`, `to` | The hours the answer holds, from the start of the first to the end of the last |
+| `next` | Where the next read should start: the first hour of the answer that is still open, or `to` when all are closed |
+| `retainedFrom` | The oldest hour that is kept |
+| `egress` | Always `{"available": false, "reason": ...}`: Geass does not meter traffic, and every `egressBytes` is `null` |
+| `hours[].closed` | Whether the hour can still change. It closes once it is metered to its end, or five minutes after it ends, and never changes after that. An open hour comes again in the next answer |
+| `hours[].meteredSeconds` | How much of the hour the meter saw, 0 to 3600. In a closed hour, less than 3600 is time it did not see, which is not counted; `0` is an hour it did not run in, which is not the same as an hour in which nothing was reserved |
+| `hours[].orgs[]` | One entry for each organization and workspace that had a pod on a node or a bound volume in the hour, sorted by organization and workspace. `workspace` is `""` for the organization as a whole: its projects in no workspace, and its builds |
+| `hours[].unassigned` | The projects that belong to no organization. Never added to an organization |
+| `hours[].platform` | What is no project's: Geass, K3s, monitoring, storage, and the shared database and bucket servers |
+| `cpuCoreHours`, `memoryGiBHours`, `storageGiBHours` | The amounts in the units they are billed in, to six decimals |
+| `cpuMilliSeconds`, `memoryByteSeconds`, `storageByteSeconds` | The same amounts exactly, in the units they were added up in (millicores, or bytes, times seconds) |
+
+A program that bills as it goes asks every hour or so with `from` set to the `next` of its last answer, and stores each hour by its `start`,
+`org` and `workspace`, replacing what it stored for the same hour before. Asking again for an hour that is closed gives the same numbers, until it is
+older than 62 days and no longer kept.
 
 ### Sign in from a program
 

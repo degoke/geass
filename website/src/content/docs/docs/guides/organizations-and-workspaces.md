@@ -186,6 +186,10 @@ A platform administrator can set these on an organization, in **Settings** → *
 | **Required node tags** (`requiredTags`) | Every workload of every project of the organization runs only on nodes carrying all of them, added to the project's own. With nodes tagged and reserved for the tag, this is how an organization gets machines of its own. The tags have to exist on nodes, and be reserved, as a project's must. |
 | **Allowed domains** (`allowedDomains`) | Its services may take hostnames under these domains only, and the hostname Geass gives a service. Two organizations cannot be given overlapping domains. |
 
+## Billing what each organization reserves
+
+With `spec.usage.enabled` on the platform configuration, the operator keeps what the projects of each organization reserve (CPU, memory and storage), hour by hour and by workspace, and `GET /api/v1/usage/hours` gives it to the platform's administrators. Projects that belong to no organization are kept apart from every organization. No organization can read it, its own figures included. See [Usage by organization, for billing](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing).
+
 ## Alerts
 
 An organization has alert channels of its own, under **Settings** → **Alerts**: Slack channels that hear only about the organization's projects (what is firing, and failed builds, deploys, backups, crash loops and storage), never about the cluster or another organization. An organization's administrator makes and sees them; a member of one workspace manages the channels that name projects of that workspace. A channel posts to `hooks.slack.com`: mail goes out through the platform's mail server and is not for an organization to send through. Each organization may have 10, and the platform's own keep their 20.
