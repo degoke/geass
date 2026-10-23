@@ -105,6 +105,7 @@ export default defineConfig({
             "docs/guides/scale-to-zero",
             "docs/guides/compliance-tags",
             "docs/guides/network-isolation",
+            "docs/guides/outbound-limits",
             "docs/guides/project-limits",
             "docs/guides/observability",
             "docs/guides/alerts",

@@ -261,7 +261,7 @@ Without this block, databases that turn on backups report that they need storage
 | `spec.network.allowFromProjects` | list of strings | empty | At most 20 unique items. Each matches `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, 63 characters at most | Other projects, by project ID, whose services may reach this project's services. It has no effect when isolation is `None`. |
 | `spec.network.blockNodeAddresses` | boolean | none: `false` when absent | none | `true` stops the project's services from opening connections to the cluster's machines: every node address and the two lowest addresses of every node's pod range. The Kubernetes API stays open on the control plane. It is independent of `isolation`, and Geass keeps the rule in step with the nodes as they join and leave. Projects created by the dashboard or the API set it to `true`, and one that existed before it does not have it. |
 
-A project with no `spec.network` is isolated and not blocked from the machines. The policies apply to every environment of the project and change within seconds of a save. See [Network isolation](/docs/guides/network-isolation/).
+A project with no `spec.network` is isolated and not blocked from the machines. The policies apply to every environment of the project and change within seconds of a save. See [Network isolation](/docs/guides/network-isolation/). A project of an organization may also be held to the organization's [outbound limits](/docs/guides/outbound-limits/), which are not a setting of the project.
 
 ### Quota
 
@@ -290,7 +290,7 @@ A field left out is not capped. The caps count requests, not use. Each environme
 | `status.clusterRef` | string | The cluster the operator observed. It is set after the first successful reconcile and prevents a project from moving to another cluster. |
 | `status.environments[].name` | string | The environment name. At most 100 entries. |
 | `status.environments[].namespace` | string | The namespace of that environment. |
-| `status.conditions` | list | The `Ready` condition. See below. |
+| `status.conditions` | list | The `Ready` condition, and `EgressLimitsApplied` for a project of an organization with outbound limits. See below. |
 | `status.reconcileRetry.reconcileFailures` | integer | Consecutive errors counted toward the retry limit. |
 | `status.reconcileRetry.reconcileFailureStarted` | time | When the current streak of errors began. |
 | `status.reconcileRetry.reconcileFailureGeneration` | integer | The `metadata.generation` at which the project was marked `ProvisionFailed`. |
@@ -299,7 +299,7 @@ A field left out is not capped. The caps count requests, not use. Each environme
 
 ### Conditions
 
-The operator sets one condition type, `Ready`.
+The operator sets the condition type `Ready`, and `EgressLimitsApplied` (below the table).
 
 | Status | Reason | Message | Meaning |
 | --- | --- | --- | --- |
@@ -310,6 +310,8 @@ The operator sets one condition type, `Ready`.
 | `False` | `ReconcileError` | `Project environments must be unique` | `spec.environments` contains a duplicate. |
 | `False` | `ReconcileError` | `invalid project "..."`, `invalid environment "..."` or `project/environment namespace "..." is invalid` | A name is not a valid DNS label, or the combined namespace name is too long. |
 | `False` | `ProvisionFailed` | `Provisioning failed after repeated errors. Update settings or platform configuration, then save or redeploy to try again.` | The same kind of error repeated 5 times or for 3 minutes. The operator stops retrying until you change the spec. |
+
+A project of an organization that has [outbound limits](/docs/guides/outbound-limits/) also carries `EgressLimitsApplied`: `True` (`Applied`) when they are in the network policy of every environment and the cluster enforces network policies (its `NetworkPolicyEnforced` condition), `False` with `NotEnforced` when the cluster does not, `Unknown` with `EnforcementUnknown` before the cluster has been checked or when the check could not tell, and `False` with `InvalidLimits` when they cannot be applied as written (each environment keeps the policy it had). It does not change `Ready`. A project without such limits has no such condition.
 
 The operator retries a failing project every 30 seconds. Errors that the operator treats as temporary (a cluster that is not ready, a cluster change, a duplicate environment) are retried without a limit. Other errors count: after 5 in a row, or 3 minutes, the project becomes `ProvisionFailed` and the controller pauses until `metadata.generation` changes, which means until you edit `spec`. The dashboard has no **Retry** button for projects. Any change to `spec` raises `metadata.generation` and resumes reconciliation.
 
