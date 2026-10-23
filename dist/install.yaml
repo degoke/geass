@@ -6342,6 +6342,35 @@ spec:
                   dashboard at geass.<rootDomain> after DNS verification.
                 pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
                 type: string
+              tenancy:
+                description: |-
+                  Tenancy hardens a cluster that organizations who do not trust each other share, such as by running their code in a
+                  sandboxed runtime. Unset means nothing changes.
+                properties:
+                  sandbox:
+                    description: |-
+                      Sandbox runs the pods Geass makes for organizations' projects under a sandboxed container runtime, such as gVisor or
+                      Kata Containers, so that code one organization wrote does not share the node's kernel directly with another's. Unset
+                      means every pod runs with the node's own runtime, as before.
+                    properties:
+                      runtimeClassName:
+                        description: RuntimeClassName is the RuntimeClass the pods
+                          run with, such as gvisor or kata.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      skipOnReservedNodes:
+                        description: |-
+                          SkipOnReservedNodes runs without the sandbox the pods that can only be scheduled on nodes reserved for their own
+                          organization: their node selector asks for a tag the organization requires of all its projects, no other
+                          organization requires it, and every node that carries it is reserved for it, of which there is at least one.
+                          Anything less certain is sandboxed.
+                        type: boolean
+                    required:
+                    - runtimeClassName
+                    type: object
+                type: object
               traefikAccessLogs:
                 properties:
                   enabled:
