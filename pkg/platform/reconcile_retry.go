@@ -151,6 +151,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "database server") && strings.Contains(msg, "unavailable") {
 		return false
 	}
+	// A database on a server of another organization waits for the platform to give the project a server of its own
+	// organization's, or to give the server to the project's organization; the project's people can do neither.
+	if strings.Contains(msg, MessageOneOrganizationPerServer) {
+		return false
+	}
 	// A project, or the cluster it is on, that is not ready yet, or is not there yet, is a wait: a project made a moment
 	// ago is not ready for a second or two, and a service applied with it (one kubectl apply of both, in either order)
 	// meets that. The retries come within milliseconds, so counting it used up the five tries before the project could be
