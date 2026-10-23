@@ -230,6 +230,12 @@ The first public release, open source under the Apache License 2.0.
   WebSocket also takes the token as the subprotocol `geass.bearer.<token>`, next to `geass.v1`. It is checked as the
   header is, and read for no other request.
 
+
+### Fixed
+
+- **A service could not be deployed from a dashboard that runs outside the cluster.** Deploying records a deployment and then writes
+  its status, which the `--controllers=false` dashboard's role (`config/dashboard-only`) did not allow, so the service was saved as a
+  draft and "deploying it failed". The role can now update the status of a `GeassDeployment`.
 ### Changed
 
 - The first pool whose nodes hold no data (`storage: None`, the default), or the first single server added with

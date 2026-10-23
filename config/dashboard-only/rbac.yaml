@@ -17,7 +17,7 @@ metadata:
 rules:
 # Geass's own objects. The dashboard creates, edits and deletes every kind but the ones the controllers write alone,
 # and updates the status of the few it keeps a record in (webhook deliveries, console sessions, builds, backup
-# archives, provisioning attempts, domain checks). The controllers' own records are in the status of the same kinds,
+# archives, provisioning attempts, domain checks, and the deployment it records when a service is deployed). The controllers' own records are in the status of the same kinds,
 # which is why they are listed here: the dashboard reads them and a retry resets some.
 - apiGroups: [geass.geass.dev]
   resources:
@@ -47,6 +47,7 @@ rules:
   - geassbuilds/status
   - geassconsolesessions/status
   - geassdatabases/status
+  - geassdeployments/status
   - geasslogicaldatabases/status
   - geassobjectstores/status
   - geassplatformconfigs/status
