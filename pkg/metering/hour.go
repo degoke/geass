@@ -16,6 +16,7 @@ package metering
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -139,9 +140,7 @@ func encode(h Hour, configMap *corev1.ConfigMap) error {
 	if configMap.Labels == nil {
 		configMap.Labels = map[string]string{}
 	}
-	for key, value := range hourLabels(h.Start) {
-		configMap.Labels[key] = value
-	}
+	maps.Copy(configMap.Labels, hourLabels(h.Start))
 	configMap.Data = map[string]string{dataKey: string(raw)}
 	return nil
 }
