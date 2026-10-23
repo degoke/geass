@@ -465,6 +465,135 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              observability:
+                description: |-
+                  Observability says where the cluster's metrics and logs go besides the stores in the cluster, and where the
+                  dashboard reads them from. Unset, both stay in the cluster.
+                properties:
+                  external:
+                    description: |-
+                      External sends the cluster's metrics and logs to stores outside the cluster as well, and has the dashboard read
+                      them from there. It is what lets a dashboard that runs outside the cluster (--controllers=false) show metrics and
+                      log history. Unset, everything stays in the cluster, as before.
+                    properties:
+                      logs:
+                        description: |-
+                          Logs is a store that speaks VictoriaLogs' JSON lines and LogsQL APIs: VictoriaLogs itself, or something in front
+                          of it.
+                        properties:
+                          accountID:
+                            description: |-
+                              AccountID and ProjectID are the VictoriaLogs tenant the lines are written to and read from, sent as the AccountID
+                              and ProjectID headers with every line and every query. Unset means 0, VictoriaLogs' default tenant.
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          credentialRef:
+                            description: |-
+                              CredentialRef names a Secret in the system namespace that holds how to sign in to the store: a "token" key for a
+                              bearer token, or "username" and "password" keys for basic authentication. Empty sends no credentials. Geass
+                              copies the keys it uses into a Secret beside the log shipper, which reads them from there.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          projectID:
+                            description: ProjectID is the second half of the tenant.
+                              See AccountID.
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          pushURL:
+                            description: |-
+                              PushURL is the address of the store that the log shipper sends every line to, besides the store in the cluster:
+                              /insert/jsonline is added to it. Lines of projects that require node tags are not sent, as they are not sent to the
+                              store in the cluster. Empty sends nothing. It needs the logging add-on.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          queryURL:
+                            description: |-
+                              QueryURL is the address of the store that answers LogsQL: /select/logsql/query is added to it. When it is set,
+                              the dashboard reads log history from it and never from the store in the cluster. Empty leaves the dashboard
+                              reading the cluster's store.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          retentionDays:
+                            description: |-
+                              RetentionDays is how long the store keeps logs, which the dashboard reports with the history it reads from it.
+                              Unset means the logging add-on's retention.
+                            format: int32
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                        type: object
+                      metrics:
+                        description: |-
+                          Metrics is a store that speaks Prometheus remote write and the Prometheus query API, such as Mimir, Cortex,
+                          Thanos or VictoriaMetrics.
+                        properties:
+                          credentialRef:
+                            description: |-
+                              CredentialRef names a Secret in the system namespace that holds how to sign in to the store: a "token" key for a
+                              bearer token, or "username" and "password" keys for basic authentication. Empty sends no credentials. Geass
+                              copies the keys it uses into a Secret beside Prometheus, which reads them from there.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          queryURL:
+                            description: |-
+                              QueryURL is a Prometheus-compatible query API: the address that /api/v1/query and /api/v1/query_range are added to
+                              (for Mimir that is its /prometheus prefix). When it is set, the dashboard reads every metric it shows from it and
+                              never from the Prometheus in the cluster. Empty leaves the dashboard reading the cluster's Prometheus.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          remoteWriteURL:
+                            description: |-
+                              RemoteWriteURL receives every sample the cluster's Prometheus keeps, by Prometheus remote write: Mimir's or
+                              Cortex's /api/v1/push, VictoriaMetrics' /api/v1/write (with the tenant in the path for its cluster version), or
+                              anything else that speaks the protocol. Prometheus keeps its own copy as before. Empty sends nothing. It needs the
+                              monitoring add-on.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          tenant:
+                            description: |-
+                              Tenant is sent in TenantHeader with every write and every query, for a store that keeps tenants apart by a
+                              header. Empty sends no tenant header, for a store that takes the tenant from the URL or from the credentials.
+                            maxLength: 150
+                            pattern: ^[A-Za-z0-9!._*'()-]+$
+                            type: string
+                          tenantHeader:
+                            description: |-
+                              TenantHeader is the header that carries Tenant. Unset means X-Scope-OrgID, which Mimir, Cortex and Loki read;
+                              Thanos reads THANOS-TENANT. A header Prometheus sets itself, such as Authorization, cannot be used.
+                            maxLength: 64
+                            pattern: ^[A-Za-z0-9-]+$
+                            type: string
+                        type: object
+                    type: object
+                type: object
               prometheusURL:
                 type: string
               registry:

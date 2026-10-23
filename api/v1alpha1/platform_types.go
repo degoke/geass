@@ -593,6 +593,10 @@ type GeassPlatformConfigSpec struct {
 	// that is down, backups that are failing, a node that is not ready.
 	// +optional
 	Alerting *GeassAlertingSpec `json:"alerting,omitempty"`
+	// Observability says where the cluster's metrics and logs go besides the stores in the cluster, and where the
+	// dashboard reads them from. Unset, both stay in the cluster.
+	// +optional
+	Observability *GeassObservabilitySpec `json:"observability,omitempty"`
 }
 
 // GeassPlatformAuthSpec says whose word Geass takes for who a person is.
