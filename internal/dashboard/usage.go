@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -224,6 +223,7 @@ func (p *PrometheusClient) QueryVector(ctx context.Context, query string) ([]vec
 	if err != nil {
 		return nil, err
 	}
+	addHeader(req, p.Header)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -234,7 +234,7 @@ func (p *PrometheusClient) QueryVector(ctx context.Context, query string) ([]vec
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("prometheus query failed: %s", string(body))
+		return nil, &storeError{status: resp.StatusCode, text: "prometheus query failed: " + string(body)}
 	}
 	var parsed struct {
 		Data struct {

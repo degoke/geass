@@ -163,6 +163,8 @@ func TestADashboardOnlyProcessAddsTheDashboardAndNothingTheControllersOwn(t *tes
 	require.Same(t, cfg, server.Config)
 	require.NotNil(t, server.Webhooks, "it builds its own dispatcher: deploys and tests still tell the project's webhooks")
 	require.NotNil(t, server.Compute, "it builds its own cloud providers: listing a cloud's sizes needs no controller")
+	require.Nil(t, server.Metrics, "metrics are read from what the platform configuration names: a store outside the cluster when it names one")
+	require.Nil(t, server.LogStore, "and so is log history")
 	require.NotNil(t, mgr.guard())
 	require.False(t, mgr.guard().NeedLeaderElection())
 }

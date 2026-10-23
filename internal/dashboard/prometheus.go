@@ -25,6 +25,10 @@ type MetricsClient interface {
 type PrometheusClient struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	// Header is sent with every query: the tenant and the credentials of a store outside the cluster.
+	Header http.Header
+	// External says the client reads a store outside the cluster, which is what a page says when it does not answer.
+	External bool
 }
 
 func defaultPrometheusURL() string {
@@ -55,6 +59,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 	if err != nil {
 		return "", err
 	}
+	addHeader(req, p.Header)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
@@ -65,7 +70,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 		return "", err
 	}
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("prometheus query failed: %s", string(body))
+		return "", &storeError{status: resp.StatusCode, text: "prometheus query failed: " + string(body)}
 	}
 
 	var parsed struct {
@@ -104,16 +109,26 @@ var overviewMetrics = []metricCard{
 	{Title: "CPU cores used (5m rate)", Query: `sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))`},
 }
 
+// metricsClient is the client the dashboard reads metrics with: the one a test set, the metrics store outside the cluster
+// that the platform configuration names, or Prometheus. A store outside the cluster is read whoever asks, since it is
+// all a dashboard outside the cluster has; the platform's own Prometheus URL only when readPlatformConfig says so.
 func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) MetricsClient {
 	if s.Metrics != nil {
 		return s.Metrics
 	}
-	prometheusURL := ""
-	if readPlatformConfig && s.Client != nil {
-		config := &geassv1alpha1.GeassPlatformConfig{}
-		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
-			prometheusURL = config.Spec.PrometheusURL
+	var config *geassv1alpha1.GeassPlatformConfig
+	if s.Client != nil {
+		found := &geassv1alpha1.GeassPlatformConfig{}
+		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, found); err == nil {
+			config = found
 		}
+	}
+	if external := s.externalMetricsClient(ctx, config); external != nil {
+		return external
+	}
+	prometheusURL := ""
+	if readPlatformConfig && config != nil {
+		prometheusURL = config.Spec.PrometheusURL
 	}
 	return &PrometheusClient{BaseURL: prometheusURL}
 }

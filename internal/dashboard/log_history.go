@@ -61,6 +61,9 @@ type storedLine struct {
 type VictoriaLogsClient struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	// Header is sent with every query: the tenant (AccountID and ProjectID) and the credentials of a store outside the
+	// cluster.
+	Header http.Header
 }
 
 func defaultLogStoreURL() string {
@@ -85,6 +88,7 @@ func (c *VictoriaLogsClient) QueryLogs(ctx context.Context, query string, limit 
 	if err != nil {
 		return nil, err
 	}
+	addHeader(req, c.Header)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -93,7 +97,7 @@ func (c *VictoriaLogsClient) QueryLogs(ctx context.Context, query string, limit 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("the log store refused the query: %s", strings.TrimSpace(string(body)))
+		return nil, &storeError{status: resp.StatusCode, text: "the log store refused the query: " + strings.TrimSpace(string(body))}
 	}
 	var lines []storedLine
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, historyMaxResponse))
@@ -231,14 +235,6 @@ func parseHistoryParams(r *http.Request) (historyParams, error) {
 	return params, nil
 }
 
-// logStore is the client for the log store: the one a test set, or the add-on's server.
-func (s *Server) logStore() logStoreReader {
-	if s.LogStore != nil {
-		return s.LogStore
-	}
-	return &VictoriaLogsClient{}
-}
-
 // loggingEnabled reports whether the cluster was set up to keep logs.
 func (s *Server) loggingEnabled(ctx context.Context) (enabled bool, retentionDays int32) {
 	var clusters geassv1alpha1.GeassClusterList
@@ -261,6 +257,10 @@ func (s *Server) handleAPIProjectLogHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	enabled, retention := s.loggingEnabled(r.Context())
+	source := s.historySource(r.Context())
+	if source.retentionDays > 0 {
+		retention = source.retentionDays
+	}
 	if !enabled {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": []string{},
 			"message": "Log history is not set up on this cluster. Turn on the logging add-on to keep logs after pods are gone."})
@@ -297,12 +297,17 @@ func (s *Server) handleAPIProjectLogHistory(w http.ResponseWriter, r *http.Reque
 	if params.level != "" {
 		fetch = min(params.limit*historyLevelOverfetch, historyOverfetchMax)
 	}
+	if source.reader == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": serviceNames(owners),
+			"message": source.unavailableMessage(source.unusable)})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), historyTimeout)
 	defer cancel()
-	stored, err := s.logStore().QueryLogs(ctx, historyQuery(namespaces, params.service, owners, params.search, params.since, fetch), fetch)
+	stored, err := source.reader.QueryLogs(ctx, historyQuery(namespaces, params.service, owners, params.search, params.since, fetch), fetch)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, logsKey: []logLine{}, "services": serviceNames(owners),
-			"message": "The log store is not answering yet. It may still be starting; try again in a minute."})
+			"message": source.unavailableMessage(err)})
 		return
 	}
 
