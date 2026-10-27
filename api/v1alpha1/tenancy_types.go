@@ -19,6 +19,10 @@ type GeassPlatformTenantIsolationSpec struct {
 	// before: an organization without a registry of its own builds with the platform's login.
 	// +optional
 	Registry *GeassTenantRegistrySpec `json:"registry,omitempty"`
+	// Mail is how organizations' services send mail: through a relay that Geass runs in the cluster, which holds each
+	// organization to its limits and hands its mail to the platform's mail service. Unset means no relay.
+	// +optional
+	Mail *GeassTenantMail `json:"mail,omitempty"`
 }
 
 // GeassTenantSandboxSpec names the RuntimeClass the pods of organizations' projects run with: the pods of their services,

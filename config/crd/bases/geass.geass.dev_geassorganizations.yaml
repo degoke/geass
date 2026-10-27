@@ -454,6 +454,75 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              mail:
+                description: |-
+                  Mail is what the organization may send through the platform's mail relay (spec.tenancy.mail.relay on the
+                  GeassPlatformConfig): its own limits and the domains it may send from, each in place of the platform's. Like the rest
+                  of this spec it is the platform's to write.
+                properties:
+                  allowedSenderDomains:
+                    description: |-
+                      AllowedSenderDomains are the domains the organization may send from, in place of the platform's list: the envelope
+                      sender and the addresses of the From and Sender headers must be at one of them, or below one. An empty list
+                      replaces the platform's with none.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                      type: string
+                    maxItems: 50
+                    type: array
+                    x-kubernetes-list-type: set
+                  limits:
+                    description: Limits replace the platform's relay limits, each
+                      field it sets for that field.
+                    properties:
+                      connections:
+                        description: Connections is the most connections the organization
+                          may have signed in at once.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                      maxMessageSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: MaxMessageSize is the largest message, headers
+                          and attachments included, such as "10Mi". At most 50Mi.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      messagesPerDay:
+                        description: MessagesPerDay is the most messages in any 24
+                          hours.
+                        format: int32
+                        maximum: 10000000
+                        minimum: 0
+                        type: integer
+                      messagesPerHour:
+                        description: MessagesPerHour is the most messages in any 60
+                          minutes.
+                        format: int32
+                        maximum: 1000000
+                        minimum: 0
+                        type: integer
+                      messagesPerMinute:
+                        description: |-
+                          MessagesPerMinute is the most messages in any 60 seconds. Zero sends nothing, which stops an organization's mail at
+                          once.
+                        format: int32
+                        maximum: 100000
+                        minimum: 0
+                        type: integer
+                      recipientsPerMessage:
+                        description: |-
+                          RecipientsPerMessage is the most recipients one message may have. A recipient past it is refused with 452, which
+                          tells the sender to send it in another message.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               maxProjects:
                 description: |-
                   MaxProjects is how many projects the organization may have. Without it there is no limit; zero keeps it from
