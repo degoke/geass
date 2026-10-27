@@ -168,7 +168,7 @@ kubectl get namespace morning-beach-production -o jsonpath='{.metadata.annotatio
 
 ## What has been tested
 
-The objects Geass writes, their content, that they follow a change and go with the setting, that nothing is written for a project of no organization or for a platform that sets nothing, and the condition, are tested against fake API clients. The bandwidth policy is run by the Kubernetes API server's own code for admission policies (its CEL compiler and JSON patcher) on a pod and a namespace. **Nothing of it has run on a real cluster yet**: neither a real API server admitting a pod through the LimitRange, the quota and the policy, nor a network plugin shaping a pod's traffic, nor the kubelet evicting a pod for its disk.
+The objects Geass writes, their content, that they follow a change and go with the setting, that nothing is written for a project of no organization or for a platform that sets nothing, and the condition, are tested against fake API clients. The bandwidth policy is run by the Kubernetes API server's own code for admission policies (its CEL compiler and JSON patcher) on a pod and a namespace. **On a real K3s (v1.36.4+k3s1)** the API server admitted pods through them: the quota and the LimitRange were written, a pod that declared nothing was given the defaults, a container above the most was refused, the pod-count quota refused the pods past it, and everything went when the setting was removed. The bandwidth was shaped there as [Bandwidth](#bandwidth) says. The kubelet evicting a pod for its disk has not been seen.
 
 ## Troubleshooting
 

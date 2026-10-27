@@ -13,10 +13,13 @@ of organizations' projects.
 
 It is off until you set it, and while it is off no pod changes.
 
-:::caution[Not run with a real sandbox]
+:::caution[Run once with gVisor, never with Kata]
 Geass's tests check the pods it writes, and that it waits when the RuntimeClass is missing, against a fake API server.
-gVisor and Kata themselves have not been run with Geass: neither the services nor the Kaniko builds have been seen to
-work under them. Try it on one cluster, with your own services, before you rely on it.
+On a real K3s it was run once with gVisor ([Prepare the nodes](#prepare-the-nodes) says on what): while the RuntimeClass
+was missing a running service was left as it was and said why, and when it appeared both organizations' services rolled
+into the sandbox and Geass's own pods did not; an organization's service then ran under gVisor. Kata has not been run with
+Geass, no Kaniko build has been seen to work under either, and `skipOnReservedNodes` has not been tried on real reserved
+nodes. Try it on one cluster, with your own services, before you rely on it.
 :::
 
 ## What runs in the sandbox

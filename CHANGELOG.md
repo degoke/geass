@@ -59,7 +59,7 @@ The first public release, open source under the Apache License 2.0.
   another class rolls the organizations' services through their Deployments; builds take it from their next run.
   `skipOnReservedNodes` runs without the sandbox only the pods that can certainly only run on nodes reserved for their own
   organization. The nodes need the runtime installed and the cluster the RuntimeClass; the docs give the K3s containerd
-  configuration for gVisor. Not run with gVisor or Kata yet. Off by default: without it no pod template changes. The
+  configuration for gVisor. Run once on K3s with gVisor (an organization's service, not a build), never with Kata. Off by default: without it no pod template changes. The
   operator now records events and reads RuntimeClasses.
 - **Noisy-neighbour limits for shared clusters.** `spec.tenantLimits.defaults` on the platform configuration, and `spec.limits`
   on an organization in their place, hold each namespace an organization's pods run in (every environment of its projects,
@@ -70,7 +70,8 @@ The first public release, open source under the Apache License 2.0.
   the network plugin runs that plugin). An organization's builds are given the most a container may have. A project says on
   its `TenantLimitsApplied` condition whether they are applied, and a service whose pods they refuse says why. Pods per node
   and disk I/O are not limited: Kubernetes has no means to. Off by default, and nothing has changed for a platform that
-  does not set them. Tested against fake clients and the API server's own admission policy code, not yet on a real cluster.
+  does not set them. Tested against fake clients and the API server's own admission policy code, and once on a real K3s,
+  whose API server admitted pods through the limits and whose flannel shaped a pod's traffic (after a large default burst).
 - **Outbound limits for shared clusters.** `spec.tenancy.egress` on the platform configuration, and `spec.egress` on an
   organization in its place field by field, close ports to addresses outside the cluster for the pods of organizations'
   projects, in every environment and in their build namespace: the mail ports (TCP 25, 465, 587, 2465, 2525 and 2587) by
@@ -80,8 +81,8 @@ The first public release, open source under the Apache License 2.0.
   and private-range blocks and the cluster's DNS are untouched, and the cluster's API port stays open from environments. A
   project says on its `EgressLimitsApplied` condition whether they are applied and whether the cluster enforces network
   policies. Closing mining pools' ports is offered as a heuristic, and nothing detects mining or counts mail. Off by default,
-  and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, not yet on a
-  cluster whose network plugin enforces them.
+  and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, and once on a
+  real K3s with real traffic: mail and a port range closed, the ports beside them open, a relay allowed.
 - **Registry isolation for organizations.** With `spec.tenancy.registry` (`policy: requireOwnRegistry`, the default), a
   build of a project that belongs to an organization is never given the platform's registry login, nor another
   organization's: one that would be fails before its Job is made, and one running with it when the setting is turned on
@@ -274,8 +275,9 @@ The first public release, open source under the Apache License 2.0.
   The optional `expiresAt` makes the connection show when the credentials lapse, which AWS does not say; credentials with
   a session token get no "expires in N days" warning, since they are renewed every hour. Credentials that are replaced
   (through the API, or in the Secret) are used by the next machine made or deleted, with no restart, and a lapsed token
-  makes a node wait and does not fail it. A connection without a `sessionToken` works as before. Not run against a live
-  AWS account: only against a simulation that checks the signature.
+  makes a node wait and does not fail it. A connection without a `sessionToken` works as before. Run against a live AWS
+  account with an assumed role's credentials: accepted, refused with a corrupted token, renewed, and machines launched and
+  terminated with them.
 - **Node pools and autoscaling (experimental).** A `GeassNodePool` makes machines at a cloud, joins them over SSH
   with a key and a host key that Geass makes (the join token is never put in a machine's user data), and removes them.
   `maxNodes` is required and caps the cost. A fixed pool keeps `minNodes`. An autoscaling pool adds nodes for pods that
