@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -730,7 +731,17 @@ func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string
 		// Reached with the application's own login (see usesOperatorLogin), which this command is replaced by.
 		return []string{"mariadb", "-e", query}, nil
 	case geassv1alpha1.DatabaseEngineSQLite:
-		return []string{"rqlite", "-e", query}, nil
+		// The rqlite shell has no -e (rqlite 8 answers "ERR! undefined option -e") and only reads from a prompt: given
+		// a pipe it prints its prompt again and again at the end of the input. The statement goes to rqlited's HTTP API
+		// instead, as a JSON array, to the unified endpoint that runs a read or a write as the statement is. The
+		// statement is one argument of wget, never part of a shell command, so it cannot change what is run. The server's
+		// pod has busybox wget, which has no way to send an error status's body, so an error is read in the answer
+		// (`{"results":[{"error":"..."}]}`, status 200).
+		body, err := json.Marshal([]string{query})
+		if err != nil {
+			return nil, err
+		}
+		return []string{"wget", "-q", "-O", "-", "--header=Content-Type: application/json", "--post-data=" + string(body), "http://127.0.0.1:4001/db/request?pretty"}, nil
 	default:
 		return []string{"psql", "-c", query}, nil
 	}
