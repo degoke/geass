@@ -322,3 +322,9 @@ The first public release, open source under the Apache License 2.0.
   setting; the Upgrading page of the documentation says how.
 
 [Unreleased]: https://github.com/degoke/geass/commits/main
+
+### Fixed
+
+- **Making and deploying a service in one request could fail with "saved as a draft" although it was made.** The service is saved a
+  second time with its deploy marked; the controller has by then added its finalizer, so that save conflicts, and the latest copy was
+  read through a cache that had not seen the new object yet and found nothing. A copy that is not found yet is now asked for again.
