@@ -71,6 +71,11 @@ type dashboardPlatform struct {
 	// version field every database carries.
 	EngineVersions map[string]string    `json:"engineVersions"`
 	Session        dashboardSessionInfo `json:"session"`
+	// Managed says that a platform runs this Geass and keeps the installer, updates, the K3s release, sign-in and the
+	// dashboard's domain for itself (spec.managed), so the dashboard shows them read-only. Absent unless managed mode is on,
+	// and only the platform's administrators are told: a read-only session's bootstrap never reads the platform's
+	// configuration, and an organization's has no pages it would be about.
+	Managed *dashboardManaged `json:"managed,omitempty"`
 }
 
 // dashboardRelease is what the cluster runs. Geass is the release of the operator that serves this dashboard, which is
@@ -122,6 +127,9 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	mutation.URL = &mutationURL
 	mutation.URL.Path = apiMutationPath(r.URL.Path)
 	mutation.URL.RawPath = ""
+	if s.refuseWhenManaged(w, mutation) {
+		return
+	}
 
 	switch {
 	case mutation.URL.Path == "/login":

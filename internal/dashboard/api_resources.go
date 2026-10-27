@@ -120,6 +120,9 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 		info.RegistryRepository = readiness.Config.Spec.Registry.Repository
 		info.CloudflareReady = readiness.CloudflareReady
 		info.DashboardURL = readiness.DashboardURL
+		// Whether a platform keeps the installer, updates, sign-in and the dashboard's domain for itself is told to the
+		// platform's administrators, whose pages they are, from the configuration this has read already.
+		info.Managed = dashboardManagedOf(managedStateOf(readiness.Config))
 		if readiness.HasCloudflare {
 			summary := s.cloudflareConnectionSummary(ctx, readiness.Config)
 			info.CloudflareZoneID = summary.ZoneID
