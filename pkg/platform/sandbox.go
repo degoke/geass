@@ -116,7 +116,23 @@ func ResolveSandbox(ctx context.Context, c client.Reader, project string, nodeSe
 	case p.Spec.Org == "":
 		return Sandbox{}, nil
 	}
-	sandbox := Sandbox{Applies: true, Org: p.Spec.Org}
+	return sandboxFor(ctx, c, setting, p.Spec.Org, nodeSelector)
+}
+
+// ResolveOrganizationSandbox is ResolveSandbox for pods that are an organization's without a project: those of a database
+// server the organization owns. An empty organization is the platform's, whose pods keep the node's own runtime.
+func ResolveOrganizationSandbox(ctx context.Context, c client.Reader, org string, nodeSelector map[string]string) (Sandbox, error) {
+	setting, err := SandboxSetting(ctx, c)
+	if err != nil || setting == nil || org == "" {
+		return Sandbox{}, err
+	}
+	return sandboxFor(ctx, c, setting, org, nodeSelector)
+}
+
+// sandboxFor decides for the pods of an organization (empty for a project that could not be found) while the setting is
+// on: the node's own runtime on nodes certainly reserved for the organization, the RuntimeClass anywhere else.
+func sandboxFor(ctx context.Context, c client.Reader, setting *geassv1alpha1.GeassTenantSandboxSpec, org string, nodeSelector map[string]string) (Sandbox, error) {
+	sandbox := Sandbox{Applies: true, Org: org}
 	if setting.SkipOnReservedNodes && sandbox.Org != "" {
 		tag, err := ReservedForOrganization(ctx, c, sandbox.Org, nodeSelector)
 		if err != nil {

@@ -41,6 +41,8 @@ type dumpTarget struct {
 	user           string
 	passwordSecret string
 	passwordKey    string
+	// sandbox is how the Jobs run: an organization's under the platform's sandboxed runtime, as its server's pods would.
+	sandbox platform.Sandbox
 }
 
 const mysqlRootUser = "root"
@@ -148,6 +150,7 @@ func dumpPodSpec(in dumpJobInput) corev1.PodSpec {
 	// The copy is staged on a node's disk and travels to or from the database, so it runs in the
 	// database's region.
 	jobPlacement(pinnedNodePlacement(in.db)).ApplyToPodSpec(&pod)
+	in.target.sandbox.Apply(&pod)
 	if in.restoreKey == "" {
 		pod.InitContainers = []corev1.Container{{
 			Name: dumpContainer, Image: in.target.image, Command: dumpCommand(in),

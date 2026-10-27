@@ -120,6 +120,9 @@ func (s *Server) handleSharedDatabaseCreate(w http.ResponseWriter, r *http.Reque
 	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, placement) {
 		return
 	}
+	if s.refuseUnsandboxableDatabase(w, r, fallback, db) {
+		return
+	}
 	if err := s.Client.Create(r.Context(), db); err != nil {
 		redirectFormInternalError(w, r, fallback)
 		return

@@ -29,6 +29,7 @@ Choose a dedicated database when the data matters enough to need backups and poi
 - If your cluster uses regions, a server serves only projects in its own region. A project without a region of its own uses the cluster's default region. A server or project with no region at all can be paired with any. See [Scaling and placement](/docs/guides/scaling-and-placement/).
 - If a project requires compliance node tags, it can use a server only when the server runs on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
 - If the cluster has [organizations](/docs/guides/organizations-and-workspaces/), a server holds the databases of one organization only. While organizations are on, a project of an organization uses a server of its organization, and the platform's own servers are for the projects of no organization. See [Organizations](#organizations).
+- If the platform runs organizations' code in a [sandboxed runtime](/docs/operations/sandboxed-runtime/), an organization's server runs in it too, and so must be MySQL: a PostgreSQL server is not made for an organization then. See [The sandboxed runtime](#the-sandboxed-runtime).
 
 ## Set up a shared server
 
@@ -248,6 +249,20 @@ This is the case of a cluster that used the platform's server for every project 
 
 While organizations are on, the order matters. A project of no organization that has databases on the platform's server cannot be given to an organization, and the server cannot be given to the organization while the project is of none. Move the project's data first, or, as a platform administrator who accepts the short time in between, set the project's `spec.org` with `kubectl` and then give the server: until the server is given, the operator keeps serving the project's databases and reports them.
 
+## The sandboxed runtime
+
+With `spec.tenancy.sandbox` set on the platform (see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/#database-servers)), an organization's server runs under the platform's RuntimeClass, such as gVisor, like the organization's services, because a login with enough rights runs programs through its server. The platform's own servers do not: while organizations are on, they hold only the databases of projects of no organization.
+
+| Server | With the sandbox on |
+| --- | --- |
+| An organization's MySQL server, one server or highly available | Made in the sandbox. One that already runs moves into it when a platform administrator approves its restart (`kubectl -n geass-system annotate geassdatabase <server> geass.dev/sandbox-restart=true`), or at once with `databaseRestarts: Immediate`, and until then says `RestartPending` on its `Sandboxed` condition |
+| An organization's PostgreSQL server | Not made: CloudNativePG, which runs it, cannot give its pods a RuntimeClass. `POST /api/shared-databases/create` with `org` refuses it with `400`, and a PostgreSQL server is not given to an organization (`409`). One made before is held: it keeps running and serving, outside the sandbox, but Geass changes nothing of it, and it says so on its `Sandboxed` condition (`EngineCannotBeSandboxed`) |
+| The platform's server, of either engine | Not sandboxed, and not affected |
+
+The Jobs that make and drop the logical databases of an organization run under the RuntimeClass too, from their next run, on whichever server they are. While the RuntimeClass is missing, none is made: a new logical database waits, not ready, with `Sandboxed` `False` `RuntimeClassMissing`, and one being deleted is let go after three minutes without being dropped from its server.
+
+Moving a server into the sandbox restarts it. A highly available MySQL server is rolled by MOCO one server at a time, with the primary switched to a replica; a single server is unavailable while its pod starts again. Under gVisor a database runs slower than on the node's own kernel, and some of what MySQL can ask of the kernel is only partly there: see [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs), and try a copy first.
+
 ## What a project can and cannot do
 
 - A login reaches only its own logical database. Geass revokes `PUBLIC` access to each logical database and grants it to that login alone. It changes nothing on the server's other databases, such as the `postgres` maintenance database, which keep the server's default access.
@@ -306,6 +321,7 @@ The connection call needs a workspace token with Full access. It shows the host,
 - Each logical database is a `GeassLogicalDatabase` in `geass-system`. The controller runs a Job named `<logical ID>-create` in the server's namespace, in the image `postgres:16-alpine` or `mysql:8.4`. It connects with the administrative login, creates the login and database, revokes public access and grants it to the login. It runs again safely: an existing login has its password and limit set again, and an existing database is kept.
 - On delete, a Job named `<logical ID>-drop` runs `DROP DATABASE ... WITH (FORCE)` and drops the login. A finalizer, `geass.geass.dev/logicaldatabase`, holds the object until the Job finishes or three minutes pass.
 - Jobs run in the server's region. They do not use the server's **Run on** tags, so on a shared server they run on nodes that are not reserved, and not on compliance nodes. On a project's own server they also carry the project's required tags.
+- With the platform's [sandboxed runtime](/docs/operations/sandboxed-runtime/) on, a Job of an organization's server, or of an organization's project on any server, is made with the RuntimeClass (`runtimeClassName` in its pod). A Job that is already made keeps how it runs.
 
 ```bash
 kubectl get geassdatabases -n geass-system
@@ -363,11 +379,18 @@ The database was on the server before the rule found it. It works, and is listed
 **Giving a project to an organization, or a server, is refused with 409.**
 The project, or the server, has databases that would then share a server with another owner's. The message names them. Move their data or delete them first, in the order under [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
 
+**"This database cannot run in the sandbox: PostgreSQL runs on the CloudNativePG operator …".**
+The platform runs organizations' code in a sandboxed runtime, and PostgreSQL cannot run in it. Set up a MySQL server for the organization instead. A server made before is held as it is: see [The sandboxed runtime](#the-sandboxed-runtime).
+
+**"Runs without the sandbox until it is restarted into RuntimeClass …".**
+The server ran before the sandbox was set, and waits for a platform administrator to approve its restart. It works meanwhile. See [Servers that already run](/docs/operations/sandboxed-runtime/#servers-that-already-run).
+
 ## Related
 
 - [Databases](/docs/guides/databases/)
 - [Backups and restore](/docs/guides/backups-and-restore/)
 - [Network isolation](/docs/guides/network-isolation/)
+- [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
 - [Compliance node tags](/docs/guides/compliance-tags/)
 - [Command line](/docs/guides/command-line/)

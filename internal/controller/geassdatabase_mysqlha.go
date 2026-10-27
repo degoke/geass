@@ -165,6 +165,8 @@ func mocoClusterSpec(db *geassv1alpha1.GeassDatabase, storageClass string, place
 		}},
 	}
 	placement.ApplyToPodSpec(&podSpec)
+	// MOCO makes each server's pod from this spec as it is, so the class reaches every server (and its sidecar).
+	applyServerRuntimeClass(db, &podSpec)
 
 	labels := map[string]string{platform.K8sLabelManagedBy: platform.ManagedByValue}
 	if db.Spec.Project != "" {
@@ -374,7 +376,12 @@ func (r *GeassDatabaseReconciler) ensureMySQLLogin(ctx context.Context, db *geas
 	err := r.Get(ctx, client.ObjectKeyFromObject(job), job)
 	switch {
 	case apierrors.IsNotFound(err):
+		sandbox, err := r.jobSandbox(ctx, db)
+		if err != nil {
+			return false, err
+		}
 		job = mysqlLoginJob(db, wsNS, cluster, placement)
+		sandbox.Apply(&job.Spec.Template.Spec)
 		if err := setSameNamespaceOwner(db, job, r.Scheme); err != nil {
 			return false, err
 		}

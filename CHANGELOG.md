@@ -52,8 +52,8 @@ The first public release, open source under the Apache License 2.0.
 - **A sandboxed runtime for organizations' code.** With `spec.tenancy.sandbox.runtimeClassName` (such as `gvisor` or a
   Kata class), the pods Geass makes for a project that belongs to an organization run under that RuntimeClass: its
   services' copies (pull request environments included), its functions' schedules and its builds. The projects of no
-  organization, Geass's own pods, and databases, object storage and backups are left as they are. It fails closed: while
-  the RuntimeClass is not in the cluster, such a service writes no Deployment (one that was running is left as it was) and
+  organization, Geass's own pods and object storage are left as they are (for database servers, see the entry below).
+  It fails closed: while the RuntimeClass is not in the cluster, such a service writes no Deployment (one that was running is left as it was) and
   a build stays `Pending`, each with the condition `Sandboxed` `False` `RuntimeClassMissing`, a `Warning` event
   `SandboxRuntimeClassMissing` and a message naming the class, and they go on when it appears. Turning it on, off or to
   another class rolls the organizations' services through their Deployments; builds take it from their next run.
@@ -61,6 +61,20 @@ The first public release, open source under the Apache License 2.0.
   organization. The nodes need the runtime installed and the cluster the RuntimeClass; the docs give the K3s containerd
   configuration for gVisor. Run once on K3s with gVisor (an organization's service, not a build), never with Kata. Off by default: without it no pod template changes. The
   operator now records events and reads RuntimeClasses.
+- **Organizations' database servers in the sandboxed runtime.** With `spec.tenancy.sandbox` set, an organization's MySQL
+  (one server, or highly available on MOCO through its `spec.podTemplate`), Redis and SQLite (rqlite) servers run under
+  the RuntimeClass, for the databases of its projects and for shared servers whose `spec.org` names it, with the Jobs that
+  copy, restore and make logins and logical databases on them; the platform's own servers and the object storage server
+  are left as they are. It fails closed as services do: while the RuntimeClass is missing a new server is not made and a
+  running one is left as it is (`Sandboxed` `False` `RuntimeClassMissing`, one event, no failure counted). PostgreSQL
+  (CloudNativePG 1.25, whose `Cluster` takes no RuntimeClass) and MariaDB (mariadb-operator, likewise) are not run outside
+  the sandbox for an organization: the dashboard refuses them (`400`, "This database cannot run in the sandbox: …"), the
+  operator refuses one written past it, and one made before is held, running and serving but no longer changed
+  (`EngineCannotBeSandboxed`, event `SandboxEngineUnsupported`). A running server is not restarted for the setting:
+  `spec.tenancy.sandbox.databaseRestarts` is `OnApproval` by default, so it moves when a platform administrator
+  annotates it `geass.dev/sandbox-restart` (and says `RestartPending` until then), or `Immediate`. Restarts are the
+  StatefulSet's, Deployment's or MOCO's own; a Redis server comes back empty. Tested against fake clients and envtest
+  only: no database operator and no gVisor ran. Nothing changes without the setting.
 - **Noisy-neighbour limits for shared clusters.** `spec.tenantLimits.defaults` on the platform configuration, and `spec.limits`
   on an organization in their place, hold each namespace an organization's pods run in (every environment of its projects,
   and its build namespace): a ResourceQuota `geass-tenant-quota` on its pods and ephemeral storage; a LimitRange that gives a

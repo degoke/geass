@@ -27,12 +27,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	utilptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -65,6 +67,9 @@ type GeassDatabaseReconciler struct {
 	HTTP   *http.Client
 	// PodUsage is what the cluster's pods ask of its nodes, for the check that a new database fits. Nil reads the pods.
 	PodUsage *platform.PodUsageIndex
+	// Recorder is told of an organization's server that waits for the sandboxed runtime, cannot run in it, waits for a
+	// restart into it or is restarted into it. Nil tells nobody; the database's Sandboxed condition still says it.
+	Recorder events.EventRecorder
 
 	// newBackupStorage builds the AWS client used for backup storage; tests replace it.
 	newBackupStorage backupStorageFactory
@@ -205,6 +210,10 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	placement, err := r.databaseNodePlacement(ctx, &db)
 	if err != nil {
 		return r.setNotReady(ctx, &db, err.Error())
+	}
+	// An organization's server runs under the sandboxed runtime, decided before anything of it is made or changed.
+	if result, stop, err := r.sandboxDatabase(ctx, &db, wsNS, placement); stop || err != nil {
+		return result, err
 	}
 
 	storageClass, waitForStorage, err := r.databaseStorageClass(ctx, &db, wsNS)
@@ -453,6 +462,9 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc.Name}},
 		}}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
+		// The template is kept from pass to pass, so a server restarted out of the sandbox loses its class here.
+		deploy.Spec.Template.Spec.RuntimeClassName = nil
+		applyServerRuntimeClass(db, &deploy.Spec.Template.Spec)
 		return setSameNamespaceOwner(db, deploy, r.Scheme)
 	}); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -1072,8 +1084,13 @@ func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&geassv1alpha1.GeassDatabase{}).
 		// A project choosing or changing its backup storage must reach the databases waiting for it.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject), builder.WithPredicates(readyOrSpecChanged())).
-		// An organization's region and required node tags decide where its projects' databases may be placed.
-		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.databasesForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// An organization's region and required node tags decide where its projects' databases and its own servers may be
+		// placed, and whether they are on nodes reserved for it.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.databasesForOrganization), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// The sandbox setting, its RuntimeClass and nodes' reservations decide how organizations' servers run.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.everyDatabase), builder.WithPredicates(databaseSandboxChanged())).
+		Watches(&nodev1.RuntimeClass{}, handler.EnqueueRequestsFromMapFunc(r.databasesForRuntimeClass), builder.WithPredicates(runtimeClassCreatedOrDeleted())).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.databasesForReservation), builder.WithPredicates(nodeReservationChanged())).
 		// A database given its first logical database must start giving out its administrative login.
 		Watches(&geassv1alpha1.GeassLogicalDatabase{}, handler.EnqueueRequestsFromMapFunc(r.databasesForLogicalDatabase)).
 		// A restore or final backup finishing should be noticed at once, not at the next poll.

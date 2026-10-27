@@ -86,7 +86,7 @@ On a project's own server there is no new login. The database uses the name you 
 | `status.username` | string | The login that owns the database on the shared server. |
 | `status.reconcileRetry` | object | Failure counters. Same as for [GeassDatabase](/docs/reference/resources/geass-database/#ready-condition-and-retries). |
 | `status.provision` | object | Deploy history. Same as for GeassDatabase. |
-| `status.conditions` | list | `Ready`, and `OrganizationIsolated` while the database's server is not its project's organization's (see below). |
+| `status.conditions` | list | `Ready`; `OrganizationIsolated` while the database's server is not its project's organization's (see below); and `Sandboxed` while the platform runs organizations' code in a sandboxed runtime and the database is on an organization's server or of an organization's project (see below). |
 
 `Ready` has three reasons:
 
@@ -97,6 +97,8 @@ On a project's own server there is no new login. The database uses the name you 
 | `ProvisionFailed` | `False` | Geass gave up after repeated errors. The retry rules are the same as for GeassDatabase: see [Ready condition and retries](/docs/reference/resources/geass-database/#ready-condition-and-retries). |
 
 `OrganizationIsolated` is there only while [organizations](/docs/guides/organizations-and-workspaces/) are on and the database is on a shared server of another owner than its project: another organization's server, the platform's server for a project of an organization, or an organization's server for a project of none. Its status is then `False`, its reason `MixedOrganizations`, and its message names both owners by their resource IDs. A database that is not on the server yet is not made (`Ready` is `False` with the same message, which does not count as a failure). One that is on it already (it has `status.connectionSecret`) is kept and served, and `Ready` is left as it is. Geass records a `Warning` event with the reason `MixedOrganizations` when it first finds either. The condition goes when the server and the project belong to one owner again, or organizations are turned off. See [Shared database servers](/docs/guides/shared-database-servers/#organizations).
+
+`Sandboxed` says how the Job that made the database ran under the platform's [sandboxed runtime](/docs/operations/sandboxed-runtime/#the-jobs-on-their-data): `True` `RuntimeClass` (`Runs under RuntimeClass gvisor`), or `False` `ReservedNodes` on nodes reserved for the organization. While the RuntimeClass is missing it is `False` `RuntimeClassMissing`: no Job is made, `Ready` is `False` with `Waiting for the sandboxed runtime: …`, which does not count as a failure, and a `Warning` event `SandboxRuntimeClassMissing` is recorded once. A Job made before keeps how it ran. A database deleted while the RuntimeClass is missing is not dropped from its server, and is let go after three minutes.
 
 A `GeassLogicalDatabase` has no draft step. It has no deploy gate, so Geass starts creating it as soon as it exists.
 

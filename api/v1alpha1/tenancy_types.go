@@ -22,9 +22,11 @@ type GeassPlatformTenantIsolationSpec struct {
 }
 
 // GeassTenantSandboxSpec names the RuntimeClass the pods of organizations' projects run with: the pods of their services,
-// of their functions' schedules and of their builds. The projects of no organization and Geass's own pods keep the node's
-// own runtime. The nodes need the runtime installed and the cluster a RuntimeClass of this name; while there is none, an
-// organization's service or build waits, and says so, and is never started without the sandbox.
+// of their functions' schedules and of their builds, and the database servers of organizations and of their projects, with
+// the Jobs that copy, restore and make databases on them. The projects of no organization and Geass's own pods keep the
+// node's own runtime. The nodes need the runtime installed and the cluster a RuntimeClass of this name; while there is
+// none, an organization's service, build or database server waits, and says so, and is never started without the sandbox.
+// A database engine whose operator cannot run its pods under a RuntimeClass is not made for an organization.
 type GeassTenantSandboxSpec struct {
 	// RuntimeClassName is the RuntimeClass the pods run with, such as gvisor or kata.
 	// +kubebuilder:validation:MinLength=1
@@ -37,7 +39,22 @@ type GeassTenantSandboxSpec struct {
 	// Anything less certain is sandboxed.
 	// +optional
 	SkipOnReservedNodes bool `json:"skipOnReservedNodes,omitempty"`
+	// DatabaseRestarts is when an organization's database server that is already running is restarted to go into the
+	// sandbox, out of it, or to another RuntimeClass, which restarts the database. OnApproval (the default, also when
+	// empty): only once a platform administrator annotates the GeassDatabase geass.dev/sandbox-restart; until then it runs
+	// as it does, and its Sandboxed condition says so. Immediate: at once, every such server together. A server that is
+	// made, or has never been ready, takes the sandbox at once either way.
+	// +kubebuilder:validation:Enum=OnApproval;Immediate
+	// +optional
+	DatabaseRestarts string `json:"databaseRestarts,omitempty"`
 }
+
+const (
+	// DatabaseRestartsOnApproval restarts a running database server into the sandbox only when it is annotated for it.
+	DatabaseRestartsOnApproval = "OnApproval"
+	// DatabaseRestartsImmediate restarts every running database server into the sandbox at once.
+	DatabaseRestartsImmediate = "Immediate"
+)
 
 const (
 	// RegistryPolicyRequireOwnRegistry builds an organization's images only into a registry of the organization's own.
