@@ -47,6 +47,9 @@ type Account struct {
 	Warnings []string
 	// ExpiresAt is when the credentials stop working, when the provider says.
 	ExpiresAt time.Time
+	// Temporary says the credentials are short-lived by design, and whatever issues them renews them before they lapse
+	// (a session token from sts:AssumeRole). ExpiresAt is still shown, but not counted down in a warning.
+	Temporary bool
 }
 
 // Size is a machine size a provider offers.

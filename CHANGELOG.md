@@ -194,6 +194,13 @@ The first public release, open source under the Apache License 2.0.
   resumed pool, control plane firewall sync, a single server, and the dashboard. Spot machines were not tested: the
   account's organization denied the launch. The other eleven drivers were written from the provider's documentation and
   tested against an in-memory simulation of its API only.
+- **Amazon EC2 with temporary credentials.** An AWS connection for machines can hold what `sts:AssumeRole` returns, not
+  only an IAM user's key. The optional secret `sessionToken` is sent with every EC2 and STS request and signed with it.
+  The optional `expiresAt` makes the connection show when the credentials lapse, which AWS does not say; credentials with
+  a session token get no "expires in N days" warning, since they are renewed every hour. Credentials that are replaced
+  (through the API, or in the Secret) are used by the next machine made or deleted, with no restart, and a lapsed token
+  makes a node wait and does not fail it. A connection without a `sessionToken` works as before. Not run against a live
+  AWS account: only against a simulation that checks the signature.
 - **Node pools and autoscaling (experimental).** A `GeassNodePool` makes machines at a cloud, joins them over SSH
   with a key and a host key that Geass makes (the join token is never put in a machine's user data), and removes them.
   `maxNodes` is required and caps the cost. A fixed pool keeps `minNodes`. An autoscaling pool adds nodes for pods that
