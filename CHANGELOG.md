@@ -294,6 +294,15 @@ The first public release, open source under the Apache License 2.0.
   shows a viewer what the cloud said about a pool or its nodes. A webhook service is never connected to at a link-local
   address, however it is reached. DNS never points at a server added with `storage: None`.
 
+### Fixed
+
+- **A service could not be deployed from a dashboard that runs outside the cluster.** Deploying records a deployment and then writes
+  its status, which the `--controllers=false` dashboard's role (`config/dashboard-only`) did not allow, so the service was saved as a
+  draft and "deploying it failed". The role can now update the status of a `GeassDeployment`.
+- **Making and deploying a service in one request could fail with "saved as a draft" although it was made.** The service is saved a
+  second time with its deploy marked; the controller has by then added its finalizer, so that save conflicts, and the latest copy was
+  read through a cache that had not seen the new object yet and found nothing. A copy that is not found yet is now asked for again.
+
 ### Security
 
 - Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
@@ -322,9 +331,3 @@ The first public release, open source under the Apache License 2.0.
   setting; the Upgrading page of the documentation says how.
 
 [Unreleased]: https://github.com/degoke/geass/commits/main
-
-### Fixed
-
-- **Making and deploying a service in one request could fail with "saved as a draft" although it was made.** The service is saved a
-  second time with its deploy marked; the controller has by then added its finalizer, so that save conflicts, and the latest copy was
-  read through a cache that had not seen the new object yet and found nothing. A copy that is not found yet is now asked for again.
