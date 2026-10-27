@@ -47,6 +47,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
+	"github.com/degoke/geass/internal/mailrelay"
 	"github.com/degoke/geass/internal/netcheck"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	_ "github.com/degoke/geass/pkg/compute/all"
@@ -103,6 +104,10 @@ func main() {
 	// is a small program that listens or connects. That is not the operator and must not start it.
 	if len(os.Args) > 1 && os.Args[1] == "netcheck" {
 		os.Exit(netcheck.Run(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// So is the mail relay the operator runs for organizations (spec.tenancy.mail.relay): a Deployment of this image.
+	if len(os.Args) > 1 && os.Args[1] == "mailrelay" {
+		os.Exit(mailrelay.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
