@@ -529,7 +529,10 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		setupLog.Error(err, "Failed to add the abuse detector")
 		os.Exit(1)
 	}
-	if err := (&controller.AbuseReconciler{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder("geass-abuse")}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.AbuseReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder("geass-abuse"),
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "abuse")
 		os.Exit(1)
 	}

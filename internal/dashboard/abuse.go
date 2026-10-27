@@ -161,6 +161,20 @@ type v1AbuseAnswer struct {
 	Reviewed []v1AbuseReviewed `json:"reviewed"`
 }
 
+// v1AbuseCleared is what a clearing answers, and v1AbuseReleased what a release does.
+type v1AbuseCleared struct {
+	Service       string    `json:"service"`
+	WasSuspected  bool      `json:"wasSuspected"`
+	ReviewedUntil time.Time `json:"reviewedUntil"`
+	Message       string    `json:"message"`
+}
+
+type v1AbuseReleased struct {
+	Service  string `json:"service"`
+	Released bool   `json:"released"`
+	Message  string `json:"message"`
+}
+
 // requireAbuseAdmin refuses anyone who is not an administrator of the platform: an organization's administrators, a
 // viewer of the platform, and a project's token.
 func (s *Server) requireAbuseAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -406,9 +420,9 @@ func (s *Server) handleAbuseClear(ctx context.Context, w http.ResponseWriter, r 
 		writeV1Error(w, http.StatusInternalServerError, "could not record the review")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		formAbuseService: name, "wasSuspected": review.Cleared != "", "reviewedUntil": review.Until,
-		"message": "Cleared. The sustained-CPU signal leaves the service alone until then; a report from an outside detector still applies.",
+	writeJSON(w, http.StatusOK, v1AbuseCleared{
+		Service: name, WasSuspected: review.Cleared != "", ReviewedUntil: review.Until,
+		Message: "Cleared. The sustained-CPU signal leaves the service alone until then; a report from an outside detector still applies.",
 	})
 }
 
@@ -443,9 +457,8 @@ func (s *Server) handleAbuseRelease(ctx context.Context, w http.ResponseWriter, 
 		writeV1Error(w, http.StatusInternalServerError, "could not release the service")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		formAbuseService: name, "released": released,
-		"message": "Released. Its copies start again; it stays suspected until it is cleared.",
+	writeJSON(w, http.StatusOK, v1AbuseReleased{
+		Service: name, Released: released, Message: "Released. Its copies start again; it stays suspected until it is cleared.",
 	})
 }
 

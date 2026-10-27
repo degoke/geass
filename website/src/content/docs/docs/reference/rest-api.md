@@ -412,6 +412,19 @@ curl -X POST https://geass.example.com/webhooks/github/forwarded/rungeass \
 # {"accepted":true,"delivery":"...","triggered":1}
 ```
 
+#### Abuse detection
+
+The suspects of [abuse detection](/docs/guides/abuse-detection/) (`spec.tenancy.abuse`), and what the platform does about them. Every
+route is for an admin acting for the platform (a platform administrator or an install-wide admin token): an organization's caller,
+a viewer, an observer and a project token are refused with `403` and told nothing. The writes answer `409` while abuse detection is off.
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /abuse/suspects` | Admin acting for the platform | `?org=` | `{"enabled", "note", "action", "cpu", "suspects": [...], "counting": [...], "reviewed": [...]}`: each suspect with where it is (`service`, `project`, `environment`, `namespace`, `org`), its evidence (for the CPU signal `averagePercent`, `minPercent`, `thresholdPercent`, `windowMinutes`, `samples`, `traffic`; for a report `reporter`, `detail`, `pod`, `priority`), `since`, `detectedAt`, `suspended`, `releasedAt` and the condition's `message`; the services the CPU signal is counting now, and those cleared, until when. `cpu` gives the settings and whether the metrics server (and Prometheus, for `quietTraffic`) answered at the last sample. `note` says, every time, that a suspect is a signal and not proof |
+| `POST /abuse/suspects/{name}/clear` | Admin acting for the platform | `days` (1 to 365; default `reviewExemptionDays`, or 30), `note` | `{"service", "wasSuspected", "reviewedUntil", "message"}`. The suspicion goes (a suspended service runs again) and the CPU signal leaves the service alone until then. A service that is not suspected can be cleared ahead of a heavy job. `404` for no such service |
+| `POST /abuse/suspects/{name}/release` | Admin acting for the platform | none | `{"service", "released", "message"}`. A suspended service runs again and stays suspected. `409` for one that is not suspended |
+| `POST /abuse/reports` | Admin acting for the platform (a token, from a detector) | `service`, or `namespace` and `pod`; `reporter`, `reason`, `priority`, `time` (RFC 3339). Or falcosidekick's webhook body as it is: `rule`, `priority`, `time` and `output_fields` (`k8s.ns.name`, `k8s.pod.name`) are read, and Falco's `output` and command line are not kept | `{"service", "project", "org", "alreadySuspected", "suspended"}`. `400` for no service or pod to go by, `404` for a service that does not exist or does not run in the namespace, `422` for a pod that is not a copy of a service, and for a service of a project of no organization |
+
 #### Templates and project tokens
 
 | Method and path | Who | Body | Returns |

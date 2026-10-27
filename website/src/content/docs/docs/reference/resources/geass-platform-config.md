@@ -89,6 +89,18 @@ spec:
       policy: requireOwnRegistry
 ```
 
+Abuse detection for organizations' services, left running until a platform administrator has looked (see [Abuse detection](/docs/guides/abuse-detection/)):
+
+```yaml title="platform.yaml (spec.tenancy)"
+spec:
+  tenancy:
+    abuse:
+      action: None
+      cpu:
+        thresholdPercent: 90
+        windowMinutes: 30
+```
+
 ## Spec fields
 
 | Field | Type | Default | Validation | Meaning |
@@ -133,7 +145,14 @@ spec:
 | `spec.tenancy.egress.mail` | string | `Blocked` | `Blocked` or `Open` | `Blocked` closes TCP 25, 465, 587, 2465, 2525 and 2587 to addresses outside the cluster, except where `allow` opens them. |
 | `spec.tenancy.egress.allowedPorts` | list of ports | none (every port open but the closed ones) | 1 to 64 | When set, the only ports open to addresses outside the cluster, less the closed ones. The cluster's API port stays open from project environments. |
 | `spec.tenancy.egress.blockedPorts` | list of ports | none | At most 64 | Closed to addresses outside the cluster, besides mail's: for example the ports mining pools listen on, which is a heuristic and detects nothing. |
+| `spec.tenancy.egress.miningPools` | string | `Open` | `Blocked` or `Open` | `Blocked` closes a curated list of the TCP ports public mining pools listen on by default (3333 to 3336, 4444, 5555, 7777, 14433, 14444 and 45700), except where `allow` opens them. A heuristic: a miner on port 443 or behind a proxy is not stopped, and nothing is detected. See [Mining](/docs/guides/outbound-limits/#mining). |
 | `spec.tenancy.egress.allow[].cidr`, `.ports`, `.description` | string; list of ports; string | none | At most 32. `cidr` an IPv4 range written from its first address, not in `169.254.0.0/16` or `127.0.0.0/8`; `ports` 1 to 16; `description` at most 200 characters | Opens the ports to that range whatever else closes them, such as 587 to a mail relay. It cannot open the metadata range, the nodes of a project that keeps away from them, or a build's private ranges. |
+| `spec.tenancy.abuse` | object | none (off) | none | Looks for the services of organizations' projects that may be abusing the machines, such as by mining: CPU use that stays near what the copies are allowed, and reports from a detector outside Geass. A suspect gets the condition `AbuseSuspected`, an event and the alert **Abuse suspected**, and is listed by `GET /api/v1/abuse/suspects`. A signal, not proof. See [Abuse detection](/docs/guides/abuse-detection/). |
+| `spec.tenancy.abuse.action` | string | `None` | `None` or `Suspend` | `Suspend` scales a suspect to zero copies until a platform administrator releases or clears it; nothing is deleted. An organization's `spec.abuse.action` replaces it. |
+| `spec.tenancy.abuse.reviewExemptionDays` | integer | 30 | 1 to 365 | How long a service a platform administrator cleared is left out of the CPU signal. |
+| `spec.tenancy.abuse.cpu.thresholdPercent`, `.windowMinutes` | integer | 90, 30 | 50 to 100; 10 to 1440 | A service is suspected when every sample (one a minute, from `metrics.k8s.io`) for the window is at or above this share of its copies' CPU limits (or requests). |
+| `spec.tenancy.abuse.cpu.quietTraffic.maxRequestsPerMinute` | integer | none | 0 or more | Counts a sample only while the ingress passes the service at most this many requests a minute (from Prometheus, with the monitoring add-on). |
+| `spec.tenancy.abuse.cpu.quietTraffic.withoutTrafficData.thresholdPercent`, `.windowMinutes` | integer | the larger of 95 and the threshold; twice the window | 50 to 100; 10 to 1440 | What applies instead while the requests cannot be read. |
 | A port: `port`, `endPort`, `protocol` | integer, integer, string | `protocol` `TCP` | `port` and `endPort` 1 to 65535, `endPort` not below `port`; `TCP` or `UDP` | One port, or the range from `port` to `endPort`, both included. |
 | `spec.alerting.smtp.host` | string | none | 1 to 253 characters | The mail server email channels send through. Required when `smtp` is set. Alertmanager sends the mail, from the `monitoring` namespace. |
 | `spec.alerting.smtp.port` | integer | `587` | 1 to 65535 | The mail server's port. |
@@ -246,7 +265,7 @@ The Ingress asks cert-manager for a certificate from a ClusterIssuer named `lets
 
 In tunnel mode the controller creates the tunnel `geass`, the Secret `geass-cloudflared-token` and the Deployment `geass-cloudflared`, publishes the routes, and creates CNAME records. Without a Cloudflare connection it deletes the Deployment and Secret.
 
-The routes are the dashboard's host and the host of every service that has one. The controller works out what it would send first, and compares it with what it last sent in full. When nothing has changed it sends nothing to Cloudflare, and looks again after five minutes, which catches a route or record that someone deleted in Cloudflare. It reacts at once when a service gets, changes or loses a host, because it watches the services for changes to their spec. A CNAME record that cannot be created is only logged, and the controller tries again in five seconds. The route of a service that [sleeps when idle](/docs/guides/scale-to-zero/) points at the add-on's wake proxy instead of at the service, because the tunnel does not go through Traefik. The platform configuration is also read by the build controller (the registry, and `spec.tenancy.sandbox` and `spec.tenancy.registry` for an organization's builds), the service controller (`spec.tenancy.sandbox` and `spec.tenancy.registry`, a change of which reaches every service), the operator that holds the leader lease (`spec.usage`, for the meter), the dashboard (metrics address, the stores outside the cluster, GitHub readiness), project creation (the default cluster), the cluster controller (the stores outside the cluster, which it adds to the monitoring and logging add-ons, with the copies of their credentials beside them), and the project and organization controllers (the default noisy-neighbour limits, which they write into each organization's namespaces whenever `spec.tenantLimits` changes, and the outbound limits of `spec.tenancy.egress`, which they write into the network policies of organizations' namespaces).
+The routes are the dashboard's host and the host of every service that has one. The controller works out what it would send first, and compares it with what it last sent in full. When nothing has changed it sends nothing to Cloudflare, and looks again after five minutes, which catches a route or record that someone deleted in Cloudflare. It reacts at once when a service gets, changes or loses a host, because it watches the services for changes to their spec. A CNAME record that cannot be created is only logged, and the controller tries again in five seconds. The route of a service that [sleeps when idle](/docs/guides/scale-to-zero/) points at the add-on's wake proxy instead of at the service, because the tunnel does not go through Traefik. The platform configuration is also read by the build controller (the registry, and `spec.tenancy.sandbox` and `spec.tenancy.registry` for an organization's builds), the service controller (`spec.tenancy.sandbox` and `spec.tenancy.registry`, a change of which reaches every service), the operator that holds the leader lease (`spec.usage`, for the meter), the dashboard (metrics address, the stores outside the cluster, GitHub readiness), project creation (the default cluster), the cluster controller (the stores outside the cluster, which it adds to the monitoring and logging add-ons, with the copies of their credentials beside them), the project and organization controllers (the default noisy-neighbour limits, which they write into each organization's namespaces whenever `spec.tenantLimits` changes, and the outbound limits of `spec.tenancy.egress`, which they write into the network policies of organizations' namespaces), and the abuse detection (`spec.tenancy.abuse`: the detector on the operator that holds the lease, and the controller that writes the `AbuseSuspected` conditions and removes them when the setting goes).
 
 ## Troubleshooting
 
