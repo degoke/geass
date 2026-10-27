@@ -80,6 +80,23 @@ spec:
 
 Setting `mode: external` by hand skips the checks the dashboard makes before it switches (a test sign-in as an admin of the provider, and an admin with a password), so test the provider from **Settings** → **Sign-in** first.
 
+A mail relay for organizations, which signs each in with a login of its own, holds it to its limits and sends through Amazon SES (see [Mail relay](/docs/guides/mail-relay/)):
+
+```yaml title="platform.yaml (spec.tenancy)"
+spec:
+  tenancy:
+    mail:
+      relay:
+        enabled: true
+        upstream:
+          host: email-smtp.eu-west-1.amazonaws.com
+          credentialRef:
+            name: mail-upstream
+        limits:
+          messagesPerDay: 2000
+        requireSenderDomain: true
+```
+
 Organizations' builds never given the platform's registry login, and each organization's images kept apart (see [Registry isolation for organizations](/docs/operations/registry-isolation/)):
 
 ```yaml title="platform.yaml (spec.tenancy)"
@@ -135,6 +152,16 @@ spec:
 | `spec.tenancy.egress.blockedPorts` | list of ports | none | At most 64 | Closed to addresses outside the cluster, besides mail's: for example the ports mining pools listen on, which is a heuristic and detects nothing. |
 | `spec.tenancy.egress.allow[].cidr`, `.ports`, `.description` | string; list of ports; string | none | At most 32. `cidr` an IPv4 range written from its first address, not in `169.254.0.0/16` or `127.0.0.0/8`; `ports` 1 to 16; `description` at most 200 characters | Opens the ports to that range whatever else closes them, such as 587 to a mail relay. It cannot open the metadata range, the nodes of a project that keeps away from them, or a build's private ranges. |
 | A port: `port`, `endPort`, `protocol` | integer, integer, string | `protocol` `TCP` | `port` and `endPort` 1 to 65535, `endPort` not below `port`; `TCP` or `UDP` | One port, or the range from `port` to `endPort`, both included. |
+| `spec.tenancy.mail.relay.enabled` | boolean | `false` | Needs `upstream` | Runs the mail relay `geass-mail-relay` in `geass-system`, gives each organization a login (`geass-mail-credentials-<organization>`) and each environment of its projects the Secret `geass-mail`. Turning it off removes all of them. Not on the settings page. See [Mail relay](/docs/guides/mail-relay/). |
+| `spec.tenancy.mail.relay.upstream.host`, `.port` | string, integer | none; `587`, or `465` with `tls: TLS` | A host name or IPv4 address, at most 253 characters; 1 to 65535 | The mail service the relay hands every message to. |
+| `spec.tenancy.mail.relay.upstream.tls` | string | `StartTLS` | `StartTLS`, `TLS` or `None`; `None` cannot have `credentialRef` | `StartTLS` requires the upstream to offer STARTTLS, or nothing is sent. `TLS` is TLS from the first byte. `None` is plain text, for an upstream inside the cluster or on a private network. The upstream's certificate is checked against its host name and the public authorities. |
+| `spec.tenancy.mail.relay.upstream.credentialRef.name` | string | none | none | A Secret in `geass-system` with `username` and `password`, which the relay signs in to the upstream with. Mounted into the relay's pod, so a new password is used without a restart. |
+| `spec.tenancy.mail.relay.limits.messagesPerMinute`, `.messagesPerHour`, `.messagesPerDay` | integers | 60, 600, 2000 | 0 to 100000, 1000000 and 10000000 | The most messages each organization may send in any 60 seconds, 60 minutes and 24 hours. `0` sends nothing. An organization's `spec.mail.limits` replaces each field it sets. |
+| `spec.tenancy.mail.relay.limits.recipientsPerMessage`, `.connections` | integers | 50, 5 | 1 to 1000 each | The most recipients of one message, and connections signed in at once. |
+| `spec.tenancy.mail.relay.limits.maxMessageSize` | quantity | `10Mi` | 1Ki to 50Mi, checked by the operator | The largest message. |
+| `spec.tenancy.mail.relay.allowedSenderDomains` | list of strings | none (any sender) | At most 50 domains | The domains organizations may send from: the envelope sender and the addresses of the `From` and `Sender` headers. A domain covers the domains below it. An organization's own list replaces this one. |
+| `spec.tenancy.mail.relay.requireSenderDomain` | boolean | `false` | none | Refuses every message of an organization that has no allowed sender domain, its own or the platform's. |
+| `spec.tenancy.mail.relay.deniedRecipientDomains` | list of strings | none | At most 200 domains | Domains, and the domains below them, the relay never sends to. |
 | `spec.alerting.smtp.host` | string | none | 1 to 253 characters | The mail server email channels send through. Required when `smtp` is set. Alertmanager sends the mail, from the `monitoring` namespace. |
 | `spec.alerting.smtp.port` | integer | `587` | 1 to 65535 | The mail server's port. |
 | `spec.alerting.smtp.security` | string | `starttls` | `starttls`, `tls` or `none` | How the connection is protected: `starttls` upgrades a plain connection (port 587), `tls` is encrypted from the first byte and Alertmanager does that only on port 465, `none` sends in the clear and cannot have a username, because Alertmanager will not send a password unencrypted. |
@@ -175,7 +202,7 @@ spec:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `status.cloudflareTunnelID` | string | The ID of the Cloudflare tunnel Geass manages, when the tunnel is in use. |
-| `status.conditions` | list | `DashboardDomainReady` and `CloudflareReady`. |
+| `status.conditions` | list | `DashboardDomainReady`, `CloudflareReady`, and `MailRelayReady` while the mail relay is set. |
 
 ### DashboardDomainReady
 
@@ -208,6 +235,18 @@ This condition reports the Cloudflare side. It is only set when `cloudflareConne
 | `DNSError` | `False` | Ingress mode: the dashboard's A record could not be created. |
 
 While `CloudflareReady` is true, services without a host get a default one under the root domain. See [Connect Cloudflare](/docs/guides/connectors/cloudflare/).
+
+### MailRelayReady
+
+This condition says whether the [mail relay](/docs/guides/mail-relay/) runs. It is there only while `spec.tenancy.mail.relay` is enabled.
+
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `Ready` | `True` | The relay's pod is ready. The message names its address and the upstream. |
+| `Starting` | `False` | The pod is not ready yet. |
+| `UpstreamCredentialsMissing` | `False` | The Secret `upstream.credentialRef` names is missing, or lacks `username` or `password`. |
+| `ImageUnknown` | `False` | The operator's Deployment, whose image the relay runs, could not be read. |
+| `InvalidSettings` | `False` | The settings cannot be applied (a message size over 50Mi, a login over plain text). The relay keeps the configuration it had, and the `Warning` event `MailRelaySettingsInvalid` is recorded. |
 
 ## How the dashboard maps to it
 
@@ -246,7 +285,7 @@ The Ingress asks cert-manager for a certificate from a ClusterIssuer named `lets
 
 In tunnel mode the controller creates the tunnel `geass`, the Secret `geass-cloudflared-token` and the Deployment `geass-cloudflared`, publishes the routes, and creates CNAME records. Without a Cloudflare connection it deletes the Deployment and Secret.
 
-The routes are the dashboard's host and the host of every service that has one. The controller works out what it would send first, and compares it with what it last sent in full. When nothing has changed it sends nothing to Cloudflare, and looks again after five minutes, which catches a route or record that someone deleted in Cloudflare. It reacts at once when a service gets, changes or loses a host, because it watches the services for changes to their spec. A CNAME record that cannot be created is only logged, and the controller tries again in five seconds. The route of a service that [sleeps when idle](/docs/guides/scale-to-zero/) points at the add-on's wake proxy instead of at the service, because the tunnel does not go through Traefik. The platform configuration is also read by the build controller (the registry, and `spec.tenancy.sandbox` and `spec.tenancy.registry` for an organization's builds), the service controller (`spec.tenancy.sandbox` and `spec.tenancy.registry`, a change of which reaches every service), the operator that holds the leader lease (`spec.usage`, for the meter), the dashboard (metrics address, the stores outside the cluster, GitHub readiness), project creation (the default cluster), the cluster controller (the stores outside the cluster, which it adds to the monitoring and logging add-ons, with the copies of their credentials beside them), and the project and organization controllers (the default noisy-neighbour limits, which they write into each organization's namespaces whenever `spec.tenantLimits` changes, and the outbound limits of `spec.tenancy.egress`, which they write into the network policies of organizations' namespaces).
+The routes are the dashboard's host and the host of every service that has one. The controller works out what it would send first, and compares it with what it last sent in full. When nothing has changed it sends nothing to Cloudflare, and looks again after five minutes, which catches a route or record that someone deleted in Cloudflare. It reacts at once when a service gets, changes or loses a host, because it watches the services for changes to their spec. A CNAME record that cannot be created is only logged, and the controller tries again in five seconds. The route of a service that [sleeps when idle](/docs/guides/scale-to-zero/) points at the add-on's wake proxy instead of at the service, because the tunnel does not go through Traefik. The platform configuration is also read by the build controller (the registry, and `spec.tenancy.sandbox` and `spec.tenancy.registry` for an organization's builds), the service controller (`spec.tenancy.sandbox` and `spec.tenancy.registry`, a change of which reaches every service), the operator that holds the leader lease (`spec.usage`, for the meter), the dashboard (metrics address, the stores outside the cluster, GitHub readiness), project creation (the default cluster), the cluster controller (the stores outside the cluster, which it adds to the monitoring and logging add-ons, with the copies of their credentials beside them), and the project and organization controllers (the default noisy-neighbour limits, which they write into each organization's namespaces whenever `spec.tenantLimits` changes, and the outbound limits of `spec.tenancy.egress`, which they write into the network policies of organizations' namespaces), and the mail relay's controller (`spec.tenancy.mail`).
 
 ## Troubleshooting
 

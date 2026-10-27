@@ -83,6 +83,27 @@ The first public release, open source under the Apache License 2.0.
   policies. Closing mining pools' ports is offered as a heuristic, and nothing detects mining or counts mail. Off by default,
   and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, and once on a
   real K3s with real traffic: mail and a port range closed, the ports beside them open, a relay allowed.
+- **A mail relay for organizations.** With `spec.tenancy.mail.relay`, Geass runs an SMTP submission server, `geass-mail-relay` in
+  `geass-system`, from the operator's own image (`manager mailrelay`), which organizations' services reach inside the cluster
+  whatever their outbound limits say, and which sends through one mail service the platform chooses (SES, Postmark, a company's
+  relay: `upstream` with `host`, `port`, `tls` and `credentialRef`). A client must start TLS before it signs in, and checks the
+  relay's certificate against an authority Geass keeps; each organization signs in with a login of its own
+  (`geass-mail-credentials-<organization>`, 32 random bytes, compared as a digest in constant time, rotated with the annotation
+  `geass.dev/rotate-mail-credentials` with the old password taken for a day, revoked by deleting it), which each environment of
+  its projects has as the Secret `geass-mail` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SECURITY`,
+  `SMTP_CA_CERT`) for a service to reference; nothing is put into pods by itself. Each organization is held to messages per minute,
+  hour and day (`450 4.7.1`), recipients per message (`452 4.5.3`), message size (`552 5.3.4`) and connections (`454 4.7.0`), with
+  defaults, the platform's `limits` and an organization's `spec.mail.limits` field by field, and to its sender domains in the
+  envelope and the `From` and `Sender` headers (`allowedSenderDomains`, `requireSenderDomain`, an organization's own list in place
+  of the platform's), and nobody sends to `deniedRecipientDomains` (`550 5.7.1`). A message is answered only once the upstream took
+  it, so there is no queue; an upstream that is down, defers or refuses the relay's login is a temporary failure. The counts are
+  kept in the memory of the relay's one replica: a restart starts them over, which the docs say plainly. Metrics by organization
+  (`geass_mail_relay_*`, scraped with the admin token when monitoring is on), structured logs without a secret, and
+  `GET /api/v1/mail/usage` for the platform's administrators; the condition `MailRelayReady` on the platform configuration. No
+  content scanning, DKIM, SPF, DMARC or bounce handling. Off by default: nothing is made or changed until it is set, and turning it
+  off removes everything it made. Tested in-process with go-smtp's client against the relay and a fake upstream (under `-race`),
+  against fake clients and envtest; not against a real mail service or mail program. Adds `github.com/emersion/go-smtp` and
+  `github.com/emersion/go-sasl` (both MIT).
 - **Registry isolation for organizations.** With `spec.tenancy.registry` (`policy: requireOwnRegistry`, the default), a
   build of a project that belongs to an organization is never given the platform's registry login, nor another
   organization's: one that would be fails before its Job is made, and one running with it when the setting is turned on

@@ -289,6 +289,7 @@ There is one, named `platform`, in `geass-system`. See [GeassPlatformConfig](/do
 | `usage.enabled` | Meter what each organization reserves, hour by hour, for billing; see [Usage by organization](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing) | `kubectl` only |
 | `tenancy.sandbox.runtimeClassName`, `.skipOnReservedNodes` | Run organizations' services, schedules and builds under a sandboxed runtime (gVisor, Kata); see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) | `kubectl` only |
 | `tenancy.egress.mail`, `.allowedPorts`, `.blockedPorts`, `.allow` | Close mail and other ports to addresses outside the cluster for organizations' pods; see [Outbound limits](/docs/guides/outbound-limits/) | `kubectl` only |
+| `tenancy.mail.relay` (`enabled`, `upstream`, `limits`, `allowedSenderDomains`, `requireSenderDomain`, `deniedRecipientDomains`) | Run a mail relay that gives each organization a login and limits, and sends through your mail service; see [Mail relay](/docs/guides/mail-relay/) | `kubectl` only |
 | `tenancy.registry.policy` | Never give organizations' builds the platform's registry login, and keep each organization's images apart; see [Registry isolation for organizations](/docs/operations/registry-isolation/) | `kubectl` only |
 | `defaultDomain`, `traefikAccessLogs` | Present in the schema; no code reads them | Not used |
 

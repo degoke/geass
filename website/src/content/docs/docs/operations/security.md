@@ -21,6 +21,7 @@ had no independent audit, and nothing here should be read as one.
 | Where a project's data runs | Compliance tags: node selectors on everything the project runs, and an admission policy as a backstop |
 | Cloud metadata service | A network policy that blocks `169.254.0.0/16` from every project namespace |
 | Mail and other ports to the outside, for organizations | Off by default. The platform's outbound limits, written into the same policy and an organization's build namespace's: mail ports closed, further ports or all but a list. A port heuristic against mining pools, not detection. See [Outbound limits](/docs/guides/outbound-limits/) |
+| How much mail an organization sends | Off by default. The mail relay: STARTTLS required before sign-in, a login per organization (random, compared as a digest in constant time, rotatable), rates, recipients, size, connections and sender domains per organization, counted in the relay's memory. No content scanning, DKIM or bounce handling. See [Mail relay](/docs/guides/mail-relay/) |
 | The cluster's machines | A network policy that blocks every node address, with the Kubernetes API left open on the control plane. On for projects created in the dashboard or the API; a choice for older projects |
 | One project using all the room | Optional per project: a quota on the CPU, memory, disk and pods of the project, of each environment, or both |
 | Metrics and log stores | Network policies that admit only platform namespaces |
@@ -368,7 +369,13 @@ the Cloudflare token, the GitHub App key, app secrets and shared secrets, functi
   `GEASS_TRIGGER_TOKEN`, from the Secret `<app>-trigger` in the environment's namespace. The schedule's CronJob sends it in the
   `x-geass-trigger-token` header, and the function tells a scheduled call from a visitor by comparing it in constant time. Anyone who can
   read that Secret can forge a scheduled call. The token travels inside the cluster as plain HTTP, like all traffic between services.
-- **In transit.** Inside the cluster, traffic to the dashboard is plain HTTP. Publish it over HTTPS.
+- **The mail relay.** While [the relay](/docs/guides/mail-relay/) runs, each organization's login is in `geass-mail-credentials-<organization>`
+  in `geass-system`, and a copy is in `geass-mail` in each environment of its projects, where its own services can read it. The relay itself
+  is given only the SHA-256 digests of the passwords (the passwords are 32 random bytes, so a fast digest is enough), in the Secret
+  `geass-mail-relay`, with the token its metrics and usage are read with. Its certificate's authority key, `geass-mail-relay-ca`, is never
+  mounted in the relay. The upstream's login stays in the Secret you name, which the relay mounts. None of these is ever logged.
+- **In transit.** Inside the cluster, traffic to the dashboard is plain HTTP. Publish it over HTTPS. The mail relay requires TLS before an
+  organization signs in, with a certificate that clients check against `SMTP_CA_CERT`.
 
 :::caution
 The password of an in-cluster database that Geass creates is random, and the MySQL root password is the same value. A database made by an earlier release
@@ -450,6 +457,9 @@ Without network policies every pod in a Kubernetes cluster can reach every other
   the cluster for every organization's pods (`spec.tenancy.egress`), in the same policy, since a policy of its own could not close
   what this one opens. It is off by default, does not detect mining, and does not limit how much mail is sent. See
   [Outbound limits](/docs/guides/outbound-limits/).
+- **The mail relay.** When it runs, it has a policy of its own, `geass-mail-relay`: every pod may reach its submission port, which
+  asks for an organization's login, and only `geass-system` and `monitoring` its admin port. It reaches only the cluster's DNS and
+  the upstream's port. Organizations reach it whatever their outbound limits say. See [Mail relay](/docs/guides/mail-relay/#networking).
 - **A check that policies are enforced.** All of this depends on the network plugin acting on policies. Geass tries it, and the **Usage** page says **Not enforced** when it does not. See [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies).
 - **Telemetry.** The Prometheus and log stores have no login and hold every project's data, so Geass limits them to the
   platform namespaces with `geass-restrict-metrics-store` and `geass-restrict-log-store`.
@@ -610,7 +620,9 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
     give each a registry login of its own, and turn on `AlwaysPullImages`.
 17. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
-    Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through a relay you run.
+    Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through the
+    [mail relay](/docs/guides/mail-relay/), with a sender domain required, each organization's domains verified at the upstream, and a
+    sending quota at the upstream too: the relay's counts start over when it restarts.
 
 ## What stays your responsibility
 
