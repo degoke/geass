@@ -13,6 +13,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
+	"github.com/degoke/geass/pkg/templates"
 )
 
 // sandboxedPlatform is the platform's configuration with organizations' code under gVisor. The RuntimeClass is not in the
@@ -83,4 +84,18 @@ func TestWithoutTheSandboxAnOrganizationGetsPostgresAsBefore(t *testing.T) {
 	})
 	require.Less(t, rec.Code, 400, rec.Body.String())
 	require.False(t, apierrors.IsNotFound(srv.Client.Get(context.Background(), client.ObjectKey{Name: "orders", Namespace: platform.SystemNamespace}, &geassv1alpha1.GeassDatabase{})))
+}
+
+func TestATemplateWithPostgresIsRefusedToAnOrganizationWithWhatItMadeBefore(t *testing.T) {
+	srv := &Server{Client: newFakeClient(roomyTestNode(), sandboxedPlatform(), matrixOrg(orgA, "Acme", "org_a"), tenantProject("pa1", orgA, ""))}
+	template := templates.Template{ID: "stack", Name: "Stack", Resources: []templates.Resource{
+		{Key: "cache", Kind: templates.KindDatabase, Name: "cache", Engine: "Redis"},
+		{Key: "pg", Kind: templates.KindDatabase, Name: "pg", Engine: "Postgres"},
+	}}
+	_, err := srv.deployTemplate(context.Background(), template, "pa1", "production")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "This database cannot run in the sandbox")
+	var databases geassv1alpha1.GeassDatabaseList
+	require.NoError(t, srv.Client.List(context.Background(), &databases))
+	require.Empty(t, databases.Items, "the Redis made before it is taken away with it")
 }
