@@ -182,6 +182,10 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// something it does not depend on.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileClusterIssuer(ctx, &cluster, certManagerReady))
 
+	// The mesh that joins nodes at different sites is looked at too, when the cluster has one (spec.network.mesh): what
+	// the nodes advertise, and whether the control plane is on it. A cluster that sets none has nothing looked at.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileMesh(ctx, &cluster))
+
 	// Growing existing volumes is background work, so it runs after the status is
 	// written and only ever shortens the requeue. It cannot affect readiness, and a
 	// problem in it must not feed the failure count that pauses this reconciler.

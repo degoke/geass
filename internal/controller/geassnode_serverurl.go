@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -18,7 +19,7 @@ import (
 // so does one whose installer could not work out its own address. That is the control plane's address
 // from the control plane's own point of view, which no worker can use, and it used to surface as a
 // firewall error. It is replaced by the address the control plane node registered under: its public
-// address in a multi-site cluster, whose workers are at other providers, and its private one otherwise.
+// address in a multi-site cluster (a mesh of either kind), whose workers are at other providers, and its private one otherwise.
 // The cluster object is not edited. If no control plane node has an address, the URL is returned as it
 // is and the worker's own reachability check explains what is wrong.
 func workerServerURL(cluster *geassv1alpha1.GeassCluster, controlPlane []corev1.Node) string {
@@ -42,7 +43,7 @@ func workerServerURL(cluster *geassv1alpha1.GeassCluster, controlPlane []corev1.
 		return cmp.Compare(a.Name, b.Name)
 	})
 	for _, node := range nodes {
-		host := controlPlaneHost(node, cluster.Spec.Network.MultiSite)
+		host := controlPlaneHost(node, mesh.From(cluster.Spec.Network).Enabled)
 		if host == "" {
 			continue
 		}

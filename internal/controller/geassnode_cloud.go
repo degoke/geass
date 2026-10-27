@@ -36,6 +36,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/compute"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
@@ -360,7 +361,7 @@ func (r *GeassNodeReconciler) cloudInstanceSpec(ctx context.Context, provider co
 		Settings:          cloud.Settings,
 		Incarnation:       string(node.UID),
 		ControlPlaneCIDRs: controlPlaneCIDRs,
-		MultiSite:         cluster.Spec.Network.MultiSite,
+		MultiSite:         mesh.From(cluster.Spec.Network).UsesOverlayPort(),
 		PrivateAddress:    cloud.AddressType == geassv1alpha1.AddressPrivate,
 	}
 	init := compute.CloudInit{AuthorizedKeys: spec.AuthorizedKeys, HostKey: &hostKey, Hostname: node.Name}
@@ -572,9 +573,14 @@ func (r *GeassNodeReconciler) cloudJoin(ctx context.Context, node *geassv1alpha1
 	if err != nil {
 		return r.setFailed(ctx, node, "join token: "+err.Error())
 	}
+	if refused, err := meshJoinRefusal(ctx, r.Client, cluster, node); err != nil {
+		return ctrl.Result{}, err
+	} else if refused != "" {
+		return r.setFailed(ctx, node, refused)
+	}
 	in, err := workerJoinInput(ctx, r.Client, r.ServerVersion, node, cluster, creds, token)
 	if err != nil {
-		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+		return r.setFailed(ctx, node, joinInputFailure(err))
 	}
 	if claimed, err := r.claimJoin(ctx, node); err != nil {
 		return ctrl.Result{}, err
@@ -881,10 +887,10 @@ func (r *GeassNodeReconciler) handleCloudDeletion(ctx context.Context, node *gea
 }
 
 // controlPlaneRules are what a machine at address needs to reach the control plane: its API port, and in a multi-site
-// cluster the overlay port.
+// cluster whose mesh is WireGuard the overlay port. A Tailscale mesh opens no port on the control plane.
 func controlPlaneRules(cluster *geassv1alpha1.GeassCluster, cidr string) []compute.AccessRule {
 	rules := []compute.AccessRule{{Protocol: "tcp", Port: 6443, CIDR: cidr}}
-	if cluster.Spec.Network.MultiSite {
+	if mesh.From(cluster.Spec.Network).UsesOverlayPort() {
 		rules = append(rules, compute.AccessRule{Protocol: "udp", Port: compute.OverlayPortUDP, CIDR: cidr})
 	}
 	return rules
