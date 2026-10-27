@@ -71,6 +71,10 @@ func v1RouteScope(parts []string) routeScope {
 		return scopeAny
 	case kindProjects, kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases:
 		return scopeTenant
+	case "usage":
+		// GET /api/v1/usage reaches authentication as the dashboard's /api/usage, which answers for the caller's tenant.
+		// What is under it here, what every organization reserved hour by hour, is the platform's.
+		return scopePlatform
 	}
 	return scopePlatform
 }

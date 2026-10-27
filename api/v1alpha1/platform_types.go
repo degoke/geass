@@ -593,6 +593,20 @@ type GeassPlatformConfigSpec struct {
 	// that is down, backups that are failing, a node that is not ready.
 	// +optional
 	Alerting *GeassAlertingSpec `json:"alerting,omitempty"`
+	// Usage keeps, hour by hour, what each organization's projects reserve, for billing on a cluster that organizations
+	// share. Unset means off.
+	// +optional
+	Usage *GeassPlatformUsageSpec `json:"usage,omitempty"`
+}
+
+// GeassPlatformUsageSpec says whether the operator meters what each organization reserves.
+type GeassPlatformUsageSpec struct {
+	// Enabled turns the meter on. Every minute the operator adds what the pods of each organization's projects ask for
+	// (CPU and memory requests) and the size of their bound volumes to the hour it is in, and keeps 62 days of hours in
+	// ConfigMaps named geass-usage-<hour> in the system namespace. GET /api/v1/usage/hours serves them to the platform's
+	// administrators. Turning it off stops the meter and keeps what it stored.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // GeassPlatformAuthSpec says whose word Geass takes for who a person is.

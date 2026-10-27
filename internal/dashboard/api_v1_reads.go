@@ -87,6 +87,7 @@ func (s *Server) v1Router() *http.ServeMux {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /api/v1/version", s.v1Version)
 		mux.HandleFunc("GET /api/v1/me", s.v1Me)
+		mux.HandleFunc("GET /api/v1/usage/hours", s.v1UsageHours)
 		mux.HandleFunc("GET /api/v1/nodes", s.v1Nodes)
 		mux.HandleFunc("GET /api/v1/compute/providers", s.v1ComputeProviders)
 		mux.HandleFunc("GET /api/v1/compute/sizes", s.v1ComputeSizes)

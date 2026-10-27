@@ -21,6 +21,14 @@ The first public release, open source under the Apache License 2.0.
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3
   in a browser. The package itself is still developed against 8.
+- **Usage by organization, for billing.** With `spec.usage.enabled`, the operator that holds the lease meters, every minute,
+  what the projects of each organization reserve: CPU and memory requests while a pod is on a node, and the size of bound
+  volumes, by organization and workspace through each project's `spec.org` and `spec.workspace`, with the projects of no
+  organization and the platform's own kept apart. Hours are kept 62 days in ConfigMaps `geass-usage-<YYYYMMDDHH>` in
+  `geass-system`, which the operator's cache leaves out, and a restart neither repeats nor loses a minute (time the meter
+  did not see shows as fewer metered seconds). `GET /api/v1/usage/hours?from=&to=&org=` serves them, with each hour closed
+  or open and a `next` to read on from, to the platform's administrators only. Traffic is not metered: `egressBytes` is
+  always `null`. Off by default; a dashboard-only process never meters.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

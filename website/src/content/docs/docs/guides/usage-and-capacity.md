@@ -221,6 +221,58 @@ curl -sS -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/u
 
 The response lists `cpuAllocatableMillis`, `memoryAllocatableBytes`, `nodes`, a `projects` array, a `platform` object and a `regions` array. `actualAvailable` is `true` when the "using" figures could be read. See the [REST API](/docs/reference/rest-api/).
 
+## Usage by organization, for billing
+
+The page shows what is reserved now. On a cluster that several [organizations](/docs/guides/organizations-and-workspaces/) share, Geass can also keep what each organization reserved, hour by hour, so that the platform can bill them for it. It is off until you turn it on, and only the platform's administrators can read it.
+
+```bash title="Turn the meter on"
+sudo k3s kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"usage":{"enabled":true}}}'
+```
+
+### What is metered
+
+Every minute the operator adds what is reserved at that moment, times the time since the last minute, to the hour it is in:
+
+| Figure | What it is | Unit in the export |
+| --- | --- | --- |
+| CPU | What the pods ask for (their requests), from the moment a pod is placed on a node until it finishes. As the scheduler counts it: the containers together, or the largest init container if that is more, plus the pod's overhead. | Core-hours |
+| Memory | The same, for memory. | GiB-hours |
+| Storage | The size of each bound volume (the size of the volume it is bound to, or what it asked for when the volume does not say). | GiB-hours |
+| Egress | Not metered. Always `null`. | |
+
+A pod or a volume is an organization's through the project whose environment it runs in: the project's organization and workspace (`spec.org` and `spec.workspace`) say whose it is, at the moment of each sample. Builds in an organization's build namespace are the organization's, under the workspace `""`, which also holds the projects of the organization that are in no workspace. Two other totals are kept apart and never added to an organization: **unassigned**, the projects that belong to no organization, and **platform**, everything that is no project's (Geass, K3s, monitoring, storage, and the shared database and bucket servers).
+
+What it does not measure:
+
+- **What is used.** The figures are reservations, as on this page. A service that reserves 0.25 CPU and sits idle is billed 0.25 CPU, and one that sets no request is billed nothing. What pods use comes from Prometheus, which is optional and keeps its own retention, so it is not the source.
+- **Traffic.** Geass has no figure for traffic that leaves the cluster. The only network number it has is what each pod sends, from Prometheus, which counts traffic to other pods and to the cluster's databases as well. Every answer says `"egress": {"available": false, ...}`.
+- **Shared servers by organization.** A logical database on a shared server is billed as the server's, under **platform**, and so are the bytes in buckets on the cluster's object storage server.
+- **Nodes.** An organization with nodes of its own (reserved with node tags) is billed for its pods' reservations like any other; bill the nodes from their pool if that is the deal.
+
+### How it is kept
+
+Each hour (in UTC) is a ConfigMap in `geass-system` named `geass-usage-<YYYYMMDDHH>`, labelled `geass.dev/usage-hour` and `geass.dev/usage-day`, and kept for 62 days. Only the operator that holds the leader lease meters, and only where the controllers run: a dashboard-only process (`--controllers=false`) reads the hours and never writes them.
+
+An hour says how far it has been metered, and each minute only adds the time after that. An operator that restarts within three minutes carries on where the hours end, without counting a minute twice or losing one. Time the meter did not see (it was off, or away for longer) is not counted, and shows: the hour's `meteredSeconds` is less than 3600. An hour is **closed** once it is metered to its end, or five minutes after it ends; after that it never changes.
+
+Turning the meter off stops it, and keeps the hours it stored until it is turned on again (which deletes those older than 62 days) or you delete them:
+
+```bash title="Delete every stored hour"
+sudo k3s kubectl -n geass-system delete configmap -l geass.dev/usage-hour
+```
+
+### Read it
+
+`GET /api/v1/usage/hours` answers with every hour from `from` to `to` (RFC 3339; the last 24 hours by default, at most 31 days at a time), for every organization or, with `?org=`, for one. It needs an admin who acts for the platform: a platform administrator, or an install-wide admin token. An organization's people and tokens, viewers, observers and project tokens get `403`.
+
+```bash title="What each organization reserved this morning"
+curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
+  "https://geass.example.com/api/v1/usage/hours?from=2026-10-23T09:00:00Z&to=2026-10-23T12:00:00Z" \
+  | jq -r '.hours[] | .start as $hour | .orgs[] | [$hour, .org, .workspace, .cpuCoreHours, .memoryGiBHours, .storageGiBHours] | @tsv'
+```
+
+To bill as you go, ask every hour or so from the `next` of the last answer, and store each hour by its start, organization and workspace, replacing what you stored for it before: an hour that is still open (`"closed": false`) comes again in the next answer until it closes. The [REST API](/docs/reference/rest-api/#usage-by-organization) has the whole answer.
+
 ## Troubleshooting
 
 **The page says "Capacity unavailable".**

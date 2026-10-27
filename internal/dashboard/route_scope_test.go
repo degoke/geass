@@ -107,6 +107,9 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 		switch path {
 		case "/api/v1/nodes", "/api/v1/cluster/metrics", "/api/v1/operator/metrics":
 			continue
+		case "/api/v1/usage/hours":
+			// What every organization reserved, for billing: the platform's (usage_hours_test.go).
+			continue
 		}
 		if op.Tag == tagCompute {
 			// Machines and the clouds they come from belong to the cluster: see the test below.

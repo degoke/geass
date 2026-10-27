@@ -6356,6 +6356,19 @@ spec:
                   for dashboardExposure=cloudflare-tunnel.
                 pattern: ^[a-z0-9-]+(\.[a-z0-9-]+)+$
                 type: string
+              usage:
+                description: |-
+                  Usage keeps, hour by hour, what each organization's projects reserve, for billing on a cluster that organizations
+                  share. Unset means off.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled turns the meter on. Every minute the operator adds what the pods of each organization's projects ask for
+                      (CPU and memory requests) and the size of their bound volumes to the hour it is in, and keeps 62 days of hours in
+                      ConfigMaps named geass-usage-<hour> in the system namespace. GET /api/v1/usage/hours serves them to the platform's
+                      administrators. Turning it off stops the meter and keeps what it stored.
+                    type: boolean
+                type: object
             type: object
           status:
             properties:
