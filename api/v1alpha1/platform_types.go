@@ -671,6 +671,10 @@ type GeassPlatformConfigSpec struct {
 	// dashboard reads them from. Unset, both stay in the cluster.
 	// +optional
 	Observability *GeassObservabilitySpec `json:"observability,omitempty"`
+	// Tenancy hardens a cluster that organizations who do not trust each other share, such as by running their code in a
+	// sandboxed runtime. Unset means nothing changes.
+	// +optional
+	Tenancy *GeassPlatformTenantIsolationSpec `json:"tenancy,omitempty"`
 }
 
 // GeassPlatformUsageSpec says whether the operator meters what each organization reserves.

@@ -68,6 +68,16 @@ spec:
       sessionMinutes: 60
 ```
 
+Organizations' code under gVisor, except on nodes reserved for the organization (see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) for what the nodes need first):
+
+```yaml title="platform.yaml (spec.tenancy)"
+spec:
+  tenancy:
+    sandbox:
+      runtimeClassName: gvisor
+      skipOnReservedNodes: true
+```
+
 Setting `mode: external` by hand skips the checks the dashboard makes before it switches (a test sign-in as an admin of the provider, and an admin with a password), so test the provider from **Settings** → **Sign-in** first.
 
 ## Spec fields
@@ -107,6 +117,8 @@ Setting `mode: external` by hand skips the checks the dashboard makes before it 
 | `spec.auth.tenancy.autoProvision.mode`, `.allow`, `.max` | `Pending` or `Open`; list of strings; integer | none (off) | `allow` at most 50 entries; `max` 1 to 500, default 20; `Open` needs `allow` | Makes an organization of the provider that Geass does not know when one of its administrators, with a verified address, signs in. `Pending` makes it suspended until approved; `Open` makes it ready, for the ids in `allow` (an id as it is, or a prefix followed by `*`). See [Sign in with an identity provider](/docs/guides/external-sign-in/#organizations-made-by-sign-in). |
 | `spec.auth.tenancy.platformClaim`, `.platformValues` | string, list of strings | none | At most 253 characters; at most 20 values | A claim whose value, compared whole, makes someone an administrator of the whole platform and not of an organization. Without them, only the admins who sign in with a password are. |
 | `spec.usage.enabled` | boolean | `false` | none | Whether the operator meters what each organization's projects reserve (CPU and memory requests, and the size of bound volumes), hour by hour, into the ConfigMaps `geass-usage-<YYYYMMDDHH>` in `geass-system`, kept 62 days, for `GET /api/v1/usage/hours`. Turning it off stops the meter and keeps what it stored. Not on the settings page. See [Usage by organization, for billing](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing). |
+| `spec.tenancy.sandbox.runtimeClassName` | string | none (off) | 1 to 253 characters, a DNS subdomain; required when `sandbox` is set | The RuntimeClass (gVisor, Kata) that the pods of organizations' projects run with: their services' copies, their functions' schedules and their builds. The projects of no organization and Geass's own pods are left alone. While the cluster has no RuntimeClass of this name, an organization's service or build waits, with the condition `Sandboxed` `False` `RuntimeClassMissing`, and is never started without it. Changing it rolls the organizations' services. Not on the settings page. See [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/). |
+| `spec.tenancy.sandbox.skipOnReservedNodes` | boolean | `false` | none | Runs without the sandbox the pods that can only be scheduled on nodes reserved for their own organization: they ask for a tag the organization requires, no other organization requires it, and every node that carries it is reserved for it. Anything less certain is sandboxed. See [Reserved nodes](/docs/operations/sandboxed-runtime/#reserved-nodes). |
 | `spec.alerting.smtp.host` | string | none | 1 to 253 characters | The mail server email channels send through. Required when `smtp` is set. Alertmanager sends the mail, from the `monitoring` namespace. |
 | `spec.alerting.smtp.port` | integer | `587` | 1 to 65535 | The mail server's port. |
 | `spec.alerting.smtp.security` | string | `starttls` | `starttls`, `tls` or `none` | How the connection is protected: `starttls` upgrades a plain connection (port 587), `tls` is encrypted from the first byte and Alertmanager does that only on port 465, `none` sends in the clear and cannot have a username, because Alertmanager will not send a password unencrypted. |

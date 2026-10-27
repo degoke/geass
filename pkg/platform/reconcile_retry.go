@@ -127,6 +127,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
 		return false
 	}
+	// An organization's service waits for the sandboxed runtime until the platform adds it, which changes nothing of the
+	// service: counting the wait would give the service up before the runtime came.
+	if strings.HasPrefix(msg, strings.ToLower(MessageSandboxRuntimeMissing)) {
+		return false
+	}
 	if strings.Contains(msg, strings.ToLower(MessageObjectStorageCredentials)) {
 		return false
 	}

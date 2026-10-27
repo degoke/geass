@@ -99,13 +99,13 @@ The operator copies these from the service. Changing a field of the service chan
 | `status.completedAt` | time | When the build succeeded. A build that failed has none. |
 | `status.cancelRequested` | boolean | Set to stop the build. |
 | `status.lastLogLine` | string | Shown in the dashboard's build log if set. Nothing sets it. |
-| `status.conditions` | list | Nothing writes conditions for this kind. |
+| `status.conditions` | list | `Sandboxed`, only on a build of an organization's project while the platform's `spec.tenancy.sandbox` is set: `True` `RuntimeClass` when its pod runs under the sandboxed runtime, `False` `ReservedNodes` when it runs without it on nodes reserved for the organization, `False` `RuntimeClassMissing` while the build waits for the RuntimeClass (in `Pending`, with a `Warning` event `SandboxRuntimeClassMissing`). See [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/). Nothing else writes conditions for this kind. |
 
 ### Phases
 
 | Phase | Meaning | What happens next |
 | --- | --- | --- |
-| `Pending` | The build was put back to the start by a push, a rebuild or a reset (a build that the operator has created but not yet reconciled has an empty phase). | The next reconcile resolves the commit. |
+| `Pending` | The build was put back to the start by a push, a rebuild or a reset (a build that the operator has created but not yet reconciled has an empty phase). Also a build of an organization's project that waits for the platform's sandboxed runtime, whose `Sandboxed` condition says so. | The next reconcile resolves the commit. A build that waits for the runtime is looked at again every 30 seconds, and its Job is made once the RuntimeClass is there. |
 | `WaitingForCI` | Waiting for check runs of the commit, or for GitHub to answer. | Checked again every 15 seconds. A commit with no check runs waits forever. |
 | `Running` | The Kaniko Job exists. | Checked every 5 seconds. |
 | `Succeeded` | The Job finished and a digest was found. | The service deploys the digest. The build is not looked at again, unless it has a log store and its log is not archived yet. |

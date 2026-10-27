@@ -395,6 +395,7 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		PodUsage: podUsage,
 		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
 		AsyncReports: true,
+		Recorder:     mgr.GetEventRecorder("geass-app"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
 		os.Exit(1)
@@ -405,6 +406,7 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		Kube:   kubernetes.NewForConfigOrDie(restConfig),
 		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
 		AsyncReports: true,
+		Recorder:     mgr.GetEventRecorder("geass-build"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassbuild")
 		os.Exit(1)

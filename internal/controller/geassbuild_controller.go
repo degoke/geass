@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -42,6 +43,8 @@ type GeassBuildReconciler struct {
 	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
 	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
 	AsyncReports bool
+	// Recorder records the events of a build, such as a wait for the sandboxed runtime. Nil records none.
+	Recorder events.EventRecorder
 
 	retries reportRetries
 	reports reportDispatcher
@@ -57,6 +60,8 @@ type GeassBuildReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassapps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=node.k8s.io,resources=runtimeclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 func (r *GeassBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	result, err := r.reconcileBuild(ctx, req)
@@ -154,6 +159,18 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		jobPlacement.ApplyToPodSpec(&job.Spec.Template.Spec)
+		// An organization's build runs its Dockerfile, which is the organization's code, so it runs under the sandboxed
+		// runtime too. Without the runtime the build waits, before anything of it is copied or made.
+		sandbox, err := platform.ResolveSandbox(ctx, r.Client, build.Spec.Project, job.Spec.Template.Spec.NodeSelector)
+		if missing := sandboxWait(err); missing != nil {
+			if err := r.recordBuildSandbox(ctx, build, sandbox, missing); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildPending, nil, nil)
+		} else if err != nil {
+			return ctrl.Result{}, err
+		}
+		sandbox.Apply(&job.Spec.Template.Spec)
 		// A project of an organization builds in the organization's own namespace, with copies of what the build needs.
 		// Its Job is then in another namespace than the build, which cannot own it.
 		namespace, org, err := r.buildNamespaceFor(ctx, build)
@@ -167,6 +184,9 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			}
 			build.Status.JobNamespace = namespace
 		} else if err := controllerutil.SetControllerReference(build, job, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.recordBuildSandbox(ctx, build, sandbox, nil); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, job); err != nil {

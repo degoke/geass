@@ -35,11 +35,13 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -80,6 +82,8 @@ type GeassAppReconciler struct {
 	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
 	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
 	AsyncReports bool
+	// Recorder records the events of a service, such as a wait for the sandboxed runtime. Nil records none.
+	Recorder events.EventRecorder
 
 	retries reportRetries
 	reports reportDispatcher
@@ -104,6 +108,9 @@ type GeassAppReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassbuilds,verbs=get;list;watch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=node.k8s.io,resources=runtimeclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 func (r *GeassAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	result, err := r.reconcileApp(ctx, req)
@@ -215,8 +222,9 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 	if err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
 	}
-	if err := r.reconcileDeployment(ctx, &app, wsNS, withScaleToZero(plan), withRegistryPullSecret(pullSecret)); err != nil {
-		return r.setNotReady(ctx, &app, err.Error())
+	// An organization's service whose sandboxed runtime is not there keeps its Deployment as it was, and waits.
+	if err := r.reconcileSandboxedDeployment(ctx, &app, wsNS, withScaleToZero(plan), withRegistryPullSecret(pullSecret)); err != nil {
+		return r.notReadyFor(ctx, &app, err)
 	}
 	if err := r.reconcileAutoscaler(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
@@ -231,7 +239,7 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		return r.setNotReady(ctx, &app, err.Error())
 	}
 	if err := r.reconcileFunctionTriggers(ctx, &app, wsNS, plan); err != nil {
-		return r.setNotReady(ctx, &app, err.Error())
+		return r.notReadyFor(ctx, &app, err)
 	}
 	if err := r.reconcileServiceMonitor(ctx, &app, wsNS); err != nil {
 		return r.setNotReady(ctx, &app, err.Error())
@@ -528,12 +536,19 @@ type workloadOptions struct {
 	scaleToZero scaleToZeroPlan
 	// pullSecret is the credential the nodes pull a built image with, when the registry needs one.
 	pullSecret *corev1.LocalObjectReference
+	// sandbox, when set, is told how the service's pods were made to run.
+	sandbox *platform.Sandbox
 }
 
 // withRegistryPullSecret has the service's pods pull their image with a credential, for an image Geass built
 // and pushed to a registry that needs one. A nil secret changes nothing.
 func withRegistryPullSecret(secret *corev1.LocalObjectReference) workloadOption {
 	return func(o *workloadOptions) { o.pullSecret = secret }
+}
+
+// withSandboxResult has the Deployment say how its pods run under spec.tenancy.sandbox, for the service's status.
+func withSandboxResult(sandbox *platform.Sandbox) workloadOption {
+	return func(o *workloadOptions) { o.sandbox = sandbox }
 }
 
 // withScaleToZero carries a service's scale-to-zero plan to the pieces that depend on it.
@@ -762,6 +777,16 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 		if appRunsManyCopies(app) {
 			spreadCopies(&deploy.Spec.Template.Spec, selector, spreadBySite)
 		}
+		// An organization's pods run under the sandboxed runtime, decided from where they may be scheduled. When the runtime
+		// is not there the Deployment is not written at all, so no pod is started without it.
+		sandbox, sandboxErr := platform.ResolveSandbox(ctx, r.Client, app.Spec.Project, deploy.Spec.Template.Spec.NodeSelector)
+		if sandboxErr != nil {
+			return sandboxErr
+		}
+		sandbox.Apply(&deploy.Spec.Template.Spec)
+		if options.sandbox != nil {
+			*options.sandbox = sandbox
+		}
 		if options.scaleToZero.active {
 			// What the pods are made from, so a service that sleeps is known to need checking again when it changes.
 			if deploy.Annotations == nil {
@@ -863,7 +888,12 @@ func (r *GeassAppReconciler) resolveGitImage(ctx context.Context, app *geassv1al
 	app.Status.CurrentBuild = build.Name
 	if !ready {
 		r.dispatchReport(ctx, app, r.syncPullRequestComment)
-		result, err = r.setNotReady(ctx, app, "Git source is waiting for a successful build")
+		message := "Git source is waiting for a successful build"
+		// A build held back for the sandboxed runtime says so, and so does the service that waits for it.
+		if wait := buildSandboxWait(build); wait != "" {
+			message = wait
+		}
+		result, err = r.setNotReady(ctx, app, message)
 		return result, true, err
 	}
 	image, err := builtImageReference(build)
@@ -1337,7 +1367,13 @@ func (r *GeassAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(appForDeployment), builder.WithPredicates(predicate.Or(podOOMKilled(), podStartFailing()))).
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.appsForProject), builder.WithPredicates(readyOrSpecChanged())).
 		// Where an organization's services run follows its region and required node tags.
-		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.appsForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.appsForOrganization), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// How an organization's services run follows spec.tenancy.sandbox: a change to it rolls them, a RuntimeClass that
+		// appears starts those that waited for it, and a change to a node's reservations can move them in or out of the
+		// sandbox when reserved nodes may run without it.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.allApps), builder.WithPredicates(tenancyChanged())).
+		Watches(&nodev1.RuntimeClass{}, handler.EnqueueRequestsFromMapFunc(r.appsForRuntimeClass), builder.WithPredicates(runtimeClassCreatedOrDeleted())).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.appsForReservation), builder.WithPredicates(nodeReservationChanged())).
 		// A service tolerates the taint of nodes that must not hold data only while such nodes exist, so that a cluster
 		// without them never restarts a service for it. The first pool or server of that kind, and the last one going,
 		// reach every service so that it is rolled to match.
