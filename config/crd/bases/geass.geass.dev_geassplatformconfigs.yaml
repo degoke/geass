@@ -466,6 +466,24 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              managed:
+                description: |-
+                  Managed says a platform runs this Geass and keeps the installer, updates, the K3s release, sign-in and the
+                  dashboard's domain for itself: the dashboard's API refuses writes to them and the dashboard shows them read-only.
+                  Unset means off, and everything can be changed as before.
+                properties:
+                  enabled:
+                    description: Enabled turns managed mode on. Unset or false means
+                      off.
+                    type: boolean
+                  provider:
+                    description: |-
+                      Provider names the platform that manages the cluster, such as rungeass. It is put in the messages that say who
+                      manages a setting: "managed by rungeass". Left empty the messages say "the platform that runs this cluster".
+                    maxLength: 60
+                    pattern: ^([A-Za-z0-9][A-Za-z0-9 ._-]*)?$
+                    type: string
+                type: object
               observability:
                 description: |-
                   Observability says where the cluster's metrics and logs go besides the stores in the cluster, and where the

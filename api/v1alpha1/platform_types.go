@@ -681,6 +681,11 @@ type GeassPlatformConfigSpec struct {
 	// and each pod's network bandwidth. Unset means none of it, as before.
 	// +optional
 	TenantLimits *GeassPlatformTenantLimitsSpec `json:"tenantLimits,omitempty"`
+	// Managed says a platform runs this Geass and keeps the installer, updates, the K3s release, sign-in and the
+	// dashboard's domain for itself: the dashboard's API refuses writes to them and the dashboard shows them read-only.
+	// Unset means off, and everything can be changed as before.
+	// +optional
+	Managed *GeassPlatformManagedSpec `json:"managed,omitempty"`
 }
 
 // GeassPlatformUsageSpec says whether the operator meters what each organization reserves.
