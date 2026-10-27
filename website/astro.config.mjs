@@ -106,6 +106,7 @@ export default defineConfig({
             "docs/guides/compliance-tags",
             "docs/guides/network-isolation",
             "docs/guides/project-limits",
+            "docs/guides/tenant-limits",
             "docs/guides/observability",
             "docs/guides/alerts",
             "docs/guides/usage-and-capacity",

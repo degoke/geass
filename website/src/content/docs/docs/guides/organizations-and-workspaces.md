@@ -186,6 +186,7 @@ A platform administrator can set these on an organization, in **Settings** → *
 | **Region** (`region`) | Where its projects run when they name no region of their own. |
 | **Required node tags** (`requiredTags`) | Every workload of every project of the organization runs only on nodes carrying all of them, added to the project's own. With nodes tagged and reserved for the tag, this is how an organization gets machines of its own. The tags have to exist on nodes, and be reserved, as a project's must. |
 | **Allowed domains** (`allowedDomains`) | Its services may take hostnames under these domains only, and the hostname Geass gives a service. Two organizations cannot be given overlapping domains. |
+| **Noisy-neighbour limits** (`limits`) | The pods and ephemeral storage of each of its namespaces, what a container that asks for nothing is given and the most one may ask for, and each pod's bandwidth, in place of the platform's defaults (`spec.tenantLimits.defaults`). Set with `kubectl` only. See [Noisy-neighbour limits](/docs/guides/tenant-limits/). |
 
 ## Billing what each organization reserves
 
@@ -232,7 +233,7 @@ One GitHub App serves every organization. With organizations on, a person who co
 
 These are shared, and fine for organizations that trust each other:
 
-- **Machines.** Every organization's pods run on the same nodes, unless you reserve nodes with [node tags](/docs/guides/scaling-and-placement/) and give each organization its own tags (see above). A pod that escapes its container reaches the node. To keep that from strangers, run organizations' services, schedules and builds under gVisor or Kata with the [sandboxed runtime](/docs/operations/sandboxed-runtime/); their databases and buckets are not sandboxed.
+- **Machines.** Every organization's pods run on the same nodes, unless you reserve nodes with [node tags](/docs/guides/scaling-and-placement/) and give each organization its own tags (see above). A pod that escapes its container reaches the node. To keep that from strangers, run organizations' services, schedules and builds under gVisor or Kata with the [sandboxed runtime](/docs/operations/sandboxed-runtime/); their databases and buckets are not sandboxed. [Noisy-neighbour limits](/docs/guides/tenant-limits/) bound each organization's pods, disk and bandwidth, but not its pods on one node, nor its disk reads and writes.
 - **The network of shared servers.** A shared database server runs in the platform's namespace, and any pod can open a connection to it. Each logical database has its own login that reaches that database and nothing else, and the administrator's login is in a Secret no organization reads.
 - **The operator and the dashboard.** They hold cluster-wide access; the separation is made by their code and by the network policy.
 - **The GitHub App.** There is one for the installation, and anyone who can install it on an account they own can connect that installation.

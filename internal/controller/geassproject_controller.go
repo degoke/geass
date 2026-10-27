@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -36,6 +37,7 @@ type GeassProjectReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=resourcequotas;limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes;services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassplatformconfigs,verbs=get;list;watch
 
 func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var project geassv1alpha1.GeassProject
@@ -96,6 +98,7 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	var limits tenantLimitsState
 	desired := make(map[string]string, len(project.Spec.Environments))
 	for _, env := range project.Spec.Environments {
 		if _, exists := desired[env]; exists {
@@ -121,7 +124,19 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, err
 		}
 		if err := r.reconcileProjectQuota(ctx, &project, namespace, quotaUsage, orgCaps); err != nil {
-			return ctrl.Result{}, err
+			// A project of an organization with limits says on its condition which environment they could not be written
+			// into, and the others are still done.
+			if orgCaps.limits == nil {
+				return ctrl.Result{}, err
+			}
+			limits.problems = append(limits.problems, namespace+": "+err.Error())
+		}
+		if orgCaps.limitsInvalid == nil {
+			if available, err := reconcileTenantBandwidth(ctx, r.Client, namespace, orgCaps.limits); err != nil {
+				limits.problems = append(limits.problems, namespace+": "+err.Error())
+			} else if !available {
+				limits.noBandwidthPolicy = true
+			}
 		}
 		if err := r.reconcileProjectCompliance(ctx, &project, namespace); err != nil {
 			return ctrl.Result{}, err
@@ -156,7 +171,20 @@ func (r *GeassProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		platform.ClearReconcileRetry(&retryState)
 		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
 		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "ProjectReady", "Project environments are ready")
+		if applied, reason, message, ok := limits.condition(orgCaps); ok {
+			status := metav1.ConditionFalse
+			if applied {
+				status = metav1.ConditionTrue
+			}
+			latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionTenantLimitsApplied, status, reason, message)
+		} else {
+			meta.RemoveStatusCondition(&latest.Status.Conditions, platform.ConditionTenantLimitsApplied)
+		}
 	})
+	if err == nil && len(limits.problems) > 0 {
+		// Written again with the growing delay of a failed reconcile, until it can be.
+		err = fmt.Errorf("could not apply the organization's limits: %s", joinBounded(limits.problems, 3))
+	}
 	return ctrl.Result{}, err
 }
 
@@ -243,8 +271,10 @@ func (r *GeassProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return requests
 		}), builder.WithPredicates(readyOrSpecChanged())).
-		// What an organization requires of its projects (node tags, region, quota) is acted on in each of them.
+		// What an organization requires of its projects (node tags, region, quota, limits) is acted on in each of them.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, projectItself)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// So are the limits the platform gives every organization.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(projectsOfOrganizations(r.Client)), builder.WithPredicates(tenantLimitsChanged())).
 		// A network policy that is edited or deleted by hand is put back.
 		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.projectsForNetworkPolicy)).
 		// A project that blocks the cluster's machines names each one in its policy, so it follows the nodes.

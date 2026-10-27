@@ -61,6 +61,16 @@ The first public release, open source under the Apache License 2.0.
   organization. The nodes need the runtime installed and the cluster the RuntimeClass; the docs give the K3s containerd
   configuration for gVisor. Not run with gVisor or Kata yet. Off by default: without it no pod template changes. The
   operator now records events and reads RuntimeClasses.
+- **Noisy-neighbour limits for shared clusters.** `spec.tenantLimits.defaults` on the platform configuration, and `spec.limits`
+  on an organization in their place, hold each namespace an organization's pods run in (every environment of its projects,
+  and its build namespace): a ResourceQuota `geass-tenant-quota` on its pods and ephemeral storage; a LimitRange that gives a
+  container that asks for nothing a default request and limit of CPU, memory and ephemeral storage (so that no pod is free to
+  the scheduler or the usage meter) and refuses one above the most; and each pod's bandwidth, which a mutating admission
+  policy `geass-pod-bandwidth` puts on every pod as the CNI bandwidth plugin's annotations (Kubernetes 1.36, and only where
+  the network plugin runs that plugin). An organization's builds are given the most a container may have. A project says on
+  its `TenantLimitsApplied` condition whether they are applied, and a service whose pods they refuse says why. Pods per node
+  and disk I/O are not limited: Kubernetes has no means to. Off by default, and nothing has changed for a platform that
+  does not set them. Tested against fake clients and the API server's own admission policy code, not yet on a real cluster.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

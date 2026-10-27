@@ -26,9 +26,9 @@ var (
 	defaultRequestMemory = resource.MustParse("64Mi")
 )
 
-// ManagedQuotaNames lists the quota objects the operator owns, so a watch can ignore the rest.
+// ManagedQuotaNames lists the quota objects the operator owns in a project's namespaces, so a watch can ignore the rest.
 func ManagedQuotaNames() []string {
-	return []string{ProjectQuotaName, ProjectDefaultsName}
+	return []string{ProjectQuotaName, ProjectDefaultsName, TenantQuotaName}
 }
 
 // quotaLimits is a cap as a ResourceList, which is what a ResourceQuota holds.
@@ -129,25 +129,17 @@ func ProjectResourceQuota(project, namespace string, hard corev1.ResourceList) *
 
 // ProjectLimitRange gives containers a request for what the quota counts. A quota on CPU or memory refuses
 // every pod that does not say how much it asks for, and a project's namespace holds pods Geass does not write
-// the requests of (an init container, a sidecar a database operator adds). It returns nil when the quota
-// counts neither, because there is nothing to fill in then.
-func ProjectLimitRange(project, namespace string, hard corev1.ResourceList) *corev1.LimitRange {
-	defaults := corev1.ResourceList{}
-	if _, ok := hard[corev1.ResourceRequestsCPU]; ok {
-		defaults[corev1.ResourceCPU] = defaultRequestCPU.DeepCopy()
-	}
-	if _, ok := hard[corev1.ResourceRequestsMemory]; ok {
-		defaults[corev1.ResourceMemory] = defaultRequestMemory.DeepCopy()
-	}
-	if len(defaults) == 0 {
+// the requests of (an init container, a sidecar a database operator adds). The organization's limits, when it has
+// any, add their own defaults and most (see ContainerDefaults): one LimitRange holds both, because Kubernetes applies
+// the defaults of several in no set order. It returns nil when there is nothing to fill in or hold.
+func ProjectLimitRange(project, namespace string, hard corev1.ResourceList, limits *geassv1alpha1.GeassTenantLimits) *corev1.LimitRange {
+	item := ContainerDefaults(limits, LowerHard(hard, TenantHard(limits)))
+	if item == nil {
 		return nil
 	}
 	return &corev1.LimitRange{
 		ObjectMeta: policyMeta(ProjectDefaultsName, namespace, map[string]string{LabelProject: project}),
-		Spec: corev1.LimitRangeSpec{Limits: []corev1.LimitRangeItem{{
-			Type:           corev1.LimitTypeContainer,
-			DefaultRequest: defaults,
-		}}},
+		Spec:       corev1.LimitRangeSpec{Limits: []corev1.LimitRangeItem{*item}},
 	}
 }
 

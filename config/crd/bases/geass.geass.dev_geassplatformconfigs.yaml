@@ -652,6 +652,148 @@ spec:
                     - runtimeClassName
                     type: object
                 type: object
+              tenantLimits:
+                description: |-
+                  TenantLimits keeps one organization's workloads from crowding out another's on a cluster they share: the pods and
+                  local disk of each of its namespaces, what a container is given when it asks for nothing and the most it may ask for,
+                  and each pod's network bandwidth. Unset means none of it, as before.
+                properties:
+                  defaults:
+                    description: |-
+                      Defaults are the limits of every organization. An organization's own spec.limits replaces each of these it sets, field
+                      by field at the top level: an organization that sets container replaces the whole of the default container limits.
+                      Unset means no limits beyond each organization's own. A project that belongs to no organization is never limited by
+                      them.
+                    properties:
+                      bandwidth:
+                        description: |-
+                          Bandwidth caps the network traffic of each pod. It works only where the cluster's network plugin runs the CNI bandwidth
+                          plugin, and only on Kubernetes 1.36 or later, where Geass can add it to every pod as it is made.
+                        properties:
+                          egress:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Egress is the most a pod may send.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          ingress:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Ingress is the most a pod may receive.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      container:
+                        description: Container is what a container that asks for nothing
+                          is given, and the most one may ask for.
+                        properties:
+                          defaultLimit:
+                            description: DefaultLimit is the limit a container is
+                              given for a resource it sets no limit on. Without it,
+                              that is Max.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          defaultRequest:
+                            description: |-
+                              DefaultRequest is the request a container is given for a resource it asks for none of. Without it a container that
+                              is given a limit asks for 50m CPU, 64Mi memory and 64Mi ephemeral storage, or its limit if that is lower.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          max:
+                            description: |-
+                              Max is the most a container may set as its limit. A pod with a container that sets more, or whose request is above
+                              it, is refused.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                        type: object
+                      ephemeralStorage:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          EphemeralStorage is the most local disk the pods of each namespace may use together, such as "20Gi": the total of
+                          their containers' ephemeral-storage limits, and of their requests. A container's ephemeral storage is what it writes to
+                          its own filesystem, its logs and its emptyDir volumes, on the node's disk. It needs a default limit for containers that
+                          set none (container.defaultLimit.ephemeralStorage, or container.max.ephemeralStorage), or every such pod is refused.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      pods:
+                        description: Pods is the most pods each namespace may have
+                          running or waiting at once. Finished pods are not counted.
+                        format: int32
+                        maximum: 100000
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               traefikAccessLogs:
                 properties:
                   enabled:

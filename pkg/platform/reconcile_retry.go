@@ -114,6 +114,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageQuotaUsedUp)) || strings.Contains(msg, "exceeded quota") {
 		return false
 	}
+	// Nor is a pod the organization's limits refuse: a change to the limits lets it in, and that is not the service's either.
+	if strings.Contains(msg, strings.ToLower(MessageLimitsRefused)) || strings.Contains(msg, strings.ToLower(MessagePodsInvalid)) {
+		return false
+	}
 	// A copy that is stopped for memory and started again is a crash loop, and a service in one waits to be fixed
 	// without being given up on.
 	if strings.Contains(msg, strings.ToLower(MessageOutOfMemory)) {

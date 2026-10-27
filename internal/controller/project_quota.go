@@ -22,7 +22,9 @@ import (
 // reconcileProjectQuota puts the cap a project asked for on one of its environments, and takes it off again
 // when the project stops asking. A project that never asked has none of these objects, so nothing is capped
 // until someone chooses it. usage is what every environment of the project uses now (see environmentUsage), which
-// a project-wide cap is divided by.
+// a project-wide cap is divided by. The organization's limits, when it has any, are held there too: its quota on the
+// namespace's pods and ephemeral storage, and the defaults and most of each container, which share the LimitRange with
+// the defaults the project's own quota needs.
 func (r *GeassProjectReconciler) reconcileProjectQuota(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string, usage map[string]corev1.ResourceList, org orgQuota) error {
 	hard := platform.EnvironmentHard(namespace, project.Spec.EnvironmentQuota, project.Spec.ProjectQuota, usage)
 	// An organization's total holds every environment of every one of its projects, so an environment is held to what its
@@ -34,44 +36,54 @@ func (r *GeassProjectReconciler) reconcileProjectQuota(ctx context.Context, proj
 		if err := deleteOwnedQuotaObject(ctx, r.Client, &corev1.ResourceQuota{}, platform.ProjectQuotaName, namespace); err != nil {
 			return err
 		}
-		return deleteOwnedQuotaObject(ctx, r.Client, &corev1.LimitRange{}, platform.ProjectDefaultsName, namespace)
+	} else {
+		desired := platform.ProjectResourceQuota(project.Name, namespace, hard)
+		current := &corev1.ResourceQuota{ObjectMeta: desired.ObjectMeta}
+		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
+			current.Labels = desired.Labels
+			current.Spec.Hard = desired.Spec.Hard
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 
-	desired := platform.ProjectResourceQuota(project.Name, namespace, hard)
-	current := &corev1.ResourceQuota{ObjectMeta: desired.ObjectMeta}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, current, func() error {
-		current.Labels = desired.Labels
-		current.Spec.Hard = desired.Spec.Hard
+	// Limits that cannot be applied as they are written leave the namespace as it was until they are fixed, rather than
+	// taking away what held it; the project says why. The defaults are left too, though the project's quota shares them.
+	if org.limitsInvalid != nil {
 		return nil
-	}); err != nil {
+	}
+	if err := reconcileTenantQuota(ctx, r.Client, namespace, map[string]string{platform.LabelProject: project.Name}, org.limits); err != nil {
 		return err
 	}
-
-	defaults := platform.ProjectLimitRange(project.Name, namespace, hard)
-	if defaults == nil {
-		return deleteOwnedQuotaObject(ctx, r.Client, &corev1.LimitRange{}, platform.ProjectDefaultsName, namespace)
-	}
-	existing := &corev1.LimitRange{ObjectMeta: defaults.ObjectMeta}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
-		existing.Labels = defaults.Labels
-		existing.Spec = defaults.Spec
-		return nil
-	})
-	return err
+	return reconcileLimitRange(ctx, r.Client, platform.ProjectDefaultsName, namespace, platform.ProjectLimitRange(project.Name, namespace, hard, org.limits))
 }
 
-// orgQuota is what the organization of a project caps in total, and what its environments use now. It is the zero value
-// for a project that has no organization, or one whose organization caps nothing.
+// orgQuota is what the organization of a project caps in total, and what its environments use now, and the limits it holds
+// each of them to. It is the zero value for a project that has no organization, or one whose organization caps nothing.
 type orgQuota struct {
 	total *geassv1alpha1.GeassProjectQuota
 	usage map[string]corev1.ResourceList
+	// limits are the organization's noisy-neighbour limits (the platform's defaults with its own in their place), nil when
+	// there are none. limitsInvalid says why they cannot be applied as they are, and then none of them is written.
+	limits        *geassv1alpha1.GeassTenantLimits
+	limitsInvalid error
 }
 
-// organizationQuota reads the quota of the project's organization and what every environment of all its projects uses.
+// organizationQuota reads the quota and the limits of the project's organization and what every environment of all its
+// projects uses.
 func (r *GeassProjectReconciler) organizationQuota(ctx context.Context, project *geassv1alpha1.GeassProject) (orgQuota, error) {
 	org, err := platform.OrganizationOf(ctx, r.Client, project)
-	if err != nil || org == nil || org.Spec.Quota.IsZero() {
+	if err != nil || org == nil {
 		return orgQuota{}, err
+	}
+	limits, err := platform.TenantLimitsOf(ctx, r.Client, org)
+	if err != nil {
+		return orgQuota{}, err
+	}
+	caps := orgQuota{limits: limits, limitsInvalid: platform.ValidateTenantLimits(limits)}
+	if org.Spec.Quota.IsZero() {
+		return caps, nil
 	}
 	var projects geassv1alpha1.GeassProjectList
 	if err := r.List(ctx, &projects, client.InNamespace(platform.SystemNamespace)); err != nil {
@@ -97,7 +109,8 @@ func (r *GeassProjectReconciler) organizationQuota(ctx context.Context, project 
 			usage[namespace] = quota.Status.Used
 		}
 	}
-	return orgQuota{total: org.Spec.Quota, usage: usage}, nil
+	caps.total, caps.usage = org.Spec.Quota, usage
+	return caps, nil
 }
 
 // environmentUsage reads what each environment of a project uses from the quota in its namespace, which
@@ -190,7 +203,8 @@ func (r *GeassProjectReconciler) quotaObjectEdited() predicate.Predicate {
 				if !equality.Semantic.DeepEqual(before.Spec, after.Spec) {
 					return true
 				}
-				return !equality.Semantic.DeepEqual(before.Status.Used, after.Status.Used) && r.projectHasWideQuota(e.ObjectNew)
+				// Only the project's own quota is divided by what is used; the organization's limits are not.
+				return before.Name == platform.ProjectQuotaName && !equality.Semantic.DeepEqual(before.Status.Used, after.Status.Used) && r.projectHasWideQuota(e.ObjectNew)
 			case *corev1.LimitRange:
 				after, ok := e.ObjectNew.(*corev1.LimitRange)
 				return ok && !equality.Semantic.DeepEqual(before.Spec, after.Spec)
@@ -217,8 +231,10 @@ func (r *GeassProjectReconciler) projectHasWideQuota(obj client.Object) bool {
 	return err == nil && org != nil && !org.Spec.Quota.IsZero()
 }
 
-// quotaProblem says when a Deployment cannot make a pod because its environment's quota is used up, which the
-// Deployment reports only on a condition of its own. It returns "" for any other reason.
+// quotaProblem says when a Deployment cannot make a pod because its environment's quota is used up, or because the
+// organization's limits refuse it (a container asks for more than the most allowed), or because the pod is not valid as the
+// namespace's defaults leave it (a request above the default limit it was given). The Deployment reports each only on a
+// condition of its own. It returns "" for any other reason.
 func quotaProblem(deploy *appsv1.Deployment) string {
 	for _, cond := range deploy.Status.Conditions {
 		if cond.Type != appsv1.DeploymentReplicaFailure || cond.Status != corev1.ConditionTrue {
@@ -226,6 +242,14 @@ func quotaProblem(deploy *appsv1.Deployment) string {
 		}
 		if _, detail, found := strings.Cut(cond.Message, "exceeded quota: "); found {
 			return platform.MessageQuotaUsedUp + ": " + detail
+		}
+		// The LimitRange's refusal: "maximum cpu usage per Container is 2, but limit is 4".
+		if _, detail, found := strings.Cut(cond.Message, "is forbidden: "); found && (strings.Contains(detail, " usage per Container is ") || strings.Contains(detail, " usage per Pod is ")) {
+			return platform.MessageLimitsRefused + ": " + detail
+		}
+		// A request above the limit: "spec.containers[0].resources.requests: Invalid value: "2": must be less than or equal to cpu limit of 1".
+		if _, detail, found := strings.Cut(cond.Message, "is invalid: "); found && strings.Contains(detail, "must be less than or equal to") && strings.Contains(detail, " limit") {
+			return platform.MessagePodsInvalid + ": " + detail
 		}
 	}
 	return ""

@@ -290,7 +290,7 @@ A field left out is not capped. The caps count requests, not use. Each environme
 | `status.clusterRef` | string | The cluster the operator observed. It is set after the first successful reconcile and prevents a project from moving to another cluster. |
 | `status.environments[].name` | string | The environment name. At most 100 entries. |
 | `status.environments[].namespace` | string | The namespace of that environment. |
-| `status.conditions` | list | The `Ready` condition. See below. |
+| `status.conditions` | list | The `Ready` condition, and `TenantLimitsApplied` for a project of an organization with noisy-neighbour limits. See below. |
 | `status.reconcileRetry.reconcileFailures` | integer | Consecutive errors counted toward the retry limit. |
 | `status.reconcileRetry.reconcileFailureStarted` | time | When the current streak of errors began. |
 | `status.reconcileRetry.reconcileFailureGeneration` | integer | The `metadata.generation` at which the project was marked `ProvisionFailed`. |
@@ -299,7 +299,7 @@ A field left out is not capped. The caps count requests, not use. Each environme
 
 ### Conditions
 
-The operator sets one condition type, `Ready`.
+The operator sets the condition type `Ready`, and `TenantLimitsApplied` (below the table).
 
 | Status | Reason | Message | Meaning |
 | --- | --- | --- | --- |
@@ -310,6 +310,8 @@ The operator sets one condition type, `Ready`.
 | `False` | `ReconcileError` | `Project environments must be unique` | `spec.environments` contains a duplicate. |
 | `False` | `ReconcileError` | `invalid project "..."`, `invalid environment "..."` or `project/environment namespace "..." is invalid` | A name is not a valid DNS label, or the combined namespace name is too long. |
 | `False` | `ProvisionFailed` | `Provisioning failed after repeated errors. Update settings or platform configuration, then save or redeploy to try again.` | The same kind of error repeated 5 times or for 3 minutes. The operator stops retrying until you change the spec. |
+
+A project of an organization that has [noisy-neighbour limits](/docs/guides/tenant-limits/) also carries `TenantLimitsApplied`: `True` (`Applied`) when they are in every environment, or `False` with `InvalidLimits` (they cannot be held as written, and each environment keeps what it had), `NotApplied` (an environment's could not be written; the operator tries again) or `BandwidthNotApplied` (the cluster has no mutating admission policies). It does not change `Ready`. A project of an organization without limits has no such condition.
 
 The operator retries a failing project every 30 seconds. Errors that the operator treats as temporary (a cluster that is not ready, a cluster change, a duplicate environment) are retried without a limit. Other errors count: after 5 in a row, or 3 minutes, the project becomes `ProvisionFailed` and the controller pauses until `metadata.generation` changes, which means until you edit `spec`. The dashboard has no **Retry** button for projects. Any change to `spec` raises `metadata.generation` and resumes reconciliation.
 

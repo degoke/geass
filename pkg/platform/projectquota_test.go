@@ -169,25 +169,25 @@ func TestTheQuotaObjectCarriesTheHardLimits(t *testing.T) {
 }
 
 func TestContainersGetARequestOnlyForWhatTheQuotaCounts(t *testing.T) {
-	both := ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4"), corev1.ResourceRequestsMemory: resource.MustParse("8Gi")})
+	both := ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4"), corev1.ResourceRequestsMemory: resource.MustParse("8Gi")}, nil)
 	require.NotNil(t, both)
 	require.Len(t, both.Spec.Limits, 1)
 	require.Equal(t, corev1.LimitTypeContainer, both.Spec.Limits[0].Type)
 	require.Len(t, both.Spec.Limits[0].DefaultRequest, 2)
 	require.Empty(t, both.Spec.Limits[0].Default, "a default request only: a default limit would start killing containers that never had one")
 
-	cpuOnly := ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4")})
+	cpuOnly := ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("4")}, nil)
 	require.Len(t, cpuOnly.Spec.Limits[0].DefaultRequest, 1)
 	require.Contains(t, cpuOnly.Spec.Limits[0].DefaultRequest, corev1.ResourceCPU)
 
-	require.Nil(t, ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsStorage: resource.MustParse("1Gi"), corev1.ResourcePods: resource.MustParse("5")}),
+	require.Nil(t, ProjectLimitRange("shop", "shop-production", corev1.ResourceList{corev1.ResourceRequestsStorage: resource.MustParse("1Gi"), corev1.ResourcePods: resource.MustParse("5")}, nil),
 		"a quota that does not count CPU or memory refuses no pod for lacking a request, so there is nothing to fill in")
 }
 
 func TestEveryQuotaObjectIsOneTheOperatorWatches(t *testing.T) {
 	hard := corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("1"), corev1.ResourceRequestsMemory: resource.MustParse("1Gi")}
 	require.Contains(t, ManagedQuotaNames(), ProjectResourceQuota("shop", "ns", hard).Name)
-	require.Contains(t, ManagedQuotaNames(), ProjectLimitRange("shop", "ns", hard).Name)
+	require.Contains(t, ManagedQuotaNames(), ProjectLimitRange("shop", "ns", hard, nil).Name)
 }
 
 func TestAQuotaWithNoCapsIsNoQuota(t *testing.T) {

@@ -67,6 +67,8 @@ A limit stops **new** pods. Nothing that is running is stopped, and lowering a l
 
 A limit on CPU or memory refuses every pod that does not say how much it asks for. Geass sets a request on the services and databases it creates. A sidecar or an init container that something else adds might not. So when a project has a CPU or memory limit, each environment also gets a small default: a container that asks for no CPU is counted as asking for 50m, and one that asks for no memory as asking for 64Mi. Only a request is defaulted, never a limit, so the default does not start killing a container that never had one. A limit on storage or pods alone needs no defaults, and Geass adds none.
 
+The project of an organization can also be held to its organization's [noisy-neighbour limits](/docs/guides/tenant-limits/), which a platform administrator sets: they can give containers a default request of their own, a default limit and a most, and they share the same LimitRange.
+
 ## Change it with a manifest or the API
 
 The limits live in the project's `spec`. The fragment below shows only the limits. Add it to your project's full manifest, or use the `kubectl patch` that follows, rather than applying the fragment alone:
@@ -150,7 +152,7 @@ The project controller writes and keeps two objects in each environment's namesp
 | Object | Name | What it does |
 | --- | --- | --- |
 | ResourceQuota | `geass-project-quota` | `requests.cpu`, `requests.memory`, `requests.storage` and `pods`, for each limit that is set. The value is the environment's own limit, or what the others leave of the project's limit, whichever is lower. |
-| LimitRange | `geass-project-defaults` | A default request of 50m CPU and 64Mi memory for a container that asks for none, only for the resources that are capped. Absent when only storage or pods are capped. |
+| LimitRange | `geass-project-defaults` | A default request of 50m CPU and 64Mi memory for a container that asks for none, only for the resources that are capped. Absent when only storage or pods are capped. With the organization's [noisy-neighbour limits](/docs/guides/tenant-limits/) it also holds their default requests, default limits and most, which take the place of these for what they name. |
 
 For a project with a whole-project limit the controller also watches each environment's quota for what it uses, and works the others' caps out again when it changes. A project with only environment limits is not woken by usage, which changes with every pod.
 

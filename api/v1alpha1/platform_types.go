@@ -675,6 +675,11 @@ type GeassPlatformConfigSpec struct {
 	// sandboxed runtime. Unset means nothing changes.
 	// +optional
 	Tenancy *GeassPlatformTenantIsolationSpec `json:"tenancy,omitempty"`
+	// TenantLimits keeps one organization's workloads from crowding out another's on a cluster they share: the pods and
+	// local disk of each of its namespaces, what a container is given when it asks for nothing and the most it may ask for,
+	// and each pod's network bandwidth. Unset means none of it, as before.
+	// +optional
+	TenantLimits *GeassPlatformTenantLimitsSpec `json:"tenantLimits,omitempty"`
 }
 
 // GeassPlatformUsageSpec says whether the operator meters what each organization reserves.

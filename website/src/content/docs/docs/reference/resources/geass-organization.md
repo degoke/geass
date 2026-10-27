@@ -59,6 +59,7 @@ The name is made by Geass (`org-` and eight hex digits) and does not change. Pro
 | `spec.suspended` | boolean | `false` | none | Keeps the organization's people from signing in, and stops their open sessions at once, while its projects keep running. |
 | `spec.maxProjects` | integer | none | 0 or more | The most projects the organization may have. Checked when one is made or given to it. 0 keeps it from making any. |
 | `spec.quota.cpu`, `.memory`, `.storage`, `.pods` | quantity, quantity, quantity, integer | none | `pods` at least 1 | The most all its projects may ask for together. Each environment's own quota is held to what the others of the organization have left. See [Organizations and workspaces](/docs/guides/organizations-and-workspaces/#what-the-platform-sets-for-an-organization). |
+| `spec.limits` | object | none | As `spec.tenantLimits.defaults` on the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/) | The organization's own noisy-neighbour limits (`pods`, `ephemeralStorage`, `container`, `bandwidth`), each replacing the platform's default as a whole. Held in each environment of its projects and in its build namespace. See [Noisy-neighbour limits](/docs/guides/tenant-limits/). |
 | `spec.region` | string | empty | `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, at most 40 characters | Where projects run that name no region of their own. |
 | `spec.requiredTags` | list of strings | empty | At most 8, each a DNS label | Node tags every workload of every project of the organization must run on, added to the project's own. |
 | `spec.allowedDomains` | list of strings | empty | At most 50 domain names | The domains the organization's services may take hostnames under, and the hostname Geass gives a service. Empty allows any hostname nobody else holds. |
@@ -75,7 +76,7 @@ A person works in one organization at a time, and in it either in all of it or i
 
 The dashboard refuses to delete an organization that still has projects, a database server or a cloud connection, or to remove a workspace that has projects, so that nothing is left that nobody can see. Move or delete them first (`POST /api/projects/{project}/assign`). Deleting the resource with `kubectl` is not checked: its projects then belong to an organization that no longer exists, which only the platform's administrators can see, until they are assigned again.
 
-The operator holds the resource with the finalizer `geass.geass.dev/organization` until the namespace the organization's builds ran in (`geass-build-<name>`) is gone. The dashboard also deletes the organization's alert channels and its registry login.
+The operator holds the resource with the finalizer `geass.geass.dev/organization` until the namespace the organization's builds ran in (`geass-build-<name>`) is gone. While the organization lives, the operator keeps that namespace held to its noisy-neighbour limits. The dashboard also deletes the organization's alert channels and its registry login.
 
 ## Annotations
 
