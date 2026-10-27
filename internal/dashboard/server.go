@@ -2737,6 +2737,9 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		instances := int32(3)
 		db.Spec.Instances = &instances
 	}
+	if s.refuseUnsandboxableDatabase(w, r, fallback, db) {
+		return
+	}
 	db.Spec.Backup = defaultBackups(db)
 	db.Spec.Deploy.Enabled = false
 	platform.InitializePendingCreated(&db.ObjectMeta)

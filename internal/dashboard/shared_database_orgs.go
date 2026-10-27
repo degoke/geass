@@ -87,6 +87,18 @@ func (s *Server) handleSharedDatabaseOrg(w http.ResponseWriter, r *http.Request,
 		orgFail(w, http.StatusConflict, message)
 		return
 	}
+	// A server given to an organization runs as the organization's do, which its engine may not be able to.
+	given := server.DeepCopy()
+	given.Spec.Org = org
+	gap, err := platform.DatabaseSandboxGap(ctx, s.system(), given, s.databasePlacement(ctx, given).NodeSelector())
+	if err != nil {
+		writeDashboardUnavailable(w)
+		return
+	}
+	if gap != "" {
+		orgFail(w, http.StatusConflict, platform.EngineCannotBeGivenMessage(gap))
+		return
+	}
 	before := server.Spec.Org
 	err = retry.RetryOnConflict(writeRetry, func() error {
 		var latest geassv1alpha1.GeassDatabase

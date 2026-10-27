@@ -2,9 +2,9 @@ package platform
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	nodev1 "k8s.io/api/node/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -116,7 +116,8 @@ func DatabaseRestartsImmediately(setting *geassv1alpha1.GeassTenantSandboxSpec) 
 // DatabaseSandboxGap is why an in-cluster database's server, with its pods held to the node selector given, would have to
 // run in the sandbox and cannot, or nothing when it need not or can: it is an organization's, the sandbox is on and asks
 // for a RuntimeClass there, and its engine cannot run under one (EngineSandboxGap). A missing RuntimeClass is no reason:
-// the server waits for it. It is what the dashboard refuses a new server, or a server given to an organization, for.
+// the server waits for it, and the class is not read at all. It is what the dashboard refuses a new server, or a server
+// given to an organization, for.
 func DatabaseSandboxGap(ctx context.Context, c client.Reader, db *geassv1alpha1.GeassDatabase, nodeSelector map[string]string) (string, error) {
 	if db.Spec.Placement == geassv1alpha1.DatabasePlacementExternal {
 		return "", nil
@@ -125,15 +126,26 @@ func DatabaseSandboxGap(ctx context.Context, c client.Reader, db *geassv1alpha1.
 	if gap == "" {
 		return "", nil
 	}
-	sandbox, err := ResolveDatabaseSandbox(ctx, c, db, nodeSelector)
-	var missing *SandboxRuntimeMissingError
-	if err != nil && !errors.As(err, &missing) {
+	// Only which class the decision asks for matters here, so the class itself is not read: the dashboard, which asks, need
+	// not be able to read RuntimeClasses.
+	sandbox, err := ResolveDatabaseSandbox(ctx, classesAssumed{c}, db, nodeSelector)
+	if err != nil {
 		return "", err
 	}
 	if sandbox.RuntimeClass == "" {
 		return "", nil
 	}
 	return gap, nil
+}
+
+// classesAssumed reads through to the reader it wraps, except that every RuntimeClass is there without being read.
+type classesAssumed struct{ client.Reader }
+
+func (r classesAssumed) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*nodev1.RuntimeClass); ok {
+		return nil
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
 }
 
 // EngineCannotBeGivenMessage is what refuses to give a shared server to an organization while its engine cannot run in the
