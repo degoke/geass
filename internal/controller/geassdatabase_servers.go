@@ -433,6 +433,7 @@ func (r *GeassDatabaseReconciler) ensureServerStatefulSet(ctx context.Context, d
 			TerminationGracePeriodSeconds: utilptr.To(srv.stopGrace),
 		}
 		placement.ApplyToPodSpec(&sts.Spec.Template.Spec)
+		applyServerRuntimeClass(db, &sts.Spec.Template.Spec)
 		return setSameNamespaceOwner(db, sts, r.Scheme)
 	})
 	if err != nil {

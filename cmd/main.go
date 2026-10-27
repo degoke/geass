@@ -436,6 +436,7 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		PodUsage: podUsage,
+		Recorder: mgr.GetEventRecorder("geass-database"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassdatabase")
 		os.Exit(1)
