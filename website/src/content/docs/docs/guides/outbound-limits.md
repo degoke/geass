@@ -1,6 +1,6 @@
 ---
 title: "Outbound limits"
-description: "Keep organizations sharing a cluster from sending mail straight to the internet, limit the ports their pods reach, and what a network policy cannot do against abuse."
+description: "Keep organizations from mailing straight to the internet, limit the ports their pods reach, and what a network policy cannot do against abuse."
 ---
 
 On a cluster that several [organizations](/docs/guides/organizations-and-workspaces/) share, every organization's pods leave the cluster from the platform's addresses. A pod that sends spam straight to the internet's mail servers, or connects to a mining pool, gets those addresses blocked and reported, for everyone. **Outbound limits** close ports to addresses outside the cluster for the pods of organizations' projects: the ports mail is sent on by default, and optionally further ports, or all but a list of them.

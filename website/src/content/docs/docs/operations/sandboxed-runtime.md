@@ -1,6 +1,6 @@
 ---
 title: "Sandboxed runtime for organizations"
-description: "Run organizations' services, schedules, builds and database servers under gVisor or Kata: what the nodes need, how to turn it on, how it fails closed, how running databases are moved, and its limits."
+description: "Run organizations' services, builds and database servers under gVisor or Kata: node setup, turning it on, failing closed, moving databases, and limits."
 ---
 
 With [organizations](/docs/guides/organizations-and-workspaces/), every organization's pods still run on the same nodes,

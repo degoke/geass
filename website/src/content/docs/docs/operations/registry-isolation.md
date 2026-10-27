@@ -1,6 +1,6 @@
 ---
 title: "Registry isolation for organizations"
-description: "Keep the platform's registry login out of organizations' builds and namespaces, and each organization's images apart: spec.tenancy.registry, what it refuses, how to share one registry, and its limits."
+description: "Keep the platform's registry login out of organizations' builds and their images apart: spec.tenancy.registry, what it refuses, sharing one registry."
 ---
 
 With [organizations](/docs/guides/organizations-and-workspaces/), an organization's builds run in a namespace of their own,

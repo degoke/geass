@@ -1,6 +1,6 @@
 ---
 title: "Abuse detection"
-description: "Look for organizations' services that may be mining or otherwise abusing a shared cluster's machines: what Geass can see, what it cannot, how a suspect is reviewed, and how to plug in Falco."
+description: "Find organizations' services that may be mining or abusing a shared cluster: what Geass can see and cannot, how suspects are reviewed, and how to plug in Falco."
 ---
 
 On a cluster that several [organizations](/docs/guides/organizations-and-workspaces/) share, the classic abuse is free compute: a stranger's service that mines a cryptocurrency on the platform's machines, or does some other work nobody pays for. **Abuse detection** looks for the services of organizations' projects that may be doing it, says so to the platform's administrators, and, if you ask it to, scales a suspect to zero until somebody has looked.
