@@ -58,8 +58,8 @@ routes and on the same operations under `/api/v1`.
 | Updating Geass | `upgrades` | None: the dashboard has no route that updates Geass, which is the installer's job | **Usage > Version** says who updates it, and no longer tells the person to run the installer |
 | The K3s version | `k3sVersion` | None: no route of the dashboard sets `spec.k3s.version` or updates K3s | The same section |
 
-The last two are in the list so that the dashboard can say they are managed, and so that a route added for them later has one place
-to be listed. What is refused, per area, is in `managedAreaOf` in `internal/dashboard/managed.go`, and is the table above.
+The last two are in the list so that the dashboard can say they are managed. The table is complete: a write that is not in it is not
+refused.
 
 ### What a refusal looks like
 
@@ -123,8 +123,9 @@ already, and the server refuses a write whoever sends it.
 - **It does not change the installer.** The installer (`geass`, the install script) runs on a machine and does not ask the dashboard
   for anything, so it neither reads managed mode nor is stopped by it. Nobody should run it on a cluster whose control plane the
   platform hosts (see [Hosted control plane](/docs/operations/hosted-control-plane/)). Managed mode does not make it safe to.
-- **It does not stop `kubectl`.** `spec.k3s.version`, the identity provider in `spec.auth` and the domain in `spec.dashboardURL` are
-  fields; the dashboard's routes for the ones that have routes are refused and `kubectl` is not.
+- **It does not stop `kubectl`.** Sign-in (`spec.auth`), the domain (`spec.dashboardURL`, `spec.rootDomain`) and the K3s version
+  (`spec.k3s.version` of the `GeassCluster`) are fields of objects. Managed mode refuses the dashboard's routes that write them,
+  and does not stop anything else that writes them.
 - **It ends no sign-in that already works.** People go on signing in through the identity provider and through an organization's
   own provider that was set up before managed mode went on, and automatic organizations (`spec.auth.tenancy.autoProvision`) go on
   working as set. `GET /auth/oidc/login?purpose=test` still starts a test sign-in, which keeps its result in the operator's memory and
