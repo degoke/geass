@@ -528,6 +528,14 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		setupLog.Error(err, "Failed to add the usage meter")
 		os.Exit(1)
 	}
+	// The platform's mail relay for organizations (spec.tenancy.mail.relay). It does nothing while that is unset.
+	if err := (&controller.MailRelayReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder("geass-mail-relay"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "mailrelay")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 	return sharedParts{webhooks: webhookDispatcher, compute: computeFactory}
 }
