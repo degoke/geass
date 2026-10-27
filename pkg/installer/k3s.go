@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/degoke/geass/pkg/mesh"
 )
 
 const k3sKubeconfigEnv = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
@@ -34,10 +36,19 @@ func (s *K3sInstall) Run() error {
 		Logf(s.Name(), "Installer shell tracing enabled")
 	}
 
+	if s.Network.IsTailscale() {
+		// Written before the configuration that points at it, so that K3s finds it at its first start.
+		if err := writeVPNAuthFile(s.Name(), s.Network.Tailscale); err != nil {
+			return err
+		}
+	}
 	if err := writeK3sConfig(s.Name(), s.Network.ServerConfig()); err != nil {
 		return err
 	}
-	if s.Network.MultiSite {
+	switch {
+	case s.Network.IsTailscale():
+		Logf(s.Name(), "Tailscale mesh: advertising %s", s.Network.ExternalIP)
+	case s.Network.MultiSite:
 		Logf(s.Name(), "Multi-site cluster: WireGuard overlay, advertising %s", s.Network.ExternalIP)
 	}
 
@@ -80,6 +91,22 @@ func writeK3sConfig(step, content string) error {
 		return fmt.Errorf("write %s: %w", k3sConfigPath, err)
 	}
 	Logf(step, "Wrote %s", k3sConfigPath)
+	return nil
+}
+
+// writeVPNAuthFile writes what K3s reads to join the tailnet, where only root can read it. The key is not logged.
+func writeVPNAuthFile(step string, tailscale TailscaleNetwork) error {
+	if err := os.MkdirAll("/etc/rancher/k3s", 0o755); err != nil {
+		return fmt.Errorf("create k3s config directory: %w", err)
+	}
+	line := mesh.VPNAuth(tailscale.AuthKey, tailscale.ControlServerURL)
+	if err := os.WriteFile(mesh.AuthFile, []byte(line), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", mesh.AuthFile, err)
+	}
+	if err := os.Chmod(mesh.AuthFile, 0o600); err != nil {
+		return fmt.Errorf("restrict %s: %w", mesh.AuthFile, err)
+	}
+	Logf(step, "Wrote %s", mesh.AuthFile)
 	return nil
 }
 

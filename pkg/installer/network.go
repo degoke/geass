@@ -2,12 +2,16 @@ package installer
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 
 	"sigs.k8s.io/yaml"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -19,20 +23,113 @@ const k3sConfigPath = "/etc/rancher/k3s/config.yaml"
 // cluster has nodes at different providers that only reach each other over the internet, so the overlay
 // has to be encrypted: k3s's WireGuard backend, with every node advertising its public IP. Switching an
 // existing cluster means restarting every node, so it is chosen at install time.
+//
+// GEASS_MESH is the newer way to ask for it, and the only way to ask for a Tailscale mesh. GEASS_MESH=wireguard is
+// GEASS_MULTI_SITE=1 and also records spec.network.mesh on the cluster, which turns on the operator's checks of the mesh.
+// GEASS_MESH=tailscale needs this machine to be on the tailnet already (the installer reads its address from tailscale)
+// and an auth key in a file, which is what the other nodes join with.
 type Network struct {
+	// MultiSite is a WireGuard mesh: GEASS_MULTI_SITE, or GEASS_MESH=wireguard. It is false for a Tailscale mesh, which
+	// has no use for the WireGuard module or its port.
 	MultiSite bool
-	// ExternalIP is this node's public address, which other sites reach it on. Required for multi-site.
+	// ExternalIP is this node's public address, which other sites reach it on, or its address on the tailnet. Required
+	// for multi-site.
 	ExternalIP string
+	// Mesh is set when the cluster is built with GEASS_MESH: it is then recorded on the cluster object. It is empty for
+	// a cluster that asked for nothing, or only for GEASS_MULTI_SITE.
+	Mesh geassv1alpha1.MeshProvider
+	// Tailscale is what a Tailscale mesh is joined with.
+	Tailscale TailscaleNetwork
+
+	// problem is why the environment could not be turned into a network, reported by Validate: the installer's
+	// steps are built before any of them runs.
+	problem error
+}
+
+// TailscaleNetwork is what the control plane and every node join a tailnet with.
+type TailscaleNetwork struct {
+	// AuthKey is the key, read from GEASS_TAILSCALE_AUTH_KEY_FILE. It is a secret: it is never logged.
+	AuthKey string
+	// ControlServerURL is a Headscale server's address, from GEASS_TAILSCALE_CONTROL_URL. Empty means Tailscale's own.
+	ControlServerURL string
+}
+
+// tailnetIPv4 is how the installer learns this machine's address on the tailnet. A variable so that a test can say.
+var tailnetIPv4 = func() (string, error) {
+	out, err := exec.Command("tailscale", "ip", "-4").Output()
+	if err != nil {
+		return "", err
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	return strings.TrimSpace(line), nil
 }
 
 // NetworkFromEnv reads the choice from the environment, as the installer's other switches are:
-// GEASS_MULTI_SITE turns it on and GEASS_NODE_EXTERNAL_IP names this node's public address.
+// GEASS_MULTI_SITE turns the WireGuard mesh on and GEASS_NODE_EXTERNAL_IP names this node's public address. GEASS_MESH
+// is wireguard or tailscale, with GEASS_TAILSCALE_AUTH_KEY_FILE and GEASS_TAILSCALE_CONTROL_URL for the second.
 func NetworkFromEnv() Network {
-	return Network{
+	network := Network{
 		MultiSite:  envEnabled("GEASS_MULTI_SITE"),
 		ExternalIP: strings.TrimSpace(os.Getenv("GEASS_NODE_EXTERNAL_IP")),
 	}
+	switch choice := strings.ToLower(strings.TrimSpace(os.Getenv("GEASS_MESH"))); choice {
+	case "":
+	case "wireguard":
+		network.Mesh = geassv1alpha1.MeshProviderWireGuard
+		network.MultiSite = true
+	case "tailscale":
+		network.Mesh = geassv1alpha1.MeshProviderTailscale
+		if network.MultiSite {
+			network.problem = fmt.Errorf("GEASS_MULTI_SITE is the WireGuard mesh: leave it unset with GEASS_MESH=tailscale")
+			return network
+		}
+		network.readTailscale()
+	default:
+		network.problem = fmt.Errorf("GEASS_MESH %q is not one of wireguard, tailscale", os.Getenv("GEASS_MESH"))
+	}
+	return network
 }
+
+// readTailscale reads what a Tailscale mesh needs from the environment and this machine: the auth key from its file and
+// the address this machine has on the tailnet, unless GEASS_NODE_EXTERNAL_IP names one.
+func (n *Network) readTailscale() {
+	n.Tailscale.ControlServerURL = strings.TrimSpace(os.Getenv("GEASS_TAILSCALE_CONTROL_URL"))
+	if err := mesh.ValidateControlServerURL(n.Tailscale.ControlServerURL); err != nil {
+		n.problem = fmt.Errorf("GEASS_TAILSCALE_CONTROL_URL: %w", err)
+		return
+	}
+	file := strings.TrimSpace(os.Getenv("GEASS_TAILSCALE_AUTH_KEY_FILE"))
+	if file == "" {
+		n.problem = fmt.Errorf("a Tailscale mesh needs an auth key: put one in a file that only root can read and set GEASS_TAILSCALE_AUTH_KEY_FILE to its path")
+		return
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		n.problem = fmt.Errorf("read GEASS_TAILSCALE_AUTH_KEY_FILE: %w", err)
+		return
+	}
+	n.Tailscale.AuthKey = strings.TrimSpace(string(raw))
+	if err := mesh.ValidateAuthKey(n.Tailscale.AuthKey); err != nil {
+		n.problem = fmt.Errorf("GEASS_TAILSCALE_AUTH_KEY_FILE %s: %w", file, err)
+		return
+	}
+	if n.ExternalIP != "" {
+		return
+	}
+	ip, err := tailnetIPv4()
+	if err != nil || ip == "" {
+		n.problem = fmt.Errorf("this machine has no address on the tailnet. Install Tailscale on it and bring it up with `tailscale up` first (the cluster's " +
+			"address is the one `tailscale ip -4` prints), or set GEASS_NODE_EXTERNAL_IP to it")
+		return
+	}
+	n.ExternalIP = ip
+}
+
+// Enabled is whether the nodes are at different sites.
+func (n Network) Enabled() bool { return n.MultiSite || n.Mesh == geassv1alpha1.MeshProviderTailscale }
+
+// IsTailscale is whether the nodes join a tailnet.
+func (n Network) IsTailscale() bool { return n.Mesh == geassv1alpha1.MeshProviderTailscale }
 
 func envEnabled(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
@@ -45,7 +142,10 @@ func envEnabled(name string) bool {
 
 // Validate checks that a multi-site install has what it needs.
 func (n Network) Validate() error {
-	if !n.MultiSite {
+	if n.problem != nil {
+		return n.problem
+	}
+	if !n.Enabled() {
 		return nil
 	}
 	if n.ExternalIP == "" {
@@ -53,6 +153,32 @@ func (n Network) Validate() error {
 	}
 	if net.ParseIP(n.ExternalIP) == nil {
 		return fmt.Errorf("GEASS_NODE_EXTERNAL_IP %q is not an IP address", n.ExternalIP)
+	}
+	if n.Mesh == "" {
+		// A cluster that asks only for GEASS_MULTI_SITE is installed as it always was.
+		return nil
+	}
+	return n.checkAddress()
+}
+
+// checkAddress refuses an address no other site can use, and says so when it is one that only some can. A loopback
+// or link-local address never works. A private one works only between sites that route to each other, which is not
+// what a mesh is for, so it is allowed with a warning; so is one on 100.64.0.0/10 outside a tailnet.
+func (n Network) checkAddress() error {
+	kind, _ := mesh.Kind(n.ExternalIP)
+	switch kind {
+	case mesh.AddressUnusable:
+		return fmt.Errorf("%s cannot be reached from another machine (it is loopback, unspecified, link-local or multicast): "+
+			"set GEASS_NODE_EXTERNAL_IP to the address other sites reach this machine on", n.ExternalIP)
+	case mesh.AddressPrivate:
+		Warnf("system checks", "%s is a private address. It means one thing at each site, so nodes at other sites reach this machine on it only "+
+			"if their networks route to each other. A mesh is for sites that do not: use the address the other sites can send traffic to "+
+			"(a public one, or the one on the tailnet)", n.ExternalIP)
+	case mesh.AddressShared:
+		if !n.IsTailscale() {
+			Warnf("system checks", "%s is in 100.64.0.0/10, which the internet does not route: only a node on the same carrier or tailnet network "+
+				"can reach it. Use this machine's public address, or GEASS_MESH=tailscale", n.ExternalIP)
+		}
 	}
 	return nil
 }
@@ -62,7 +188,7 @@ func (n Network) Validate() error {
 // the caller uses this machine's own address on the network the workers share with it: see
 // controlPlaneAddress.
 func (n Network) ServerURL() string {
-	if n.MultiSite && n.ExternalIP != "" {
+	if n.Enabled() && n.ExternalIP != "" {
 		return serverURLFor(n.ExternalIP)
 	}
 	return ""
@@ -121,14 +247,11 @@ func (n Network) ServerSettings() map[string]any {
 		// passwords in the clear.
 		"secrets-encryption": true,
 	}
-	if n.MultiSite {
-		config["flannel-backend"] = platform.WireGuardBackend
-		config["node-external-ip"] = n.ExternalIP
-		// Without this flannel builds the tunnel on the node's private address, which the other sites
-		// cannot reach.
-		config["flannel-external-ip"] = true
-		// Workers join on the public address, so the API server's certificate has to be valid for it.
-		config["tls-san"] = []string{n.ExternalIP}
+	switch {
+	case n.IsTailscale():
+		maps.Copy(config, mesh.TailscaleServerSettings(n.ExternalIP))
+	case n.MultiSite:
+		maps.Copy(config, mesh.WireGuardServerSettings(n.ExternalIP))
 	}
 	return config
 }

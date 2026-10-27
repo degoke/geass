@@ -1,0 +1,174 @@
+{
+  "multi-config": "kubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-external-ip: 198.51.100.7\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\n",
+  "multi-provision": [
+    {
+      "Name": "check-curl",
+      "Cmd": "sudo -n sh -c 'which curl || (apt-get update -qq \u0026\u0026 apt-get install -y curl)'",
+      "Optional": false
+    },
+    {
+      "Name": "install-iscsi",
+      "Cmd": "sudo -n sh -c 'set -e\nif ! command -v iscsiadm \u003e/dev/null 2\u003e\u00261; then\n  if command -v apt-get \u003e/dev/null 2\u003e\u00261; then\n    apt-get update -qq \u0026\u0026 DEBIAN_FRONTEND=noninteractive apt-get install -y open-iscsi\n  elif command -v dnf \u003e/dev/null 2\u003e\u00261; then\n    dnf install -y iscsi-initiator-utils\n  elif command -v yum \u003e/dev/null 2\u003e\u00261; then\n    yum install -y iscsi-initiator-utils\n  elif command -v zypper \u003e/dev/null 2\u003e\u00261; then\n    zypper --non-interactive install open-iscsi\n  else\n    echo \"could not install the iSCSI initiator: no supported package manager found\" \u003e\u00262\n    exit 1\n  fi\nfi\nsystemctl enable --now iscsid\n'",
+      "Optional": true
+    },
+    {
+      "Name": "check-cluster-reachable",
+      "Cmd": "sudo -n sh -c 'out=$(curl -sk --max-time 15 '\\''https://203.0.113.1:6443/ping'\\'' 2\u003e/dev/null); rc=$?\ncase \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n0) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: something answered, but it is not a K3s API server (no pong from /ping). Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n6) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the host name does not resolve from here. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n7) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection was refused: nothing listens at that address and port, or a firewall rejects it. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\n28) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\n*) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\nesac\necho \"$why (curl exit code $rc)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    },
+    {
+      "Name": "check-wireguard",
+      "Cmd": "sudo -n sh -c 'try() { ip link add geass-wgcheck type wireguard 2\u003e/dev/null \u0026\u0026 ip link del geass-wgcheck; }\nif ! try; then\n  if command -v apt-get \u003e/dev/null 2\u003e\u00261; then\n    DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard \u003e/dev/null 2\u003e\u00261 || true\n  elif command -v dnf \u003e/dev/null 2\u003e\u00261; then\n    dnf install -y wireguard-tools \u003e/dev/null 2\u003e\u00261 || true\n  fi\n  modprobe wireguard 2\u003e/dev/null || true\nfi\ntry || { echo \"this node'\\''s kernel cannot create a WireGuard interface, which a multi-site cluster needs (built in from Linux 5.6)\" \u003e\u00262; exit 1; }'",
+      "Optional": false
+    },
+    {
+      "Name": "open-overlay-port",
+      "Cmd": "sudo -n sh -c 'if command -v ufw \u003e/dev/null 2\u003e\u00261 \u0026\u0026 ufw status | grep -q \"Status: active\"; then\n  ufw allow 51820/udp \u0026\u0026 ufw allow 10250/tcp\nelif command -v firewall-cmd \u003e/dev/null 2\u003e\u00261 \u0026\u0026 [ \"$(firewall-cmd --state 2\u003e/dev/null)\" = \"running\" ]; then\n  firewall-cmd --permanent --add-port=51820/udp --add-port=10250/tcp \u0026\u0026 firewall-cmd --reload\nfi'",
+      "Optional": true
+    },
+    {
+      "Name": "write-k3s-config",
+      "Cmd": "sudo -n sh -c 'mkdir -p /etc/rancher/k3s \u0026\u0026 cat \u003e /etc/rancher/k3s/config.yaml \u003c\u003c'\\''GEASS_K3S_CONFIG'\\''\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-external-ip: 198.51.100.7\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\nGEASS_K3S_CONFIG'",
+      "Optional": false
+    },
+    {
+      "Name": "install-k3s",
+      "Cmd": "sudo -n sh -c 'curl -sfL https://get.k3s.io | \\\n INSTALL_K3S_VERSION='\\''v1.36.5+k3s1'\\'' \\\n INSTALL_K3S_EXEC=\"agent\" \\\n K3S_URL='\\''https://203.0.113.1:6443'\\'' \\\n K3S_TOKEN='\\''fixture-token'\\'' \\\n K3S_NODE_NAME='\\''worker-1'\\'' \\\n sh -'",
+      "Optional": false
+    },
+    {
+      "Name": "enable-k3s",
+      "Cmd": "sudo -n sh -c 'systemctl enable k3s-agent \u0026\u0026 systemctl start k3s-agent'",
+      "Optional": false
+    }
+  ],
+  "multi-upgrade": [
+    {
+      "Name": "check-curl",
+      "Cmd": "sudo -n sh -c 'which curl || (apt-get update -qq \u0026\u0026 apt-get install -y curl)'",
+      "Optional": false
+    },
+    {
+      "Name": "check-cluster-reachable",
+      "Cmd": "sudo -n sh -c 'out=$(curl -sk --max-time 15 '\\''https://203.0.113.1:6443/ping'\\'' 2\u003e/dev/null); rc=$?\ncase \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n0) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: something answered, but it is not a K3s API server (no pong from /ping). Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n6) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the host name does not resolve from here. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n7) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection was refused: nothing listens at that address and port, or a firewall rejects it. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\n28) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\n*) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group, with UDP 51820 open between every pair of nodes.'\\'' ;;\nesac\necho \"$why (curl exit code $rc)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    },
+    {
+      "Name": "write-k3s-config",
+      "Cmd": "sudo -n sh -c 'mkdir -p /etc/rancher/k3s \u0026\u0026 cat \u003e /etc/rancher/k3s/config.yaml \u003c\u003c'\\''GEASS_K3S_CONFIG'\\''\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-external-ip: 198.51.100.7\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\nGEASS_K3S_CONFIG'",
+      "Optional": false
+    },
+    {
+      "Name": "install-k3s",
+      "Cmd": "sudo -n sh -c 'curl -sfL https://get.k3s.io | \\\n INSTALL_K3S_VERSION='\\''v1.36.5+k3s1'\\'' \\\n INSTALL_K3S_EXEC=\"agent\" \\\n K3S_URL='\\''https://203.0.113.1:6443'\\'' \\\n K3S_TOKEN='\\''fixture-token'\\'' \\\n K3S_NODE_NAME='\\''worker-1'\\'' \\\n sh -'",
+      "Optional": false
+    },
+    {
+      "Name": "check-k3s-version",
+      "Cmd": "sudo -n sh -c 'for i in $(seq 1 60); do\n  if systemctl is-active --quiet k3s-agent \u0026\u0026 /usr/local/bin/k3s --version 2\u003e/dev/null | grep -qF '\\''v1.36.5+k3s1'\\''; then exit 0; fi\n  sleep 2\ndone\nprintf '\\''the k3s agent is not running K3s %s: %s (see journalctl -u k3s-agent)\\n'\\'' '\\''v1.36.5+k3s1'\\'' \"$(/usr/local/bin/k3s --version 2\u003e\u00261 | head -1)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    }
+  ],
+  "root-multi-provision": [
+    {
+      "Name": "check-curl",
+      "Cmd": "which curl || (apt-get update -qq \u0026\u0026 apt-get install -y curl)",
+      "Optional": false
+    },
+    {
+      "Name": "install-iscsi",
+      "Cmd": "set -e\nif ! command -v iscsiadm \u003e/dev/null 2\u003e\u00261; then\n  if command -v apt-get \u003e/dev/null 2\u003e\u00261; then\n    apt-get update -qq \u0026\u0026 DEBIAN_FRONTEND=noninteractive apt-get install -y open-iscsi\n  elif command -v dnf \u003e/dev/null 2\u003e\u00261; then\n    dnf install -y iscsi-initiator-utils\n  elif command -v yum \u003e/dev/null 2\u003e\u00261; then\n    yum install -y iscsi-initiator-utils\n  elif command -v zypper \u003e/dev/null 2\u003e\u00261; then\n    zypper --non-interactive install open-iscsi\n  else\n    echo \"could not install the iSCSI initiator: no supported package manager found\" \u003e\u00262\n    exit 1\n  fi\nfi\nsystemctl enable --now iscsid\n",
+      "Optional": true
+    },
+    {
+      "Name": "check-cluster-reachable",
+      "Cmd": "out=$(curl -sk --max-time 15 'https://203.0.113.1:6443/ping' 2\u003e/dev/null); rc=$?\ncase \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n0) why='cannot reach the cluster API at https://203.0.113.1:6443 from this node: something answered, but it is not a K3s API server (no pong from /ping). Check that spec.serverURL on the GeassCluster is the control plane'\\''s address on a network this node can reach.' ;;\n6) why='cannot reach the cluster API at https://203.0.113.1:6443 from this node: the host name does not resolve from here. Check that spec.serverURL on the GeassCluster is the control plane'\\''s address on a network this node can reach.' ;;\n7) why='cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection was refused: nothing listens at that address and port, or a firewall rejects it. Check that spec.serverURL on the GeassCluster is the control plane'\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''s security group, with UDP 51820 open between every pair of nodes.' ;;\n28) why='cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. Check that spec.serverURL on the GeassCluster is the control plane'\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''s security group, with UDP 51820 open between every pair of nodes.' ;;\n*) why='cannot reach the cluster API at https://203.0.113.1:6443 from this node: Check that spec.serverURL on the GeassCluster is the control plane'\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''s security group, with UDP 51820 open between every pair of nodes.' ;;\nesac\necho \"$why (curl exit code $rc)\" \u003e\u00262\nexit 1",
+      "Optional": false
+    },
+    {
+      "Name": "check-wireguard",
+      "Cmd": "try() { ip link add geass-wgcheck type wireguard 2\u003e/dev/null \u0026\u0026 ip link del geass-wgcheck; }\nif ! try; then\n  if command -v apt-get \u003e/dev/null 2\u003e\u00261; then\n    DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard \u003e/dev/null 2\u003e\u00261 || true\n  elif command -v dnf \u003e/dev/null 2\u003e\u00261; then\n    dnf install -y wireguard-tools \u003e/dev/null 2\u003e\u00261 || true\n  fi\n  modprobe wireguard 2\u003e/dev/null || true\nfi\ntry || { echo \"this node's kernel cannot create a WireGuard interface, which a multi-site cluster needs (built in from Linux 5.6)\" \u003e\u00262; exit 1; }",
+      "Optional": false
+    },
+    {
+      "Name": "open-overlay-port",
+      "Cmd": "if command -v ufw \u003e/dev/null 2\u003e\u00261 \u0026\u0026 ufw status | grep -q \"Status: active\"; then\n  ufw allow 51820/udp \u0026\u0026 ufw allow 10250/tcp\nelif command -v firewall-cmd \u003e/dev/null 2\u003e\u00261 \u0026\u0026 [ \"$(firewall-cmd --state 2\u003e/dev/null)\" = \"running\" ]; then\n  firewall-cmd --permanent --add-port=51820/udp --add-port=10250/tcp \u0026\u0026 firewall-cmd --reload\nfi",
+      "Optional": true
+    },
+    {
+      "Name": "write-k3s-config",
+      "Cmd": "mkdir -p /etc/rancher/k3s \u0026\u0026 cat \u003e /etc/rancher/k3s/config.yaml \u003c\u003c'GEASS_K3S_CONFIG'\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-external-ip: 198.51.100.7\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\nGEASS_K3S_CONFIG",
+      "Optional": false
+    },
+    {
+      "Name": "install-k3s",
+      "Cmd": "curl -sfL https://get.k3s.io | \\\n INSTALL_K3S_VERSION='v1.36.5+k3s1' \\\n INSTALL_K3S_EXEC=\"agent\" \\\n K3S_URL='https://203.0.113.1:6443' \\\n K3S_TOKEN='fixture-token' \\\n K3S_NODE_NAME='worker-1' \\\n sh -",
+      "Optional": false
+    },
+    {
+      "Name": "enable-k3s",
+      "Cmd": "systemctl enable k3s-agent \u0026\u0026 systemctl start k3s-agent",
+      "Optional": false
+    }
+  ],
+  "single-config": "kubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\n",
+  "single-provision": [
+    {
+      "Name": "check-curl",
+      "Cmd": "sudo -n sh -c 'which curl || (apt-get update -qq \u0026\u0026 apt-get install -y curl)'",
+      "Optional": false
+    },
+    {
+      "Name": "install-iscsi",
+      "Cmd": "sudo -n sh -c 'set -e\nif ! command -v iscsiadm \u003e/dev/null 2\u003e\u00261; then\n  if command -v apt-get \u003e/dev/null 2\u003e\u00261; then\n    apt-get update -qq \u0026\u0026 DEBIAN_FRONTEND=noninteractive apt-get install -y open-iscsi\n  elif command -v dnf \u003e/dev/null 2\u003e\u00261; then\n    dnf install -y iscsi-initiator-utils\n  elif command -v yum \u003e/dev/null 2\u003e\u00261; then\n    yum install -y iscsi-initiator-utils\n  elif command -v zypper \u003e/dev/null 2\u003e\u00261; then\n    zypper --non-interactive install open-iscsi\n  else\n    echo \"could not install the iSCSI initiator: no supported package manager found\" \u003e\u00262\n    exit 1\n  fi\nfi\nsystemctl enable --now iscsid\n'",
+      "Optional": true
+    },
+    {
+      "Name": "check-cluster-reachable",
+      "Cmd": "sudo -n sh -c 'out=$(curl -sk --max-time 15 '\\''https://203.0.113.1:6443/ping'\\'' 2\u003e/dev/null); rc=$?\ncase \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n0) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: something answered, but it is not a K3s API server (no pong from /ping). Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n6) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the host name does not resolve from here. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n7) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection was refused: nothing listens at that address and port, or a firewall rejects it. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\n28) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\n*) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\nesac\necho \"$why (curl exit code $rc)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    },
+    {
+      "Name": "write-k3s-config",
+      "Cmd": "sudo -n sh -c 'mkdir -p /etc/rancher/k3s \u0026\u0026 cat \u003e /etc/rancher/k3s/config.yaml \u003c\u003c'\\''GEASS_K3S_CONFIG'\\''\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\nGEASS_K3S_CONFIG'",
+      "Optional": false
+    },
+    {
+      "Name": "install-k3s",
+      "Cmd": "sudo -n sh -c 'curl -sfL https://get.k3s.io | \\\n INSTALL_K3S_VERSION='\\''v1.36.5+k3s1'\\'' \\\n INSTALL_K3S_EXEC=\"agent\" \\\n K3S_URL='\\''https://203.0.113.1:6443'\\'' \\\n K3S_TOKEN='\\''fixture-token'\\'' \\\n K3S_NODE_NAME='\\''worker-1'\\'' \\\n sh -'",
+      "Optional": false
+    },
+    {
+      "Name": "enable-k3s",
+      "Cmd": "sudo -n sh -c 'systemctl enable k3s-agent \u0026\u0026 systemctl start k3s-agent'",
+      "Optional": false
+    }
+  ],
+  "single-upgrade": [
+    {
+      "Name": "check-curl",
+      "Cmd": "sudo -n sh -c 'which curl || (apt-get update -qq \u0026\u0026 apt-get install -y curl)'",
+      "Optional": false
+    },
+    {
+      "Name": "check-cluster-reachable",
+      "Cmd": "sudo -n sh -c 'out=$(curl -sk --max-time 15 '\\''https://203.0.113.1:6443/ping'\\'' 2\u003e/dev/null); rc=$?\ncase \"$out\" in *pong*) exit 0 ;; esac\ncase $rc in\n0) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: something answered, but it is not a K3s API server (no pong from /ping). Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n6) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the host name does not resolve from here. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach.'\\'' ;;\n7) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection was refused: nothing listens at that address and port, or a firewall rejects it. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\n28) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: the connection timed out: a firewall or security group is probably dropping the traffic, or this node has no route to that address. Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\n*) why='\\''cannot reach the cluster API at https://203.0.113.1:6443 from this node: Check that spec.serverURL on the GeassCluster is the control plane'\\''\\'\\'''\\''s address on a network this node can reach, and that TCP 6443 is open to this node, in the host firewall and in the provider'\\''\\'\\'''\\''s security group.'\\'' ;;\nesac\necho \"$why (curl exit code $rc)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    },
+    {
+      "Name": "write-k3s-config",
+      "Cmd": "sudo -n sh -c 'mkdir -p /etc/rancher/k3s \u0026\u0026 cat \u003e /etc/rancher/k3s/config.yaml \u003c\u003c'\\''GEASS_K3S_CONFIG'\\''\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-label:\n- tag.geass.dev/compute=true\n- tag.geass.dev/storage=true\n- topology.kubernetes.io/region=us\n- topology.kubernetes.io/zone=aws-us-east-1\nnode-taint:\n- tag.geass.dev/storage=reserved:NoSchedule\nGEASS_K3S_CONFIG'",
+      "Optional": false
+    },
+    {
+      "Name": "install-k3s",
+      "Cmd": "sudo -n sh -c 'curl -sfL https://get.k3s.io | \\\n INSTALL_K3S_VERSION='\\''v1.36.5+k3s1'\\'' \\\n INSTALL_K3S_EXEC=\"agent\" \\\n K3S_URL='\\''https://203.0.113.1:6443'\\'' \\\n K3S_TOKEN='\\''fixture-token'\\'' \\\n K3S_NODE_NAME='\\''worker-1'\\'' \\\n sh -'",
+      "Optional": false
+    },
+    {
+      "Name": "check-k3s-version",
+      "Cmd": "sudo -n sh -c 'for i in $(seq 1 60); do\n  if systemctl is-active --quiet k3s-agent \u0026\u0026 /usr/local/bin/k3s --version 2\u003e/dev/null | grep -qF '\\''v1.36.5+k3s1'\\''; then exit 0; fi\n  sleep 2\ndone\nprintf '\\''the k3s agent is not running K3s %s: %s (see journalctl -u k3s-agent)\\n'\\'' '\\''v1.36.5+k3s1'\\'' \"$(/usr/local/bin/k3s --version 2\u003e\u00261 | head -1)\" \u003e\u00262\nexit 1'",
+      "Optional": false
+    }
+  ]
+}

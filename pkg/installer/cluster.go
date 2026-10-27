@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -116,11 +117,25 @@ spec:
 %s%s`, geassClusterAPIVersion, name, version, serverURL, certManagerManifest(acmeEmail), networkManifest(network))
 }
 
+// meshAuthSecretName is the Secret that holds the auth key of a Tailscale mesh, which the cluster object names and the
+// operator reads whenever it adds a worker.
+const meshAuthSecretName = "geass-mesh-auth"
+
 // networkManifest is the cluster's network section: only a multi-site cluster says anything, and the
 // operator reads it when it joins workers.
 func networkManifest(network Network) string {
-	if !network.MultiSite {
-		return ""
+	switch {
+	case network.IsTailscale():
+		manifest := "  network:\n    mesh:\n      provider: Tailscale\n      tailscale:\n        authKeySecretRef: " + meshAuthSecretName + "\n"
+		if network.Tailscale.ControlServerURL != "" {
+			manifest += "        controlServerURL: \"" + network.Tailscale.ControlServerURL + "\"\n"
+		}
+		return manifest
+	case network.Mesh == geassv1alpha1.MeshProviderWireGuard:
+		// multiSite stays, so that what an operator that does not know the mesh field reads is what it always was.
+		return "  network:\n    multiSite: true\n    mesh:\n      provider: WireGuard\n"
+	case network.MultiSite:
+		return "  network:\n    multiSite: true\n"
 	}
-	return "  network:\n    multiSite: true\n"
+	return ""
 }
