@@ -17,6 +17,10 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
+  `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
+  The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3
+  in a browser. The package itself is still developed against 8.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the
