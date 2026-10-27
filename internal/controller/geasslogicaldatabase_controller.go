@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -146,6 +147,14 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	jobName := logical.Name + "-create"
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: server.Status.TargetNamespace}}
+	// A Job that is made keeps how it runs: its pod cannot change. One that is not made yet is decided now, and is not made
+	// while an organization's Job would wait for the sandboxed runtime.
+	sandbox, err := r.jobSandboxUnlessMade(ctx, &logical, &server, job)
+	if missing := sandboxWait(err); missing != nil {
+		return r.waitForSandbox(ctx, &logical, missing)
+	} else if err != nil {
+		return r.setNotReady(ctx, &logical, err.Error())
+	}
 	container := logicalDatabaseJobContainer(&server, admin, target, false)
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, job, func() error {
 		job.Labels = map[string]string{
@@ -160,6 +169,9 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 			job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 			job.Spec.Template.Spec.Containers = []corev1.Container{container}
 			jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
+			if job.ResourceVersion == "" {
+				sandbox.Apply(&job.Spec.Template.Spec)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -514,13 +526,27 @@ func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context,
 	target := logicalTarget{database: database, username: login}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-drop", Namespace: ns}}
 	err = r.Get(ctx, client.ObjectKeyFromObject(job), job)
+	expired := time.Since(logical.DeletionTimestamp.Time) > logicalDropTimeout
 	switch {
 	case apierrors.IsNotFound(err):
+		sandbox, err := r.logicalJobSandbox(ctx, logical, &server)
+		if missing := sandboxWait(err); missing != nil {
+			// The drop of an organization's database is not run outside the sandbox. Like a server that is not ready, a
+			// runtime that does not come in time does not keep the object: the database and its login stay on the server.
+			if expired {
+				logf.FromContext(ctx).Info("Gave up dropping the logical database: the sandboxed runtime is missing", "logicalDatabase", logical.Name, "runtimeClass", missing.RuntimeClass)
+				return 0, nil
+			}
+			return 15 * time.Second, nil
+		} else if err != nil {
+			return 0, err
+		}
 		job.Labels = map[string]string{platform.LabelManagedBy: platform.ManagedByValue, platform.LabelLogicalDatabase: logical.Name, labelLogicalRole: "drop"}
 		job.Spec.BackoffLimit = int32ptr(3)
 		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 		job.Spec.Template.Spec.Containers = []corev1.Container{logicalDatabaseJobContainer(&server, admin, target, true)}
 		jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
+		sandbox.Apply(&job.Spec.Template.Spec)
 		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
 			return 0, err
 		}
@@ -529,7 +555,6 @@ func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context,
 		return 0, err
 	}
 	finished := job.Status.Succeeded > 0 || job.Status.Failed > 0
-	expired := time.Since(logical.DeletionTimestamp.Time) > logicalDropTimeout
 	if finished || expired {
 		_ = client.IgnoreNotFound(r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)))
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-login", Namespace: ns}}))
