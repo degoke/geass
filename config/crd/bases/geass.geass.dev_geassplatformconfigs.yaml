@@ -932,6 +932,11 @@ spec:
                             required:
                             - host
                             type: object
+                            x-kubernetes-validations:
+                            - message: 'credentialRef needs tls StartTLS or TLS: the
+                                upstream''s password is never sent in plain text'
+                              rule: '!(has(self.credentialRef) && has(self.tls) &&
+                                self.tls == ''None'')'
                         type: object
                         x-kubernetes-validations:
                         - message: an enabled relay needs an upstream

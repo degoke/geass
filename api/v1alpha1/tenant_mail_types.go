@@ -73,6 +73,7 @@ type GeassMailRelaySpec struct {
 }
 
 // GeassMailRelayUpstream is where the relay sends, and how it signs in there.
+// +kubebuilder:validation:XValidation:rule="!(has(self.credentialRef) && has(self.tls) && self.tls == 'None')",message="credentialRef needs tls StartTLS or TLS: the upstream's password is never sent in plain text"
 type GeassMailRelayUpstream struct {
 	// Host is the upstream's host name or IPv4 address, such as email-smtp.eu-west-1.amazonaws.com. With TLS, its
 	// certificate must be valid for this name and signed by a public authority.
