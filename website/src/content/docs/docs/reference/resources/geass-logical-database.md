@@ -86,7 +86,7 @@ On a project's own server there is no new login. The database uses the name you 
 | `status.username` | string | The login that owns the database on the shared server. |
 | `status.reconcileRetry` | object | Failure counters. Same as for [GeassDatabase](/docs/reference/resources/geass-database/#ready-condition-and-retries). |
 | `status.provision` | object | Deploy history. Same as for GeassDatabase. |
-| `status.conditions` | list | One condition: `Ready`. |
+| `status.conditions` | list | `Ready`, and `OrganizationIsolated` while the database's server is not its project's organization's (see below). |
 
 `Ready` has three reasons:
 
@@ -95,6 +95,8 @@ On a project's own server there is no new login. The database uses the name you 
 | `LogicalDatabaseReady` | `True` | The database exists and the connection Secret is written. The message is `Logical database connection is available`. |
 | `ReconcileError` | `False` | Not ready yet. The message says what is missing. |
 | `ProvisionFailed` | `False` | Geass gave up after repeated errors. The retry rules are the same as for GeassDatabase: see [Ready condition and retries](/docs/reference/resources/geass-database/#ready-condition-and-retries). |
+
+`OrganizationIsolated` is there only while [organizations](/docs/guides/organizations-and-workspaces/) are on and the database is on a shared server of another owner than its project: another organization's server, the platform's server for a project of an organization, or an organization's server for a project of none. Its status is then `False`, its reason `MixedOrganizations`, and its message names both owners by their resource IDs. A database that is not on the server yet is not made (`Ready` is `False` with the same message, which does not count as a failure). One that is on it already (it has `status.connectionSecret`) is kept and served, and `Ready` is left as it is. Geass records a `Warning` event with the reason `MixedOrganizations` when it first finds either. The condition goes when the server and the project belong to one owner again, or organizations are turned off. See [Shared database servers](/docs/guides/shared-database-servers/#organizations).
 
 A `GeassLogicalDatabase` has no draft step. It has no deploy gate, so Geass starts creating it as soon as it exists.
 
@@ -111,6 +113,8 @@ The messages you can see:
 | `database name must contain only letters, numbers, and underscores` | `spec.databaseName` fails the pattern. |
 | `This database server runs in the <a> region, but the project runs in the <b> region` | A shared server and the project are pinned to different regions. |
 | `This database server does not run on nodes tagged <tags>, which the project requires` | The project's `spec.requiredTags` include a tag that the shared server is not placed on (its `geass.dev/node-placement` has it in neither `tags` nor `required`). A server installed before placement existed runs anywhere, so it is refused. This message counts as a failure. |
+| `This database server belongs to an organization that the project is not in` | With organizations off: the shared server has `spec.org` and the project is not that organization's. This message counts as a failure. |
+| `The database server <server> belongs to <owner> and the project <project> to <owner>, but a shared database server holds the databases of one organization only. It is not made: …` | With organizations on: the shared server and the project are not one organization's, and the database is not on the server yet. It does not count as a failure; the database is made once the platform gives the server or the project to one owner. |
 | `database connection secret is unavailable` | The server's connection Secret is missing. |
 | `Waiting for the database server's administrator login` | The server has not exposed its administrator credentials yet. |
 | `creating logical database` | The create Job is running. |
@@ -127,7 +131,7 @@ The messages you can see:
 
 The dashboard fills in a generated name, `spec.databaseName: app` and the server you chose. It has no field for `connectionLimit`: set it with `kubectl` or the REST API. The success message says `Added database`, and there is no deploy step. Geass starts at once.
 
-The dashboard refuses a request that cannot work, with these messages: `That database server does not exist`, `A database can only be created on a Postgres or MySQL server`, `That server belongs to another project or environment`, `This server runs in the <a> region, but the project runs in the <b> region. Every query would cross regions`, `The connection limit must be a whole number from 1 to 1000` and `logical database already exists`. It does not check required node tags: a shared server is offered when it is `Ready` and in the project's region, and the tag check happens afterwards in the controller (see the messages above).
+The dashboard refuses a request that cannot work, with these messages: `That database server does not exist`, `A database can only be created on a Postgres or MySQL server`, `That server belongs to another project or environment`, `That server belongs to an organization the project is not in`, `That server is the platform's and the project is in the organization <org>, but with organizations on a shared database server holds the databases of one organization only. …`, `This server runs in the <a> region, but the project runs in the <b> region. Every query would cross regions`, `The connection limit must be a whole number from 1 to 1000` and `logical database already exists`. It does not check required node tags: a shared server is offered when it is `Ready` and in the project's region, and the tag check happens afterwards in the controller (see the messages above).
 
 ## From the command line and the API
 

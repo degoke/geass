@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,6 +35,9 @@ import (
 type GeassLogicalDatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Recorder is told of a database whose server holds another organization's data (keepToOneOrganization). Nil tells
+	// nobody; the database's condition still says it.
+	Recorder events.EventRecorder
 }
 
 const (
@@ -52,6 +56,7 @@ const (
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 var databaseNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
@@ -74,12 +79,25 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		return r.setNotReady(ctx, &logical, fmt.Sprintf("database server %q is unavailable", logical.Spec.ServerRef))
 	}
 	shared := platform.IsSharedDatabase(&server)
+	tenancy := false
 	if shared {
 		// The server has to be able to drop this database when it goes, so it is held until it has.
 		if !controllerutil.ContainsFinalizer(&logical, FinalizerLogicalDatabase) {
 			controllerutil.AddFinalizer(&logical, FinalizerLogicalDatabase)
 			return ctrl.Result{}, r.Update(ctx, &logical)
 		}
+		on, err := platform.TenancyOn(ctx, r.Client)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		tenancy = on
+	}
+	if shared && tenancy {
+		if result, stop, err := r.keepToOneOrganization(ctx, &logical, &server); stop || err != nil {
+			return result, err
+		}
+	} else if err := r.clearOrganizationMixing(ctx, &logical); err != nil {
+		return ctrl.Result{}, err
 	}
 	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
 		return r.setNotReady(ctx, &logical, "database server is not ready")
@@ -97,8 +115,11 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		return r.setNotReady(ctx, &logical, "database name must contain only letters, numbers, and underscores")
 	}
 	if shared {
-		if message := r.organizationMismatch(ctx, &logical, &server); message != "" {
-			return r.setNotReady(ctx, &logical, message)
+		// With organizations on, keepToOneOrganization has decided this already.
+		if !tenancy {
+			if message := r.organizationMismatch(ctx, &logical, &server); message != "" {
+				return r.setNotReady(ctx, &logical, message)
+			}
 		}
 		if message := r.regionMismatch(ctx, &logical, &server); message != "" {
 			return r.setNotReady(ctx, &logical, message)
@@ -544,6 +565,12 @@ func (r *GeassLogicalDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		// An organization's region and required tags are its projects' too.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.logicalDatabasesForProject)),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Whose a shared server is decides whose databases it may hold, and organizations being on decides whether that of
+		// the platform's server is checked at all (keepToOneOrganization).
+		Watches(&geassv1alpha1.GeassDatabase{}, handler.EnqueueRequestsFromMapFunc(r.logicalDatabasesOnServer),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}, predicate.NewPredicateFuncs(isSharedServer))).
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.everyLogicalDatabase),
+			builder.WithPredicates(organizationsToggled())).
 		Named("geasslogicaldatabase").
 		Complete(r)
 }

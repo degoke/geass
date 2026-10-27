@@ -41,6 +41,8 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIUsage(w, r)
 	case r.URL.Path == "/api/orgs":
 		s.handleAPIOrgs(w, r)
+	case r.URL.Path == "/api/shared-databases/mixed":
+		s.handleAPISharedDatabaseMixing(w, r)
 	case r.URL.Path == "/api/events":
 		s.handleDashboardEvents(w, r)
 	case r.URL.Path == "/api/settings/github":

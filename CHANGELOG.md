@@ -383,6 +383,14 @@ The first public release, open source under the Apache License 2.0.
   organization can no longer take a hostname another organization's service serves.
 - Builds no longer mount the operator's service account token, and an organization's builds run apart from the
   platform's namespace and secrets (see above).
+- **A shared database server holds the databases of one organization.** While organizations are on, the platform's
+  shared server is for the projects of no organization, as an organization's server already was for its own projects.
+  The dashboard refuses a logical database, a project's move (`POST /api/projects/{p}/assign`) and a server given to an
+  organization (the new `POST /api/shared-databases/{name}/org`) that would put two owners' data on one server, and the
+  operator does not make such a database however its objects were written. One that was already on its server is kept
+  and served, and reported: the condition `OrganizationIsolated` (`False`, `MixedOrganizations`), a Warning event, and
+  `GET /api/shared-databases/mixed` for the platform's administrators, which also shows, before organizations are turned
+  on, what they will report. The operator may now create `events.k8s.io` events. With organizations off nothing changes.
 - **Secrets are encrypted at rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`) on every
   cluster it builds, so the dashboard users, API token hashes, cloud keys, app secrets and database passwords are encrypted
   in K3s's datastore and in the etcd snapshots, including the one taken before an upgrade. A control plane server joined

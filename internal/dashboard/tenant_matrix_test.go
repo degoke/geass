@@ -435,6 +435,8 @@ func TestAnOrganizationCannotReachThePlatformsOwnRoutes(t *testing.T) {
 		{http.MethodPost, "/api/settings/registry/save"}, {http.MethodPost, "/api/settings/alerts/channels"},
 		{http.MethodPost, "/api/nodes/worker-1/placement"}, {http.MethodPost, "/api/platform/default-region"},
 		{http.MethodPost, "/api/shared-databases/create"}, {http.MethodPost, "/api/ha-readiness/check"},
+		{http.MethodPost, "/api/shared-databases/shared-db/org"}, {http.MethodGet, "/api/shared-databases/mixed"},
+		{http.MethodGet, "/api/v1/shared-databases/mixed"},
 		{http.MethodPost, "/api/templates/create"}, {http.MethodPost, "/api/templates/x/delete"},
 		{http.MethodGet, "/api/orgs"}, {http.MethodPost, "/api/orgs/create"}, {http.MethodPost, "/api/settings/auth/tenancy"},
 		{http.MethodGet, "/api/cluster/metrics"}, {http.MethodGet, "/api/operator/metrics"}, {http.MethodGet, "/api/v1/nodes"},

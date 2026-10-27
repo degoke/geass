@@ -441,8 +441,9 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		os.Exit(1)
 	}
 	if err := (&controller.GeassLogicalDatabaseReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("geass-logicaldatabase"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasslogicaldatabase")
 		os.Exit(1)

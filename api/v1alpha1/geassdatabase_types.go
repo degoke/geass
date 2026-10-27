@@ -70,7 +70,9 @@ type GeassDatabaseSpec struct {
 	Project string `json:"project,omitempty"`
 	// Org makes a shared server an organization's: the name of a GeassOrganization. Only that organization's projects
 	// may take logical databases on it, and only its people see it. It is for a server with no project; one that has a
-	// project belongs to the project, and this is ignored. Empty is the platform's, which every project may use.
+	// project belongs to the project, and this is ignored. Empty is the platform's: while organizations are on it is for
+	// the projects of no organization, so that a server never holds two organizations' data; while they are off every
+	// project may use it.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
 	// +optional
