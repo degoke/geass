@@ -80,7 +80,8 @@ func v1ProjectTransfer(r *http.Request) (*http.Request, bool) {
 	}
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, v1Prefix), "/"), "/")
 	export := len(parts) == 3 && parts[0] == kindProjects && parts[2] == "export"
-	if !export && !(len(parts) == 2 && parts[0] == kindProjects && parts[1] == "import") {
+	importing := len(parts) == 2 && parts[0] == kindProjects && parts[1] == "import"
+	if !export && !importing {
 		return nil, false
 	}
 	legacy := r.Clone(r.Context())

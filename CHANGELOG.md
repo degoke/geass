@@ -17,6 +17,24 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Move a project between clusters: export and import.** `POST /api/v1/projects/{p}/export` gives a project's definition as a
+  bundle (a gzip tar of YAML with a JSON manifest): its services, databases and buckets, their configuration, hostnames and
+  schedules, and none of its secret values, credentials, tenant or data. What it leaves out is listed in the manifest,
+  including every secret key and every value whose name or content looks like a secret, to be entered again.
+  `POST /api/v1/projects/import` makes a new project from a bundle, on the same or another cluster: it plans first (`?dryRun=true`
+  says what would be made and what the cluster lacks, and changes nothing), refuses with the plan on a taken name or id, a region
+  or required node tag the cluster lacks, a hostname another service has, missing object storage or the organization's project
+  limit, and otherwise makes the project, its databases, buckets and services as drafts under new names, so that nothing runs and
+  no secret exists until it is deployed; a step that fails removes what was made. Both are for administrators (not a project's own
+  token), run for the caller's organization, and are logged with who and how many, never what. A bundle is read as untrusted
+  input: it is refused when it names a Secret, ConfigMap, login or connection of the cluster that reads it, or is over 16 MiB.
+  The data of databases and buckets is not moved: the guide describes moving a database's data with the backups Geass already
+  makes (the import can keep the project's id for platform administrators, which is what restoring them needs), and a
+  design for restoring at import time. There is no setting: nothing changes until someone calls the two routes. Tried with
+  unit tests, the routes of a fake cluster with two organizations (and added to the tenant matrix), and a real API server
+  (envtest) that accepts what an import makes and has the project controller make its environments. Not tried: two real
+  clusters or K3s, a real backup restored into an imported project, deploying what an import made, a dashboard page, the
+  command line (`geass api` cannot receive the file; use `curl`).
 - **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3

@@ -78,6 +78,7 @@ export default defineConfig({
           label: "Build and deploy",
           items: [
             "docs/guides/projects-and-environments",
+            "docs/guides/moving-a-project",
             "docs/guides/apps",
             "docs/guides/functions",
             "docs/guides/environment-variables",

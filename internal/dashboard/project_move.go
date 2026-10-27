@@ -34,6 +34,13 @@ import (
 // the caller works in may see and make.
 
 const (
+	// jsonKeyCode is where an answer to an error says which kind it is, and errorCodeConflict is the code of one that says the
+	// request cannot be done as things are.
+	jsonKeyCode       = "code"
+	errorCodeConflict = "conflict"
+)
+
+const (
 	// importQueryDryRun and the others are the options of an import sent in the address, when the body is the archive itself.
 	importQueryDryRun  = "dryRun"
 	importQueryName    = "name"
@@ -75,18 +82,17 @@ func (s *Server) handleProjectExport(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 	summary := r.URL.Query().Get(exportQuerySummary) == boolTrue
+	archive, err := bundle.Encode()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: dashboardActionFailed})
+		return
+	}
 	logger := ctrllog.FromContext(ctx)
 	logger.Info("Exported project", "project", project.Name, "by", s.currentSession(r).Username, "summary", summary,
 		"services", len(bundle.Services), "databases", len(bundle.Databases), "buckets", len(bundle.Buckets),
 		"toReenter", len(bundle.Manifest.ToReenter), "notIncluded", len(bundle.Manifest.NotIncluded))
 	if summary {
-		bundle.Manifest.Format, bundle.Manifest.Version = projectbundle.Format, projectbundle.Version
 		writeJSON(w, http.StatusOK, bundle.Manifest)
-		return
-	}
-	archive, err := bundle.Encode()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: dashboardActionFailed})
 		return
 	}
 	file := bundle.Manifest.Project.DisplayName
@@ -287,7 +293,7 @@ func (s *Server) handleProjectImport(w http.ResponseWriter, r *http.Request) {
 	if !plan.OK() {
 		logger.Info("Refused import of project", "from", bundle.Manifest.Project.ID, "by", actor, "blockers", len(plan.Blockers))
 		writeJSON(w, http.StatusConflict, map[string]any{
-			dashboardLiteralError: "the project cannot be imported: " + plan.Blockers[0].Message, "code": "conflict", "plan": plan,
+			dashboardLiteralError: "the project cannot be imported: " + plan.Blockers[0].Message, jsonKeyCode: errorCodeConflict, "plan": plan,
 		})
 		return
 	}
@@ -295,7 +301,7 @@ func (s *Server) handleProjectImport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if platform.IsUserError(err) {
 			logger.Info("Import of project failed and was rolled back", "from", bundle.Manifest.Project.ID, "by", actor, "reason", err.Error())
-			writeJSON(w, http.StatusConflict, map[string]string{dashboardLiteralError: err.Error(), "code": "conflict"})
+			writeJSON(w, http.StatusConflict, map[string]string{dashboardLiteralError: err.Error(), jsonKeyCode: errorCodeConflict})
 			return
 		}
 		logger.Error(err, "Import of project failed and was rolled back", "from", bundle.Manifest.Project.ID, "by", actor)
@@ -543,7 +549,7 @@ func (s *Server) importProject(ctx context.Context, bundle *projectbundle.Bundle
 		return nil, err
 	}
 
-	result = &importResult{Project: importedProject{ID: id, Name: plan.Project.Name}, Created: []importedResource{{Kind: "projects", Name: id, DisplayName: plan.Project.Name}},
+	result = &importResult{Project: importedProject{ID: id, Name: plan.Project.Name}, Created: []importedResource{{Kind: kindProjects, Name: id, DisplayName: plan.Project.Name}},
 		Warnings: plan.Warnings, ToReenter: nil, NotMoved: plan.NotMoved, Data: nil, Next: plan.Next}
 	ids := map[string]string{} // kind and name in the bundle -> name here
 	connections := map[string]string{}
@@ -566,7 +572,7 @@ func (s *Server) importProject(ctx context.Context, bundle *projectbundle.Bundle
 		made = append(made, db)
 		ids[projectbundle.KindDatabase+"/"+doc.Metadata.Name] = db.Name
 		connections[projectbundle.ConnectionSecretName(doc.Metadata.Name)] = projectbundle.ConnectionSecretName(db.Name)
-		result.Created = append(result.Created, importedResource{Kind: "databases", Name: db.Name, DisplayName: display, Environment: string(db.Spec.Environment), From: doc.Metadata.Name})
+		result.Created = append(result.Created, importedResource{Kind: kindDatabases, Name: db.Name, DisplayName: display, Environment: string(db.Spec.Environment), From: doc.Metadata.Name})
 	}
 	for i := range bundle.Buckets {
 		doc := &bundle.Buckets[i]
@@ -587,7 +593,7 @@ func (s *Server) importProject(ctx context.Context, bundle *projectbundle.Bundle
 		made = append(made, store)
 		ids[projectbundle.KindBucket+"/"+doc.Metadata.Name] = store.Name
 		connections[projectbundle.ConnectionSecretName(doc.Metadata.Name)] = projectbundle.ConnectionSecretName(store.Name)
-		result.Created = append(result.Created, importedResource{Kind: "object-stores", Name: store.Name, DisplayName: display, Environment: string(store.Spec.Environment), From: doc.Metadata.Name})
+		result.Created = append(result.Created, importedResource{Kind: kindObjectStores, Name: store.Name, DisplayName: display, Environment: string(store.Spec.Environment), From: doc.Metadata.Name})
 	}
 	for i := range bundle.Services {
 		doc := &bundle.Services[i]
@@ -626,7 +632,7 @@ func (s *Server) importProject(ctx context.Context, bundle *projectbundle.Bundle
 		}
 		made = append(made, app)
 		ids[projectbundle.KindService+"/"+doc.Metadata.Name] = app.Name
-		result.Created = append(result.Created, importedResource{Kind: "apps", Name: app.Name, DisplayName: display, Environment: string(app.Spec.Environment), From: doc.Metadata.Name})
+		result.Created = append(result.Created, importedResource{Kind: kindApps, Name: app.Name, DisplayName: display, Environment: string(app.Spec.Environment), From: doc.Metadata.Name})
 	}
 
 	result.ToReenter = renameItems(plan.ToReenter, ids, bundle.Manifest.Project.ID, id)

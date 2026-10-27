@@ -41,7 +41,7 @@ func TestAProjectThatTheTargetCanTakeHasOnlyWarningsForWhatItStillNeeds(t *testi
 	require.ElementsMatch(t, []string{"backup-storage-missing", "domain-dns", "domain-dns", "github-not-connected"}, codes(plan.Warnings),
 		"the databases' backups need storage, the two domains need DNS, and the repository service needs GitHub")
 
-	var created []string
+	created := make([]string, 0, len(plan.Create))
 	for _, planned := range plan.Create {
 		created = append(created, planned.Kind+"/"+planned.Name+"/"+planned.State)
 	}

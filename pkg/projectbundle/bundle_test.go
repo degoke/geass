@@ -246,7 +246,7 @@ func TestABundleHoldsWhatMovesAndNameswhatDoesNot(t *testing.T) {
 	require.Equal(t, map[string]string{"FEATURE_FLAGS": "a,b", "config.yaml": "mode: fast\n"}, web.Spec.ConfigData)
 	require.Equal(t, "shop.acme.example", web.Spec.Ingress.Host, "a domain of the person's stays")
 	require.Equal(t, []geassv1alpha1.GeassAppIngressRule{{Host: "www.acme.example", Path: "/"}}, web.Spec.Ingress.Rules, "the platform's hostname goes")
-	var kept []string
+	kept := make([]string, 0, len(web.Spec.Env))
 	for _, env := range web.Spec.Env {
 		kept = append(kept, env.Name)
 	}
@@ -533,8 +533,10 @@ func repack(t *testing.T, files map[string][]byte) []byte {
 			names = append(names, name)
 		}
 	}
-	headers := []tar.Header{{Name: ManifestName, Typeflag: tar.TypeReg, Mode: 0o644}}
-	bodies := [][]byte{files[ManifestName]}
+	headers := make([]tar.Header, 0, len(names)+1)
+	bodies := make([][]byte, 0, len(names)+1)
+	headers = append(headers, tar.Header{Name: ManifestName, Typeflag: tar.TypeReg, Mode: 0o644})
+	bodies = append(bodies, files[ManifestName])
 	for _, name := range sortedStrings(names) {
 		headers = append(headers, tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644})
 		bodies = append(bodies, files[name])

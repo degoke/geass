@@ -165,8 +165,11 @@ func Build(src Source) (*Bundle, error) {
 				"a database on a shared database server of the source cluster, which the target does not have. Make a database on a server of the target and move its data with the engine's dump and restore tools")
 		}
 	}
-	for i := range src.Apps {
-		app := &src.Apps[i]
+	// In name order, so that the same project always gives the same notes.
+	apps := slices.Clone(src.Apps)
+	slices.SortFunc(apps, func(a, b SourceApp) int { return cmp.Compare(a.App.Name, b.App.Name) })
+	for i := range apps {
+		app := &apps[i]
 		if !app.App.DeletionTimestamp.IsZero() {
 			continue
 		}
@@ -213,6 +216,7 @@ func Build(src Source) (*Bundle, error) {
 	slices.SortFunc(bundle.Manifest.Data, func(a, b DataNote) int { return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.ID, b.ID)) })
 	bundle.Manifest.ToReenter = sortedItems(c.reenter)
 	bundle.Manifest.NotIncluded = sortedItems(c.not)
+	slices.Sort(c.notes)
 	bundle.Manifest.Notes = c.notes
 	return bundle, nil
 }

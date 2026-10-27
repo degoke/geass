@@ -155,13 +155,6 @@ func (f *matrixFixture) importAs(session *dashboardSessionInfo, archive []byte, 
 	return f.doBody(session, moveImport+query, "application/gzip", archive)
 }
 
-func moveListApps(t *testing.T, f *matrixFixture) []geassv1alpha1.GeassApp {
-	t.Helper()
-	var apps geassv1alpha1.GeassAppList
-	require.NoError(t, f.base.List(context.Background(), &apps))
-	return apps.Items
-}
-
 func projectsNamed(t *testing.T, f *matrixFixture, display string) []geassv1alpha1.GeassProject {
 	t.Helper()
 	var projects geassv1alpha1.GeassProjectList
@@ -251,6 +244,7 @@ func TestExportSummaryIsTheManifestAlone(t *testing.T) {
 	require.Equal(t, projectbundle.Format, manifest.Format)
 	require.Equal(t, projectbundle.Version, manifest.Version)
 	require.NotEmpty(t, manifest.ToReenter)
+	require.Len(t, manifest.Entries, 5, "the files the bundle would hold, with their checksums")
 	require.NotContains(t, rec.Body.String(), moveSecretValue)
 }
 

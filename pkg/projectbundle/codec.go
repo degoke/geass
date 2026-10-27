@@ -55,7 +55,7 @@ type file struct {
 
 // Encode writes the bundle as a gzip-compressed tar. The same bundle always gives the same bytes: files are in path order and
 // carry no times, owners or permissions that vary. The manifest's entries are made here, from the files, so they cannot
-// disagree with them.
+// disagree with them, and the bundle's manifest is left as it was written (format, version and entries included).
 func (b *Bundle) Encode() ([]byte, error) {
 	var files []file
 	add := func(path, kind, id string, doc any) error {
@@ -98,6 +98,7 @@ func (b *Bundle) Encode() ([]byte, error) {
 	if manifest.Data == nil {
 		manifest.Data = []DataNote{}
 	}
+	b.Manifest = manifest
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("could not write the manifest: %w", err)

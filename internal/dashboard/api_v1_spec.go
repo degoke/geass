@@ -115,7 +115,7 @@ var v1Operations = []v1Operation{
 	{http.MethodPost, "/projects/import", "Make a new project from a bundle that another cluster (or this one) exported. Send the bundle as the body (Content-Type: application/gzip) with ?dryRun=true&name=&region=&keepProjectId=true, or as JSON with the same fields and the bundle's base64 as bundle. A dry run says what would be made and what the cluster lacks, and changes nothing. An import makes drafts: nothing runs until it is deployed", accessAdmin, kindProjects, []v1Field{
 		{"bundle", jsonString, "The bundle, base64. Send the raw bytes as the body instead when the body is not JSON", false},
 		{"dryRun", jsonBoolean, "Only say what would be made", false},
-		{"name", jsonString, "The new project's name. Default: the name in the bundle. Refused when a project you can see has it", false},
+		{pathNameParam, jsonString, "The new project's name. Default: the name in the bundle. Refused when a project you can see has it", false},
 		{formRegion, jsonString, "Put the project in this region instead of the bundle's", false},
 		{"keepProjectId", jsonBoolean, "Make the project under the id it had, which database backups are filed under. For the platform's administrators", false},
 	}, false},
