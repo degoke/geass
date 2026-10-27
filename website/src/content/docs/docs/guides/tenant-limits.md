@@ -188,3 +188,4 @@ The objects Geass writes, their content, that they follow a change and go with t
 - [Project limits](/docs/guides/project-limits/)
 - [Usage and capacity](/docs/guides/usage-and-capacity/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
+- [Outbound limits](/docs/guides/outbound-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share

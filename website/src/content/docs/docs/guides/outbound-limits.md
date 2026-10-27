@@ -205,3 +205,4 @@ The policies are tested port by port: a test evaluates each one, for every port 
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
 - [GeassOrganization](/docs/reference/resources/geass-organization/)
 - [Security](/docs/operations/security/)
+- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share

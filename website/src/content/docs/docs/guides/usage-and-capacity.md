@@ -244,7 +244,7 @@ A pod or a volume is an organization's through the project whose environment it 
 
 What it does not measure:
 
-- **What is used.** The figures are reservations, as on this page. A service that reserves 0.25 CPU and sits idle is billed 0.25 CPU, and one that sets no request is billed nothing. What pods use comes from Prometheus, which is optional and keeps its own retention, so it is not the source.
+- **What is used.** The figures are reservations, as on this page. A service that reserves 0.25 CPU and sits idle is billed 0.25 CPU, and one that sets no request is billed nothing, unless its organization has [noisy-neighbour limits](/docs/guides/tenant-limits/#how-a-containers-defaults-are-worked-out), which give every container that asks for nothing a default request, and that request is billed. What pods use comes from Prometheus, which is optional and keeps its own retention, so it is not the source.
 - **Traffic.** Geass has no figure for traffic that leaves the cluster. The only network number it has is what each pod sends, from Prometheus, which counts traffic to other pods and to the cluster's databases as well. Every answer says `"egress": {"available": false, ...}`.
 - **Shared servers by organization.** A logical database on a shared server is billed as the server's, under **platform**, and so are the bytes in buckets on the cluster's object storage server.
 - **Nodes.** An organization with nodes of its own (reserved with node tags) is billed for its pods' reservations like any other; bill the nodes from their pool if that is the deal.

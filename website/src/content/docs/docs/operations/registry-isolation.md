@@ -216,9 +216,13 @@ repository, or both are contested.
 - **A pull secret a service names itself** (`spec.source.image.pullSecret`, a Secret in its own namespace) is used as it is.
 - **Databases, object storage, backups and Geass's own pods** do not use a build registry and are not affected.
 - **The dashboard has no form for the setting.** Set it with `kubectl`.
+- **Outbound limits.** An organization's builds push to its own registry, so with [outbound
+  limits](/docs/guides/outbound-limits/) that list `allowedPorts`, list the port of each organization's registry (443 for
+  most), or its builds cannot push.
 
 ## Related
 
 - [Organizations and workspaces](/docs/guides/organizations-and-workspaces/#builds-and-the-registry)
 - [GitHub and builds](/docs/guides/github-and-builds/)
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
+- [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/), [Outbound limits](/docs/guides/outbound-limits/) and [Noisy-neighbour limits](/docs/guides/tenant-limits/), the other settings for a cluster that organizations share

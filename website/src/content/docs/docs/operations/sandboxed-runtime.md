@@ -212,7 +212,8 @@ whatever else runs there, such as the add-ons' DaemonSets, is exposed to that or
   organization's nodes. It is sandboxed itself (its organization does not require the tag), but it sits beside the
   owner's pods, which with `skipOnReservedNodes` are not.
 - **Capacity.** The check that a new service fits counts the nodes of its region and tags, not the RuntimeClass's
-  `scheduling`, and a RuntimeClass `overhead` is added to every pod and to what the project's quota counts.
+  `scheduling`, and a RuntimeClass `overhead` is added to every pod, to what the project's quota counts and to what the
+  [usage meter](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing) bills the organization.
 - **Compatibility.** gVisor implements most, not all, of Linux: some system calls and `/proc` files behave differently,
   and I/O-heavy work runs slower. A service that does not start under it shows the usual
   `The service cannot start: …` or stays starting; read its pod's events.
@@ -223,3 +224,4 @@ whatever else runs there, such as the add-ons' DaemonSets, is exposed to that or
 - [Security](/docs/operations/security/)
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
+- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Outbound limits](/docs/guides/outbound-limits/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share

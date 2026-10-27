@@ -23,48 +23,46 @@ import (
 	"github.com/degoke/geass/pkg/release"
 )
 
+// fixedReadRoutes are the read routes whose path is fixed. None of them is a path that a route of handleAPIRead which
+// matches a prefix or a suffix would take, so they are looked up first, and the dispatch of the rest stays simple.
+var fixedReadRoutes = map[string]func(s *Server, w http.ResponseWriter, r *http.Request){
+	"/api/session":                   (*Server).handleDashboardSession,
+	"/api/bootstrap":                 (*Server).handleBootstrap,
+	"/api/token":                     (*Server).handleAPIToken,
+	"/api/token/services":            (*Server).handleAPITokenServices,
+	"/api/tokens":                    (*Server).handleAPITokensList,
+	"/api/usage":                     (*Server).handleAPIUsage,
+	"/api/orgs":                      (*Server).handleAPIOrgs,
+	"/api/shared-databases/mixed":    (*Server).handleAPISharedDatabaseMixing,
+	"/api/events":                    (*Server).handleDashboardEvents,
+	"/api/settings/github":           (*Server).handleAPIGitHubSettings,
+	"/api/settings/cloudflare":       (*Server).handleAPICloudflareSettings,
+	"/api/settings/registry":         (*Server).handleAPIRegistrySettings,
+	"/api/settings/etcd-snapshots":   (*Server).handleAPIEtcdSnapshotSettings,
+	"/api/settings/auth":             (*Server).handleAPIAuthSettings,
+	"/api/settings/alerts":           (*Server).handleAPIAlertSettings,
+	"/api/alerts":                    (*Server).handleAPIOrgAlerts,
+	"/api/registry":                  (*Server).handleAPIOrgRegistry,
+	"/api/planetscale/cluster-sizes": (*Server).handleAPIPlanetScaleClusterSizes,
+	"/api/templates":                 (*Server).handleAPITemplates,
+	"/api/cluster/metrics": func(s *Server, w http.ResponseWriter, r *http.Request) {
+		s.handleAPIMetrics(w, r, "cluster", "cluster")
+	},
+	"/api/operator/metrics": func(s *Server, w http.ResponseWriter, r *http.Request) {
+		s.handleAPIMetrics(w, r, "operator", "operator")
+	},
+}
+
 func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
+	if handle, ok := fixedReadRoutes[r.URL.Path]; ok {
+		handle(s, w, r)
+		return
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, v1Prefix):
 		s.v1Router().ServeHTTP(w, r)
-	case r.URL.Path == "/api/session":
-		s.handleDashboardSession(w, r)
-	case r.URL.Path == "/api/bootstrap":
-		s.handleBootstrap(w, r)
-	case r.URL.Path == "/api/token":
-		s.handleAPIToken(w, r)
-	case r.URL.Path == "/api/token/services":
-		s.handleAPITokenServices(w, r)
-	case r.URL.Path == "/api/tokens":
-		s.handleAPITokensList(w, r)
-	case r.URL.Path == "/api/usage":
-		s.handleAPIUsage(w, r)
-	case r.URL.Path == "/api/orgs":
-		s.handleAPIOrgs(w, r)
-	case r.URL.Path == "/api/shared-databases/mixed":
-		s.handleAPISharedDatabaseMixing(w, r)
-	case r.URL.Path == "/api/events":
-		s.handleDashboardEvents(w, r)
-	case r.URL.Path == "/api/settings/github":
-		s.handleAPIGitHubSettings(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/installations"):
 		s.handleProjectGitHubInstallations(w, r)
-	case r.URL.Path == "/api/settings/cloudflare":
-		s.handleAPICloudflareSettings(w, r)
-	case r.URL.Path == "/api/settings/registry":
-		s.handleAPIRegistrySettings(w, r)
-	case r.URL.Path == "/api/settings/etcd-snapshots":
-		s.handleAPIEtcdSnapshotSettings(w, r)
-	case r.URL.Path == "/api/settings/auth":
-		s.handleAPIAuthSettings(w, r)
-	case r.URL.Path == "/api/settings/alerts":
-		s.handleAPIAlertSettings(w, r)
-	case r.URL.Path == "/api/alerts":
-		s.handleAPIOrgAlerts(w, r)
-	case r.URL.Path == "/api/registry":
-		s.handleAPIOrgRegistry(w, r)
-	case r.URL.Path == "/api/planetscale/cluster-sizes":
-		s.handleAPIPlanetScaleClusterSizes(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/servers/") && strings.HasSuffix(r.URL.Path, "/impact"):
 		s.handleAPIServerImpact(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
@@ -77,8 +75,6 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIAppRuntime(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/variables"):
 		s.handleAPIAppVariables(w, r)
-	case r.URL.Path == "/api/templates":
-		s.handleAPITemplates(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/console/ws"):
 		s.handleAppConsoleWS(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/console/ws"))
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/metrics"):
@@ -97,10 +93,6 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIProjectLogs(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs"))
 	case strings.HasPrefix(r.URL.Path, "/api/databases/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "databases", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/databases/"), "/metrics"))
-	case r.URL.Path == "/api/cluster/metrics":
-		s.handleAPIMetrics(w, r, "cluster", "cluster")
-	case r.URL.Path == "/api/operator/metrics":
-		s.handleAPIMetrics(w, r, "operator", "operator")
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "projects", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/metrics"))
 	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/logs"):
