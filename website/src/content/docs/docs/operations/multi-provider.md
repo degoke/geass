@@ -5,6 +5,8 @@ description: "Experimental: build one cluster from servers at different provider
 
 By default, the nodes of a Geass cluster share a private network. Multi-provider mode builds a cluster whose nodes sit at different providers and reach each other over the internet, through an encrypted WireGuard overlay. Use it when you want capacity or regions at more than one provider and accept the limits below.
 
+This page is the walk-through of that mode with a public address for every node. For nodes behind a NAT with no public address, for a Tailscale or Headscale network instead of WireGuard, and for the checks Geass makes of a mesh (`spec.network.mesh`), see [Mesh networking](/docs/operations/mesh-networking/). `GEASS_MESH=wireguard` is `GEASS_MULTI_SITE=1` with those checks turned on.
+
 :::caution
 Multi-provider mode is **experimental**. It has run on real servers: a four-node cluster at one provider, in several availability zones, joined over their public addresses, with traffic carried by the encrypted overlay. It has **not** been run across two different providers, and public traffic arriving from the internet has not been tested on such a cluster. Its control plane stays at one site and is a single point of failure. Do not move production workloads onto it until you have tested it on your own servers.
 

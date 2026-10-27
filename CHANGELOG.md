@@ -17,6 +17,27 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Mesh networking: nodes at several sites, some behind a NAT.** `spec.network.mesh` on the cluster says what joins them:
+  `provider: WireGuard` (the default, K3s's own `wireguard-native` backend, which is what `multiSite` always meant) or
+  `provider: Tailscale` (a Tailscale or Headscale network through K3s's `vpn-auth`, with `tailscale.authKeySecretRef` and an
+  optional `controlServerURL`). The installer takes `GEASS_MESH=wireguard|tailscale`, with `GEASS_TAILSCALE_AUTH_KEY_FILE` and
+  `GEASS_TAILSCALE_CONTROL_URL`; for Tailscale it writes `vpn-auth-file`, the tailnet address as `node-external-ip` and
+  `tls-san` and no flannel setting, keeps the key in a mode 600 file and in the Secret `geass-mesh-auth`, and sets
+  `spec.serverURL` to the control plane's tailnet address. A worker joined by the operator brings itself onto the tailnet
+  first (new steps `install-tailscale` and `join-tailnet`, with the key taken out of every error) and advertises the
+  address it got there; a WireGuard worker advertises its `spec.eip`. A Tailscale mesh opens no UDP 51820, in the firewalls
+  Geass makes at clouds or at the control plane. With the field set, the operator refuses a join that cannot work (mesh
+  settings that cannot be used, a missing or unusable auth key, a WireGuard address that is not a usable IP address, a
+  control plane that was built without the mesh) and writes a `MeshReady` condition on the cluster naming what needs
+  attention (a private `serverURL`, nodes that are not on the mesh, a control plane without the mesh); the installer
+  refuses a WireGuard mesh address no other machine can use. It never tests that traffic flows between sites, that UDP 51820
+  is open, a NAT's behaviour or the path's MTU: the documentation gives the commands to check, and a plan for the run that
+  has not been done. A cluster that does not set the field gets exactly the K3s settings, join commands, cluster object and
+  monitoring values it got before (tests compare them with what the code produced earlier), and `multiSite` alone is still
+  joined and left alone as it was. Off by default; additive to the CRD. **Not run on real machines:** no node was joined to
+  a real mesh, none behind a NAT, and Tailscale and Headscale were never started with it. Tested with unit tests, tests
+  against a real API server (the CRD's rules and defaults, the condition) and the worker's new shell commands run locally
+  with a stand-in `tailscale`. See [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md).
 - **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3

@@ -56,7 +56,7 @@ These are for a server you already have. A cloud machine needs an admin, a conne
 | Control plane and Prometheus | New server | 10250/tcp | kubelet, used for container metrics |
 | New server | Internet | 443/tcp | Downloading K3s from `get.k3s.io` and container images |
 
-For nodes at different providers, see [Multi-provider clusters](/docs/operations/multi-provider/): the cluster must be installed in multi-site mode, and the ports differ (51820/udp instead of 8472/udp).
+For nodes at different providers, see [Multi-provider clusters](/docs/operations/multi-provider/): the cluster must be installed in multi-site mode, and the ports differ (51820/udp instead of 8472/udp). For a server behind a NAT with no public address, see [Mesh networking](/docs/operations/mesh-networking/), which also says how to join a machine that the control plane cannot reach over SSH.
 
 ## Set the address workers join
 
@@ -249,6 +249,7 @@ The operator runs these commands on the new server in order, each through `sudo 
 | --- | --- |
 | `check-curl` | `which curl`, else `apt-get update` and `apt-get install -y curl` |
 | `install-iscsi` | Installs and enables the iSCSI initiator. Failure does not stop the join (optional) |
+| `install-tailscale`, `join-tailnet` | A [Tailscale mesh](/docs/operations/mesh-networking/) only: install Tailscale if it is missing and bring the node onto the tailnet |
 | `check-cluster-reachable` | `curl -sk --max-time 15 <serverURL>/ping`, which must answer `pong` |
 | `check-wireguard`, `open-overlay-port` | Multi-site clusters only: tests WireGuard and opens 51820/udp and 10250/tcp in `ufw` or `firewalld` |
 | `write-k3s-config` | Overwrites `/etc/rancher/k3s/config.yaml` with the node labels and taints from `placement`, kubelet log rotation (50Mi, 5 files) and, for multi-site, `node-external-ip` |
