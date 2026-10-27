@@ -80,7 +80,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, payload githubPullR
 		return nil, err
 	}
 	var results []pullRequestResult
-	requireInstallation := s.tenancyOn(ctx)
+	requireInstallation := s.eventNeedsInstallation(ctx)
 	for i := range projects.Items {
 		project := &projects.Items[i]
 		config := project.Spec.PREnvironments

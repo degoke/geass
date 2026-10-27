@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,10 @@ func TestRoutesAreClassifiedByWhoTheyAreFor(t *testing.T) {
 		{post, "/api/templates/create", scopePlatform},
 		{post, "/api/templates/web/delete", scopePlatform},
 		{post, "/settings/github/manifest/callback", scopePlatform},
+		{post, "/api/github/connections/rungeass/save", scopePlatform},
+		{post, "/api/github/connections/rungeass/installations/42/token", scopePlatform},
+		{get, "/api/v1/github/connections", scopePlatform},
+		{get, "/api/v1/github/connections/rungeass/installations", scopePlatform},
 		{get, "/api/orgs", scopePlatform},
 		{post, "/api/orgs/create", scopePlatform},
 		{post, "/api/orgs/org-1/workspaces/create", scopePlatform},
@@ -65,6 +70,8 @@ func TestRoutesAreClassifiedByWhoTheyAreFor(t *testing.T) {
 		{get, "/api/v1/apps/web/status", scopeTenant},
 		{get, "/api/v1/databases/db/connection", scopeTenant},
 		{post, "/github/callback", scopeTenant},
+		{post, "/api/projects/p1/github/install", scopeTenant},
+		{get, "/api/projects/p1/github/installations", scopeTenant},
 		// Everyone's, answered for their own tenant.
 		{get, "/api/bootstrap", scopeAny},
 		{get, "/api/events", scopeAny},
@@ -111,8 +118,9 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 			// What every organization reserved, for billing: the platform's (usage_hours_test.go).
 			continue
 		}
-		if op.Tag == tagCompute {
-			// Machines and the clouds they come from belong to the cluster: see the test below.
+		if op.Tag == tagCompute || op.Tag == tagGitHub {
+			// Machines and the clouds they come from belong to the cluster, and so does the GitHub App a provider runs: see
+			// the tests below.
 			continue
 		}
 		// Reads that are not native are rewritten to /api/<path>, which is what authentication sees.
@@ -147,4 +155,24 @@ func TestMachinesAndTheCloudsTheyComeFromAreThePlatformsAlone(t *testing.T) {
 	} {
 		require.Equal(t, scopePlatform, routeScopeOf(http.MethodPost, path), path)
 	}
+}
+
+// The GitHub App a provider runs for the cluster, its installations and their tokens are the platform's: an organization
+// sees only the installations its own projects may connect to, through its projects' routes.
+func TestTheGitHubAppOfAProviderIsThePlatformsAlone(t *testing.T) {
+	seen := 0
+	for _, op := range v1Operations {
+		if op.Tag != tagGitHub {
+			continue
+		}
+		seen++
+		path := "/api/v1" + op.Path
+		if _, native := (&Server{}).v1Router().Handler(httptest.NewRequest(op.Method, path, nil)); native == "" {
+			legacy, _, ok := v1LegacyPath(op.Method, strings.Split(strings.Trim(op.Path, "/"), "/"))
+			require.True(t, ok, "%s %s maps to a dashboard route", op.Method, op.Path)
+			path = legacy
+		}
+		require.Equal(t, scopePlatform, routeScopeOf(op.Method, path), "%s %s", op.Method, path)
+	}
+	require.Equal(t, 8, seen)
 }

@@ -39,6 +39,16 @@ The first public release, open source under the Apache License 2.0.
   logged and left out, and one that does not answer or refuses the credentials is shown as unavailable. Off unless set;
   alerts still read Alertmanager in the cluster, and Loki is not supported. Tested against fakes of the stores, not a
   running Mimir, VictoriaMetrics or VictoriaLogs.
+- **GitHub through a provider's App.** A provider that runs Geass for many clusters, such as rungeass, can run one GitHub App
+  for all of them: a `GeassGitHubConnection` with `spec.external`, made through `PUT /api/v1/github/connections/{name}` by the
+  platform's administrators. The cluster then holds no App private key and registers no App. The provider records which
+  installations are the cluster's and which organization's projects may use each (`.../installations/{id}`), gives Geass each
+  installation's token and its expiry (`.../installations/{id}/token`, stored in a Secret, never shown or logged), and forwards
+  GitHub's events to `/webhooks/github/forwarded/{name}`, signed `X-Geass-Signature: t=...,v1=...` (HMAC-SHA256 of
+  `<t>.<event>.<body>`, five minutes either way, a copy refused), which Geass handles as it handles GitHub's own. The connection
+  shows each token's state and expiry (`status.installations`, condition `TokensReady`); a build waits, and says why, while a
+  token is missing or expired, instead of failing. Settings → Connectors → GitHub shows the provider's installations and their
+  tokens in place of the App setup. Clusters with their own App are unchanged.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

@@ -95,6 +95,9 @@ func (s *Server) v1Router() *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/connections/{name}", s.v1ConnectionGet)
 		mux.HandleFunc("GET /api/v1/pools", s.v1Pools)
 		mux.HandleFunc("GET /api/v1/pools/{name}", s.v1PoolGet)
+		mux.HandleFunc("GET /api/v1/github/connections", s.v1GitHubConnections)
+		mux.HandleFunc("GET /api/v1/github/connections/{name}", s.v1GitHubConnection)
+		mux.HandleFunc("GET /api/v1/github/connections/{name}/installations", s.v1GitHubInstallations)
 		mux.HandleFunc("GET /api/v1/openapi.json", s.v1OpenAPIHandler)
 		mux.HandleFunc("GET /api/v1/auth/device/{code}", s.handleDeviceLookup)
 		for _, kind := range []string{kindProjects, kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases} {

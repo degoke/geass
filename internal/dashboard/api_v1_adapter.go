@@ -78,6 +78,9 @@ func v1Mutation(r *http.Request) (*http.Request, error) {
 	}
 
 	form := url.Values{}
+	if secretInAddress(legacyPath, r.URL.Query()) {
+		return nil, errors.New("send the token and the webhook secret in the body, never in the address, where proxies log them")
+	}
 	// Query parameters first: a DELETE has no body to carry a confirmation.
 	maps.Copy(form, r.URL.Query())
 	if r.Body != nil && r.ContentLength != 0 {
@@ -139,11 +142,36 @@ func v1LegacyPath(method string, parts []string) (string, map[string]string, boo
 		return "/api/tokens/create", nil, true
 	case kind == "tokens" && len(parts) == 2 && method == http.MethodDelete:
 		return "/api/tokens/revoke", map[string]string{"id": parts[1]}, true
+	case kind == tagGitHub && len(parts) >= 3 && parts[1] == kindConnections:
+		return v1GitHubLegacyPath(method, parts[2:])
 	case kind == kindProjects && method == http.MethodPost && len(parts) == 3 && parts[2] == pathEnvironments:
 		// The dashboard adds an environment at .../environments/create, so the path v1 documents is not its own.
 		return "/api/projects/" + parts[1] + "/environments/create", nil, true
 	case method == http.MethodPost && len(parts) >= 2:
 		return "/api/" + strings.Join(parts, "/"), nil, true
+	}
+	return "", nil, false
+}
+
+// secretInAddress is whether a write to a GitHub App connection carries a token or a secret in its query.
+func secretInAddress(legacyPath string, query url.Values) bool {
+	if !strings.HasPrefix(legacyPath, "/api/github/connections/") {
+		return false
+	}
+	return query.Has(formToken) || query.Has(formWebhookSecret)
+}
+
+// v1GitHubLegacyPath maps the writes to a GitHub App connection (the path after /github/connections/) to the dashboard
+// routes that do them: PUT makes or changes, DELETE removes, and the token of an installation is PUT.
+func v1GitHubLegacyPath(method string, rest []string) (string, map[string]string, bool) {
+	base := "/api/github/connections/" + strings.Join(rest, "/")
+	switch {
+	case len(rest) == 1 && method == http.MethodPut, len(rest) == 3 && rest[1] == "installations" && method == http.MethodPut:
+		return base + "/" + verbSave, nil, true
+	case len(rest) == 1 && method == http.MethodDelete, len(rest) == 3 && rest[1] == "installations" && method == http.MethodDelete:
+		return base + "/" + dashboardLiteralDelete, nil, true
+	case len(rest) == 4 && rest[1] == "installations" && rest[3] == formToken && method == http.MethodPut:
+		return base, nil, true
 	}
 	return "", nil, false
 }

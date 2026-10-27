@@ -249,6 +249,8 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /projects/{name}/logs` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `tail`, `previous` | Merged live logs |
 | `GET /projects/{name}/logs/stream` | Observer | the same query | The same as server-sent events |
 | `GET /projects/{name}/logs/history` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `limit` | Stored history. A project that requires node tags gets `{"available": false, ...}`: its history is not kept |
+| `POST /projects/{name}/github/install` | Admin | `environment`, and with [a provider's GitHub App](#github-an-app-a-provider-runs) `installation` | With the cluster's own App, `{"ok": true, "url": "https://github.com/apps/.../installations/new?state=..."}`. With a provider's App, the project is connected to an installation of it: the one sent, or the only one its organization has (`{"ok": true, "connected": true, "installation": 42, "account": "acme"}`). With none, `{"ok": true, "url": "<the provider's install address>?project=...&environment=..."}`; with several and none sent, a `400` that names them |
+| `GET /projects/{name}/github/installations` | Admin | none | With a provider's App: `{"items": [{"id", "account", "accountType", "provider", "tokenState"}], "external": true, "installURL"}`, the installations the project's organization may connect to. Never a token |
 
 #### Services
 
@@ -337,6 +339,78 @@ Geass creates machines at clouds for [node pools](/docs/guides/node-pools/) and 
 | `DELETE /servers/{name}` | Admin | `confirmName`* | `{"ok": true}`. Refused for the control plane, and for a node that belongs to a pool |
 
 A pool in a response has `name`, `cluster`, `connection`, `provider`, `inventory`, `region`, `size`, `fallbackSizes`, `fallbackRegions`, `image`, `spot`, `addressType`, `settings`, `placement`, `storage`, `minNodes`, `maxNodes`, `autoscaling` (with every setting, defaults filled in), `orphanPolicy`, `suspended`, and its state: `phase`, `message`, `desiredNodes`, `nodes`, `readyNodes`, `pendingPods`, `activeSize`, `estimatedHourlyCost`, `consecutiveFailures`, `lastFailure`, `lastFailureAt`, `pausedUntil`, `lastScaleUp`, `lastScaleDown`, `orphans`, `fallbackStep` and `createdAt`. A node under `members` has `name`, `phase`, `message`, `ready`, `deleting`, `instanceId`, `address`, `size`, `region`, `createdAt` and `readyAt`.
+
+#### GitHub: an App a provider runs
+
+A cluster normally has a GitHub App of its own (see [Connect GitHub](/docs/guides/connectors/github/)). A provider that runs Geass
+for many clusters, such as rungeass, can run one App for all of them instead: these routes tell a cluster about it. The provider
+alone holds the App's private key; it records which installations of the App belong to the cluster and to which
+[organization](/docs/guides/organizations-and-workspaces/), gives Geass an installation access token for each and renews it, and
+forwards GitHub's events (see [Forwarded GitHub events](#forwarded-github-events)). Every route here is the platform's: an
+organization's caller is answered `403`, a viewer can read and not write, and no project token reaches them. A token or a webhook
+secret is never in an answer, a log line or an event, and one sent in the query string instead of the body is refused (`400`). See [GitHub through a provider](/docs/guides/connectors/github/#github-through-a-provider).
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /github/connections` | Any platform caller | none | `{"items": [connection, ...]}` |
+| `PUT /github/connections/{name}` | Admin | `provider`* (on creation), `appSlug`, `installURL` (https), `webhookSecret`* (on creation, 32 to 512 characters; send it again to change it). A field that is not sent stays; `appSlug` or `installURL` sent empty is cleared | `201` on creation, `200` after, with the connection. `{name}` is lowercase letters, digits and hyphens, at most 40, and does not end in `-github`. The secret goes into the Secret `github-app-<name>-webhook` and is never shown again. `409` for a name that is a project's connection |
+| `GET /github/connections/{name}` | Any platform caller | none | One connection; `404` for a name that is not one |
+| `DELETE /github/connections/{name}` | Admin | `confirmName`* | `{"deleted": "<name>"}`, with its token Secrets and its webhook Secret. `409` with `projects` while a project is connected through it |
+| `GET /github/connections/{name}/installations` | Any platform caller | none | `{"items": [installation, ...]}` |
+| `PUT /github/connections/{name}/installations/{id}` | Admin | `account`* (the GitHub login the App is installed on), `accountType` (`User`, `Organization` or `Enterprise`), `org` (the [organization](/docs/guides/organizations-and-workspaces/) whose projects may connect to it; empty is the platform's: projects of no organization) | The installation. `{id}` is GitHub's installation id. `400` for an `org` that does not exist; `409` for an installation another connection lists, and for moving it to another organization while a project of the one it is in is connected to it |
+| `DELETE /github/connections/{name}/installations/{id}` | Admin | none | `{"removed": 42, "projects": ["proj-1a2b3c4d"]}`: the projects that were connected through it, which stop building from GitHub (a build says to connect the project again) until they are connected again |
+| `PUT /github/connections/{name}/installations/{id}/token` | Admin | `token`*, `expiresAt`* (RFC 3339, as GitHub returns with the token) | `{"connection", "installation", "tokenState", "tokenExpiresAt"}`, never the token. Stored in the Secret `github-app-<name>-installation-<id>`. `400` for a token with characters a token does not have, and for an `expiresAt` that has passed or is less than a minute away; `404` for an installation the connection does not list (record it first) |
+
+A connection in an answer is `{"name", "provider", "appSlug", "installURL", "webhookPath", "webhookURL", "ready", "tokensReady",
+"tokensReason", "tokensMessage", "installations"}`. `webhookPath` is `/webhooks/github/forwarded/<name>` and `webhookURL` the same on
+the dashboard's address when the cluster has one; `ready` is whether the webhook secret is stored. `tokensReady` (`True` or `False`),
+`tokensReason` and `tokensMessage` are the connection's `TokensReady` condition worked out at the moment of the request:
+`TokensValid`, `NoInstallations`, `TokenExpiringSoon` (every token still works, and one has less than ten minutes left), `TokenMissing`
+or `TokenExpired`. An installation is `{"id", "account", "accountType", "org", "tokenState", "tokenExpiresAt", "projects"}`, where
+`tokenState` is `Valid`, `ExpiringSoon`, `Expired` (also when less than a minute is left) or `Missing`.
+
+```bash title="Give a cluster the provider's App, an installation and its token"
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"provider":"rungeass","appSlug":"rungeass","installURL":"https://app.rungeass.app/github/install","webhookSecret":"'"$FORWARDING_SECRET"'"}'
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass/installations/42 \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"account":"acme","accountType":"Organization","org":"org-acme"}'
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass/installations/42/token \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"token":"'"$INSTALLATION_TOKEN"'","expiresAt":"2026-10-23T13:00:00Z"}'
+# {"connection":"rungeass","installation":42,"tokenExpiresAt":"2026-10-23T13:00:00Z","tokenState":"Valid"}
+```
+
+#### Forwarded GitHub events
+
+The provider forwards each GitHub event for an installation of the cluster to `POST /webhooks/github/forwarded/<name>` (not under
+`/api`, and reached without signing in: the signature is the credential). It sends GitHub's body as it came, byte for byte, with these
+headers:
+
+| Header | Value |
+| --- | --- |
+| `X-GitHub-Event` | GitHub's event name, such as `push`. Required |
+| `X-GitHub-Delivery` | GitHub's delivery id. Optional: it is logged and echoed as `delivery` |
+| `X-Geass-Signature` | `t=<unix seconds>,v1=<hex>`, where `<hex>` is HMAC-SHA256, keyed with the connection's webhook secret, of `<t>.<X-GitHub-Event>.<body>`. Several `v1=` values (up to four) are accepted, so a provider changing the secret can sign with both |
+
+Geass compares in constant time, refuses a `t` more than five minutes from its own clock (only once the signature has matched),
+remembers the signatures of the events it did for ten minutes and answers `409` to the same one again (one it answered `5xx`
+is not remembered, so it may be sent again as it was; each dashboard process remembers its own), and reads at most 2 MiB (`413` beyond).
+It answers `401` alike for a connection that does not exist, one without a webhook secret and a signature that does not match. Once it is
+verified, the event is handled exactly as one from GitHub's own webhook (`ping`, `push` and `pull_request`, others ignored), with one
+difference: the event must name an installation the connection lists (`422` otherwise, and `{"accepted": true, "ignored": true}` for
+an event that names none), and it counts only for the projects connected to that installation.
+
+```bash title="Sign and forward an event"
+t=$(date +%s)
+# The body is signed exactly as it is sent: the bytes of the file, a final newline included.
+sig=$({ printf '%s.push.' "$t"; cat body.json; } | openssl dgst -sha256 -hmac "$FORWARDING_SECRET" | awk '{print $2}')
+curl -X POST https://geass.example.com/webhooks/github/forwarded/rungeass \
+  -H "X-GitHub-Event: push" -H "X-GitHub-Delivery: $DELIVERY" -H "X-Geass-Signature: t=$t,v1=$sig" \
+  --data-binary @body.json
+# {"accepted":true,"delivery":"...","triggered":1}
+```
 
 #### Templates and project tokens
 

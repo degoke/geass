@@ -64,7 +64,11 @@ export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
             icon={GitBranch}
             name="GitHub"
             status={githubStatus}
-            description="GitHub App for repository deploys."
+            description={
+              githubInfo?.external
+                ? `GitHub App for repository deploys, run by ${githubInfo.external.provider}.`
+                : "GitHub App for repository deploys."
+            }
             actionLabel="Configure"
             onConfigure={() => setActive("github")}
           />

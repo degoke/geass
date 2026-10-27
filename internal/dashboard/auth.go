@@ -228,6 +228,10 @@ func dashboardPublicPath(r *http.Request) bool {
 	switch {
 	case path == platform.GeassDashboardProbePath, path == "/webhooks/github":
 		return true
+	// The provider of an external GitHub App forwards GitHub's events: its signature with the secret it shares with the
+	// cluster is the credential.
+	case strings.HasPrefix(path, githubForwardedPrefix):
+		return true
 	case path == "/api/login", path == "/api/logout", path == "/api/session":
 		return true
 	// A deploy hook is called by a tool that cannot sign in: the secret in its URL is the credential. Every method

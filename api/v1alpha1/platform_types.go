@@ -232,11 +232,81 @@ type GeassProjectList struct {
 type GeassGitHubConnectionSpec struct {
 	SecretRef        corev1.LocalObjectReference  `json:"secretRef"`
 	WebhookSecretRef *corev1.LocalObjectReference `json:"webhookSecretRef,omitempty"`
+	// External makes this the connection of a GitHub App that is not the cluster's own: a provider outside the
+	// cluster (such as rungeass) owns the App and its private key, sends GitHub's events on to Geass signed with the
+	// secret in webhookSecretRef, and gives Geass an installation token for each installation listed here. Geass never
+	// mints a token for these installations and never holds the App's private key. Set through the API, not by hand.
+	// +optional
+	External *GeassGitHubExternalApp `json:"external,omitempty"`
+}
+
+// GeassGitHubExternalApp is a GitHub App run by a provider outside the cluster, and the installations of it whose
+// repositories this cluster builds.
+type GeassGitHubExternalApp struct {
+	// Provider names who runs the App. The dashboard shows it ("GitHub is provided by rungeass").
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Provider string `json:"provider"`
+	// AppSlug is the App's name in its address on GitHub (github.com/apps/<appSlug>). Geass uses it to find the comments
+	// it wrote as the App and to link to the App's settings.
+	// +kubebuilder:validation:MaxLength=100
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +optional
+	AppSlug string `json:"appSlug,omitempty"`
+	// InstallURL is where a person installs the App on a GitHub account. Connecting a project that has no installation
+	// to use sends the person there.
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://`
+	// +optional
+	InstallURL string `json:"installURL,omitempty"`
+	// Installations are the installations of the App that belong to this cluster.
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=map
+	// +listMapKey=id
+	// +optional
+	Installations []GeassGitHubInstallation `json:"installations,omitempty"`
+}
+
+// GeassGitHubInstallation is one installation of an external GitHub App: the GitHub account it is on, and the
+// organization whose projects may build from it.
+type GeassGitHubInstallation struct {
+	// ID is GitHub's id of the installation.
+	// +kubebuilder:validation:Minimum=1
+	ID int64 `json:"id"`
+	// Account is the login of the GitHub user or organization the App is installed on.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=100
+	Account string `json:"account"`
+	// AccountType is User or Organization, as GitHub says.
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	AccountType string `json:"accountType,omitempty"`
+	// Org is the GeassOrganization whose projects may connect to this installation. Empty is the platform's own: only
+	// projects that belong to no organization may.
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Org string `json:"org,omitempty"`
 }
 
 type GeassGitHubConnectionStatus struct {
 	Ready      bool               `json:"ready"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Installations is, for an external App, what Geass holds for each of its installations: whether it has a token
+	// for it and when that token stops working. The token itself is only ever in a Secret. One entry per installation of
+	// spec.external, so it has the same bound.
+	// +kubebuilder:validation:MaxItems=1000
+	// +optional
+	Installations []GeassGitHubInstallationStatus `json:"installations,omitempty"`
+}
+
+// GeassGitHubInstallationStatus is the state of the token Geass holds for one installation of an external App.
+type GeassGitHubInstallationStatus struct {
+	ID int64 `json:"id"`
+	// TokenState is Valid, ExpiringSoon (valid, and due to be renewed), Expired or Missing.
+	TokenState string `json:"tokenState"`
+	// TokenExpiresAt is when the token the provider gave last stops working. Unset while there is none.
+	// +optional
+	TokenExpiresAt *metav1.Time `json:"tokenExpiresAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

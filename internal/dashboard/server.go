@@ -118,6 +118,8 @@ type Server struct {
 	// v1Mux serves the reads that exist only in the v1 API; it is built on first use.
 	v1Once sync.Once
 	v1Mux  *http.ServeMux
+	// forwarded remembers the GitHub events a provider forwarded, so that a copy of one is not done twice.
+	forwarded forwardReplays
 }
 
 // Start implements manager.Runnable.
@@ -252,6 +254,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner.HandleFunc(platform.GeassDashboardProbePath, s.handleGeassProbe)
 	inner.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
+	inner.HandleFunc(githubForwardedPrefix, s.handleForwardedGitHubWebhook)
 	inner.HandleFunc(deployHookPrefix, s.handleDeployHook)
 	inner.HandleFunc(oidcLoginPath, s.handleOIDCLogin)
 	inner.HandleFunc(oidcCallbackPath, s.handleOIDCCallback)
