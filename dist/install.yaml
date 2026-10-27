@@ -6127,6 +6127,75 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              mail:
+                description: |-
+                  Mail is what the organization may send through the platform's mail relay (spec.tenancy.mail.relay on the
+                  GeassPlatformConfig): its own limits and the domains it may send from, each in place of the platform's. Like the rest
+                  of this spec it is the platform's to write.
+                properties:
+                  allowedSenderDomains:
+                    description: |-
+                      AllowedSenderDomains are the domains the organization may send from, in place of the platform's list: the envelope
+                      sender and the addresses of the From and Sender headers must be at one of them, or below one. An empty list
+                      replaces the platform's with none.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                      type: string
+                    maxItems: 50
+                    type: array
+                    x-kubernetes-list-type: set
+                  limits:
+                    description: Limits replace the platform's relay limits, each
+                      field it sets for that field.
+                    properties:
+                      connections:
+                        description: Connections is the most connections the organization
+                          may have signed in at once.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                      maxMessageSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: MaxMessageSize is the largest message, headers
+                          and attachments included, such as "10Mi". At most 50Mi.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      messagesPerDay:
+                        description: MessagesPerDay is the most messages in any 24
+                          hours.
+                        format: int32
+                        maximum: 10000000
+                        minimum: 0
+                        type: integer
+                      messagesPerHour:
+                        description: MessagesPerHour is the most messages in any 60
+                          minutes.
+                        format: int32
+                        maximum: 1000000
+                        minimum: 0
+                        type: integer
+                      messagesPerMinute:
+                        description: |-
+                          MessagesPerMinute is the most messages in any 60 seconds. Zero sends nothing, which stops an organization's mail at
+                          once.
+                        format: int32
+                        maximum: 100000
+                        minimum: 0
+                        type: integer
+                      recipientsPerMessage:
+                        description: |-
+                          RecipientsPerMessage is the most recipients one message may have. A recipient past it is refused with 452, which
+                          tells the sender to send it in another message.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               maxProjects:
                 description: |-
                   MaxProjects is how many projects the organization may have. Without it there is no limit; zero keeps it from
@@ -7151,6 +7220,163 @@ spec:
                         - Blocked
                         - Open
                         type: string
+                    type: object
+                  mail:
+                    description: |-
+                      Mail is how organizations' services send mail: through a relay that Geass runs in the cluster, which holds each
+                      organization to its limits and hands its mail to the platform's mail service. Unset means no relay.
+                    properties:
+                      relay:
+                        description: |-
+                          Relay runs a mail relay in the cluster, which organizations' services submit mail to with credentials of their
+                          organization's own, and which hands each message to the platform's mail service (the upstream) once it is within
+                          the organization's limits. Unset means no relay.
+                        properties:
+                          allowedSenderDomains:
+                            description: |-
+                              AllowedSenderDomains are the domains organizations may send from: both the envelope sender (MAIL FROM) and every
+                              address of the From and Sender headers must be at one of them, or below one. An organization's own
+                              spec.mail.allowedSenderDomains replaces the list. Unset, and with no list of the organization's, any sender is
+                              taken, unless RequireSenderDomain is set.
+                            items:
+                              maxLength: 253
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                              type: string
+                            maxItems: 50
+                            type: array
+                            x-kubernetes-list-type: set
+                          deniedRecipientDomains:
+                            description: |-
+                              DeniedRecipientDomains are domains the relay never sends to, for every organization: a recipient at one of them, or
+                              below one, is refused.
+                            items:
+                              maxLength: 253
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                              type: string
+                            maxItems: 200
+                            type: array
+                            x-kubernetes-list-type: set
+                          enabled:
+                            description: Enabled runs the relay. Turning it off removes
+                              the relay and every login Geass made for it.
+                            type: boolean
+                          limits:
+                            description: |-
+                              Limits are what each organization may send. An organization's own spec.mail.limits replaces each field it sets.
+                              A field set in neither place has the relay's default: 60 messages a minute, 600 an hour, 2000 a day, 50 recipients
+                              a message, 10Mi a message and 5 connections at once.
+                            properties:
+                              connections:
+                                description: Connections is the most connections the
+                                  organization may have signed in at once.
+                                format: int32
+                                maximum: 1000
+                                minimum: 1
+                                type: integer
+                              maxMessageSize:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: MaxMessageSize is the largest message,
+                                  headers and attachments included, such as "10Mi".
+                                  At most 50Mi.
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              messagesPerDay:
+                                description: MessagesPerDay is the most messages in
+                                  any 24 hours.
+                                format: int32
+                                maximum: 10000000
+                                minimum: 0
+                                type: integer
+                              messagesPerHour:
+                                description: MessagesPerHour is the most messages
+                                  in any 60 minutes.
+                                format: int32
+                                maximum: 1000000
+                                minimum: 0
+                                type: integer
+                              messagesPerMinute:
+                                description: |-
+                                  MessagesPerMinute is the most messages in any 60 seconds. Zero sends nothing, which stops an organization's mail at
+                                  once.
+                                format: int32
+                                maximum: 100000
+                                minimum: 0
+                                type: integer
+                              recipientsPerMessage:
+                                description: |-
+                                  RecipientsPerMessage is the most recipients one message may have. A recipient past it is refused with 452, which
+                                  tells the sender to send it in another message.
+                                format: int32
+                                maximum: 1000
+                                minimum: 1
+                                type: integer
+                            type: object
+                          requireSenderDomain:
+                            description: |-
+                              RequireSenderDomain refuses every message of an organization that has no allowed sender domain, neither its own
+                              nor the platform's, instead of taking any sender. Set it when each organization's domains have to be checked first
+                              (the upstream only sends from verified domains, say).
+                            type: boolean
+                          upstream:
+                            description: 'Upstream is the mail service the relay hands
+                              every message to: Amazon SES, Postmark, a company''s
+                              relay.'
+                            properties:
+                              credentialRef:
+                                description: |-
+                                  CredentialRef names a Secret in the system namespace with the keys username and password, which the relay signs in
+                                  to the upstream with (AUTH PLAIN, only over TLS). The relay reads it from a volume, so a new password in the Secret
+                                  is used within a minute or two, without a restart. Unset means the relay does not sign in.
+                                properties:
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              host:
+                                description: |-
+                                  Host is the upstream's host name or IPv4 address, such as email-smtp.eu-west-1.amazonaws.com. With TLS, its
+                                  certificate must be valid for this name and signed by a public authority.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?)*$
+                                type: string
+                              port:
+                                description: Port is the upstream's port. Unset means
+                                  587, or 465 with TLS.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              tls:
+                                description: |-
+                                  TLS is StartTLS (the default: the upstream must offer STARTTLS, or nothing is sent), TLS (from the first byte, as on
+                                  port 465) or None (plain text, for an upstream inside the cluster or on a private network only).
+                                enum:
+                                - StartTLS
+                                - TLS
+                                - None
+                                type: string
+                            required:
+                            - host
+                            type: object
+                            x-kubernetes-validations:
+                            - message: 'credentialRef needs tls StartTLS or TLS: the
+                                upstream''s password is never sent in plain text'
+                              rule: '!(has(self.credentialRef) && has(self.tls) &&
+                                self.tls == ''None'')'
+                        type: object
+                        x-kubernetes-validations:
+                        - message: an enabled relay needs an upstream
+                          rule: '!self.enabled || has(self.upstream)'
                     type: object
                   registry:
                     description: |-

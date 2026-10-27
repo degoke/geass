@@ -18,6 +18,8 @@ They are off until the platform sets them. A Geass without organizations, or who
 | **The cloud's metadata service, the cluster's machines, a build's private addresses** | What the policies already closed, before these limits. | As before. No setting of the limits opens them. |
 | **Mining** | Nothing here detects it. Closing the ports mining pools listen on (`miningPools: Blocked`, or your own `blockedPorts`) is a heuristic, described in [Mining](#mining). [Abuse detection](/docs/guides/abuse-detection/) is what looks for it. | **Not enforced.** A miner who uses another port, port 443 or a proxy is not stopped. |
 | **How much mail an organization sends** (rates, counts, per-destination quotas) | Nothing. | **Not done.** A network policy allows or refuses a connection; it cannot count. See [What is not done](#what-is-not-done). |
+| **Mining** | Nothing detects it. Closing the ports mining pools listen on is a heuristic, described in [Mining](#mining). | **Not enforced.** A miner who uses another port, port 443 or a proxy is not stopped. |
+| **How much mail an organization sends** (rates, counts, per-destination quotas) | Not the outbound limits: a network policy allows or refuses a connection, and cannot count. The [mail relay](/docs/guides/mail-relay/), when it is set, counts each organization's messages, recipients, size and connections. | **Not by these limits.** Held by the relay, for the mail that goes through it. |
 
 The limits apply in every namespace an organization's pods run in: each environment of each of its projects, pull request environments included, and its build namespace (`geass-build-<organization>`), since a build runs the organization's Dockerfile. A project that belongs to no organization is never limited, and neither is anything in the platform's namespaces (`geass-system`, `kube-system`, `monitoring` and the others).
 
@@ -90,7 +92,8 @@ Limits that Kubernetes would refuse are refused when they are saved: a port outs
 
 With mail closed, an organization's pods cannot reach a mail server outside the cluster on any of the six ports. To let them send mail, open a way that the platform controls:
 
-- **A relay in the cluster.** The cluster's own pods are reached on every port whatever the limits say, so a mail relay you run in a namespace of the platform's, such as `mail-relay`, is reachable from the organizations' pods on 587, and sends mail on from there, unlimited. That is where authentication, rate limits and per-organization accounting belong: the relay can do them and a network policy cannot.
+- **Geass's mail relay** (`spec.tenancy.mail.relay`), which is the way this guide recommends. Geass runs it in `geass-system`, gives each organization a login of its own (the Secret `geass-mail` in each of its environments), holds each organization to its limits (messages per minute, hour and day, recipients, size, connections, sender domains), and hands the mail to the upstream service you choose. The cluster's own pods are reached on every port whatever the limits say, so the organizations reach it on 587 with mail closed, and with `allowedPorts` that do not list 587: it needs no `allow` entry. See [Mail relay](/docs/guides/mail-relay/).
+- **A relay of your own in the cluster**, in a namespace of the platform's, is reachable the same way. It sends what it is given on, unlimited, unless it does its own authentication and counting.
 - **An allowance** to a relay or provider outside the cluster, by its addresses: `allow: [{cidr: 203.0.113.25/32, ports: [{port: 587}]}]`. A mail service whose host name resolves to addresses that change cannot be named this way; use a relay.
 - **`mail: Open` on one organization** that you trust to send mail.
 
@@ -98,7 +101,7 @@ With mail closed, an organization's pods cannot reach a mail server outside the 
 
 Without `allowedPorts`, every port is open but the closed ones. With it, only those it lists, less the closed ones: list what the organizations' services and builds need outside the cluster, such as 443 for registries, git hosts and S3 backups, the ports of outside databases, and a registry's own port when it is not 443. Two things stay open whatever the limits say:
 
-- **The cluster's own pods, on every port.** That keeps the cluster's DNS, other services and databases working. It is also why a relay or proxy in the cluster is outside the limits (see [What is not done](#what-is-not-done)).
+- **The cluster's own pods, on every port.** That keeps the cluster's DNS, other services and databases working. It is also why a relay or proxy in the cluster is outside the limits (see [What is not done](#what-is-not-done)), and why [Geass's mail relay](/docs/guides/mail-relay/) needs no place in `allowedPorts`.
 - **The cluster's API port, from project environments**, to any address: the port the cluster's `kubernetes` Service sends to, 6443 on K3s. The Postgres databases in a project's namespace use the API, which pods reach at the control plane's own address, and that address can be outside the nodes (a [hosted control plane](/docs/operations/hosted-control-plane/)). A build has no use for it, so in a build namespace it is limited like any other port.
 
 A rule that lists ports leaves out every protocol it does not list. Once any port is closed, **ICMP (ping) and SCTP to addresses outside the cluster are closed too**: a network policy cannot name them. Limits that close nothing, such as `mail: Open` alone, leave the policy as it was.
@@ -182,6 +185,8 @@ With the limits in force it prints `25 closed` and `443 open`. Run the same from
 
 - **Detecting mining**, or any other abuse: a network policy sees ports, not programs. See [Mining](#mining) and [Abuse detection](/docs/guides/abuse-detection/).
 - **Limiting how much mail is sent**, as opposed to closing the ports: rates, counts, per-organization accounting. A relay in the cluster is where that belongs.
+- **Detecting mining**, or any other abuse. See [Mining](#mining).
+- **Limiting how much mail is sent**, as opposed to closing the ports: rates, counts, per-organization accounting. A network policy cannot count. The [mail relay](/docs/guides/mail-relay/) does this for the mail that goes through it.
 - **Quotas per destination**, or on traffic volume. Bandwidth per pod is a different limit, which needs the network plugin's bandwidth support.
 - **Naming destinations by host name.** A network policy holds addresses only.
 - **IPv6.** Geass's policies let only IPv4 leave the cluster, so IPv6 to outside addresses was closed before the limits and stays closed.
@@ -203,3 +208,5 @@ The policies are tested port by port (`miningPools` too, against the list above 
 - [GeassOrganization](/docs/reference/resources/geass-organization/)
 - [Security](/docs/operations/security/)
 - [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/), [Registry isolation for organizations](/docs/operations/registry-isolation/) and [Abuse detection](/docs/guides/abuse-detection/), the other settings for a cluster that organizations share
+- [Mail relay](/docs/guides/mail-relay/), the way organizations send mail once it is closed
+- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share

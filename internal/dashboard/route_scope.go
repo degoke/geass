@@ -75,6 +75,9 @@ func v1RouteScope(parts []string) routeScope {
 		// GET /api/v1/usage reaches authentication as the dashboard's /api/usage, which answers for the caller's tenant.
 		// What is under it here, what every organization reserved hour by hour, is the platform's.
 		return scopePlatform
+	case "mail":
+		// What every organization sent through the mail relay.
+		return scopePlatform
 	}
 	return scopePlatform
 }

@@ -214,6 +214,7 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /events` | Any | none | A server-sent event stream that says when something changed; see [Events](#events) |
 | `GET /usage` | Any | none | What each project reserves and uses; see [Usage](#usage) |
 | `GET /usage/hours` | Admin acting for the platform (a platform administrator or an install-wide admin token; not an organization's caller, a viewer, an observer or a project token) | `?from=`, `?to=` (RFC 3339), `?org=` | What each organization reserved, hour by hour, once `spec.usage.enabled` is on; see [Usage by organization](#usage-by-organization) |
+| `GET /mail/usage` | Admin acting for the platform, as for `/usage/hours` | `?org=` | What each organization sent through the mail relay, and was refused, since the relay started; see [Mail relay usage](#mail-relay-usage) |
 
 #### Sign-in and tokens
 
@@ -525,6 +526,51 @@ meter never wrote as empty, so an hour is never missing.
 A program that bills as it goes asks every hour or so with `from` set to the `next` of its last answer, and stores each hour by its `start`,
 `org` and `workspace`, replacing what it stored for the same hour before. Asking again for an hour that is closed gives the same numbers, until it is
 older than 62 days and no longer kept.
+
+### Mail relay usage
+
+`GET /api/v1/mail/usage` is what the [mail relay](/docs/guides/mail-relay/) counted for each organization. Like the usage hours it is
+the platform's alone: an organization's people and tokens, viewers, observers and project tokens get `403`. The dashboard asks the relay
+on its admin port, with the token from the relay's Secret, so the answer is as current as the relay. The counts are kept only in the
+relay's memory: `countedSince` is when the relay started, and a restart starts them over.
+
+```json title="GET /api/v1/mail/usage?org=org-a"
+{
+  "enabled": true,
+  "counters": "memory",
+  "countedSince": "2026-10-27T09:00:00Z",
+  "now": "2026-10-27T10:00:00Z",
+  "org": "org-a",
+  "organizations": [
+    {
+      "org": "org-a",
+      "limits": { "messagesPerMinute": 60, "messagesPerHour": 600, "messagesPerDay": 2000, "recipientsPerMessage": 50,
+        "maxMessageBytes": 10485760, "connections": 5 },
+      "lastMinute": 2, "lastHour": 40, "lastDay": 40, "connections": 1,
+      "accepted": 40, "recipients": 52, "bytes": 812345,
+      "rejected": { "rate_minute": 3, "sender_domain": 1 },
+      "upstreamFailures": { "unreachable": 1 },
+      "authFailures": 0,
+      "lastAcceptedAt": "2026-10-27T09:59:12Z"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Whether the relay runs. When it does not, `organizations` is empty and there is no `countedSince` |
+| `counters` | Always `memory`: the counts are in the memory of the relay's one replica |
+| `countedSince`, `now` | When the relay started, and when it answered |
+| `organizations[].limits` | The limits the organization is held to, with every default worked out |
+| `lastMinute`, `lastHour`, `lastDay` | The messages its windows hold now, which its rates are checked against: those sent, and those being sent |
+| `connections` | Its connections signed in now |
+| `accepted`, `recipients`, `bytes` | What the upstream took, since `countedSince` |
+| `rejected` | What the relay refused, by reason: `rate_minute`, `rate_hour`, `rate_day`, `recipients`, `size`, `sender_domain`, `recipient_domain`, `connections`, `organization_removed` |
+| `upstreamFailures` | What the upstream did not take, by kind: `unreachable`, `deferred`, `refused`, `auth` |
+| `authFailures` | Failed sign-ins with the organization's username |
+
+`?org=` that is not a name is `400`. A relay that is set but does not answer, or has no admin token yet, is `503`, with the reason.
 
 ### Sign in from a program
 

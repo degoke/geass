@@ -127,6 +127,11 @@ type GeassOrganizationSpec struct {
 	// what is done to a suspect in place of the platform's action.
 	// +optional
 	Abuse *GeassOrganizationAbuse `json:"abuse,omitempty"`
+	// Mail is what the organization may send through the platform's mail relay (spec.tenancy.mail.relay on the
+	// GeassPlatformConfig): its own limits and the domains it may send from, each in place of the platform's. Like the rest
+	// of this spec it is the platform's to write.
+	// +optional
+	Mail *GeassOrganizationMail `json:"mail,omitempty"`
 	// Region is where the organization's projects run when they name none of their own: only nodes in the region
 	// are used. Without it they use the cluster's default region.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
