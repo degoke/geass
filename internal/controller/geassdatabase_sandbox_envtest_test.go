@@ -29,7 +29,7 @@ var _ = Describe("Database servers in the sandbox", func() {
 			config := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "geass.geass.dev/v1alpha1", "kind": "GeassPlatformConfig",
 				"metadata": map[string]any{"name": []string{"restarts-approval", "restarts-immediate", "restarts-never"}[i], "namespace": platform.SystemNamespace},
-				"spec": map[string]any{"tenancy": map[string]any{"sandbox": map[string]any{"runtimeClassName": "gvisor", "databaseRestarts": value}}},
+				"spec":     map[string]any{"tenancy": map[string]any{"sandbox": map[string]any{"runtimeClassName": "gvisor", "databaseRestarts": value}}},
 			}}
 			if value == "Never" {
 				Expect(k8sClient.Create(ctx, config)).NotTo(Succeed())

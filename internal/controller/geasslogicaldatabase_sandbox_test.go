@@ -49,7 +49,7 @@ func (f *sharedFixture) sandboxed(t *testing.T) *metav1.Condition {
 
 func TestTheJobsOfAnOrganizationsLogicalDatabaseRunInTheSandbox(t *testing.T) {
 	for name, serverOrg := range map[string]string{
-		"on the organization's server":                         tenantOrg,
+		"on the organization's server":                          tenantOrg,
 		"on the platform's server, while organizations are off": "",
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -144,7 +144,9 @@ func (e *sandboxDBEnv) eventsWith(reason string) []string {
 	return found
 }
 
-func failures(db *geassv1alpha1.GeassDatabase) int32 { return db.Status.ReconcileRetry.ReconcileFailures }
+func failures(db *geassv1alpha1.GeassDatabase) int32 {
+	return db.Status.ReconcileRetry.ReconcileFailures
+}
 
 func TestAnOrganizationsRedisServerIsMadeUnderTheRuntimeClass(t *testing.T) {
 	e := newSandboxDBEnv(t, tenantProjectDB(geassv1alpha1.DatabaseEngineRedis), append(readyTenantProject(tenantOrg), tenantSandboxConfig(false), tenantRuntimeClass())...)
