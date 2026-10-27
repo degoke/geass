@@ -121,9 +121,9 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 			// What every organization reserved, for billing: the platform's (usage_hours_test.go).
 			continue
 		}
-		if op.Tag == tagCompute || op.Tag == tagGitHub {
+		if op.Tag == tagCompute || op.Tag == tagGitHub || op.Tag == tagAbuse {
 			// Machines and the clouds they come from belong to the cluster, and so does the GitHub App a provider runs: see
-			// the tests below.
+			// the tests below. Suspicions of abuse are the platform's too (abuse_test.go).
 			continue
 		}
 		// Reads that are not native are rewritten to /api/<path>, which is what authentication sees.

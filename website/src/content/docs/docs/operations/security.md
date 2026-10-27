@@ -614,6 +614,11 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 17. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
     Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through a relay you run.
+18. If strangers run code on the cluster, turn on [abuse detection](/docs/guides/abuse-detection/) with `action: None`, review what it
+    finds (`GET /api/v1/abuse/suspects`), exempt the projects that do legitimate heavy work, and only then consider `Suspend`. It
+    is a signal and not proof, and it misses a miner that stays below its threshold, pauses, or uses a GPU; a runtime monitor
+    such as Falco can report to it, except from inside gVisor-sandboxed pods, which it cannot see into. Close the mining pools' ports
+    too (`miningPools: Blocked`), knowing it is a heuristic.
 
 ## What stays your responsibility
 
@@ -634,7 +639,9 @@ Geass does not do these for you:
   rules for the operator's own health (rule `geass-operator` in `monitoring`: the operator down, failing or slow reconciles, a backed-up
   work queue, a slow or failing Kubernetes API server). An admin can set up [alerts](/docs/guides/alerts/) to Slack or email, which Alertmanager
   sends: for failed builds and deploys, services that are down, failing backups, crashing pods, filling storage, nodes that are not ready and
-  the operator's own alerts. Geass does not watch the traffic to your services, or what they log or return.
+  the operator's own alerts. Geass does not watch the traffic to your services, or what they log or return. Its
+  [abuse detection](/docs/guides/abuse-detection/) watches organizations' services' CPU use for patterns that look like mining, and takes
+  reports from a runtime monitor you run; it does not look inside containers, and what it finds is a signal for you to review.
 
 ## Related
 

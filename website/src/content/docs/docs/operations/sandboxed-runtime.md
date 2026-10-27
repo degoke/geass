@@ -388,6 +388,10 @@ not let a Job's pod change. A logical database's `Sandboxed` condition says how 
   and I/O-heavy work runs slower. A service that does not start under it shows the usual
   `The service cannot start: …` or stays starting; read its pod's events. A database server that does not start says
   `Service is starting` until it does: read its pod's events and logs, and see [What it costs](#what-it-costs).
+- **Watching what the pods do.** A tool on the node that watches system calls (Falco, Tetragon) sees gVisor's own process,
+  not the program inside: the organization's system calls are handled by gVisor and never reach the node's kernel. So
+  such a tool cannot report a miner in a sandboxed pod. What a pod uses is measured all the same, so the
+  [abuse detection](/docs/guides/abuse-detection/)'s CPU signal works under the sandbox.
 
 ## Related
 
@@ -396,4 +400,4 @@ not let a Job's pod change. A logical database's `Sandboxed` condition says how 
 - [Security](/docs/operations/security/)
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
 - [Scaling and placement](/docs/guides/scaling-and-placement/)
-- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Outbound limits](/docs/guides/outbound-limits/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share
+- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Outbound limits](/docs/guides/outbound-limits/), [Registry isolation for organizations](/docs/operations/registry-isolation/) and [Abuse detection](/docs/guides/abuse-detection/), the other settings for a cluster that organizations share

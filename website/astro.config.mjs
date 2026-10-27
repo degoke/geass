@@ -108,6 +108,7 @@ export default defineConfig({
             "docs/guides/outbound-limits",
             "docs/guides/project-limits",
             "docs/guides/tenant-limits",
+            "docs/guides/abuse-detection",
             "docs/guides/observability",
             "docs/guides/alerts",
             "docs/guides/usage-and-capacity",

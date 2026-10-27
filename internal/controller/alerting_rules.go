@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/abuse"
 	"github.com/degoke/geass/pkg/alerts"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -81,6 +82,7 @@ func evaluateProblems(s alertSnapshot) []problem {
 	e.backups()
 	e.nodes()
 	e.clusters()
+	e.abuse()
 
 	problems := make([]problem, 0, len(e.found))
 	for _, found := range e.found {
@@ -329,6 +331,29 @@ func (e *problemEvaluation) clusters() {
 			copies.Status == metav1.ConditionFalse && copies.Reason != platform.EtcdSnapshotsReasonWaiting {
 			add(detailSnapshots, alerts.SeverityWarning)
 		}
+	}
+}
+
+// abuse finds the services the abuse detection suspects. The alert is the platform's alone, so it carries no project: an
+// organization's channel is routed on its projects and never hears it, nor sees it among what is firing, and a channel of
+// the platform's that is limited to some projects does not hear it either. Where the service is goes in the detail.
+func (e *problemEvaluation) abuse() {
+	for i := range e.snapshot.Apps {
+		app := &e.snapshot.Apps[i]
+		condition := meta.FindStatusCondition(app.Status.Conditions, abuse.ConditionAbuseSuspected)
+		if condition == nil || condition.Status != metav1.ConditionTrue || !app.DeletionTimestamp.IsZero() {
+			continue
+		}
+		severity := alerts.SeverityWarning
+		if condition.Reason == abuse.ReasonSuspended {
+			severity = alerts.SeverityCritical
+		}
+		e.add(problem{
+			Key:  problemKey(geassv1alpha1.AlertAbuseSuspected, app.Name),
+			Kind: geassv1alpha1.AlertAbuseSuspected, Severity: severity, Environment: string(app.Spec.Environment),
+			Resource: platform.ResourceDisplayName(app.ObjectMeta), ResourceKind: appKind(app), Path: appPath(app),
+			Detail: firstNonEmpty(e.projects[app.Spec.Project], app.Spec.Project) + " / " + string(app.Spec.Environment),
+		})
 	}
 }
 

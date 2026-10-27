@@ -34,8 +34,9 @@ import (
 // A rule that lists ports leaves out every protocol it does not list, so ICMP (ping) and SCTP no longer leave the cluster
 // once ports are closed.
 //
-// What a network policy cannot do is not attempted. It cannot detect mining (closing the ports pools listen on is a
-// heuristic), cannot count or rate-limit mail, and cannot name a destination by its host name.
+// What a network policy cannot do is not attempted. It cannot detect mining (closing the ports pools listen on, which
+// miningPools does for a curated list, is a heuristic; pkg/abuse is what looks for it), cannot count or rate-limit mail, and
+// cannot name a destination by its host name.
 
 const (
 	// ConditionEgressLimitsApplied, on a project of an organization whose outbound traffic is limited, says whether the
@@ -50,6 +51,22 @@ const (
 // submitting mail, with TLS from the start or after STARTTLS), 2525 (the alternative most mail services offer where 587 is
 // closed), and 2465 and 2587 (Amazon SES's alternatives to 465 and 587).
 func MailPorts() []int32 { return []int32{25, 465, 587, 2465, 2525, 2587} }
+
+// MiningPoolPorts are the TCP ports the limits close when miningPools is Blocked: the stratum ports that many public mining
+// pools, and the example configurations of mining programs, use (3333 to 3336, 4444, 5555 and 7777), and further ports that
+// published lists of pools name (14433, 14444 and 45700). Closing them is a heuristic, kept short on purpose: it makes a
+// miner run with a pool's defaults fail, and does nothing against one that uses port 443, another port or a proxy. Ports
+// with more chance of other uses (6666 is also IRC's, 9999 other software's) are left to blockedPorts.
+func MiningPoolPorts() []geassv1alpha1.GeassEgressPortRange {
+	single := func(port int32) geassv1alpha1.GeassEgressPortRange {
+		return geassv1alpha1.GeassEgressPortRange{Port: port, Protocol: corev1.ProtocolTCP}
+	}
+	last := int32(3336)
+	return []geassv1alpha1.GeassEgressPortRange{
+		{Port: 3333, EndPort: &last, Protocol: corev1.ProtocolTCP}, single(4444), single(5555), single(7777),
+		single(14433), single(14444), single(45700),
+	}
+}
 
 // egressProtocols are the protocols the limits write ports for, in the order they are written.
 var egressProtocols = []corev1.Protocol{corev1.ProtocolTCP, corev1.ProtocolUDP}
@@ -188,6 +205,11 @@ func PlanEgress(egress *geassv1alpha1.GeassTenantEgress) (*EgressPlan, error) {
 	default:
 		problems = append(problems, fmt.Sprintf("mail is %q, not Blocked or Open", egress.Mail))
 	}
+	switch egress.MiningPools {
+	case "", geassv1alpha1.EgressMiningPoolsBlocked, geassv1alpha1.EgressMiningPoolsOpen:
+	default:
+		problems = append(problems, fmt.Sprintf("miningPools is %q, not Blocked or Open", egress.MiningPools))
+	}
 	if egress.AllowedPorts != nil && len(egress.AllowedPorts) == 0 {
 		problems = append(problems, "allowedPorts is an empty list, which would close every port: leave it out to open every port but the closed ones")
 	}
@@ -228,6 +250,11 @@ func PlanEgress(egress *geassv1alpha1.GeassTenantEgress) (*EgressPlan, error) {
 	if egress.MailBlocked() {
 		for _, port := range MailPorts() {
 			open[corev1.ProtocolTCP][port] = false
+		}
+	}
+	if egress.MiningPoolsBlocked() {
+		for _, r := range MiningPoolPorts() {
+			open[protocolOf(r)].fill(spanOf(r), false)
 		}
 	}
 	for _, r := range egress.BlockedPorts {
@@ -454,6 +481,9 @@ func EffectiveTenantEgress(defaults, own *geassv1alpha1.GeassTenantEgress) *geas
 		}
 		if own.Allow != nil {
 			out.Allow = own.Allow
+		}
+		if own.MiningPools != "" {
+			out.MiningPools = own.MiningPools
 		}
 	}
 	return out

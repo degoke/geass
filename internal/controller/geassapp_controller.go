@@ -52,6 +52,7 @@ import (
 	ctrlsource "sigs.k8s.io/controller-runtime/pkg/source"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/abuse"
 	"github.com/degoke/geass/pkg/githubapp"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/webhooks"
@@ -349,15 +350,18 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		platform.ClearReconcileRetry(&retryState)
 		writeReconcileRetryToAPI(&latest.Status.ReconcileRetry, retryState)
 		completeProvisionSuccess(&latest.Status.Provision)
-		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, metav1.ConditionTrue, "AppReady", "Application is ready")
+		readyStatus, readyReason, readyMessage := appReadyCondition(&app)
+		latest.Status.Conditions = platform.SetCondition(latest.Status.Conditions, platform.ConditionReady, readyStatus, readyReason, readyMessage)
 		latest.Status.Conditions = scaleToZeroCondition(plan, latest.Status.Conditions)
 		latest.Status.Conditions = outOfMemoryCondition(latest.Status.Conditions, oomKill, oomFound)
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	app.Status = latest.Status
-	r.notifyDeployOutcome(ctx, &app, webhooks.EventDeploymentSucceeded, "")
-	r.reportToGitHub(ctx, &app, githubapp.DeploymentSuccess, "", wasReady)
+	if !abuse.Suspended(&app) {
+		r.notifyDeployOutcome(ctx, &app, webhooks.EventDeploymentSucceeded, "")
+		r.reportToGitHub(ctx, &app, githubapp.DeploymentSuccess, "", wasReady)
+	}
 
 	log.Info("Reconciled GeassApp", "environment", app.Spec.Environment, "namespace", wsNS)
 	if oomFound {
@@ -365,6 +369,15 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{RequeueAfter: oomKillExpiry(oomKill, time.Now())}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// appReadyCondition is the Ready condition of a service whose Deployment is as it should be: ready, or, for one that is
+// suspended for abuse and so at zero copies on purpose, not ready and saying why. It is not a failure, and is not retried.
+func appReadyCondition(app *geassv1alpha1.GeassApp) (metav1.ConditionStatus, string, string) {
+	if abuse.Suspended(app) {
+		return metav1.ConditionFalse, abuse.ReasonSuspended, "Scaled to zero by the platform's administrators, who suspect abuse (see the AbuseSuspected condition). It runs again when they release it."
+	}
+	return metav1.ConditionTrue, "AppReady", "Application is ready"
 }
 
 // appPublicURL is the address a service answers on from outside the cluster, or "" when it has no host.
@@ -575,6 +588,11 @@ func (r *GeassAppReconciler) reconcileDeployment(ctx context.Context, app *geass
 	replicas := int32(1)
 	if app.Spec.Replicas != nil {
 		replicas = *app.Spec.Replicas
+	}
+	if abuse.Suspended(app) {
+		// Suspended for abuse: no copy runs until a platform administrator releases it. A CPU autoscaler leaves a
+		// Deployment at zero alone.
+		replicas = 0
 	}
 	port := app.Spec.Port
 	if port == 0 {

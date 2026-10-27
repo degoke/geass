@@ -117,6 +117,8 @@ func alertRules() *monitoringv1.PrometheusRule {
 						"Node not ready", `{{ $labels.resource }}`, "This node has not been ready for five minutes, or could not be set up. Workloads on it are not running."),
 					problem("GeassClusterProblem", geassv1alpha1.AlertClusterIssue, "10m",
 						"Cluster problem", cluster, "Open the cluster page in the dashboard for the details."),
+					problem("GeassAbuseSuspected", geassv1alpha1.AlertAbuseSuspected, "",
+						"Abuse suspected", `{{ $labels.resource }} ({{ $labels.detail }})`, "Geass's abuse detection suspects this service of an organization of abusing the platform's machines, such as by mining. It is a signal, not proof: read the evidence (GET /api/v1/abuse/suspects), then clear or release it."),
 				},
 			},
 			{

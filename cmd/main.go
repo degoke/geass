@@ -524,6 +524,19 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		setupLog.Error(err, "Failed to add the usage meter")
 		os.Exit(1)
 	}
+	// Abuse detection for organizations' services (spec.tenancy.abuse): the sustained-CPU signal, and what follows from a
+	// suspicion. Both do nothing until it is set.
+	if err := mgr.Add(&controller.AbuseDetector{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
+		setupLog.Error(err, "Failed to add the abuse detector")
+		os.Exit(1)
+	}
+	if err := (&controller.AbuseReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder("geass-abuse"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "abuse")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 	return sharedParts{webhooks: webhookDispatcher, compute: computeFactory}
 }

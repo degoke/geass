@@ -16,7 +16,7 @@ They are off until the platform sets them. A Geass without organizations, or who
 | **Only listed ports open** (`allowedPorts`) | The same policy. | The same. |
 | **Destinations opened on closed ports** (`allow`), such as a mail relay | A rule of the same policy for each range of addresses. | The same. Addresses only: a policy cannot name a host. |
 | **The cloud's metadata service, the cluster's machines, a build's private addresses** | What the policies already closed, before these limits. | As before. No setting of the limits opens them. |
-| **Mining** | Nothing detects it. Closing the ports mining pools listen on is a heuristic, described in [Mining](#mining). | **Not enforced.** A miner who uses another port, port 443 or a proxy is not stopped. |
+| **Mining** | Nothing here detects it. Closing the ports mining pools listen on (`miningPools: Blocked`, or your own `blockedPorts`) is a heuristic, described in [Mining](#mining). [Abuse detection](/docs/guides/abuse-detection/) is what looks for it. | **Not enforced.** A miner who uses another port, port 443 or a proxy is not stopped. |
 | **How much mail an organization sends** (rates, counts, per-destination quotas) | Nothing. | **Not done.** A network policy allows or refuses a connection; it cannot count. See [What is not done](#what-is-not-done). |
 
 The limits apply in every namespace an organization's pods run in: each environment of each of its projects, pull request environments included, and its build namespace (`geass-build-<organization>`), since a build runs the organization's Dockerfile. A project that belongs to no organization is never limited, and neither is anything in the platform's namespaces (`geass-system`, `kube-system`, `monitoring` and the others).
@@ -42,15 +42,10 @@ spec:
   tenancy:
     egress:
       mail: Blocked               # the default: closes TCP 25, 465, 587, 2465, 2525 and 2587
-      blockedPorts:               # closed besides mail's: here, the ports mining pools listen on (a heuristic)
-        - port: 3333
-          endPort: 3336
-        - port: 4444
-        - port: 5555
-        - port: 7777
-        - port: 14433
-        - port: 14444
-        - port: 45700
+      miningPools: Blocked        # closes the ports public mining pools listen on by default (a heuristic)
+      blockedPorts:               # closed besides those: here, more pools' ports, knowing they have other uses
+        - port: 6666
+        - port: 9999
       allow:                      # opened whatever else closes them
         - cidr: 203.0.113.25/32
           ports:
@@ -63,11 +58,12 @@ The fragment shows only the limits. Patch them in rather than applying it alone:
 ```bash
 kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"tenancy":{"egress":{
   "mail":"Blocked",
-  "blockedPorts":[{"port":3333,"endPort":3336},{"port":4444},{"port":5555},{"port":7777},{"port":14433},{"port":14444},{"port":45700}],
+  "miningPools":"Blocked",
+  "blockedPorts":[{"port":6666},{"port":9999}],
   "allow":[{"cidr":"203.0.113.25/32","ports":[{"port":587}],"description":"the platform'"'"'s mail relay"}]}}}}'
 ```
 
-To give one organization other limits, set `spec.egress` on its [GeassOrganization](/docs/reference/resources/geass-organization/). Each of `mail`, `allowedPorts`, `blockedPorts` and `allow` that it sets **replaces the platform's whole**; what it leaves out is the platform's. An empty `blockedPorts` or `allow` replaces the platform's with none. `allowedPorts` cannot be empty: to free one organization from the platform's list, give it every port, `[{"port":1,"endPort":65535},{"port":1,"endPort":65535,"protocol":"UDP"}]`. This is how one organization is let send mail that the others may not:
+To give one organization other limits, set `spec.egress` on its [GeassOrganization](/docs/reference/resources/geass-organization/). Each of `mail`, `miningPools`, `allowedPorts`, `blockedPorts` and `allow` that it sets **replaces the platform's whole**; what it leaves out is the platform's. An empty `blockedPorts` or `allow` replaces the platform's with none. `allowedPorts` cannot be empty: to free one organization from the platform's list, give it every port, `[{"port":1,"endPort":65535},{"port":1,"endPort":65535,"protocol":"UDP"}]`. This is how one organization is let send mail that the others may not:
 
 ```bash
 kubectl -n geass-system patch geassorganization org-1a2b3c4d --type merge -p '{"spec":{"egress":{"mail":"Open"}}}'
@@ -80,6 +76,7 @@ To remove them: `kubectl -n geass-system patch geassplatformconfig platform --ty
 | Field | Meaning |
 | --- | --- |
 | `mail` | `Blocked` (the default) closes the ports mail is sent and submitted on: TCP 25 (mail servers passing mail to each other, which is how spam goes straight to a mailbox's server), 465 and 587 (a mail program submitting mail, with TLS from the start or after STARTTLS), 2525 (the alternative many mail services offer where 587 is closed), and 2465 and 2587 (Amazon SES's alternatives to 465 and 587). `Open` leaves them open. Other alternatives some hosts use, such as 26 or 588, are not in the list: add them to `blockedPorts`. |
+| `miningPools` | `Blocked` closes a curated list of the TCP ports public mining pools, and the example configurations of mining programs, listen on by default: 3333 to 3336, 4444, 5555 and 7777, and 14433, 14444 and 45700. `Open`, or leaving it out, leaves them open. A heuristic: see [Mining](#mining). Like `mail`, it closes them to every address but those `allow` opens them to. |
 | `allowedPorts` | When set, the only destination ports open to addresses outside the cluster, and every other port is closed. At least one entry. List UDP ports too (such as 443, for HTTP/3), or no UDP leaves the cluster. A port that is allowed and also closed, by `mail` or `blockedPorts`, is closed. Unset means every port is open but the closed ones. |
 | `blockedPorts` | Closed to addresses outside the cluster, besides mail's. |
 | `allow[].cidr` | A range of IPv4 addresses, written from its first address, such as `203.0.113.25/32` for one address or `203.0.113.0/24`. Not in `169.254.0.0/16` or `127.0.0.0/8`. |
@@ -121,9 +118,9 @@ spec:
 
 ## Mining
 
-Detecting mining takes watching what runs on the nodes: a program's CPU use and what it is, at runtime, with something like Falco or Tetragon. A network policy sees only addresses and ports, so **Geass detects no mining**. What a policy can do is close the ports public mining pools listen on by default, which stops a miner run with a pool's example configuration. It does nothing against one that connects to port 443 (many pools offer it), to any other port, or through a proxy, so treat it as a tripwire for the careless and not as a control.
+Detecting mining takes watching what runs on the nodes: a program's CPU use and what it is, at runtime. A network policy sees only addresses and ports, so **these limits detect no mining**. [Abuse detection](/docs/guides/abuse-detection/) is what looks for it, from the CPU a service uses and from what a tool such as Falco or Tetragon reports. What a policy can do is close the ports public mining pools listen on by default, which stops a miner run with a pool's example configuration. It does nothing against one that connects to port 443 (many pools offer it), to any other port, or through a proxy, so treat it as a tripwire for the careless and not as a control.
 
-A list to start from (it is not complete, pools change, and some of these ports have other uses):
+`miningPools: Blocked` closes the first two rows of this list; add the third yourself with `blockedPorts` if you accept their other uses. The list is not complete, and pools change:
 
 | Ports | Why |
 | --- | --- |
@@ -131,7 +128,7 @@ A list to start from (it is not complete, pools change, and some of these ports 
 | 14433, 14444, 45700 | Further ports that published lists of mining pool ports name |
 | 6666, 9999, 13333, 15555, 17777, 19999 | More pool ports, with more chance of other uses: 6666 is also IRC's, and other software listens on 9999. Add them knowing that |
 
-Close them with `blockedPorts`, as in the example above. Use the cloud's own abuse signals and a runtime monitor for the rest.
+Close them with `miningPools` and `blockedPorts`, as in the example above. Use [abuse detection](/docs/guides/abuse-detection/), the cloud's own abuse signals and a runtime monitor for the rest.
 
 ## The condition
 
@@ -183,7 +180,7 @@ With the limits in force it prints `25 closed` and `443 open`. Run the same from
 
 ## What is not done
 
-- **Detecting mining**, or any other abuse. See [Mining](#mining).
+- **Detecting mining**, or any other abuse: a network policy sees ports, not programs. See [Mining](#mining) and [Abuse detection](/docs/guides/abuse-detection/).
 - **Limiting how much mail is sent**, as opposed to closing the ports: rates, counts, per-organization accounting. A relay in the cluster is where that belongs.
 - **Quotas per destination**, or on traffic volume. Bandwidth per pod is a different limit, which needs the network plugin's bandwidth support.
 - **Naming destinations by host name.** A network policy holds addresses only.
@@ -194,7 +191,7 @@ With the limits in force it prints `25 closed` and `443 open`. Run the same from
 
 ## What has been tested
 
-The policies are tested port by port: a test evaluates each one, for every port from 1 to 65535 of TCP and UDP and for addresses on the internet, on a private network, at the metadata service, at a node and at a pod, with a reading of the NetworkPolicy rules written apart from the code that builds them, and compares that with what the limits mean. The controllers are tested against fake clients: the limits are written into an organization's environments and build namespace and nowhere else, follow changes and go with the setting, are put back after an edit, and leave everything as it was when they cannot be applied. Against a real API server (envtest), the CRDs refuse what they should, and the policies are accepted and stored exactly as written.
+The policies are tested port by port (`miningPools` too, against the list above written out port by port): a test evaluates each one, for every port from 1 to 65535 of TCP and UDP and for addresses on the internet, on a private network, at the metadata service, at a node and at a pod, with a reading of the NetworkPolicy rules written apart from the code that builds them, and compares that with what the limits mean. The controllers are tested against fake clients: the limits are written into an organization's environments and build namespace and nowhere else, follow changes and go with the setting, are put back after an edit, and leave everything as it was when they cannot be applied. Against a real API server (envtest), the CRDs refuse what they should, and the policies are accepted and stored exactly as written.
 
 **On a real K3s**, real traffic went through them, from a pod of each of two organizations to listeners on the host the cluster ran on: with no limits every port answered; with them the mail ports and a closed range were refused while the port after the range, 443 and 8080 answered (so K3s's network policy controller applies `endPort` ranges), an allowance opened port 25 to one relay, mail opened for one organization left the other's closed, and removing the setting opened everything again. The project said `EnforcementUnknown` until the cluster's own check of network policy enforcement had run, then `True`. Only one cluster and one network plugin (K3s's own) have been tried.
 
@@ -205,4 +202,4 @@ The policies are tested port by port: a test evaluates each one, for every port 
 - [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
 - [GeassOrganization](/docs/reference/resources/geass-organization/)
 - [Security](/docs/operations/security/)
-- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/) and [Registry isolation for organizations](/docs/operations/registry-isolation/), the other settings for a cluster that organizations share
+- [Noisy-neighbour limits](/docs/guides/tenant-limits/), [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/), [Registry isolation for organizations](/docs/operations/registry-isolation/) and [Abuse detection](/docs/guides/abuse-detection/), the other settings for a cluster that organizations share

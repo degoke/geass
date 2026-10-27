@@ -78,6 +78,7 @@ var Kinds = []Kind{
 	{geassv1alpha1.AlertStorageFilling, "Storage filling", "A volume or a node's disk is nearly full."},
 	{geassv1alpha1.AlertStorageFailing, "Storage failing", "A node's disk has gone read-only, or a volume has lost a copy of its data or cannot be read."},
 	{geassv1alpha1.AlertClusterIssue, "Cluster problem", "A cluster upgrade stopped, certificates cannot be issued, network policies are not enforced, copies of the cluster's state have stopped reaching their bucket, or the operator is not doing its work."},
+	{geassv1alpha1.AlertAbuseSuspected, "Abuse suspected", "The abuse detection (spec.tenancy.abuse) suspects a service of an organization of abusing the platform's machines, such as by mining. A signal, not proof."},
 }
 
 // ValidKind reports whether id is a kind a channel can subscribe to.
@@ -148,10 +149,11 @@ func (c Config) Channel(id string) (Channel, bool) {
 	return Channel{}, false
 }
 
-// PlatformKind is whether an alert is about the platform's own machines and services, which belong to no project and so
-// to no organization.
+// PlatformKind is whether an alert is for the platform's administrators alone: one about the platform's own machines and
+// services, which belong to no project and so to no organization, and a suspicion of abuse, which is not for the
+// organization it is about.
 func PlatformKind(id string) bool {
-	return id == geassv1alpha1.AlertNodeUnhealthy || id == geassv1alpha1.AlertClusterIssue
+	return id == geassv1alpha1.AlertNodeUnhealthy || id == geassv1alpha1.AlertClusterIssue || id == geassv1alpha1.AlertAbuseSuspected
 }
 
 // OrgKinds are the kinds of alert an organization's channel can hear about: those about a project.

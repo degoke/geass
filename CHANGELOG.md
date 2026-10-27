@@ -111,6 +111,25 @@ The first public release, open source under the Apache License 2.0.
   event `RegistryRefused`. A registry that authorizes each organization for its own path (Harbor, zot) is how one registry
   is shared; the docs give the steps. Not run against a real registry. Off by default: without it the build Jobs, copies
   and pull secrets are unchanged. The operator now records events.
+- **Abuse detection for shared clusters.** With `spec.tenancy.abuse`, Geass looks for the services of organizations' projects
+  that may be abusing the machines, such as by mining, and says so; what it finds is a signal, not proof, and every answer says
+  so. The sustained-CPU signal samples each service once a minute from the metrics server (`metrics.k8s.io`, which K3s runs):
+  what all its copies use over what they are allowed (each container's limit, or its request), and suspects one that stays at
+  90% or more for 30 minutes without a break (`cpu.thresholdPercent`, `cpu.windowMinutes`), only while it is settled, so that
+  a rollout, a restart, a change in the number of copies and scale to zero never add up to a suspicion. Optionally it counts
+  only while the ingress passes the service few requests (`cpu.quietTraffic`, from Prometheus with the monitoring add-on),
+  with a stricter threshold and window when they cannot be read. The runs are kept in the ConfigMap `geass-abuse-signal`, so a
+  restart carries on. A suspect gets the condition `AbuseSuspected` (and its project an aggregate), a `Warning` event once, and
+  the alert **Abuse suspected** (`abuse.suspected`), which only the platform's channels hear. `action: Suspend` scales a
+  suspect to zero, reversibly, deleting nothing (the default, `None`, changes nothing). `GET /api/v1/abuse/suspects` lists the
+  suspects with their evidence, and `POST .../suspects/{name}/clear` and `/release` review them; `POST /api/v1/abuse/reports`
+  takes a report from an outside detector (falcosidekick's webhook body as it is), which Geass does not install, and which
+  cannot see inside gVisor-sandboxed pods. All of it is the platform's administrators' alone. An organization can be exempted
+  whole or by project (`spec.abuse` on it), for legitimate heavy work, and given its own action. The outbound limits gain
+  `miningPools: Blocked`, which closes a curated list of mining pools' default ports, a heuristic that a miner on port 443
+  walks past. It misses a miner that stays below the threshold, pauses, restarts itself or uses a GPU. Off by default, and
+  nothing is sampled or written for a platform that does not set it. Tested against fake clients, a fake clock and envtest; not
+  run on a real cluster or against a real miner. The operator now reads `metrics.k8s.io`.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

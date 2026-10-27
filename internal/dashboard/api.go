@@ -182,6 +182,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformGitHubRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/github/connections/"):
 		s.handleGitHubConnectionRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/abuse/"):
+		s.handleAbuseRoutes(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/save":
 		s.handlePlatformCloudflareSettingsSave(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/clear":

@@ -122,6 +122,11 @@ type GeassOrganizationSpec struct {
 	// platform sets nothing. Like the rest of this spec it is the platform's to write: no route of the dashboard changes it.
 	// +optional
 	Egress *GeassTenantEgress `json:"egress,omitempty"`
+	// Abuse is how the platform's abuse detection (spec.tenancy.abuse on the GeassPlatformConfig) treats the organization:
+	// which of its projects, or all of them, run legitimate heavy work and are left out of the sustained-CPU signal, and
+	// what is done to a suspect in place of the platform's action.
+	// +optional
+	Abuse *GeassOrganizationAbuse `json:"abuse,omitempty"`
 	// Region is where the organization's projects run when they name none of their own: only nodes in the region
 	// are used. Without it they use the cluster's default region.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`

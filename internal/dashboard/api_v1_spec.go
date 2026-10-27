@@ -321,6 +321,24 @@ var v1Operations = []v1Operation{
 	}, false},
 	{http.MethodGet, "/projects/{name}/github/installations", "With a provider's App: the GitHub accounts a project can be connected to", accessAdmin, kindProjects, nil, false},
 
+	// ---- abuse detection (spec.tenancy.abuse), the platform's alone ----
+	{http.MethodGet, "/abuse/suspects", "The services suspected of abuse, with their evidence (a signal, not proof), those the CPU signal is counting, and those that were cleared. Send ?org= for one organization's. The platform's administrators only", accessAdmin, tagAbuse, nil, false},
+	{http.MethodPost, "/abuse/suspects/{name}/clear", "Clear a service that was reviewed: the suspicion goes (a suspended service runs again), and the CPU signal leaves it alone for some days. A service that is not suspected can be cleared ahead of a heavy job. The platform's administrators only", accessAdmin, tagAbuse, []v1Field{
+		{formAbuseDays, jsonInteger, "How many days the CPU signal leaves it alone, 1 to 365. Default: spec.tenancy.abuse.reviewExemptionDays, or 30", false},
+		{formAbuseNote, jsonString, "Why, for the record", false},
+	}, false},
+	{http.MethodPost, "/abuse/suspects/{name}/release", "Let a suspended service run again. It stays suspected until it is cleared. The platform's administrators only", accessAdmin, tagAbuse, nil, false},
+	{http.MethodPost, "/abuse/reports", "Report a workload from a detector outside Geass (Falco through falcosidekick's webhook output, or a provider's own tooling): the same suspicion, condition, event and action as the CPU signal's. A token of the platform's administrators only", accessAdmin, tagAbuse, []v1Field{
+		{formAbuseService, jsonString, "The service, by name. Or send namespace and pod", false},
+		{formAbuseNS, jsonString, "The namespace of the pod (Falco: output_fields.k8s.ns.name)", false},
+		{formAbusePod, jsonString, "A pod that is a copy of the service (Falco: output_fields.k8s.pod.name)", false},
+		{formAbuseReporter, jsonString, "Who reports it, such as falco. Default for a Falco event: falco", false},
+		{formAbuseReason, jsonString, "What was seen, such as a rule's name. Default for a Falco event: its rule. It is shown to the organization on its service", false},
+		{formAbusePriority, jsonString, "How urgent the reporter thinks it is", false},
+		{formAbuseTime, jsonString, "When it was seen (RFC 3339)", false},
+		{formFalcoFields, "object", "Falco's output_fields, as falcosidekick sends them: the namespace and pod are read from it", false},
+	}, false},
+
 	// ---- templates ----
 	{http.MethodGet, "/templates", "Catalog and saved templates", accessObserver, tagTemplates, nil, false},
 	{http.MethodPost, "/templates/{id}/deploy", "Deploy a template into an environment", accessAdmin, tagTemplates, []v1Field{fieldProject, fieldEnv}, false},
