@@ -548,3 +548,16 @@ func TestTheRelaysConfigurationNamesNoSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, strings.Contains(string(spec), "ses-smtp-password-secret") || strings.Contains(string(spec), "AKIAEXAMPLE"))
 }
+
+func TestAnOrganizationCalledLikeTheRelayIsStillAnOrganization(t *testing.T) {
+	relayOrg := mailOrg(platform.MailRelayLabelOwn)
+	f := newMailRelayFixture(t, platformWithRelay(mailRelaySpec()), relayOrg)
+	f.reconcile()
+	require.NotNil(t, f.secret(platform.SystemNamespace, platform.MailCredentialsSecretName(relayOrg.Name)))
+	require.NoError(t, f.client.Delete(context.Background(), relayOrg))
+	f.reconcile()
+	require.Nil(t, f.secret(platform.SystemNamespace, platform.MailCredentialsSecretName(relayOrg.Name)), "its login goes with it")
+	require.NotNil(t, f.secret(platform.SystemNamespace, platform.MailRelayName), "and the relay's own Secrets stay")
+	require.NotNil(t, f.secret(platform.SystemNamespace, platform.MailRelayTLSSecretName))
+	require.NotNil(t, f.secret(platform.SystemNamespace, platform.MailRelayCASecretName))
+}

@@ -165,6 +165,9 @@ func (res *reservation) release() {
 
 // keep makes a message's count final: it was sent.
 func (res *reservation) keep(now time.Time, recipients, size int64) {
+	if res == nil {
+		return
+	}
 	c := res.counters
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -379,6 +379,11 @@ func (s *session) Data(r io.Reader) error {
 		s.reject(org.Name, reasonSize, "a message over the size limit was refused", "limit", limit)
 		return sizeError(limit)
 	}
+	if errors.Is(err, errMessageAborted) {
+		// The client's message stopped being readable (a line over the limit, a dropped connection): not the upstream's doing.
+		held.release()
+		return &smtp.SMTPError{Code: 554, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "The message could not be read"}
+	}
 	if err != nil {
 		held.release()
 		return s.upstreamFailed(org.Name, err, elapsed)

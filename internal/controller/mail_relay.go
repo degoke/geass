@@ -346,8 +346,8 @@ func (r *MailRelayReconciler) ensureMailLogins(ctx context.Context, orgs []geass
 	for i := range secrets.Items {
 		secret := &secrets.Items[i]
 		org := secret.Labels[platform.LabelMailRelay]
-		if org == platform.MailRelayLabelOwn || secret.Labels[platform.LabelManagedBy] != platform.ManagedByValue ||
-			secret.Name != platform.MailCredentialsSecretName(org) || logins[org] != nil {
+		// The relay's own Secrets have names of their own, so a login is told apart by its name, whatever its organization is called.
+		if secret.Labels[platform.LabelManagedBy] != platform.ManagedByValue || secret.Name != platform.MailCredentialsSecretName(org) || logins[org] != nil {
 			continue
 		}
 		if err := client.IgnoreNotFound(r.Delete(ctx, secret)); err != nil {

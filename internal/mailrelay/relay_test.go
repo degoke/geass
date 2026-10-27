@@ -565,3 +565,15 @@ func errorsAs(err error, target **smtp.SMTPError) bool {
 	}
 	return ok
 }
+
+func TestAMessageThatCannotBeReadIsNotTheUpstreamsFailure(t *testing.T) {
+	h := newHarness(t, testOrg("org-acme", acmePassword, roomy()))
+	client := h.signedIn(t, "org-acme", acmePassword)
+	long := message("app@acme.example", strings.Repeat("y", 3000))
+	err := send(client, "app@acme.example", []string{"a@example.net"}, long)
+	require.Error(t, err, "a line over 2000 characters is not taken")
+	require.Empty(t, h.upstream.received())
+	usage := h.relay.Usage().Organizations[0]
+	require.Empty(t, usage.UpstreamFailures, "the upstream is not blamed for it")
+	require.Equal(t, int64(0), usage.LastMinute, "and it is not counted")
+}
