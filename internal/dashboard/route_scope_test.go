@@ -117,8 +117,9 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 		switch path {
 		case "/api/v1/nodes", "/api/v1/cluster/metrics", "/api/v1/operator/metrics":
 			continue
-		case "/api/v1/usage/hours":
-			// What every organization reserved, for billing: the platform's (usage_hours_test.go).
+		case "/api/v1/usage/hours", "/api/v1/mail/usage":
+			// What every organization reserved, for billing, and what it sent through the mail relay: the platform's
+			// (usage_hours_test.go, mail_usage_test.go).
 			continue
 		}
 		if op.Tag == tagCompute || op.Tag == tagGitHub {
