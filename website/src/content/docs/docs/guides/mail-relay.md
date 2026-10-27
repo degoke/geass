@@ -141,6 +141,7 @@ Every answer the relay gives:
 | `450 4.7.1` | A rate limit. |
 | `452 4.5.3` | Too many recipients. |
 | `552 5.3.4` | Too large. |
+| `554 5.6.0` | The message could not be read: a line over 2000 characters, or a header over 256 KiB. It is not counted. |
 | `550 5.7.1` | A sender the organization may not use, a recipient at a denied domain, or a login whose organization has been removed. |
 | `451 4.4.1` | The upstream could not be reached, did not offer STARTTLS, or presented a certificate that is not valid for its name. |
 | `451 4.7.0` | The upstream refused the relay's own login. This is the platform's to fix, so the client is told to try again. |
@@ -202,7 +203,7 @@ with smtplib.SMTP(os.environ["SMTP_HOST"], int(os.environ["SMTP_PORT"])) as smtp
     smtp.send_message(message)
 ```
 
-The relay accepts AUTH `PLAIN` and `LOGIN`. Lines may be at most 2000 characters, as RFC 5321 expects. A longer line closes the connection.
+The relay accepts AUTH `PLAIN` and `LOGIN`. Lines may be at most 2000 characters, as RFC 5321 expects. A message with a longer line is refused with `554 5.6.0`, and a longer command closes the connection.
 
 ## Networking
 
