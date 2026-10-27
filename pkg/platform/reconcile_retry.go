@@ -141,6 +141,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.HasPrefix(msg, strings.ToLower(MessageSandboxRuntimeMissing)) {
 		return false
 	}
+	// Nor is an organization's database server whose engine cannot run in the sandbox: only the platform can change that.
+	if strings.Contains(msg, MessageCannotBeSandboxed) {
+		return false
+	}
 	if strings.Contains(msg, strings.ToLower(MessageObjectStorageCredentials)) {
 		return false
 	}
