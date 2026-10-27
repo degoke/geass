@@ -6,6 +6,7 @@ import { action, api } from "@/lib/api";
 import { canMutate, sessionScopes } from "@/lib/dashboard";
 import { alertError, notify } from "@/lib/notify";
 import { OrganizationIdP } from "@/components/OrganizationIdP";
+import { managedFor } from "@/lib/managed";
 import { Badge, Button, DataTable, Field, Input, Muted, Switch } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 
@@ -122,7 +123,7 @@ function OrganizationPolicy({ org, refetch }) {
   );
 }
 
-function EditOrganization({ org, refetch, onClose }) {
+function EditOrganization({ org, refetch, onClose, managed = null }) {
   const [displayName, setDisplayName] = useState(org.displayName);
   const [idpID, setIdpID] = useState(org.idpID);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -163,7 +164,7 @@ function EditOrganization({ org, refetch, onClose }) {
         </Stack>
       </form>
 
-      <OrganizationIdP org={org} refetch={refetch} />
+      <OrganizationIdP org={org} refetch={refetch} managed={managed} />
 
       <OrganizationPolicy key={`${org.name}:${JSON.stringify([org.maxProjects, org.quota, org.region, org.requiredTags, org.allowedDomains])}`} org={org} refetch={refetch} />
 
@@ -303,7 +304,7 @@ export function OrganizationsPage({ data }) {
         <NewOrganization refetch={orgs.refetch} onDone={() => setCreating(false)} />
       </SettingsSheet>
       <SettingsSheet opened={Boolean(editingOrg)} onClose={() => setEditing("")} title={editingOrg?.displayName || "Organization"} description={editingOrg?.name}>
-        {editingOrg ? <EditOrganization key={editingOrg.name} org={editingOrg} refetch={orgs.refetch} onClose={() => setEditing("")} /> : null}
+        {editingOrg ? <EditOrganization key={editingOrg.name} org={editingOrg} refetch={orgs.refetch} onClose={() => setEditing("")} managed={managedFor(data, "signIn")} /> : null}
       </SettingsSheet>
     </>
   );

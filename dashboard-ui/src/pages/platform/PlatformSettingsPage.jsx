@@ -8,6 +8,7 @@ import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
 import { canMutate, isPlatformSession } from "@/lib/dashboard";
+import { managedFor } from "@/lib/managed";
 import { useDashboardOptions, visibleSettingsLinks } from "@/lib/options";
 import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
@@ -103,7 +104,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page === "auth") {
     return (
       <SettingsSection title="Sign-in" flat>
-        <AuthSettings mutable={canMutate(data)} />
+        <AuthSettings mutable={canMutate(data)} managed={managedFor(data, "signIn")} />
       </SettingsSection>
     );
   }

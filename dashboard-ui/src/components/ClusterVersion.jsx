@@ -1,4 +1,5 @@
 import { Badge, DataTable, PageSection } from "@/components/geass-ui";
+import { managedFor } from "@/lib/managed";
 
 /** How an upgrade of the workers' K3s is going, in the words and tones the rest of the page uses. */
 const UPGRADE_PHASES = {
@@ -43,12 +44,25 @@ export function versionRows(release) {
   return rows;
 }
 
+/**
+ * What the Version section says about updating. A platform that runs this Geass for the person updates Geass and K3s
+ * itself, so it says who does, and does not tell the person to run the installer.
+ */
+export function versionDescription(data) {
+  const geass = managedFor(data, "upgrades");
+  const k3s = managedFor(data, "k3sVersion");
+  if (geass && k3s) return `Updating Geass and the K3s version is managed by ${geass.by} and cannot be changed here.`;
+  if (geass) return `Updating Geass is managed by ${geass.by} and cannot be changed here.`;
+  if (k3s) return `The K3s version is managed by ${k3s.by} and cannot be changed here.`;
+  return "Update by running a newer installer on the control plane.";
+}
+
 /** Which Geass and K3s the cluster runs. Updating either is described in the upgrade guide. */
 export function ClusterVersion({ data }) {
   const rows = versionRows(data?.platform?.release);
   if (!rows.length) return null;
   return (
-    <PageSection title="Version" description="Update by running a newer installer on the control plane.">
+    <PageSection title="Version" description={versionDescription(data)}>
       <DataTable
         columns={[
           { label: "Component", key: "component" },

@@ -10,6 +10,7 @@ import { ClusterBackup } from "@/components/ClusterBackup";
 import { RecoverBackups } from "@/components/RecoverBackups";
 import { ClusterVersion } from "@/components/ClusterVersion";
 import { useHidden } from "@/lib/options";
+import { managedFor } from "@/lib/managed";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
 import { AddServerSheet } from "@/components/compute/AddServerSheet";
@@ -197,7 +198,7 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       )}
       <NetworkPolicySection data={data} />
       {hideUpgrade ? null : <ClusterVersion data={data} />}
-      <ClusterBackup mutable={mutable} />
+      <ClusterBackup mutable={mutable} managed={managedFor(data, "installer")} />
       <RecoverBackups mutable={mutable} />
       <PageSection
         title="Nodes"
