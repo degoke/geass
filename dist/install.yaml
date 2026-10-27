@@ -5722,6 +5722,161 @@ spec:
                 maxLength: 100
                 minLength: 1
                 type: string
+              egress:
+                description: |-
+                  Egress is the organization's own limits on what its pods may reach outside the cluster, in place of the platform's
+                  (spec.tenancy.egress on the GeassPlatformConfig): each field set here replaces the platform's for that field, which is
+                  how one organization is let send mail that the others may not, say. Setting it limits the organization even when the
+                  platform sets nothing. Like the rest of this spec it is the platform's to write: no route of the dashboard changes it.
+                properties:
+                  allow:
+                    description: |-
+                      Allow opens ports to ranges of addresses whatever else closes them, such as the mail ports to the platform's mail
+                      relay. It cannot open what the policies close anyway: the cloud's metadata service, the cluster's machines for a
+                      project that keeps away from them, and a build's private addresses. An organization's empty list replaces the
+                      platform's with none.
+                    items:
+                      description: GeassEgressAllowance opens ports to one range of
+                        addresses.
+                      properties:
+                        cidr:
+                          description: |-
+                            CIDR is the range of IPv4 addresses, as its first address and the length of its prefix, such as "203.0.113.25/32"
+                            for one address.
+                          maxLength: 18
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                          type: string
+                        description:
+                          description: Description says what the addresses are, for
+                            whoever reads the configuration.
+                          maxLength: 200
+                          type: string
+                        ports:
+                          description: Ports are the ports opened to it.
+                          items:
+                            description: GeassEgressPortRange is one destination port,
+                              or a range of them, of one protocol.
+                            properties:
+                              endPort:
+                                description: EndPort is the last port of the range,
+                                  which it includes. Unset means Port alone.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              port:
+                                description: Port is the port, or the first port of
+                                  the range.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              protocol:
+                                description: Protocol is TCP or UDP. Unset means TCP.
+                                enum:
+                                - TCP
+                                - UDP
+                                type: string
+                            required:
+                            - port
+                            type: object
+                            x-kubernetes-validations:
+                            - message: endPort must not be below port
+                              rule: '!has(self.endPort) || self.endPort >= self.port'
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                      required:
+                      - cidr
+                      - ports
+                      type: object
+                    maxItems: 32
+                    type: array
+                  allowedPorts:
+                    description: |-
+                      AllowedPorts, when set, are the only destination ports open to addresses outside the cluster: every other port is
+                      closed. List UDP ports too (such as 443, for HTTP/3), or no UDP leaves the cluster. Unset means every port is open
+                      but the closed ones. A port that is allowed and also closed, by mail or by blockedPorts, is closed. The cluster's API
+                      port stays open from project environments, whose Postgres databases use it.
+                    items:
+                      description: GeassEgressPortRange is one destination port, or
+                        a range of them, of one protocol.
+                      properties:
+                        endPort:
+                          description: EndPort is the last port of the range, which
+                            it includes. Unset means Port alone.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        port:
+                          description: Port is the port, or the first port of the
+                            range.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        protocol:
+                          description: Protocol is TCP or UDP. Unset means TCP.
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                      required:
+                      - port
+                      type: object
+                      x-kubernetes-validations:
+                      - message: endPort must not be below port
+                        rule: '!has(self.endPort) || self.endPort >= self.port'
+                    maxItems: 64
+                    minItems: 1
+                    type: array
+                  blockedPorts:
+                    description: |-
+                      BlockedPorts are closed to addresses outside the cluster, besides mail's. Closing the ports public mining pools
+                      listen on (see the documentation for a list) is a heuristic: it makes mining with a pool's defaults fail, and does
+                      nothing against a miner who uses another port, a proxy or port 443. It detects nothing. An organization's empty list
+                      replaces the platform's with none.
+                    items:
+                      description: GeassEgressPortRange is one destination port, or
+                        a range of them, of one protocol.
+                      properties:
+                        endPort:
+                          description: EndPort is the last port of the range, which
+                            it includes. Unset means Port alone.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        port:
+                          description: Port is the port, or the first port of the
+                            range.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        protocol:
+                          description: Protocol is TCP or UDP. Unset means TCP.
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                      required:
+                      - port
+                      type: object
+                      x-kubernetes-validations:
+                      - message: endPort must not be below port
+                        rule: '!has(self.endPort) || self.endPort >= self.port'
+                    maxItems: 64
+                    type: array
+                  mail:
+                    description: Mail is Blocked, which closes the ports mail is sent
+                      on, or Open. Unset means Blocked.
+                    enum:
+                    - Blocked
+                    - Open
+                    type: string
+                type: object
               idp:
                 description: |-
                   IdP is an identity provider of the organization's own, which its people sign in through instead of the platform's.
@@ -6702,9 +6857,165 @@ spec:
                 type: string
               tenancy:
                 description: |-
-                  Tenancy hardens a cluster that organizations who do not trust each other share, such as by running their code in a
-                  sandboxed runtime. Unset means nothing changes.
+                  Tenancy hardens a cluster that organizations who do not trust each other share: how their code runs on the nodes (a
+                  sandboxed runtime) and what their pods may reach outside the cluster. Unset means nothing changes.
                 properties:
+                  egress:
+                    description: |-
+                      Egress limits what the pods of organizations' projects may reach outside the cluster: the ports mail is sent on
+                      are closed, and optionally further ports (such as those mining pools listen on), or all but a list of them. An
+                      organization's own spec.egress replaces each field of it that it sets. Unset means the pods reach the internet on
+                      every port, as before.
+                    properties:
+                      allow:
+                        description: |-
+                          Allow opens ports to ranges of addresses whatever else closes them, such as the mail ports to the platform's mail
+                          relay. It cannot open what the policies close anyway: the cloud's metadata service, the cluster's machines for a
+                          project that keeps away from them, and a build's private addresses. An organization's empty list replaces the
+                          platform's with none.
+                        items:
+                          description: GeassEgressAllowance opens ports to one range
+                            of addresses.
+                          properties:
+                            cidr:
+                              description: |-
+                                CIDR is the range of IPv4 addresses, as its first address and the length of its prefix, such as "203.0.113.25/32"
+                                for one address.
+                              maxLength: 18
+                              pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                              type: string
+                            description:
+                              description: Description says what the addresses are,
+                                for whoever reads the configuration.
+                              maxLength: 200
+                              type: string
+                            ports:
+                              description: Ports are the ports opened to it.
+                              items:
+                                description: GeassEgressPortRange is one destination
+                                  port, or a range of them, of one protocol.
+                                properties:
+                                  endPort:
+                                    description: EndPort is the last port of the range,
+                                      which it includes. Unset means Port alone.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  port:
+                                    description: Port is the port, or the first port
+                                      of the range.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  protocol:
+                                    description: Protocol is TCP or UDP. Unset means
+                                      TCP.
+                                    enum:
+                                    - TCP
+                                    - UDP
+                                    type: string
+                                required:
+                                - port
+                                type: object
+                                x-kubernetes-validations:
+                                - message: endPort must not be below port
+                                  rule: '!has(self.endPort) || self.endPort >= self.port'
+                              maxItems: 16
+                              minItems: 1
+                              type: array
+                          required:
+                          - cidr
+                          - ports
+                          type: object
+                        maxItems: 32
+                        type: array
+                      allowedPorts:
+                        description: |-
+                          AllowedPorts, when set, are the only destination ports open to addresses outside the cluster: every other port is
+                          closed. List UDP ports too (such as 443, for HTTP/3), or no UDP leaves the cluster. Unset means every port is open
+                          but the closed ones. A port that is allowed and also closed, by mail or by blockedPorts, is closed. The cluster's API
+                          port stays open from project environments, whose Postgres databases use it.
+                        items:
+                          description: GeassEgressPortRange is one destination port,
+                            or a range of them, of one protocol.
+                          properties:
+                            endPort:
+                              description: EndPort is the last port of the range,
+                                which it includes. Unset means Port alone.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            port:
+                              description: Port is the port, or the first port of
+                                the range.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            protocol:
+                              description: Protocol is TCP or UDP. Unset means TCP.
+                              enum:
+                              - TCP
+                              - UDP
+                              type: string
+                          required:
+                          - port
+                          type: object
+                          x-kubernetes-validations:
+                          - message: endPort must not be below port
+                            rule: '!has(self.endPort) || self.endPort >= self.port'
+                        maxItems: 64
+                        minItems: 1
+                        type: array
+                      blockedPorts:
+                        description: |-
+                          BlockedPorts are closed to addresses outside the cluster, besides mail's. Closing the ports public mining pools
+                          listen on (see the documentation for a list) is a heuristic: it makes mining with a pool's defaults fail, and does
+                          nothing against a miner who uses another port, a proxy or port 443. It detects nothing. An organization's empty list
+                          replaces the platform's with none.
+                        items:
+                          description: GeassEgressPortRange is one destination port,
+                            or a range of them, of one protocol.
+                          properties:
+                            endPort:
+                              description: EndPort is the last port of the range,
+                                which it includes. Unset means Port alone.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            port:
+                              description: Port is the port, or the first port of
+                                the range.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            protocol:
+                              description: Protocol is TCP or UDP. Unset means TCP.
+                              enum:
+                              - TCP
+                              - UDP
+                              type: string
+                          required:
+                          - port
+                          type: object
+                          x-kubernetes-validations:
+                          - message: endPort must not be below port
+                            rule: '!has(self.endPort) || self.endPort >= self.port'
+                        maxItems: 64
+                        type: array
+                      mail:
+                        description: Mail is Blocked, which closes the ports mail
+                          is sent on, or Open. Unset means Blocked.
+                        enum:
+                        - Blocked
+                        - Open
+                        type: string
+                    type: object
                   sandbox:
                     description: |-
                       Sandbox runs the pods Geass makes for organizations' projects under a sandboxed container runtime, such as gVisor or

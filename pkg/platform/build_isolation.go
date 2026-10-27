@@ -53,6 +53,14 @@ func OrgBuildNamespaceLabels(org string) map[string]string {
 // its image, and cannot reach another project's pods, the platform's services, the cluster's API or the cloud's metadata.
 // The addresses the nodes are on are left out too when they are known.
 func OrgBuildPolicy(namespace, org string, nodes *NodeNetwork) *networkingv1.NetworkPolicy {
+	return TenantOrgBuildPolicy(namespace, org, nodes, nil)
+}
+
+// TenantOrgBuildPolicy is OrgBuildPolicy with the organization's outbound limits (see PlanEgress) in its rule for the
+// internet: a build runs the organization's Dockerfile, which can send mail or mine as well as a service can. Without
+// limits, or with limits that close nothing, it is OrgBuildPolicy exactly. The cluster's DNS stays open, and the private
+// ranges closed, whatever the limits say.
+func TenantOrgBuildPolicy(namespace, org string, nodes *NodeNetwork, limits *EgressPlan) *networkingv1.NetworkPolicy {
 	except := append([]string{}, privateRanges...)
 	if nodes != nil {
 		except = append(except, nodes.Blocked...)
@@ -63,15 +71,20 @@ func OrgBuildPolicy(namespace, org string, nodes *NodeNetwork) *networkingv1.Net
 		}},
 		Ports: []networkingv1.NetworkPolicyPort{dnsPort(corev1.ProtocolUDP), dnsPort(corev1.ProtocolTCP)},
 	}
-	internet := networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{
-		{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: except}},
-	}}
+	egress := []networkingv1.NetworkPolicyEgressRule{dns}
+	if limits == nil || limits.closesNothing() {
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{
+			{IPBlock: &networkingv1.IPBlock{CIDR: anywhereCIDR, Except: except}},
+		}})
+	} else {
+		egress = append(egress, limits.rules(except)...)
+	}
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: policyMeta(OrgBuildPolicyName, namespace, map[string]string{LabelOrgBuild: org}),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
-			Egress:      []networkingv1.NetworkPolicyEgressRule{dns, internet},
+			Egress:      egress,
 		},
 	}
 }

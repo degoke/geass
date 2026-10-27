@@ -20,6 +20,7 @@ had no independent audit, and nothing here should be read as one.
 | Project to project traffic | A network policy per project environment (on by default) |
 | Where a project's data runs | Compliance tags: node selectors on everything the project runs, and an admission policy as a backstop |
 | Cloud metadata service | A network policy that blocks `169.254.0.0/16` from every project namespace |
+| Mail and other ports to the outside, for organizations | Off by default. The platform's outbound limits, written into the same policy and an organization's build namespace's: mail ports closed, further ports or all but a list. A port heuristic against mining pools, not detection. See [Outbound limits](/docs/guides/outbound-limits/) |
 | The cluster's machines | A network policy that blocks every node address, with the Kubernetes API left open on the control plane. On for projects created in the dashboard or the API; a choice for older projects |
 | One project using all the room | Optional per project: a quota on the CPU, memory, disk and pods of the project, of each environment, or both |
 | Metrics and log stores | Network policies that admit only platform namespaces |
@@ -445,6 +446,10 @@ Without network policies every pod in a Kubernetes cluster can reach every other
   before it, and Geass keeps it in step with the nodes. See [Network isolation](/docs/guides/network-isolation/#keep-services-away-from-the-clusters-machines).
 - **Project limits.** A project can cap what it asks for as a whole and what each of its environments asks for. It is off by default. See
   [Project limits](/docs/guides/project-limits/).
+- **Outbound limits.** On a cluster that organizations share, the platform can close mail and other ports to addresses outside
+  the cluster for every organization's pods (`spec.tenancy.egress`), in the same policy, since a policy of its own could not close
+  what this one opens. It is off by default, does not detect mining, and does not limit how much mail is sent. See
+  [Outbound limits](/docs/guides/outbound-limits/).
 - **A check that policies are enforced.** All of this depends on the network plugin acting on policies. Geass tries it, and the **Usage** page says **Not enforced** when it does not. See [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies).
 - **Telemetry.** The Prometheus and log stores have no login and hold every project's data, so Geass limits them to the
   platform namespaces with `geass-restrict-metrics-store` and `geass-restrict-log-store`.
@@ -602,6 +607,7 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
     [sandboxed runtime](/docs/operations/sandboxed-runtime/) (gVisor or Kata), which their builds use too.
 16. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
+    Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through a relay you run.
 
 ## What stays your responsibility
 

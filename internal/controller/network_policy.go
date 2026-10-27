@@ -66,9 +66,19 @@ func ensureNamespaceLabels(ctx context.Context, c client.Client, name string, wa
 	return c.Patch(ctx, ns, patch)
 }
 
+// networkPolicyExists reports whether the namespace has a policy of the name.
+func networkPolicyExists(ctx context.Context, c client.Client, name, namespace string) (bool, error) {
+	err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &networkingv1.NetworkPolicy{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // reconcileProjectNetwork applies the network policies of one project environment. nodes describes the
 // cluster's machines for a project that keeps its services away from them, and is nil for one that does not.
-func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string, nodes *platform.NodeNetwork) error {
+// egress is what the project's organization limits its outbound traffic to, the zero value for nothing.
+func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, project *geassv1alpha1.GeassProject, namespace string, nodes *platform.NodeNetwork, egress projectEgress) error {
 	if err := ensureNamespaceLabels(ctx, r.Client, namespace, map[string]string{platform.LabelProject: project.Name}); err != nil {
 		return err
 	}
@@ -79,7 +89,15 @@ func (r *GeassProjectReconciler) reconcileProjectNetwork(ctx context.Context, pr
 	} else if err := deleteNetworkPolicy(ctx, r.Client, platform.ProjectIsolationPolicyName, namespace); err != nil {
 		return err
 	}
-	return applyNetworkPolicy(ctx, r.Client, platform.CloudMetadataPolicy(project.Name, namespace, nodes))
+	if egress.invalid != nil {
+		// Limits that cannot be applied as they are written leave the environment's policy as it is, limits and all, until
+		// they are fixed; the project says why. One that is not there yet is written without them: the block on the
+		// metadata service is never left out.
+		if exists, err := networkPolicyExists(ctx, r.Client, platform.CloudMetadataPolicyName, namespace); err != nil || exists {
+			return err
+		}
+	}
+	return applyNetworkPolicy(ctx, r.Client, platform.TenantCloudMetadataPolicy(project.Name, namespace, nodes, egress.plan))
 }
 
 // projectsForNetworkPolicy maps a policy the operator owns back to its project, so that a policy that

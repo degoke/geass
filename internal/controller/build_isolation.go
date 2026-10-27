@@ -58,8 +58,8 @@ func (r *GeassBuildReconciler) buildNamespaceFor(ctx context.Context, build *gea
 }
 
 // ensureOrgBuildNamespace makes an organization's build namespace, with the policy and quota that close and bound it, or
-// accepts the one that is there when Geass made it for the organization. The organization's limits are written there too,
-// and returned for the build's own containers.
+// accepts the one that is there when Geass made it for the organization. The policy holds the organization's outbound
+// limits, and the organization's noisy-neighbour limits are written there too and returned for the build's own containers.
 func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org *geassv1alpha1.GeassOrganization) (*geassv1alpha1.GeassTenantLimits, error) {
 	name := platform.OrgBuildNamespace(org.Name)
 	ns := &corev1.Namespace{}
@@ -75,7 +75,7 @@ func (r *GeassBuildReconciler) ensureOrgBuildNamespace(ctx context.Context, org 
 	default:
 		return nil, err
 	}
-	if err := applyNetworkPolicy(ctx, r.Client, platform.OrgBuildPolicy(name, org.Name, nil)); err != nil {
+	if err := applyOrgBuildPolicy(ctx, r.Client, org); err != nil {
 		return nil, err
 	}
 	quota := platform.OrgBuildQuota(name, org.Name)

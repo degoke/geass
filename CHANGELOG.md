@@ -71,6 +71,17 @@ The first public release, open source under the Apache License 2.0.
   its `TenantLimitsApplied` condition whether they are applied, and a service whose pods they refuse says why. Pods per node
   and disk I/O are not limited: Kubernetes has no means to. Off by default, and nothing has changed for a platform that
   does not set them. Tested against fake clients and the API server's own admission policy code, not yet on a real cluster.
+- **Outbound limits for shared clusters.** `spec.tenancy.egress` on the platform configuration, and `spec.egress` on an
+  organization in its place field by field, close ports to addresses outside the cluster for the pods of organizations'
+  projects, in every environment and in their build namespace: the mail ports (TCP 25, 465, 587, 2465, 2525 and 2587) by
+  default, `blockedPorts` besides, or all but `allowedPorts`, with `allow` opening ports to ranges of addresses such as a mail
+  relay. They are written into the policies that already decide where those pods go (`geass-block-cloud-metadata` and
+  `geass-build-isolation`), as port ranges, because a policy of their own could not close what those open; the metadata, node
+  and private-range blocks and the cluster's DNS are untouched, and the cluster's API port stays open from environments. A
+  project says on its `EgressLimitsApplied` condition whether they are applied and whether the cluster enforces network
+  policies. Closing mining pools' ports is offered as a heuristic, and nothing detects mining or counts mail. Off by default,
+  and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, not yet on a
+  cluster whose network plugin enforces them.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

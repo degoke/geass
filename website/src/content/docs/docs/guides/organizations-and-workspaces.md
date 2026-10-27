@@ -187,6 +187,7 @@ A platform administrator can set these on an organization, in **Settings** → *
 | **Required node tags** (`requiredTags`) | Every workload of every project of the organization runs only on nodes carrying all of them, added to the project's own. With nodes tagged and reserved for the tag, this is how an organization gets machines of its own. The tags have to exist on nodes, and be reserved, as a project's must. |
 | **Allowed domains** (`allowedDomains`) | Its services may take hostnames under these domains only, and the hostname Geass gives a service. Two organizations cannot be given overlapping domains. |
 | **Noisy-neighbour limits** (`limits`) | The pods and ephemeral storage of each of its namespaces, what a container that asks for nothing is given and the most one may ask for, and each pod's bandwidth, in place of the platform's defaults (`spec.tenantLimits.defaults`). Set with `kubectl` only. See [Noisy-neighbour limits](/docs/guides/tenant-limits/). |
+| **Outbound limits** (`egress`) | The ports its pods may reach outside the cluster, in place of the platform's (`spec.tenancy.egress`): mail closed unless opened, further ports closed, or only a list open. Set with `kubectl` only. See [Outbound limits](/docs/guides/outbound-limits/). |
 
 ## Billing what each organization reserves
 
