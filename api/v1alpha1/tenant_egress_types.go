@@ -48,6 +48,11 @@ type GeassTenantEgress struct {
 	// +kubebuilder:validation:MaxItems=32
 	// +optional
 	Allow []GeassEgressAllowance `json:"allow,omitempty"`
+	// MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+	// 3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+	// 443, any other port or a proxy is not stopped, and it detects nothing.
+	// +optional
+	MiningPools GeassEgressMiningPools `json:"miningPools,omitempty"`
 }
 
 // MailBlocked reports whether the mail ports are closed, which they are unless Mail says Open.

@@ -54,6 +54,35 @@ spec:
               it may use. It is the tenant boundary: a project belongs to one organization, and a person who signed in as a member
               of one organization cannot see or change another's.
             properties:
+              abuse:
+                description: |-
+                  Abuse is how the platform's abuse detection (spec.tenancy.abuse on the GeassPlatformConfig) treats the organization:
+                  which of its projects, or all of them, run legitimate heavy work and are left out of the sustained-CPU signal, and
+                  what is done to a suspect in place of the platform's action.
+                properties:
+                  action:
+                    description: Action replaces the platform's action for the organization's
+                      services.
+                    enum:
+                    - None
+                    - Suspend
+                    type: string
+                  exempt:
+                    description: |-
+                      Exempt leaves every service of the organization out of the sustained-CPU signal. A report from an outside detector
+                      still applies.
+                    type: boolean
+                  exemptProjects:
+                    description: |-
+                      ExemptProjects leaves the services of these projects of the organization out of the sustained-CPU signal. A report
+                      from an outside detector still applies.
+                    items:
+                      maxLength: 63
+                      type: string
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               allowedDomains:
                 description: |-
                   AllowedDomains are the domains the organization's services may claim a hostname under: a host is allowed when
@@ -237,6 +266,15 @@ spec:
                   mail:
                     description: Mail is Blocked, which closes the ports mail is sent
                       on, or Open. Unset means Blocked.
+                    enum:
+                    - Blocked
+                    - Open
+                    type: string
+                  miningPools:
+                    description: |-
+                      MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+                      3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+                      443, any other port or a proxy is not stopped, and it detects nothing.
                     enum:
                     - Blocked
                     - Open

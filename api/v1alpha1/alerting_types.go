@@ -24,6 +24,9 @@ const (
 	// AlertStorageFailing is a node's disk that is failing (it has gone read-only), or a volume that has lost a copy of its
 	// data or cannot be read at all.
 	AlertStorageFailing = "storage.failing"
+	// AlertAbuseSuspected is a service of an organization that Geass's abuse detection (spec.tenancy.abuse) suspects of
+	// abusing the platform's machines, such as by mining. It is the platform's alone: no organization's channel hears it.
+	AlertAbuseSuspected = "abuse.suspected"
 )
 
 // GeassAlertingSpec says where Geass tells people that something went wrong. Geass turns it into an
@@ -91,7 +94,7 @@ type GeassAlertChannel struct {
 	// +optional
 	Recipients []string `json:"recipients,omitempty"`
 	// Events limits which kinds of alert the channel hears about. Empty means every kind, including ones added later.
-	// +kubebuilder:validation:items:Enum=build.failed;deploy.failed;service.down;backup.failed;node.unhealthy;cluster.issue;workload.crashlooping;storage.filling
+	// +kubebuilder:validation:items:Enum=build.failed;deploy.failed;service.down;backup.failed;node.unhealthy;cluster.issue;workload.crashlooping;storage.filling;abuse.suspected
 	// +optional
 	Events []string `json:"events,omitempty"`
 	// Projects limits the channel to these projects. Empty means every project, and it is also what lets a

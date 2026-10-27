@@ -19,6 +19,11 @@ type GeassPlatformTenantIsolationSpec struct {
 	// before: an organization without a registry of its own builds with the platform's login.
 	// +optional
 	Registry *GeassTenantRegistrySpec `json:"registry,omitempty"`
+	// Abuse looks for the services of organizations' projects that may be abusing the platform's machines, such as by
+	// mining: a service whose CPU use stays near what it is allowed, and reports from a detector outside Geass. It says so
+	// and, if asked, scales a suspect to zero. What it finds is a signal, not proof. Unset means Geass looks for nothing.
+	// +optional
+	Abuse *GeassTenantAbuse `json:"abuse,omitempty"`
 }
 
 // GeassTenantSandboxSpec names the RuntimeClass the pods of organizations' projects run with: the pods of their services,

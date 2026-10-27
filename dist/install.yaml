@@ -5689,6 +5689,35 @@ spec:
               it may use. It is the tenant boundary: a project belongs to one organization, and a person who signed in as a member
               of one organization cannot see or change another's.
             properties:
+              abuse:
+                description: |-
+                  Abuse is how the platform's abuse detection (spec.tenancy.abuse on the GeassPlatformConfig) treats the organization:
+                  which of its projects, or all of them, run legitimate heavy work and are left out of the sustained-CPU signal, and
+                  what is done to a suspect in place of the platform's action.
+                properties:
+                  action:
+                    description: Action replaces the platform's action for the organization's
+                      services.
+                    enum:
+                    - None
+                    - Suspend
+                    type: string
+                  exempt:
+                    description: |-
+                      Exempt leaves every service of the organization out of the sustained-CPU signal. A report from an outside detector
+                      still applies.
+                    type: boolean
+                  exemptProjects:
+                    description: |-
+                      ExemptProjects leaves the services of these projects of the organization out of the sustained-CPU signal. A report
+                      from an outside detector still applies.
+                    items:
+                      maxLength: 63
+                      type: string
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               allowedDomains:
                 description: |-
                   AllowedDomains are the domains the organization's services may claim a hostname under: a host is allowed when
@@ -5872,6 +5901,15 @@ spec:
                   mail:
                     description: Mail is Blocked, which closes the ports mail is sent
                       on, or Open. Unset means Blocked.
+                    enum:
+                    - Blocked
+                    - Open
+                    type: string
+                  miningPools:
+                    description: |-
+                      MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+                      3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+                      443, any other port or a proxy is not stopped, and it detects nothing.
                     enum:
                     - Blocked
                     - Open
@@ -6309,6 +6347,7 @@ spec:
                             - cluster.issue
                             - workload.crashlooping
                             - storage.filling
+                            - abuse.suspected
                             type: string
                           type: array
                         id:
@@ -6863,6 +6902,91 @@ spec:
                   sandboxed runtime), what their pods may reach outside the cluster, and keeping the platform's registry login from
                   their builds. Unset means nothing changes.
                 properties:
+                  abuse:
+                    description: |-
+                      Abuse looks for the services of organizations' projects that may be abusing the platform's machines, such as by
+                      mining: a service whose CPU use stays near what it is allowed, and reports from a detector outside Geass. It says so
+                      and, if asked, scales a suspect to zero. What it finds is a signal, not proof. Unset means Geass looks for nothing.
+                    properties:
+                      action:
+                        description: 'Action is what is done to a suspect: None, the
+                          default, or Suspend. An organization''s own spec.abuse.action
+                          replaces it.'
+                        enum:
+                        - None
+                        - Suspend
+                        type: string
+                      cpu:
+                        description: 'CPU is the sustained-CPU signal. Unset means
+                          its defaults: 90 percent of what the copies are allowed,
+                          for 30 minutes.'
+                        properties:
+                          quietTraffic:
+                            description: |-
+                              QuietTraffic, when set, counts the CPU use only while the service is sent few requests: a busy web service is
+                              expected to use its CPU, and a miner is sent nothing. The requests are those the ingress (Traefik) counts, which
+                              Prometheus has only while the monitoring add-on is on. Without them a busy service cannot be told from a quiet one,
+                              so the stricter withoutTrafficData applies in place of the threshold and window.
+                            properties:
+                              maxRequestsPerMinute:
+                                description: |-
+                                  MaxRequestsPerMinute is the most requests a minute, averaged over the last five minutes, that the ingress may pass to
+                                  the service while its CPU use counts. Zero means none at all. Requests that reach the service from inside the
+                                  cluster, not through the ingress, are not seen.
+                                format: int32
+                                maximum: 1000000
+                                minimum: 0
+                                type: integer
+                              withoutTrafficData:
+                                description: |-
+                                  WithoutTrafficData is the threshold and window that apply when the requests cannot be read. Unset means 95 percent
+                                  for twice the window.
+                                properties:
+                                  thresholdPercent:
+                                    description: ThresholdPercent replaces the signal's.
+                                      Unset means the larger of 95 and the signal's
+                                      own.
+                                    format: int32
+                                    maximum: 100
+                                    minimum: 50
+                                    type: integer
+                                  windowMinutes:
+                                    description: WindowMinutes replaces the signal's.
+                                      Unset means twice the signal's own, at most
+                                      1440.
+                                    format: int32
+                                    maximum: 1440
+                                    minimum: 10
+                                    type: integer
+                                type: object
+                            required:
+                            - maxRequestsPerMinute
+                            type: object
+                          thresholdPercent:
+                            description: ThresholdPercent is how much of what its
+                              copies are allowed a service has to use. Unset means
+                              90.
+                            format: int32
+                            maximum: 100
+                            minimum: 50
+                            type: integer
+                          windowMinutes:
+                            description: WindowMinutes is how long the use has to
+                              last without a break. Unset means 30.
+                            format: int32
+                            maximum: 1440
+                            minimum: 10
+                            type: integer
+                        type: object
+                      reviewExemptionDays:
+                        description: |-
+                          ReviewExemptionDays is how long a service that a platform administrator has cleared is left out of the CPU signal.
+                          Unset means 30.
+                        format: int32
+                        maximum: 365
+                        minimum: 1
+                        type: integer
+                    type: object
                   egress:
                     description: |-
                       Egress limits what the pods of organizations' projects may reach outside the cluster: the ports mail is sent on
@@ -7014,6 +7138,15 @@ spec:
                       mail:
                         description: Mail is Blocked, which closes the ports mail
                           is sent on, or Open. Unset means Blocked.
+                        enum:
+                        - Blocked
+                        - Open
+                        type: string
+                      miningPools:
+                        description: |-
+                          MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+                          3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+                          443, any other port or a proxy is not stopped, and it detects nothing.
                         enum:
                         - Blocked
                         - Open
