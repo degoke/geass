@@ -243,6 +243,8 @@ func matrixAttacks() []attack {
 		{"project network", get, "/api/projects/pa1/network", nil, true},
 		{"project quota", get, "/api/projects/pa1/quota", nil, true},
 		{"project github repos", get, "/api/projects/pa1/github/repos", nil, true},
+		{"project export", post, "/api/projects/pa1/export", nil, true},
+		{"v1 project export", post, "/api/v1/projects/pa1/export", nil, true},
 		// Changing a service.
 		{"app update", post, "/api/apps/app-a1/update", form("port", "9191"), false},
 		{"app display name", post, "/api/apps/app-a1/display-name", form("displayName", "hijacked"), true},

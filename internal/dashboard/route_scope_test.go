@@ -44,6 +44,8 @@ func TestRoutesAreClassifiedByWhoTheyAreFor(t *testing.T) {
 		{post, "/api/settings/auth/tenancy", scopePlatform},
 		{post, "/api/session/scope", scopeAny},
 		{post, "/api/projects/p1/assign", scopeTenant},
+		{post, "/api/projects/import", scopeTenant},
+		{post, "/api/projects/p1/export", scopeTenant},
 		{get, "/api/object-stores/cluster-s3/logs", scopePlatform},
 		{get, "/api/object-stores/cluster-s3/runtime", scopePlatform},
 		{post, "/api/object-stores/cluster-s3/console/create", scopePlatform},

@@ -16,7 +16,7 @@ func goodTarget() Target {
 		ProjectNameTaken: func(string) bool { return false },
 		ProjectIDTaken:   func(string) bool { return false },
 		Nodes: []Node{
-			{Region: "eu", Tags: []string{"hipaa", "gpu"}}, {Region: "eu"}, {Region: "us"},
+			{Region: "eu", Tags: []string{"hipaa", "gpu"}, Reserved: []string{"hipaa"}}, {Region: "eu"}, {Region: "us"},
 		},
 		HealthyNodes: 3, ObjectStorage: true, ServerlessAddon: true, GitHubApp: true, Registry: true,
 		HostProblem: func(string) string { return "" },
@@ -57,9 +57,9 @@ func TestAProjectThatTheTargetCanTakeHasOnlyWarningsForWhatItStillNeeds(t *testi
 		"Connect the new project to GitHub.",
 		"Enter the 14 secret value(s) listed under toReenter again, on the services and the project they belong to.",
 		"Choose backup storage for the new project.",
-		"Deploy the databases, and restore their data if you are moving it (see the guide).",
+		"Deploy the databases (POST /api/v1/databases/{name}/deploy), and restore their data if you are moving it (see the guide).",
 		"Deploy the buckets, and copy the objects into them.",
-		"Deploy the services (POST /api/v1/projects/{project}/deploy for each environment).",
+		"Deploy the services (POST /api/v1/apps/{name}/deploy). Deploying a whole environment at once (POST /api/v1/projects/{project}/deploy) starts its services before its databases, so deploy the databases first when the services need them.",
 		"Point DNS at the new cluster, and delete the project on the source cluster once you have checked this one.",
 	}, plan.Next)
 }

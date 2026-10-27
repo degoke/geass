@@ -468,6 +468,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectDeployPending(w, r, name)
 		case len(parts) == 2 && parts[1] == "assign":
 			s.handleProjectAssign(w, r, name)
+		case len(parts) == 2 && parts[1] == "export":
+			s.handleProjectExport(w, r, name)
 		default:
 			http.NotFound(w, r)
 		}

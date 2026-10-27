@@ -27,6 +27,8 @@ type Options struct {
 type Node struct {
 	Region string
 	Tags   []string
+	// Reserved are the tags the machine is kept for: nothing that does not ask for them runs there.
+	Reserved []string
 }
 
 // Target is what the cluster that imports says about itself. The dashboard fills it in from the cluster; Plan only asks it,
@@ -165,9 +167,16 @@ func PlanImport(b *Bundle, target Target, options Options) Plan {
 			"No node of this cluster is in the %s region. Tag a node with it first, or import into another region", region)
 	}
 	for _, tag := range b.Project.Spec.RequiredTags {
-		if !hasTag(region, tag) {
+		switch {
+		case !hasTag(region, tag):
 			block("tag-missing", KindProject, "", "", "",
 				"The project requires nodes tagged %s and no node of this cluster has the tag. A requirement of this kind is never dropped: tag the nodes first", tag)
+		case slices.ContainsFunc(target.Nodes, func(n Node) bool {
+			return (region == "" || n.Region == region) && slices.Contains(n.Tags, tag) && !slices.Contains(n.Reserved, tag)
+		}):
+			// The cluster refuses a required tag that other projects' work could land beside the data of.
+			block("tag-not-reserved", KindProject, "", "", "",
+				"Some nodes carry the tag %s without being reserved for it, so other projects could run beside this project's data. Mark the tag as a compliance tag on those nodes first", tag)
 		}
 	}
 
@@ -289,13 +298,13 @@ func nextSteps(b *Bundle, plan *Plan) []string {
 		steps = append(steps, "Choose backup storage for the new project.")
 	}
 	if len(b.Databases) > 0 {
-		steps = append(steps, "Deploy the databases, and restore their data if you are moving it (see the guide).")
+		steps = append(steps, "Deploy the databases (POST /api/v1/databases/{name}/deploy), and restore their data if you are moving it (see the guide).")
 	}
 	if len(b.Buckets) > 0 {
 		steps = append(steps, "Deploy the buckets, and copy the objects into them.")
 	}
 	if len(b.Services) > 0 {
-		steps = append(steps, "Deploy the services (POST /api/v1/projects/{project}/deploy for each environment).")
+		steps = append(steps, "Deploy the services (POST /api/v1/apps/{name}/deploy). Deploying a whole environment at once (POST /api/v1/projects/{project}/deploy) starts its services before its databases, so deploy the databases first when the services need them.")
 	}
 	steps = append(steps, "Point DNS at the new cluster, and delete the project on the source cluster once you have checked this one.")
 	return steps

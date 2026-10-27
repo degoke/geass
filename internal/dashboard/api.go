@@ -146,6 +146,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAPITokenDeploy(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
+	case mutation.URL.Path == "/projects/import":
+		s.handleProjectImport(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):
 		s.handleProjectRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/templates/"):
