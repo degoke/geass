@@ -114,8 +114,10 @@ spec.build.registry.repository on the service`, and no build is made.
 Geass reads the destination from the first of these that is set:
 
 1. The service's own `spec.build.registry.repository`.
-2. The platform registry: `spec.registry.repository` on the platform configuration (`GeassPlatformConfig` named
-   `platform`).
+2. For a project of an [organization](/docs/guides/organizations-and-workspaces/#builds-and-the-registry), the
+   organization's own registry.
+3. The platform registry: `spec.registry.repository` on the platform configuration (`GeassPlatformConfig` named
+   `platform`). With [registry isolation](/docs/operations/registry-isolation/) set, never for an organization's project.
 
 An admin sets the platform registry through the API. The dashboard has no form for it yet. The login is optional: a
 registry that needs none is fine.

@@ -135,6 +135,7 @@ export default defineConfig({
             "docs/operations/multi-provider",
             "docs/operations/hosted-control-plane",
             "docs/operations/sandboxed-runtime",
+            "docs/operations/registry-isolation",
             "docs/operations/security",
             "docs/operations/troubleshooting",
             "docs/operations/uninstall",

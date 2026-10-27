@@ -605,7 +605,10 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 14. Watch the operator log and your servers' logs.
 15. If organizations that do not trust each other share the cluster, run their code under a
     [sandboxed runtime](/docs/operations/sandboxed-runtime/) (gVisor or Kata), which their builds use too.
-16. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
+16. If organizations that do not trust each other share the cluster, set
+    [registry isolation](/docs/operations/registry-isolation/) so their builds are never given the platform's registry login,
+    give each a registry login of its own, and turn on `AlwaysPullImages`.
+17. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
     Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through a relay you run.
 

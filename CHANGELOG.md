@@ -82,6 +82,20 @@ The first public release, open source under the Apache License 2.0.
   policies. Closing mining pools' ports is offered as a heuristic, and nothing detects mining or counts mail. Off by default,
   and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, not yet on a
   cluster whose network plugin enforces them.
+- **Registry isolation for organizations.** With `spec.tenancy.registry` (`policy: requireOwnRegistry`, the default), a
+  build of a project that belongs to an organization is never given the platform's registry login, nor another
+  organization's: one that would be fails before its Job is made, and one running with it when the setting is turned on
+  is stopped. The organization's namespaces never hold a copy of it (old pull secrets and build copies are deleted). An
+  organization's builds push to its own registry under `<repository>/<project>/<service>`, and an organization without
+  one does not build: the platform's registry is no fallback, as Geass cannot give a login for a part of it. Parts of
+  registries belong to the platform (its repository), to each organization (`<platform repository>/<organization>`, and
+  its own registry), and an organization's service may not run an image, nor its build push, in a part that is not its
+  own; two registries that overlap are nobody's. The dashboard refuses an organization a registry that overlaps another's
+  (`409`), and `GET /api/registry` says `ownRequired`. Refusals are the condition `RegistryIsolated` `False`
+  (`OwnRegistryRequired`, `PlatformCredential`, `ForeignRepository`), a `Registry isolation: …` message and a `Warning`
+  event `RegistryRefused`. A registry that authorizes each organization for its own path (Harbor, zot) is how one registry
+  is shared; the docs give the steps. Not run against a real registry. Off by default: without it the build Jobs, copies
+  and pull secrets are unchanged. The operator now records events.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the

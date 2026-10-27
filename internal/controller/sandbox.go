@@ -143,15 +143,19 @@ func buildSandboxWait(build *geassv1alpha1.GeassBuild) string {
 	return ""
 }
 
-// tenancyChanged lets through the platform's configuration appearing, going or changing its spec.tenancy, which is what
-// decides how organizations' services run.
+// tenancyChanged lets through the platform's configuration appearing, going or changing the parts of its spec.tenancy that
+// decide how organizations' services run and what they may build into and run: the sandbox and the registry policy. The
+// outbound limits are written by the project and organization controllers, and reach no service.
 func tenancyChanged() predicate.Predicate {
 	tenancy := func(o client.Object) *geassv1alpha1.GeassPlatformTenantIsolationSpec {
 		config, ok := o.(*geassv1alpha1.GeassPlatformConfig)
-		if !ok || config.Name != platform.HAReadinessName || config.Namespace != platform.SystemNamespace {
+		if !ok || config.Name != platform.HAReadinessName || config.Namespace != platform.SystemNamespace || config.Spec.Tenancy == nil {
 			return nil
 		}
-		return config.Spec.Tenancy
+		if config.Spec.Tenancy.Sandbox == nil && config.Spec.Tenancy.Registry == nil {
+			return nil
+		}
+		return &geassv1alpha1.GeassPlatformTenantIsolationSpec{Sandbox: config.Spec.Tenancy.Sandbox, Registry: config.Spec.Tenancy.Registry}
 	}
 	return predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return tenancy(e.Object) != nil },
@@ -208,12 +212,17 @@ func (r *GeassAppReconciler) appsForReservation(ctx context.Context, object clie
 	return r.allApps(ctx, object)
 }
 
-// appsForOrganization reaches the services of the organization's projects. While reserved nodes may run without the
-// sandbox it reaches every service: an organization that comes to require another's reserved tag makes that other's
-// services no longer certainly on nodes of their own.
+// appsForOrganization reaches the services of the organization's projects. It reaches every service while reserved nodes
+// may run without the sandbox, since an organization that comes to require another's reserved tag makes that other's
+// services no longer certainly on nodes of their own, and while the registry policy is set, since an organization's
+// registry is then a part of a registry that no other organization's service may use.
 func (r *GeassAppReconciler) appsForOrganization(ctx context.Context, organization client.Object) []ctrl.Request {
-	if setting, err := platform.SandboxSetting(ctx, r.Client); err == nil && setting != nil && setting.SkipOnReservedNodes {
-		return r.allApps(ctx, organization)
+	var config geassv1alpha1.GeassPlatformConfig
+	if err := r.Get(ctx, client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, &config); err == nil {
+		sandbox := platform.SandboxOf(&config)
+		if (sandbox != nil && sandbox.SkipOnReservedNodes) || platform.RegistryPolicyOf(&config) != "" {
+			return r.allApps(ctx, organization)
+		}
 	}
 	return forOrganizationsProjects(r.Client, r.appsForProject)(ctx, organization)
 }

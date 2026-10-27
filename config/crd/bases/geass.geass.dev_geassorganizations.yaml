@@ -513,7 +513,9 @@ spec:
                   Registry is where the organization's builds push their images, and the login they push with, in place of the
                   platform's. It makes the organization's builds run with a credential of its own and not the platform's: the
                   organization's builds run in a namespace of their own, which holds only this login (or, without it, a copy of the
-                  platform's). A service that names a registry of its own keeps it.
+                  platform's). A service that names a registry of its own keeps it. While the platform's spec.tenancy.registry is
+                  set, the platform's login is never used for the organization: its builds push under <repository>/<project>/<service>,
+                  and without a registry here they do not start.
                 properties:
                   credentialRef:
                     description: |-

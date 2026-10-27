@@ -43,7 +43,8 @@ type GeassBuildReconciler struct {
 	// AsyncReports runs reports to GitHub on their own instead of inside the reconcile, so that a slow GitHub does not
 	// hold the controller's worker. The operator sets it; without it a report runs inside the reconcile.
 	AsyncReports bool
-	// Recorder records the events of a build, such as a wait for the sandboxed runtime. Nil records none.
+	// Recorder records the events of a build, such as a wait for the sandboxed runtime or one the registry policy holds
+	// back. Nil records none.
 	Recorder events.EventRecorder
 
 	retries reportRetries
@@ -60,6 +61,7 @@ type GeassBuildReconciler struct {
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections,verbs=get
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassgithubconnections/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassprojects;geassapps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=geass.geass.dev,resources=geassorganizations,verbs=get;list;watch
 // +kubebuilder:rbac:groups=node.k8s.io,resources=runtimeclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -90,6 +92,12 @@ func (r *GeassBuildReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	}
 	started, jobRan := buildProgress(build)
 	if !jobRan && !build.Status.CancelRequested {
+		// An organization's build under spec.tenancy.registry runs only with a login and into a repository of the
+		// organization's own. One that would not fails before anything of it is made or copied, and one that is running
+		// with such a login is stopped.
+		if held, err := r.holdBuildForRegistry(ctx, build, started); held || err != nil {
+			return ctrl.Result{}, err
+		}
 		// A build that cannot run as it is written fails before GitHub is asked anything about it.
 		if _, _, _, err := buildTarget(build); err != nil {
 			return ctrl.Result{}, r.updateStatus(ctx, build, geassv1alpha1.GeassBuildFailed, nil, err)

@@ -1,0 +1,430 @@
+{
+  "organization build": [
+    {
+      "jobNamespace": "geass-build-org-1a2b3c4d",
+      "metadata": {
+        "labels": {
+          "geass.dev/app": "api",
+          "geass.dev/environment": "",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/project": ""
+        },
+        "name": "api-build-1",
+        "namespace": "geass-system"
+      },
+      "phase": "Running",
+      "spec": {
+        "app": "api",
+        "branch": "main",
+        "credentialRef": {
+          "name": "platform-registry"
+        },
+        "environment": "",
+        "gitCredentialRef": {
+          "name": "shop-github-token"
+        },
+        "project": "shop",
+        "registry": "registry.example/acme/api:1"
+      }
+    },
+    {
+      "data": {
+        "token": "Z2hzX3Nob3A="
+      },
+      "metadata": {
+        "labels": {
+          "geass.dev/build": "api-build-1",
+          "geass.dev/build-namespace": "geass-system",
+          "geass.dev/managed-by": "geass"
+        },
+        "name": "api-build-1-git",
+        "namespace": "geass-build-org-1a2b3c4d"
+      },
+      "type": "Opaque"
+    },
+    {
+      "data": {
+        ".dockerconfigjson": "UExBVEZPUk0tUkVHSVNUUlktTE9HSU4="
+      },
+      "metadata": {
+        "labels": {
+          "geass.dev/build": "api-build-1",
+          "geass.dev/build-namespace": "geass-system",
+          "geass.dev/managed-by": "geass"
+        },
+        "name": "api-build-1-registry",
+        "namespace": "geass-build-org-1a2b3c4d"
+      },
+      "type": "kubernetes.io/dockerconfigjson"
+    },
+    {
+      "metadata": {
+        "labels": {
+          "geass.dev/build": "api-build-1",
+          "geass.dev/build-namespace": "geass-system",
+          "geass.dev/name": "api"
+        },
+        "name": "api-build-1-kaniko",
+        "namespace": "geass-build-org-1a2b3c4d"
+      },
+      "spec": {
+        "backoffLimit": 2,
+        "template": {
+          "metadata": {},
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--dockerfile=/workspace/Dockerfile",
+                  "--context=dir:///workspace",
+                  "--destination=registry.example/acme/api:1",
+                  "--digest-file=/dev/termination-log"
+                ],
+                "image": "gcr.io/kaniko-project/executor:v1.23.2",
+                "name": "kaniko",
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/workspace",
+                    "name": "workspace"
+                  },
+                  {
+                    "mountPath": "/kaniko/.docker",
+                    "name": "registry-auth",
+                    "readOnly": true
+                  }
+                ]
+              }
+            ],
+            "initContainers": [
+              {
+                "command": [
+                  "sh",
+                  "-c",
+                  "git -c http.extraheader=\"Authorization: Bearer $GITHUB_TOKEN\" clone --branch \"$BRANCH\" https://github.com/ /workspace \u0026\u0026 git -C /workspace checkout --detach \"$REVISION\""
+                ],
+                "env": [
+                  {
+                    "name": "BRANCH",
+                    "value": "main"
+                  },
+                  {
+                    "name": "REVISION",
+                    "value": "main"
+                  },
+                  {
+                    "name": "GITHUB_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "api-build-1-git"
+                      }
+                    }
+                  }
+                ],
+                "image": "alpine/git:latest",
+                "name": "git",
+                "resources": {},
+                "volumeMounts": [
+                  {
+                    "mountPath": "/workspace",
+                    "name": "workspace"
+                  }
+                ]
+              }
+            ],
+            "restartPolicy": "Never",
+            "volumes": [
+              {
+                "emptyDir": {},
+                "name": "workspace"
+              },
+              {
+                "name": "registry-auth",
+                "secret": {
+                  "items": [
+                    {
+                      "key": ".dockerconfigjson",
+                      "path": "config.json"
+                    }
+                  ],
+                  "secretName": "api-build-1-registry"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 3600
+      }
+    }
+  ],
+  "organization service": [
+    {
+      "jobNamespace": "",
+      "metadata": {
+        "labels": {
+          "geass.dev/app": "api",
+          "geass.dev/environment": "production",
+          "geass.dev/kind": "GeassBuild",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/name": "api",
+          "geass.dev/project": "payments",
+          "geass.dev/system-namespace": "geass-system"
+        },
+        "name": "api-build-9642c0832c13",
+        "namespace": "geass-system",
+        "ownerReferences": [
+          {
+            "apiVersion": "geass.geass.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "GeassApp",
+            "name": "api",
+            "uid": ""
+          }
+        ]
+      },
+      "phase": "",
+      "spec": {
+        "app": "api",
+        "branch": "main",
+        "connectionRef": {
+          "name": "payments-github"
+        },
+        "credentialRef": {
+          "name": "platform-registry"
+        },
+        "environment": "production",
+        "gitCredentialRef": {
+          "name": "payments-github"
+        },
+        "project": "payments",
+        "registry": "registry.platform.example/builds",
+        "repository": "acme/api"
+      }
+    },
+    {
+      "data": {
+        ".dockerconfigjson": "UExBVEZPUk0tUkVHSVNUUlktTE9HSU4="
+      },
+      "metadata": {
+        "labels": {
+          "geass.dev/environment": "production",
+          "geass.dev/kind": "GeassApp",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/name": "api",
+          "geass.dev/project": "payments",
+          "geass.dev/system-namespace": "geass-system"
+        },
+        "name": "api-registry-pull",
+        "namespace": "payments-production"
+      },
+      "type": "kubernetes.io/dockerconfigjson"
+    }
+  ],
+  "platform build": [
+    {
+      "jobNamespace": "",
+      "metadata": {
+        "labels": {
+          "geass.dev/app": "api",
+          "geass.dev/environment": "",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/project": ""
+        },
+        "name": "api-build-1",
+        "namespace": "geass-system"
+      },
+      "phase": "Running",
+      "spec": {
+        "app": "api",
+        "branch": "main",
+        "credentialRef": {
+          "name": "platform-registry"
+        },
+        "environment": "",
+        "gitCredentialRef": {
+          "name": "shop-github-token"
+        },
+        "project": "shop",
+        "registry": "registry.example/acme/api:1"
+      }
+    },
+    {
+      "metadata": {
+        "labels": {
+          "geass.dev/name": "api"
+        },
+        "name": "api-build-1-kaniko",
+        "namespace": "geass-system",
+        "ownerReferences": [
+          {
+            "apiVersion": "geass.geass.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "GeassBuild",
+            "name": "api-build-1",
+            "uid": ""
+          }
+        ]
+      },
+      "spec": {
+        "backoffLimit": 2,
+        "template": {
+          "metadata": {},
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--dockerfile=/workspace/Dockerfile",
+                  "--context=dir:///workspace",
+                  "--destination=registry.example/acme/api:1",
+                  "--digest-file=/dev/termination-log"
+                ],
+                "image": "gcr.io/kaniko-project/executor:v1.23.2",
+                "name": "kaniko",
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/workspace",
+                    "name": "workspace"
+                  },
+                  {
+                    "mountPath": "/kaniko/.docker",
+                    "name": "registry-auth",
+                    "readOnly": true
+                  }
+                ]
+              }
+            ],
+            "initContainers": [
+              {
+                "command": [
+                  "sh",
+                  "-c",
+                  "git -c http.extraheader=\"Authorization: Bearer $GITHUB_TOKEN\" clone --branch \"$BRANCH\" https://github.com/ /workspace \u0026\u0026 git -C /workspace checkout --detach \"$REVISION\""
+                ],
+                "env": [
+                  {
+                    "name": "BRANCH",
+                    "value": "main"
+                  },
+                  {
+                    "name": "REVISION",
+                    "value": "main"
+                  },
+                  {
+                    "name": "GITHUB_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "shop-github-token"
+                      }
+                    }
+                  }
+                ],
+                "image": "alpine/git:latest",
+                "name": "git",
+                "resources": {},
+                "volumeMounts": [
+                  {
+                    "mountPath": "/workspace",
+                    "name": "workspace"
+                  }
+                ]
+              }
+            ],
+            "restartPolicy": "Never",
+            "volumes": [
+              {
+                "emptyDir": {},
+                "name": "workspace"
+              },
+              {
+                "name": "registry-auth",
+                "secret": {
+                  "items": [
+                    {
+                      "key": ".dockerconfigjson",
+                      "path": "config.json"
+                    }
+                  ],
+                  "secretName": "platform-registry"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 3600
+      }
+    }
+  ],
+  "platform service": [
+    {
+      "jobNamespace": "",
+      "metadata": {
+        "labels": {
+          "geass.dev/app": "api",
+          "geass.dev/environment": "production",
+          "geass.dev/kind": "GeassBuild",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/name": "api",
+          "geass.dev/project": "payments",
+          "geass.dev/system-namespace": "geass-system"
+        },
+        "name": "api-build-9642c0832c13",
+        "namespace": "geass-system",
+        "ownerReferences": [
+          {
+            "apiVersion": "geass.geass.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "GeassApp",
+            "name": "api",
+            "uid": ""
+          }
+        ]
+      },
+      "phase": "",
+      "spec": {
+        "app": "api",
+        "branch": "main",
+        "connectionRef": {
+          "name": "payments-github"
+        },
+        "credentialRef": {
+          "name": "platform-registry"
+        },
+        "environment": "production",
+        "gitCredentialRef": {
+          "name": "payments-github"
+        },
+        "project": "payments",
+        "registry": "registry.platform.example/builds",
+        "repository": "acme/api"
+      }
+    },
+    {
+      "data": {
+        ".dockerconfigjson": "UExBVEZPUk0tUkVHSVNUUlktTE9HSU4="
+      },
+      "metadata": {
+        "labels": {
+          "geass.dev/environment": "production",
+          "geass.dev/kind": "GeassApp",
+          "geass.dev/managed-by": "geass",
+          "geass.dev/name": "api",
+          "geass.dev/project": "payments",
+          "geass.dev/system-namespace": "geass-system"
+        },
+        "name": "api-registry-pull",
+        "namespace": "payments-production"
+      },
+      "type": "kubernetes.io/dockerconfigjson"
+    }
+  ]
+}

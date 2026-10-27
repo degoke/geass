@@ -80,6 +80,15 @@ spec:
 
 Setting `mode: external` by hand skips the checks the dashboard makes before it switches (a test sign-in as an admin of the provider, and an admin with a password), so test the provider from **Settings** → **Sign-in** first.
 
+Organizations' builds never given the platform's registry login, and each organization's images kept apart (see [Registry isolation for organizations](/docs/operations/registry-isolation/)):
+
+```yaml title="platform.yaml (spec.tenancy)"
+spec:
+  tenancy:
+    registry:
+      policy: requireOwnRegistry
+```
+
 ## Spec fields
 
 | Field | Type | Default | Validation | Meaning |
@@ -94,7 +103,8 @@ Setting `mode: external` by hand skips the checks the dashboard makes before it 
 | `spec.prometheusURL` | string | none | none | Where the dashboard queries metrics. Wins over the `GEASS_PROMETHEUS_URL` environment variable and the default service address. `spec.observability.external.metrics.queryURL` wins over it. |
 | `spec.defaultClusterRef.name` | string | none | none | The cluster new projects use when more than one `GeassCluster` exists. With one cluster it is ignored. |
 | `spec.registry.repository` | string | none | none | The image destination for repository builds when a service sets no `build.registry.repository`. Used exactly as written. |
-| `spec.registry.credentialRef.name` | string | none | none | A Secret with the key `.dockerconfigjson` for that registry. Builds push with it, and Geass copies it into a service's namespace for the nodes to pull the built image with. |
+| `spec.registry.credentialRef.name` | string | none | none | A Secret with the key `.dockerconfigjson` for that registry. Builds push with it, and Geass copies it into a service's namespace for the nodes to pull the built image with. Under `spec.tenancy.registry`, never for a project of an organization. |
+| `spec.tenancy.registry.policy` | string | none (off); `requireOwnRegistry` when `registry` is set | `requireOwnRegistry` | For the projects of organizations: their builds are never given the platform's registry login (nor another organization's), their namespaces never hold a copy of it, they push to the organization's own registry under `<repository>/<project>/<service>`, and an organization without one does not build. Their services may not run an image in the platform's repository or in another organization's registry. Refusals are the condition `RegistryIsolated` `False` on the service or build. The projects of no organization are left as they are. Not on the settings page. See [Registry isolation for organizations](/docs/operations/registry-isolation/). |
 | `spec.defaultDomain` | string | none | none | In the schema. No code reads it. |
 | `spec.traefikAccessLogs.enabled`, `.format`, `.networkLogEndpoint` | boolean, string, string | none | none | In the schema. No code reads them. See [GeassNetworkLog](/docs/reference/resources/geass-network-log/). |
 | `spec.auth.mode` | string | `local` | `local` or `external` | How people sign in. `local` is the users in the Secret `geass-dashboard-auth`. `external` is the identity provider in `spec.auth.oidc`; a user of the Secret who is an admin and has a password can still sign in. See [Sign in with an identity provider](/docs/guides/external-sign-in/). |

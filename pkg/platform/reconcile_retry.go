@@ -93,6 +93,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "no container registry is set") {
 		return false
 	}
+	// An organization's service that the registry policy holds back waits for its organization's registry, its image or
+	// the platform's setting to change, which may not be the service's own spec: counting it would give the service up.
+	if strings.HasPrefix(msg, strings.ToLower(MessageRegistryIsolation)+":") {
+		return false
+	}
 	if strings.Contains(msg, "installing") && strings.Contains(msg, "chart") {
 		return false
 	}
