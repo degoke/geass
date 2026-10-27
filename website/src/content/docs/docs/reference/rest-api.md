@@ -87,6 +87,7 @@ On `/api/v1` every error is a JSON object with a message and a code a program ca
 | `400` | `invalid_request` | The request is invalid, a rule refused it, or the cluster lacks capacity. `error` says why. A body that is not a JSON object, or a verb with no mapping (`there is no PUT /api/v1/nodes/...`), also gets this |
 | `401` | `unauthenticated` | No valid session or token: `authentication required` or `invalid or expired API token` |
 | `403` | `forbidden` | The caller's role or token scope does not allow it: `viewer role cannot access this`, `this token cannot access that endpoint`, or a token limited to another project |
+| `403` | `managed` | The write is to something the platform that runs this Geass keeps (sign-in, the dashboard's domain and DNS, the backup of the cluster's state), with [managed mode](/docs/operations/managed-mode/) on. `error` says who manages it, and `area` and `managedBy` say which area and who. Nothing is written |
 | `404` | `not_found` | The resource, or the route, does not exist. A project token gets `app not found` for services it cannot see |
 | `405` | `method_not_allowed` | The path does not take that method |
 | `413` | `too_large` | The body is larger than 2 MiB |
@@ -97,14 +98,14 @@ A rule that fails a write returns `400` with its plain-language message, for exa
 environment` or `variable name must use uppercase letters, numbers, and underscores`. The device-code endpoints answer with their own
 codes (`authorization_pending`, `slow_down`, `access_denied`, `expired_token`) in the same `code` field.
 
-The dashboard routes under `/api` answer with `{"error": "..."}` and no `code`. Most of their `404` answers are the plain text
+The dashboard routes under `/api` answer with `{"error": "..."}` and no `code` (the refusal of managed mode, `403`, is the exception: it has `code`, `area` and `managedBy`). Most of their `404` answers are the plain text
 `404 page not found`, and these statuses apply:
 
 | Status | Meaning |
 | --- | --- |
 | `400` | The request is invalid, a rule refused it, or the cluster lacks capacity. `error` says why |
 | `401` | No valid session or token. `authentication required` or `invalid or expired API token` |
-| `403` | `viewer role cannot access this` (for a viewer, and for an observer that tries a write), `this token cannot access that endpoint`, or a token limited to another project |
+| `403` | `viewer role cannot access this` (for a viewer, and for an observer that tries a write), `this token cannot access that endpoint`, a token limited to another project, or, with [managed mode](/docs/operations/managed-mode/) on, a write to something the platform keeps, as `{"error": "...", "code": "managed", "area": "signIn"}` |
 | `404` | The resource does not exist. Most handlers answer with the plain text `404 page not found`, not JSON, and a project token gets `app not found` for services it cannot see |
 | `405` | `{"error": "method not allowed"}`: an `/api/` path called with a method other than `GET` or `POST`. A `GET` on a `POST`-only path is a plain-text `404`, except `POST /api/databases/{db}/query`, whose `GET` is a `405` |
 | `415` | `send form-encoded data`: a project token sent another content type to a dashboard route. `/api/v1` converts JSON for you, so it never gets this |
