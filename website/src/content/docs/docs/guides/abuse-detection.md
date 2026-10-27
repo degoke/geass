@@ -221,6 +221,8 @@ config:
     minimumpriority: critical
 ```
 
+How `customHeaders` is written depends on where falcosidekick is configured (a map in its own configuration file, `key:value` pairs in the Helm chart's values): check its documentation for your version. This was not run against a real falcosidekick: the body Geass reads is Falco's documented JSON output.
+
 A report about a pod that is not a copy of a service (a build, a database, a schedule's job) is refused with `422`, as is one about a service of a project of no organization. A service that is suspected already is left as it is (`alreadySuspected: true`).
 
 **A tool that watches system calls does not see inside a pod that runs under gVisor.** With the [sandboxed runtime](/docs/operations/sandboxed-runtime/), an organization's system calls are handled by gVisor's own kernel and never reach the node's, so Falco or Tetragon on the node sees gVisor, not the miner. CPU accounting still works there: the metrics server measures a sandboxed pod like any other, so the CPU signal does. Kata Containers runs a pod in a virtual machine, which a tool on the node does not see into either.
