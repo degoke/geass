@@ -150,7 +150,7 @@ A project that requires tags can use a server only when the server runs on nodes
 
 ### Logs
 
-The log store is shared by every project and may run on any node, so logs of a project that requires tags are never sent to it. The operator excludes the project's namespaces from the log shipper. When you choose **History** on the project's **Logs** page, it says "Log history is not kept for projects that require node tags, so their logs never leave the nodes they run on. Live logs are still available." Live logs are read from the nodes themselves and keep working. History is not kept for these projects, and Geass does not remove lines that were shipped before the project required tags. See [Logs, metrics and terminal](/docs/guides/observability/).
+The log store is shared by every project and may run on any node, so logs of a project that requires tags are never sent to it. The operator excludes the project's namespaces from the log shipper, so they are not sent to a [log store outside the cluster](/docs/guides/observability/#send-metrics-and-logs-outside-the-cluster) either. Metrics are not covered: a metrics store outside the cluster receives the project's metrics like any other's. When you choose **History** on the project's **Logs** page, it says "Log history is not kept for projects that require node tags, so their logs never leave the nodes they run on. Live logs are still available." Live logs are read from the nodes themselves and keep working. History is not kept for these projects, and Geass does not remove lines that were shipped before the project required tags. See [Logs, metrics and terminal](/docs/guides/observability/).
 
 ## Projects that already have databases
 

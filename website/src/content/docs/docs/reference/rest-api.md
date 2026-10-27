@@ -879,7 +879,7 @@ See [Templates](/docs/guides/templates/).
 
 ### Metrics and logs
 
-These need Prometheus (and, for history, the logging add-on) to be installed. See [Observability](/docs/guides/observability/).
+These need Prometheus (and, for history, the logging add-on) to be installed, or the metrics and log stores outside the cluster that `spec.observability.external` names, which they are then read from. See [Observability](/docs/guides/observability/).
 
 | Method and path | Access | Query | Meaning |
 | --- | --- | --- | --- |
@@ -899,14 +899,14 @@ These need Prometheus (and, for history, the logging add-on) to be installed. Se
 list of `{"t": unixSeconds, "v": number}` points. Series are `cpu` (cores), `memory` (bytes, the total of every replica), `network` and `networkIn` (bytes per
 second), `memoryPerReplica` (bytes, services: the busiest replica), `requests` (per second, services), `storage` (bytes, databases), and `nodeCpu` and `nodeMemory` (cluster). The operator's series
 are `reconcileErrors` and `statusWrites` and `statusSkipped` (per second), `reconcileTime` and `apiLatency` (the 99th percentile, in seconds), `apiRequests`
-(per second) and `queueDepth`. When Prometheus cannot be reached, `available` is `false` with a `message`.
+(per second) and `queueDepth`. When Prometheus, or the metrics store outside the cluster, cannot be reached, refuses Geass's credentials or cannot be used, `available` is `false` with a `message` that says which.
 
 Log queries: `environment`; `service` (a service or database name); `q` (up to 200 characters); `level` (`error`, `warn`, `info`, `debug`);
 `since` (a Go duration such as `15m`; up to 7 days live, 90 days in history, default 1 hour in history); `tail` (1 to 1000, default 200);
 `previous` (`true` for output from before a container's last restart); `limit` (history only, 1 to 3000, default 500). A line is
 `{"t","service","pod","container","line","level","previous"}`. The response also has `services`, `truncated` and `note`; history adds
-`available` and `retentionDays`, and returns `{"available":false,"message":"..."}` when the logging add-on is off, and for a project that requires node tags:
-the shared log store never receives those logs, so only live logs work.
+`available` and `retentionDays` (the log store outside the cluster's `retentionDays` when it is read and says one), and returns `{"available":false,"message":"..."}` when the logging add-on is off, when the log store does not answer
+or refuses Geass's credentials, and for a project that requires node tags: the shared log store never receives those logs, so only live logs work.
 
 ```bash title="Errors in the last hour"
 curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \

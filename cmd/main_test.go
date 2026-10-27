@@ -166,6 +166,8 @@ func TestADashboardOnlyProcessAddsTheDashboardAndNothingTheControllersOwn(t *tes
 	require.NotNil(t, server.Compute, "it builds its own cloud providers: listing a cloud's sizes needs no controller")
 	require.NotNil(t, server.APIReader, "the usage hours are read from the API server, which the cache leaves out")
 	require.False(t, hasRunnable[*metering.Meter](mgr), "a dashboard-only process never meters")
+	require.Nil(t, server.Metrics, "metrics are read from what the platform configuration names: a store outside the cluster when it names one")
+	require.Nil(t, server.LogStore, "and so is log history")
 	require.NotNil(t, mgr.guard())
 	require.False(t, mgr.guard().NeedLeaderElection())
 }

@@ -25,6 +25,10 @@ type MetricsClient interface {
 type PrometheusClient struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	// Header is sent with every query: the tenant and the credentials of a store outside the cluster.
+	Header http.Header
+	// External says the client reads a store outside the cluster, which is what a page says when it does not answer.
+	External bool
 }
 
 func defaultPrometheusURL() string {
@@ -55,6 +59,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 	if err != nil {
 		return "", err
 	}
+	addHeader(req, p.Header)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
@@ -65,7 +70,7 @@ func (p *PrometheusClient) QueryInstant(ctx context.Context, query string) (stri
 		return "", err
 	}
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("prometheus query failed: %s", string(body))
+		return "", &storeError{status: resp.StatusCode, text: "prometheus query failed: " + string(body)}
 	}
 
 	var parsed struct {
@@ -104,6 +109,10 @@ var overviewMetrics = []metricCard{
 	{Title: "CPU cores used (5m rate)", Query: `sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))`},
 }
 
+// metricsClient is the client the dashboard reads metrics with: the one a test set, the metrics store outside the cluster
+// that the platform configuration names, the platform's own Prometheus URL, or the cluster's Prometheus. Without
+// readPlatformConfig (a viewer's overview numbers) the platform configuration is not read at all, and that is the
+// cluster's Prometheus.
 func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) MetricsClient {
 	if s.Metrics != nil {
 		return s.Metrics
@@ -112,6 +121,9 @@ func (s *Server) metricsClient(ctx context.Context, readPlatformConfig bool) Met
 	if readPlatformConfig && s.Client != nil {
 		config := &geassv1alpha1.GeassPlatformConfig{}
 		if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: platform.HAReadinessName, Namespace: platform.SystemNamespace}, config); err == nil {
+			if external := s.externalMetricsClient(ctx, config); external != nil {
+				return external
+			}
 			prometheusURL = config.Spec.PrometheusURL
 		}
 	}

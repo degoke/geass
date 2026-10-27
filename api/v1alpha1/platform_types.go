@@ -597,6 +597,10 @@ type GeassPlatformConfigSpec struct {
 	// share. Unset means off.
 	// +optional
 	Usage *GeassPlatformUsageSpec `json:"usage,omitempty"`
+	// Observability says where the cluster's metrics and logs go besides the stores in the cluster, and where the
+	// dashboard reads them from. Unset, both stay in the cluster.
+	// +optional
+	Observability *GeassObservabilitySpec `json:"observability,omitempty"`
 }
 
 // GeassPlatformUsageSpec says whether the operator meters what each organization reserves.
