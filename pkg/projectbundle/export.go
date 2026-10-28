@@ -58,7 +58,7 @@ func (c *collector) notIncluded(kind, id, name, environment, item, reason string
 
 const (
 	reasonSecretValue = "a secret value: Geass does not export secret values"
-	reasonLooksSecret = "its name or its value looks like a secret, so it was left out"
+	reasonLooksSecret = "name or value looks like a secret, so it was left out"
 )
 
 // Build makes the bundle of a project. It never reads a secret value and never changes anything: the project, its services and

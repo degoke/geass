@@ -8,7 +8,7 @@ A project can leave one cluster and be made again on another: a customer on a sh
 The bundle holds the project's **definition**: its services, databases and buckets, their settings, hostnames and schedules. It holds no secret value and none of the data in the databases and buckets. This page says exactly what is and is not in it, and how to move the rest.
 
 :::caution
-This feature is new and has only been tried against fakes of the cluster and a real API server, not against two real clusters, and no real database backup has been restored by it. [What was tested](#what-was-tested) lists what ran and what did not. Move a project you can afford to try first, and keep the original until you have checked the copy.
+This feature is new. It was run once on two real K3s clusters (2026-10-28), but no real database backup has been restored by it. [What was tested](#what-was-tested) lists what ran and what did not. Move a project you can afford to try first, and keep the original until you have checked the copy.
 :::
 
 ## What moves and what does not
@@ -50,7 +50,7 @@ curl -X POST https://geass.shared.example/api/v1/projects/proj-1a2b3c4d/export \
   -H "Authorization: Bearer $SOURCE_TOKEN" -o morning-beach-bundle.tar.gz
 ```
 
-The answer is the bundle, a gzip-compressed tar you can open with `tar -xzf`. Its files are YAML you can read: `geass-bundle.json` (the manifest), `project.yaml`, and one file for each service, database and bucket. Do not edit them: the manifest holds a checksum of each, and an import refuses a bundle that does not match it. The import's options (a new name, another region) cover what people change.
+The answer is the bundle, a gzip-compressed tar you can open with `tar -xzf`. Its files are YAML you can read: `geass-bundle.json` (the manifest), `project.yaml`, and one file for each service, database and bucket. Do not edit them: the manifest holds a checksum of each, and an import refuses a bundle that does not match it. The manifest must be the archive's first entry; an archive that starts with anything else is refused as "not a Geass project bundle". The import's options (a new name, another region) cover what people change.
 
 To see what an export would leave for you to do, without the file, add `?summary=true`. The answer is the manifest as JSON:
 
@@ -120,7 +120,7 @@ What an import does:
 
 | `code` | Meaning |
 | --- | --- |
-| `invalid-name`, `project-name-taken` | The name is not 1 to 63 letters, numbers and dashes, or a project you can see already has it. Projects of other organizations are not looked at and not revealed |
+| `invalid-name`, `project-name-taken` | The name is too long (70 characters were refused) or has nothing usable in it (`!!!` was refused), or a project you can see already has it. Upper case is lowered and dashes at the ends are dropped without a refusal (`UPPER` became `upper`, `-bad-` became `bad`), so check the name in the plan. Projects of other organizations are not looked at and not revealed |
 | `keep-project-id-refused`, `project-id-taken` | `keepProjectId` was asked for by someone who may not, or the id exists on the cluster |
 | `environment-name`, `bucket-name` | An environment or a bucket name is too long once the new project's id is in front of it |
 | `project-limit` | The importer's organization has all the projects it may have |
@@ -150,7 +150,7 @@ The dry run does not check one thing the import does: whether an engine can run 
 The plan's `next` lists these for the project it describes.
 
 1. **Connect the new project to GitHub**, if any service builds from a repository (`POST /api/v1/projects/{project}/github/install`). See [GitHub and builds](/docs/guides/github-and-builds/).
-2. **Enter the secrets again.** `toReenter` names each one. A service's secret: `POST /api/v1/apps/{name}/secrets/set` with `key` and `value`. A value that was left out for looking like a secret but is plain configuration: `POST /api/v1/apps/{name}/config/set`. A shared variable: `POST /api/v1/projects/{project}/variables/save`. See [Environment variables](/docs/guides/environment-variables/).
+2. **Enter the secrets again.** `toReenter` names each one. A secret you set on a service that is still a draft is held by the operator until the service is deployed, so it is in neither the bundle nor `toReenter` until then: write down what a draft needs. A service's secret: `POST /api/v1/apps/{name}/secrets/set` with `key` and `value`. A value that was left out for looking like a secret but is plain configuration: `POST /api/v1/apps/{name}/config/set`. A shared variable: `POST /api/v1/projects/{project}/variables/save`. See [Environment variables](/docs/guides/environment-variables/).
 3. **Choose backup storage** for the project, if databases have backups on: [Backups and restore](/docs/guides/backups-and-restore/#choose-where-backups-are-stored).
 4. **Deploy the databases** (`POST /api/v1/databases/{name}/deploy`), and move their data if you are keeping it.
 5. **Deploy the buckets**, and copy the objects into them.
@@ -203,12 +203,13 @@ These ran, and passed:
 - The planner: every blocker and warning in the tables above, against a description of the target.
 - The routes, against a fake cluster with two organizations: who may export and import, that another organization is told a project is not there, a dry run changes nothing, names and ids, a refused import changes nothing, a failure half way removes what was made, a bundle with a Secret named in it is refused, the logged lines, and that the new project belongs to whoever imported it. The routes are in the suite that tries every route as another organization.
 - Against a real API server (envtest): the objects an import makes are accepted by the CRDs, and the project controller makes the new project's environments and their network policies.
+- **On two real K3s clusters on EC2 (2026-10-28, K3s v1.36.4, Geass built from this branch, a project with services, a Postgres with two rows and an object store):** an export gave a 2 KB bundle in which none of the secret values set on the project could be found (a secret kept under an innocent name, `GREETING`, was exported as it was, as this page says it would be). A dry run into a cluster with no object storage said `ok: false` with `object-storage-missing` and created nothing, and the same bundle without `dryRun` answered 409 with the plan. After object storage was set up, a dry run said `ok: true` and nothing was created; the real import made the project, the database, the bucket and three services as drafts under new names, with no pod and no Secret, the attach variables rewritten to the new database and bucket, and the three annotations. The database arrived empty. A repeat of the same import was refused (`host-unavailable`, `project-name-taken`), a region the cluster lacks gave `region-missing`, and `name` and `keepProjectId` worked (a second `keepProjectId` gave `project-id-taken`). Truncated, random, empty and non-tar bodies, a changed file, a newer format, an unknown field, a path outside the directory and a bundle that names a Secret or ConfigMap of the importing cluster were refused with 400 (the last with its checksums corrected, so only the rule refused them) and left the cluster as it was; a 17 MiB body, a 23 MiB JSON body, a 70 MiB decompression bomb and a 2 MiB file in a valid archive were refused with 413. A viewer token was refused on both routes, a dry run included. What the import made was then deployed: the service ran with its hostname and a database address and bucket of the new project, none of the secret variables, and the worker ran after its secret was entered again. rungeass's own route that calls these two was run against both clusters (not through a cell).
 
 These did **not** run, and nothing here says they work:
 
-- A move between two real clusters, or on K3s. No cluster was available.
+- A move on a cluster of more than one node, a shared cluster as the source, or a project token.
 - Restoring any database from a real backup into the imported project, and recovering from a real bucket. The steps under [Databases](#moving-the-data) use features that exist and are documented, and nothing here tried them together.
-- Deploying what an import made, and a service reading a variable attached to a restored database.
+- A service reading a variable attached to a *restored* database (a deployed service read the address of the new, empty one).
 - The dashboard's page for any of this: there is none yet, only the API.
 - The command line and the MCP server: `geass api` prints JSON and cannot receive the bundle, so use `curl` as above.
 - The sandbox check for a database on a platform with `spec.tenancy.sandbox` (the import has the check; no test makes it refuse).

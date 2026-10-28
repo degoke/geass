@@ -29,8 +29,8 @@ The first public release, open source under the Apache License 2.0.
   alerts, GitHub), are untouched, and so are the controllers. It is off unless set, and with it off the answers and the bootstrap are
   the same, byte for byte, as without the field (tested). It is a guard rail and not a boundary: whoever can write the platform
   configuration or the cluster's objects, or runs the installer, can still change these. Tested with a fake client through the
-  dashboard's whole handler chain, and the dashboard's own tests in jsdom (17 new); not tested on a real cluster, in a browser, with
-  a real identity provider or Cloudflare, or in rungeass. See [Managed mode](website/src/content/docs/docs/operations/managed-mode.md).
+  dashboard's whole handler chain, and the dashboard's own tests in jsdom (17 new); **run on a real K3s on EC2 (2026-10-28): all 32 writes to those areas refused, nothing written, writes work again
+  with it off**; not tested in a browser, with a real sign-in session or identity provider, or with rungeass's own operator. See [Managed mode](website/src/content/docs/docs/operations/managed-mode.md).
 - **Mesh networking: nodes at several sites, some behind a NAT.** `spec.network.mesh` on the cluster says what joins them:
   `provider: WireGuard` (the default, K3s's own `wireguard-native` backend, which is what `multiSite` always meant) or
   `provider: Tailscale` (a Tailscale or Headscale network through K3s's `vpn-auth`, with `tailscale.authKeySecretRef` and an
@@ -90,10 +90,11 @@ The first public release, open source under the Apache License 2.0.
   The data of databases and buckets is not moved: the guide describes moving a database's data with the backups Geass already
   makes (the import can keep the project's id for platform administrators, which is what restoring them needs), and a
   design for restoring at import time. There is no setting: nothing changes until someone calls the two routes. Tried with
-  unit tests, the routes of a fake cluster with two organizations (and added to the tenant matrix), and a real API server
-  (envtest) that accepts what an import makes and has the project controller make its environments. Not tried: two real
-  clusters or K3s, a real backup restored into an imported project, deploying what an import made, a dashboard page, the
-  command line (`geass api` cannot receive the file; use `curl`).
+  unit tests, the routes of a fake cluster with two organizations (and added to the tenant matrix), a real API server
+  (envtest) that accepts what an import makes and has the project controller make its environments, and **two real K3s
+  clusters on EC2 (2026-10-28): export, dry run, import, refusals, and deploying what an import made**. Not tried: a real
+  backup restored into an imported project, a dashboard page, the command line (`geass api` cannot receive the file; use
+  `curl`).
 - **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3
