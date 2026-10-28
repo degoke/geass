@@ -37,8 +37,11 @@ The first public release, open source under the Apache License 2.0.
   of the cluster's own stores, so a dashboard that runs outside the cluster (`--controllers=false`) shows them too. The
   credentials are copied beside the add-ons that send, never into their settings. A store that is named wrongly is
   logged and left out, and one that does not answer or refuses the credentials is shown as unavailable. Off unless set;
-  alerts still read Alertmanager in the cluster, and Loki is not supported. Tested against fakes of the stores, not a
-  running Mimir, VictoriaMetrics or VictoriaLogs.
+  alerts still read Alertmanager in the cluster, and Loki is not supported. Tested against fakes of the stores, and run on a
+  real K3s (v1.36.4+k3s1) against single-node VictoriaMetrics v1.155.0 and VictoriaLogs v1.53.0, not a running Mimir.
+  Prometheus began to write about 100 seconds after the setting changed, and three changes in about ten seconds once
+  left K3s's helm controller's install Job of the monitoring chart suspended and the cluster `AddonsPending` until the
+  Job was deleted: the docs say to change the setting one step at a time.
 - **GitHub through a provider's App.** A provider that runs Geass for many clusters, such as rungeass, can run one GitHub App
   for all of them: a `GeassGitHubConnection` with `spec.external`, made through `PUT /api/v1/github/connections/{name}` by the
   platform's administrators. The cluster then holds no App private key and registers no App. The provider records which
@@ -59,7 +62,8 @@ The first public release, open source under the Apache License 2.0.
   another class rolls the organizations' services through their Deployments; builds take it from their next run.
   `skipOnReservedNodes` runs without the sandbox only the pods that can certainly only run on nodes reserved for their own
   organization. The nodes need the runtime installed and the cluster the RuntimeClass; the docs give the K3s containerd
-  configuration for gVisor. Run once on K3s with gVisor (an organization's service, not a build), never with Kata. Off by default: without it no pod template changes. The
+  configuration for gVisor. Run on K3s v1.36.4+k3s1 with gVisor `release-20261019.0` (services, a Kaniko build and database
+  servers), never with Kata. Off by default: without it no pod template changes. The
   operator now records events and reads RuntimeClasses.
 - **Organizations' database servers in the sandboxed runtime.** With `spec.tenancy.sandbox` set, an organization's MySQL
   (one server, or highly available on MOCO through its `spec.podTemplate`), Redis and SQLite (rqlite) servers run under
@@ -73,8 +77,12 @@ The first public release, open source under the Apache License 2.0.
   (`EngineCannotBeSandboxed`, event `SandboxEngineUnsupported`). A running server is not restarted for the setting:
   `spec.tenancy.sandbox.databaseRestarts` is `OnApproval` by default, so it moves when a platform administrator
   annotates it `geass.dev/sandbox-restart` (and says `RestartPending` until then), or `Immediate`. Restarts are the
-  StatefulSet's, Deployment's or MOCO's own; a Redis server comes back empty. Tested against fake clients and envtest
-  only: no database operator and no gVisor ran. Nothing changes without the setting.
+  StatefulSet's, Deployment's or MOCO's own; a Redis server comes back empty. Tested against fake clients and envtest, and
+  run on a real K3s with gVisor: MySQL 8.4.11 and Redis servers, rqlite servers (started, not queried), the Jobs, both ways of approving a restart,
+  the refusal of PostgreSQL and MariaDB and the hold on a PostgreSQL made before. A MySQL server of Geass's default 512 MiB
+  was killed during its first start under gVisor and left with no password for `root@localhost` and no `app` login, while
+  saying `Ready`; one of 1 GiB started cleanly, and the docs say so. MOCO, and PostgreSQL or MariaDB in the sandbox, did not
+  run. Nothing changes without the setting.
 - **Noisy-neighbour limits for shared clusters.** `spec.tenantLimits.defaults` on the platform configuration, and `spec.limits`
   on an organization in their place, hold each namespace an organization's pods run in (every environment of its projects,
   and its build namespace): a ResourceQuota `geass-tenant-quota` on its pods and ephemeral storage; a LimitRange that gives a
@@ -96,7 +104,8 @@ The first public release, open source under the Apache License 2.0.
   project says on its `EgressLimitsApplied` condition whether they are applied and whether the cluster enforces network
   policies. Closing mining pools' ports is offered as a heuristic, and nothing detects mining or counts mail. Off by default,
   and every policy is as it was for a platform that does not set them. Tested against fake clients and envtest, and once on a
-  real K3s with real traffic: mail and a port range closed, the ports beside them open, a relay allowed.
+  real K3s with real traffic: mail and a port range closed, the ports beside them open, a relay allowed; and, on K3s v1.36.4+k3s1,
+  the mail ports of a public host refused for an organization's pod and reached from a pod of no organization and with `mail: Open`.
 - **A mail relay for organizations.** With `spec.tenancy.mail.relay`, Geass runs an SMTP submission server, `geass-mail-relay` in
   `geass-system`, from the operator's own image (`manager mailrelay`), which organizations' services reach inside the cluster
   whatever their outbound limits say, and which sends through one mail service the platform chooses (SES, Postmark, a company's
@@ -116,7 +125,8 @@ The first public release, open source under the Apache License 2.0.
   `GET /api/v1/mail/usage` for the platform's administrators; the condition `MailRelayReady` on the platform configuration. No
   content scanning, DKIM, SPF, DMARC or bounce handling. Off by default: nothing is made or changed until it is set, and turning it
   off removes everything it made. Tested in-process with go-smtp's client against the relay and a fake upstream (under `-race`),
-  against fake clients and envtest; not against a real mail service or mail program. Adds `github.com/emersion/go-smtp` and
+  against fake clients and envtest, and run on a real K3s against an SMTP sink with Python's `smtplib`; not against a real mail
+  service. Adds `github.com/emersion/go-smtp` and
   `github.com/emersion/go-sasl` (both MIT).
 - **Registry isolation for organizations.** With `spec.tenancy.registry` (`policy: requireOwnRegistry`, the default), a
   build of a project that belongs to an organization is never given the platform's registry login, nor another
@@ -130,7 +140,8 @@ The first public release, open source under the Apache License 2.0.
   (`409`), and `GET /api/registry` says `ownRequired`. Refusals are the condition `RegistryIsolated` `False`
   (`OwnRegistryRequired`, `PlatformCredential`, `ForeignRepository`), a `Registry isolation: …` message and a `Warning`
   event `RegistryRefused`. A registry that authorizes each organization for its own path (Harbor, zot) is how one registry
-  is shared; the docs give the steps. Not run against a real registry. Off by default: without it the build Jobs, copies
+  is shared; the docs give the steps. Run on a real K3s against two `registry:2` instances with real Kaniko builds, not
+  Harbor or zot; Kaniko needs a registry it can push to over HTTPS or by a name it takes as local, which the docs say. Off by default: without it the build Jobs, copies
   and pull secrets are unchanged. The operator now records events.
 - **Abuse detection for shared clusters.** With `spec.tenancy.abuse`, Geass looks for the services of organizations' projects
   that may be abusing the machines, such as by mining, and says so; what it finds is a signal, not proof, and every answer says
@@ -149,8 +160,10 @@ The first public release, open source under the Apache License 2.0.
   whole or by project (`spec.abuse` on it), for legitimate heavy work, and given its own action. The outbound limits gain
   `miningPools: Blocked`, which closes a curated list of mining pools' default ports, a heuristic that a miner on port 443
   walks past. It misses a miner that stays below the threshold, pauses, restarts itself or uses a GPU. Off by default, and
-  nothing is sampled or written for a platform that does not set it. Tested against fake clients, a fake clock and envtest; not
-  run on a real cluster or against a real miner. The operator now reads `metrics.k8s.io`.
+  nothing is sampled or written for a platform that does not set it. Tested against fake clients, a fake clock and envtest, and
+  run on a real K3s (v1.36.4+k3s1) with busy loops, the metrics server K3s ships, a falcosidekick-shaped report and gVisor; not
+  against a real Falco or a real miner. The action is decided when a suspicion is raised, so switching `action` to `Suspend`
+  does not suspend a service that is a suspect already. The operator now reads `metrics.k8s.io`.
 - **The provider's access token as a bearer credential.** With `spec.auth.oidc.accessTokens.enabled`, an application that is
   signed in at the identity provider can call the API, the event and log streams and a terminal's WebSocket with the access
   token the provider issued to the person (a JWT, RFC 9068, for the cluster's audience), as `Authorization: Bearer` or the
@@ -444,6 +457,15 @@ The first public release, open source under the Apache License 2.0.
 - **Making and deploying a service in one request could fail with "saved as a draft" although it was made.** The service is saved a
   second time with its deploy marked; the controller has by then added its finalizer, so that save conflicts, and the latest copy was
   read through a cache that had not seen the new object yet and found nothing. A copy that is not found yet is now asked for again.
+- **The console of a SQLite database never worked on rqlite 8.** It ran `rqlite -e <statement>`, which rqlite v8.36.16 does
+  not have (its shell only reads a prompt), so every statement answered `ERR! undefined option -e`. The statement now goes
+  to rqlite's HTTP API as one argument of `wget`, with no shell. Found on a real K3s.
+- **A SQLite server was lost when its pod was replaced.** Geass started rqlite without `-node-id`, so rqlite named the node
+  after the pod's host name, which a Deployment changes with every pod (a drain, a rollout, a restart into the sandbox). The new
+  node was not in the raft configuration kept on the volume, and the server answered `503` ("not part of a stable
+  configuration") for good. A server made from now on is started with `-node-id <database name>`. One made before is left as
+  it is, because a different ID at its next rollout would strand its data the same way: it still has the problem, and needs its
+  raft configuration recovered or its data moved. Found on a real K3s, with and without the sandbox; a fixed `-node-id` on the same image survived a pod replacement there.
 
 ### Security
 
@@ -472,6 +494,7 @@ The first public release, open source under the Apache License 2.0.
   and served, and reported: the condition `OrganizationIsolated` (`False`, `MixedOrganizations`), a Warning event, and
   `GET /api/shared-databases/mixed` for the platform's administrators, which also shows, before organizations are turned
   on, what they will report. The operator may now create `events.k8s.io` events. With organizations off nothing changes.
+  Run on a real K3s with single MySQL servers, not PostgreSQL or MariaDB.
 - **Secrets are encrypted at rest.** The installer turns on K3s secrets encryption (`secrets-encryption: true`) on every
   cluster it builds, so the dashboard users, API token hashes, cloud keys, app secrets and database passwords are encrypted
   in K3s's datastore and in the etcd snapshots, including the one taken before an upgrade. A control plane server joined

@@ -2051,6 +2051,29 @@ func TestAPIObjectStoreCreateRejectsInvalidBucket(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "bucket name")
 }
 
+// rqlite 8's shell has no -e (found on a real cluster: the console answered "ERR! undefined option -e"), so a SQLite statement goes to
+// rqlited's HTTP API as one argument of wget, and a statement that tries to be a shell command stays one.
+func TestDatabaseQueryCommandSendsASQLiteStatementToRqlitesHTTPAPI(t *testing.T) {
+	statement := `select 'it''s' as "q"; $(reboot) ` + "`id`"
+	cmd, err := databaseQueryCommand(geassv1alpha1.DatabaseEngineSQLite, statement)
+	require.NoError(t, err)
+	require.Equal(t, "wget", cmd[0])
+	require.NotContains(t, cmd, "rqlite")
+	require.NotContains(t, cmd, "-e")
+	require.NotContains(t, cmd, "sh", "no shell is involved, so nothing in the statement is interpreted")
+	require.Equal(t, "http://127.0.0.1:4001/db/request?pretty", cmd[len(cmd)-1])
+	var sent []string
+	var found bool
+	for _, arg := range cmd {
+		if body, ok := strings.CutPrefix(arg, "--post-data="); ok {
+			require.NoError(t, json.Unmarshal([]byte(body), &sent))
+			found = true
+		}
+	}
+	require.True(t, found, "the statement is the post data")
+	require.Equal(t, []string{statement}, sent, "one statement, unchanged")
+}
+
 func TestDatabaseQueryCommandSplitsRedisArguments(t *testing.T) {
 	cmd, err := databaseQueryCommand(geassv1alpha1.DatabaseEngineRedis, "GET session")
 	require.NoError(t, err)

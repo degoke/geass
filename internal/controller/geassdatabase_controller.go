@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -425,6 +426,23 @@ func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *g
 	return result, err
 }
 
+// sqliteGetsAStableNodeID says whether the rqlite server of this Deployment is started with a node ID that does not change. Without -node-id,
+// rqlited names the node after the pod's hostname, and a Deployment's pod has a new hostname every time it is replaced (a drain, a rollout,
+// a restart into the sandbox), so the raft configuration kept on the volume never holds the new node and the server answers 503 ("not part of a
+// stable configuration") for good, which a real K3s showed. A server made from now on gets its database's name. One that already runs without it
+// is left as it is: a different ID at its next rollout would leave its data as unreachable.
+func sqliteGetsAStableNodeID(deploy *appsv1.Deployment) bool {
+	if deploy.CreationTimestamp.IsZero() {
+		return true
+	}
+	for _, c := range deploy.Spec.Template.Spec.Containers {
+		if slices.Contains(c.Args, "-node-id") {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) (ctrl.Result, error) {
 	if db.Spec.HighAvailability {
 		return r.setNotReady(ctx, db, "SQLite does not support high availability")
@@ -443,13 +461,17 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		applyGeassLabels(deploy, db, "GeassDatabase")
+		args := []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)}
+		if sqliteGetsAStableNodeID(deploy) {
+			args = append([]string{"-node-id", db.Name}, args...)
+		}
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{platform.K8sLabelAppName: db.Name}}
 		deploy.Spec.Template.Labels = map[string]string{platform.K8sLabelAppName: db.Name, platform.LabelManagedBy: platform.ManagedByValue}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:      "sqlite",
 			Image:     platform.SQLiteImage,
-			Args:      []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)},
+			Args:      args,
 			Ports:     []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: 4001}},
 			Resources: databaseInstanceResources(db),
 			VolumeMounts: []corev1.VolumeMount{{

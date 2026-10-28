@@ -13,16 +13,25 @@ of organizations' projects and on their [database servers](#database-servers).
 
 It is off until you set it, and while it is off no pod changes.
 
-:::caution[Run once with gVisor, never with Kata]
-Geass's tests check the pods it writes, and that it waits when the RuntimeClass is missing, against a fake API server.
-On a real K3s it was run once with gVisor ([Prepare the nodes](#prepare-the-nodes) says on what): while the RuntimeClass
-was missing a running service was left as it was and said why, and when it appeared both organizations' services rolled
-into the sandbox and Geass's own pods did not; an organization's service then ran under gVisor. Kata has not been run with
-Geass, no Kaniko build has been seen to work under either, and `skipOnReservedNodes` has not been tried on real reserved
-nodes. **No database server has been run in the sandbox at all**: the tests check what Geass writes for one (the pod
-templates, the MOCO cluster, the Jobs), what it refuses and holds back, and that a running server is not restarted until
-it is told to, against a fake API server and envtest, with no database operator and no gVisor. Try it on one cluster,
-with your own services and a copy of your own data, before you rely on it.
+:::caution[Run with gVisor on real K3s, never with Kata]
+Geass's tests check the pods it writes, and that it waits when the RuntimeClass is missing, against a fake API server and
+envtest. It has also been run on real K3s v1.36.4+k3s1 with gVisor `release-20261019.0`, on a K3s server in a Docker
+container and on K3s installed on an Ubuntu 24.04 host ([Prepare the nodes](#prepare-the-nodes) says how). On the host:
+
+- With the RuntimeClass missing, running services kept the same pods and said why, and a new service and a new MySQL server
+  were not made. When it appeared, organizations' services rolled into the sandbox and Geass's own pods did not.
+- A Kaniko build (v1.23.2) of an organization's project ran under gVisor and pushed to the organization's own registry.
+- MySQL 8.4.11 (1 GiB) and Redis 7.4.11 servers ran under it and answered, and so did the Job that makes a logical database
+  on the MySQL server; a new rqlite v8.36.16 server started and was `Ready` under it (it was not queried). A running server
+  moved into the sandbox when its restart was approved and with `databaseRestarts: Immediate`. An organization's PostgreSQL
+  was refused, one made before was held, and MariaDB was refused.
+- Two things went wrong: a MySQL server at Geass's default size of 512 MiB was killed during its first start and left
+  without its logins (see [What it costs](#what-it-costs)), and a SQLite server made before Geass gave rqlite a fixed
+  node ID does not come back from a restart (see [Servers that already run](#servers-that-already-run)).
+
+**Not tried:** Kata, `skipOnReservedNodes` on real reserved nodes, highly available MySQL on MOCO, CloudNativePG's
+`podPatch`, and database servers under load. Try it on one cluster, with your own services and a copy of your own data,
+before you rely on it.
 :::
 
 ## What runs in the sandbox
@@ -54,10 +63,11 @@ make the RuntimeClass. A node without the runtime cannot start a sandboxed pod: 
 without it only with `skipOnReservedNodes` and only while its rule holds (see [Reserved nodes](#reserved-nodes)): when it
 stops holding, that organization's pods are sandboxed and cannot start there.
 
-These steps are for gVisor on K3s, which runs its own containerd. They were run once, on K3s v1.36.4+k3s1 (a K3s server in
-a Docker container on an Ubuntu 24.04 host) with gVisor `release-20261019.0`: an organization's service then ran under
-the `gvisor` RuntimeClass, with `dmesg` inside its pod printing `Starting gVisor...` and `uname` saying `4.19.0-gvisor`
-where the host says its own kernel. Check them against the [gVisor installation
+These steps are for gVisor on K3s, which runs its own containerd. They were run on K3s v1.36.4+k3s1 with gVisor
+`release-20261019.0`, once in a K3s server in a Docker container on an Ubuntu 24.04 host and once on K3s installed on an
+Ubuntu 24.04.5 host (kernel `7.0.0-1014-aws`): an organization's service then ran under the `gvisor` RuntimeClass, with
+`dmesg` inside its pod printing `Starting gVisor...` and `uname` saying `4.19.0-gvisor` where the host says its own
+kernel. Check them against the [gVisor installation
 guide](https://gvisor.dev/docs/user_guide/install/) and K3s's [containerd
 configuration](https://docs.k3s.io/advanced#configuring-containerd) for your releases: gVisor has changed how it ships
 before.
@@ -77,9 +87,13 @@ before.
    (An earlier layout had `runsc` and the shim as separate files under the same address; a release now is the tarball,
    and a `.zstd` one if you prefer it. If the address answers 404, list `gs://gvisor/releases/release/` for what is there.)
 
+   `tar -xjf` needs `bzip2`, which the minimal Ubuntu 24.04 image does not have: it stopped with `bzip2: Cannot exec`.
+   Install it first (`sudo apt-get install -y bzip2`) or take the `.zstd` tarball.
+
 2. **Tell K3s's containerd about it.** K3s writes its containerd configuration itself on every start, from a template
    you can extend. Recent K3s releases ship containerd 2, whose file is `config-v3.toml.tmpl`; an older one with
-   containerd 1.7 reads `config.toml.tmpl`. See which K3s generated: `ls /var/lib/rancher/k3s/agent/etc/containerd/`.
+   containerd 1.7 reads `config.toml.tmpl`. See which K3s generated: `sudo ls /var/lib/rancher/k3s/agent/etc/containerd/`
+   (the directory belongs to root on a host install).
 
    ```toml title="/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl (containerd 2)"
    {{ template "base" . }}
@@ -96,7 +110,8 @@ before.
    ```
 
    Then restart K3s (`sudo systemctl restart k3s-agent` on a worker, `k3s` on a server) and check that the generated
-   `config-v3.toml` (or `config.toml`) has the `runsc` runtime.
+   file has the `runsc` runtime. On K3s v1.36.4+k3s1 (containerd 2.3.4) the generated file was `config.toml`, with
+   `version = 3` and a header saying to use `config-v3.toml.tmpl`, and it held the `runsc` runtime after the restart.
 
 3. **Make the RuntimeClass** once for the cluster. Its name is what Geass is told; its `handler` is the runtime's name in
    containerd's configuration.
@@ -331,10 +346,23 @@ What the restart is, which is the operator's or Kubernetes's own, and nothing mo
 
 - **MySQL (one server), Redis and SQLite** run one pod each, so the database is unavailable while its pod is replaced and
   starts again. **A Redis server comes back empty.** SQLite's Deployment replaces its one copy as it does for any change.
+  Seen on K3s v1.36.4+k3s1: approving a MySQL 8.4.11 server of 512 MiB that held data, `mysqld` answered again about 40
+  seconds after the annotation and the data was there; `databaseRestarts: Immediate` moved a Redis, a SQLite and a MySQL
+  server within seconds, and the Redis server's key was gone.
 - **Highly available MySQL** is rolled by MOCO: one server at a time, from the highest-numbered, only while the cluster is
   healthy, and MOCO switches the primary to a replica when the primary's pod is deleted, so writes pause for a few
   seconds then.
 - **PostgreSQL and MariaDB** are never restarted for it: they cannot run in the sandbox.
+
+**A SQLite server made before Geass gave rqlite a fixed node ID does not come back from this restart, or from any other
+replacement of its pod.** Without `-node-id`, rqlite names its node after the pod's host name, and a Deployment's pod has
+a new name every time, so the new node is not in the raft configuration kept on the volume: rqlite answers `503` ("not
+part of a stable configuration") and does not recover. rqlite v8.36.16 did this to a server restarted into the sandbox,
+and the same to a server of a project of no organization, never sandboxed, whose pod was deleted. The same image with a
+fixed `-node-id` on a volume answered with its data after a pod replacement in the same test, and a server that this
+release makes is started with `-node-id <database name>` (the arguments are unit-tested; a server made by this release was
+not run). A server made earlier has to have its raft configuration recovered (rqlite's own documentation describes that; it was not tried here)
+or its data moved to a new server: Geass has no tool for either.
 
 Approve one server at a time, at a quiet hour, with its backups up to date.
 
@@ -354,15 +382,32 @@ not let a Job's pod change. A logical database's `Sandboxed` condition says how 
 - **Speed.** gVisor runs a kernel of its own in user space, and every system call and file access goes through it. A
   database does little else, so it runs slower under gVisor than on the node's kernel, by an amount that depends on the
   workload: measure yours. See gVisor's [performance guide](https://gvisor.dev/docs/architecture_guide/performance/). Kata
-  runs a virtual machine for each pod, with its own memory and its own path to the disk.
+  runs a virtual machine for each pod, with its own memory and its own path to the disk. On one machine, a stored
+  procedure of 20,000 single-row inserts (a commit every 200) took 3.2 to 3.4 seconds on a MySQL 8.4.11 server under gVisor
+  (1 GiB, 500m CPU) and 3.7 to 4.0 seconds on one outside it (512 MiB, 250m CPU), and 50 scans of 20,000 rows took 1.3 to
+  2.1 seconds against 1.8 to 3.3. The limits of the two servers differed and it is one workload, so it shows only that
+  this one was not slower under gVisor.
 - **Features.** gVisor implements most of Linux, not all of it. Its
   [compatibility list](https://gvisor.dev/docs/user_guide/compatibility/linux/amd64/) marks `io_uring` and Linux AIO
   (`io_setup` and `io_submit`, which InnoDB uses) as partly supported, `fadvise` as ignored, `mlock` as a stub, and some
   options of `fallocate` and `madvise` as unsupported. Huge pages, direct I/O (`O_DIRECT`) and how the filesystem flushes
-  may not behave as on the node. A server whose settings ask for these may start slower, run slower, or not start. Test a
-  copy of your database, with its own settings and data, under the RuntimeClass before you move it, and keep its backups.
+  may not behave as on the node. A server whose settings ask for these may start slower, run slower, or not start. MySQL
+  8.4.11 started under gVisor `release-20261019.0` with `innodb_use_native_aio` on and `innodb_flush_method` `O_DIRECT`.
+  Test a copy of your database, with its own settings and data, under the RuntimeClass before you move it, and keep its
+  backups.
 - **Memory and CPU.** A RuntimeClass `overhead` is added to every database pod too, and to what the project's quota and
   the usage meter count.
+- **MySQL needed more than 512 MiB to start.** Geass's default size for a database is 250m CPU and 512 MiB, with the limit
+  equal to the request. Two new MySQL 8.4.11 servers of that size were killed for lack of memory (`OOMKilled`, exit code
+  137) about a minute into their first start under gVisor, and restarted. The image's entrypoint does not resume an
+  interrupted first start, so after the restart `mysqld` ran with only `root@localhost`, which had no password: no
+  `root@%` and no `app` login. The password in the `<ID>-bootstrap` Secret was refused (`Access denied`), the server said
+  `Ready` ("MySQL database is ready"), and the first logical database on it stayed at "creating logical database". A
+  server made with 1 GiB started cleanly under gVisor: no restart, and `root@%`, `root@localhost` and `app@%` all there.
+  Idle, MySQL used about 430 to 440 MiB outside the sandbox and about 490 MiB under it, and a server of 512 MiB that
+  already held data and was moved in by approval ran at 500 MiB of its 512. Sizes between 512 MiB and 1 GiB were not
+  tried. Give a MySQL server that will start in the sandbox at least 1 GiB, and check that its logins work before you rely
+  on it; one that started broken has to be deleted, with its volume, and made again.
 - **A restart** for every server that already runs (above).
 
 ## What it does not cover
@@ -391,7 +436,8 @@ not let a Job's pod change. A logical database's `Sandboxed` condition says how 
 - **Watching what the pods do.** A tool on the node that watches system calls (Falco, Tetragon) sees gVisor's own process,
   not the program inside: the organization's system calls are handled by gVisor and never reach the node's kernel. So
   such a tool cannot report a miner in a sandboxed pod. What a pod uses is measured all the same, so the
-  [abuse detection](/docs/guides/abuse-detection/)'s CPU signal works under the sandbox.
+  [abuse detection](/docs/guides/abuse-detection/)'s CPU signal works under the sandbox: on K3s v1.36.4+k3s1 a busy loop
+  in a pod under gVisor was measured by the metrics server at its 100m limit, and the signal suspected it.
 
 ## Related
 
