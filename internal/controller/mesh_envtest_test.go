@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"maps"
+	"net/netip"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -165,6 +167,60 @@ var _ = Describe("The mesh of a cluster", func() {
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Reason).To(Equal(meshReasonBlocked))
 			Expect(condition.Message).To(ContainSubstring("mesh-env-cp-vxlan"))
+		})
+
+		// The overlay check (mesh_overlay.go) with a stand-in for the connection: the nodes and the condition are real API
+		// objects, and the answer from each node is made up by the test.
+		It("says which nodes the operator's probe got no answer from, once it has got none twice", func() {
+			ready := []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Hour))}}
+			withRange := func(name, cidr string, control bool, annotations map[string]string, address string) {
+				object := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations}, Spec: corev1.NodeSpec{PodCIDR: cidr}}
+				if control {
+					object.Labels = map[string]string{controlPlaneLabel: "true"}
+				}
+				Expect(k8sClient.Create(ctx, object)).To(Succeed())
+				object.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeExternalIP, Address: address}}
+				object.Status.Conditions = ready
+				Expect(k8sClient.Status().Update(ctx, object)).To(Succeed())
+				nodes = append(nodes, object)
+			}
+			withRange("mesh-env-probe-cp", "10.42.0.0/24", true, map[string]string{mesh.AnnotationFlannelBackendType: "wireguard"}, "203.0.113.10")
+			withRange("mesh-env-probe-w1", "10.42.1.0/24", false, nil, "198.51.100.7")
+			withRange("mesh-env-probe-w2", "10.42.2.0/24", false, nil, "198.51.100.8")
+
+			Expect(k8sClient.Create(ctx, cluster("mesh-env-probe", map[string]any{"mesh": map[string]any{}}))).To(Succeed())
+			DeferCleanup(func() { remove("mesh-env-probe") })
+			key := client.ObjectKey{Name: "mesh-env-probe", Namespace: platform.SystemNamespace}
+
+			prober := newFakeOverlayProber()
+			prober.set("mesh-env-probe-w1", timedOut)
+			now := time.Now()
+			reconciler := &GeassClusterReconciler{
+				Client: k8sClient, Scheme: scheme.Scheme, overlayProber: prober,
+				overlayLocal: func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("10.42.0.15")} },
+				overlayNow:   func() time.Time { return now },
+			}
+			pass := func() *metav1.Condition {
+				current := &geassv1alpha1.GeassCluster{}
+				Expect(k8sClient.Get(ctx, key, current)).To(Succeed())
+				reconciler.reconcileMesh(ctx, current)
+				stored := &geassv1alpha1.GeassCluster{}
+				Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
+				Expect(stored.Status.Conditions).To(HaveLen(1), "only MeshReady is written: nothing of the cluster's Ready is touched")
+				return meta.FindStatusCondition(stored.Status.Conditions, mesh.ConditionMeshReady)
+			}
+
+			first := pass()
+			Expect(first.Status).To(Equal(metav1.ConditionTrue))
+			Expect(first.Message).To(ContainSubstring("1 of 2 other nodes (1 not answered yet"))
+
+			now = now.Add(meshOverlayFirstRetry)
+			second := pass()
+			Expect(second.Status).To(Equal(metav1.ConditionFalse))
+			Expect(second.Reason).To(Equal(meshReasonOverlay))
+			Expect(second.Message).To(ContainSubstring("mesh-env-probe-w1 (timed out)"))
+			Expect(second.Message).NotTo(ContainSubstring("mesh-env-probe-w2"))
+			Expect(second.Message).To(ContainSubstring("one probe from one point"))
 		})
 
 		It("is not written for a cluster without a mesh", func() {

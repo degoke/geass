@@ -44,7 +44,7 @@ The first public release, open source under the Apache License 2.0.
   settings that cannot be used, a missing or unusable auth key, a WireGuard address that is not a usable IP address, a
   control plane that was built without the mesh) and writes a `MeshReady` condition on the cluster naming what needs
   attention (a private `serverURL`, nodes that are not on the mesh, a control plane without the mesh); the installer
-  refuses a WireGuard mesh address no other machine can use. It never tests that traffic flows between sites, that UDP 51820
+  refuses a WireGuard mesh address no other machine can use. Apart from the overlay check in the next entry, it never tests that traffic flows between sites, that UDP 51820
   is open, a NAT's behaviour or the path's MTU: the documentation gives the commands to check. A cluster that does not set the field gets exactly the K3s settings,
   join commands, cluster object and monitoring values it got before (tests compare them with what the code produced earlier),
   and `multiSite` alone is still joined and left alone as it was. Off by default; additive to the CRD. **Run once, on EC2, in
@@ -56,6 +56,26 @@ The first public release, open source under the Apache License 2.0.
   at a second provider. Also tested with unit tests, tests against a real API server (the CRD's rules and defaults, the
   condition) and the worker's new shell commands run locally with a stand-in `tailscale`. See
   [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md).
+- **A non-fatal overlay check for a mesh.** On the EC2 run a blocked UDP 51820 left the node, the `GeassNode`, the cluster and
+  `MeshReady` green while pods lost every packet. For a cluster that sets `spec.network.mesh`, the operator now makes a TCP
+  connection from its own pod (which the installer pins to a control plane node) to port 9 on the first address of each other
+  node's IPv4 pod range, which on K3s is the node's `cni0` bridge. The kernel routes it by the route to that range, so it follows
+  the flannel WireGuard interface or `tailscale0`. A refusal or an accepted connection is an answer; silence for 4 seconds or "no
+  route to host" is not. A node that gives no answer on two probes in a row turns `MeshReady` `False` with the new reason
+  `OverlayUnreachable`, a message that names the nodes, says it is one probe from one point, and says what to check (UDP 51820 and
+  the NAT, or the tailnet's rules and routes, or a firewall on the node). When nodes answer, `MeshConfigured` says how many and
+  what was and was not tested, or why no probe ran (the operator is not on a node's pod range, no other node is ready, or it is
+  turned off with the annotation `geass.dev/mesh-overlay-check=off` on the cluster). It never refuses or fails a join, never
+  changes the cluster's `Ready`, runs nothing on a node and uses no SSH, and runs only while `MeshReady` would otherwise be
+  `True`. Bounded: one connection per node, at most 10 at a time, 20 nodes and 15 seconds per pass, five minutes between probes of
+  a node that answers and 30 seconds doubling to five minutes after a silence. It does not test two workers against each other,
+  large packets (MTU), DNS or a service, and it can be wrong (a node with no pod yet has no bridge address, a firewall on the node
+  can drop the connection while pods reach each other). A cluster that does not set the field is not probed and gets no new
+  condition (tested). No API change. **Tested with unit tests and a fake connection only** (answers, silence, no route, hang;
+  schedule, bounds, nothing written for a cluster without a mesh) and one test against a real API server for the condition; one
+  connection is made, to this machine's own loopback address. **Not run on any real machine:** not against a real WireGuard tunnel,
+  Tailscale or Headscale, a dropped UDP 51820, a NAT, a host firewall, or from the operator's pod on a node. See
+  [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md#the-overlay-check).
 - **Move a project between clusters: export and import.** `POST /api/v1/projects/{p}/export` gives a project's definition as a
   bundle (a gzip tar of YAML with a JSON manifest): its services, databases and buckets, their configuration, hostnames and
   schedules, and none of its secret values, credentials, tenant or data. What it leaves out is listed in the manifest,
