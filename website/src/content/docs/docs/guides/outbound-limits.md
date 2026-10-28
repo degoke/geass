@@ -184,8 +184,6 @@ With the limits in force it prints `25 closed` and `443 open`. Run the same from
 ## What is not done
 
 - **Detecting mining**, or any other abuse: a network policy sees ports, not programs. See [Mining](#mining) and [Abuse detection](/docs/guides/abuse-detection/).
-- **Limiting how much mail is sent**, as opposed to closing the ports: rates, counts, per-organization accounting. A relay in the cluster is where that belongs.
-- **Detecting mining**, or any other abuse. See [Mining](#mining).
 - **Limiting how much mail is sent**, as opposed to closing the ports: rates, counts, per-organization accounting. A network policy cannot count. The [mail relay](/docs/guides/mail-relay/) does this for the mail that goes through it.
 - **Quotas per destination**, or on traffic volume. Bandwidth per pod is a different limit, which needs the network plugin's bandwidth support.
 - **Naming destinations by host name.** A network policy holds addresses only.
