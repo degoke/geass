@@ -31,8 +31,11 @@ import (
 //
 // Neither is done for a cluster that sets only multiSite: it is joined, and left alone, exactly as it was.
 //
-// What it cannot do is tell whether traffic flows between two sites. Kubernetes reports a node Ready when its kubelet
-// can reach the API, which a node that has joined the mesh badly still can. The documentation lists how to check by hand.
+// Kubernetes reports a node Ready when its kubelet can reach the API, which a node that has joined the mesh badly still
+// can, so none of the above says whether traffic flows between two sites. The overlay check (mesh_overlay.go) adds one
+// probe for that: from the operator's pod, a TCP connection to the pod network of each other node, written to the same
+// condition and never held against anything. It is one path from one point, and the documentation lists how to check
+// the rest by hand.
 
 // +kubebuilder:rbac:groups="",resources=nodes;secrets,verbs=get;list;watch
 
@@ -42,6 +45,8 @@ const (
 	meshReasonAuthKey  = "AuthKeyUnusable"
 	meshReasonBlocked  = "ControlPlaneNotOnMesh"
 	meshReasonAttended = "MeshNeedsAttention"
+	// meshReasonOverlay is set when the overlay check (mesh_overlay.go) gets no answer from the pod network of a node.
+	meshReasonOverlay = "OverlayUnreachable"
 
 	// meshRecheck is how often a mesh that is fine is looked at again, and meshRetry a mesh that is not. Nothing watches
 	// the addresses nodes advertise, so the condition is kept current by looking.
@@ -161,6 +166,7 @@ func (r *GeassClusterReconciler) reconcileMesh(ctx context.Context, cluster *gea
 			log.Error(err, "Failed to clear the MeshReady condition", "cluster", key.Name)
 			return meshRetry
 		}
+		r.overlay.forget(key)
 		return 0
 	}
 
@@ -174,10 +180,12 @@ func (r *GeassClusterReconciler) reconcileMesh(ctx context.Context, cluster *gea
 		log.Error(err, "Failed to record the MeshReady condition", "cluster", key.Name)
 		return meshRetry
 	}
+	// The overlay check has its own idea of when a node is due, which can be sooner than either.
+	wake := r.overlay.wake(key, r.overlayClock())
 	if outcome.status == metav1.ConditionTrue {
-		return meshRecheck
+		return shortestRequeue(meshRecheck, wake)
 	}
-	return meshRetry
+	return shortestRequeue(meshRetry, wake)
 }
 
 func (r *GeassClusterReconciler) meshOutcome(ctx context.Context, cluster *geassv1alpha1.GeassCluster, settings mesh.Settings) (meshOutcome, error) {
@@ -208,8 +216,12 @@ func (r *GeassClusterReconciler) meshOutcome(ctx context.Context, cluster *geass
 	case len(report.Warnings) > 0:
 		return meshOutcome{metav1.ConditionFalse, meshReasonAttended, report.Message()}, nil
 	}
-	return meshOutcome{metav1.ConditionTrue, meshReasonReady, fmt.Sprintf("Every node advertises an address on the %s mesh. This is read from the "+
-		"nodes and does not test that traffic flows between sites: check pods on two sites reach each other (see the documentation)", settings.Provider)}, nil
+	// Every node advertises an address. Whether the pod network answers is what the overlay check says.
+	finding := r.overlayFinding(ctx, cluster, nodes.Items)
+	if len(finding.Unreachable) > 0 {
+		return meshOutcome{metav1.ConditionFalse, meshReasonOverlay, finding.UnreachableMessage(settings.Provider)}, nil
+	}
+	return meshOutcome{metav1.ConditionTrue, meshReasonReady, finding.ReadyMessage(settings.Provider)}, nil
 }
 
 // setMeshCondition writes the condition, or takes it away when outcome is nil.

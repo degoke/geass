@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -139,6 +140,14 @@ type GeassClusterReconciler struct {
 	// DefaultLostNodeAfter when zero, and the step is off when it is negative. lostNodeClock replaces the clock in tests.
 	LostNodeAfter time.Duration
 	lostNodeClock func() time.Time
+
+	// overlay is what the mesh's overlay check remembers between reconciliations (see mesh_overlay.go). overlayProber
+	// replaces the connection it makes, overlayLocal the addresses of the machine it runs on, and overlayNow the clock,
+	// in tests.
+	overlay       overlayMemory
+	overlayProber OverlayProber
+	overlayLocal  func() []netip.Addr
+	overlayNow    func() time.Time
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch;create;update;patch;delete
