@@ -180,7 +180,12 @@ func (r *GeassClusterReconciler) reconcileMesh(ctx context.Context, cluster *gea
 		log.Error(err, "Failed to record the MeshReady condition", "cluster", key.Name)
 		return meshRetry
 	}
-	// The overlay check has its own idea of when a node is due, which can be sooner than either.
+	// The overlay check has its own idea of when a node is due, which can be sooner than either. It only has one while it
+	// is running: when something else is being reported it did not run this time, and what it remembers is dropped so
+	// that nodes that were due long ago do not ask for the cluster to be looked at again at once.
+	if outcome.reason != meshReasonReady && outcome.reason != meshReasonOverlay {
+		r.overlay.forget(key)
+	}
 	wake := r.overlay.wake(key, r.overlayClock())
 	if outcome.status == metav1.ConditionTrue {
 		return shortestRequeue(meshRecheck, wake)

@@ -380,6 +380,24 @@ func TestNoProbeIsMadeWhileTheMeshHasSomethingElseToSay(t *testing.T) {
 	require.Contains(t, condition.Message, "hand-joined")
 }
 
+// What the check remembered is no reason to look at the cluster again soon once it has stopped running: nodes that were due
+// ten minutes ago must not make the mesh be reconciled every few seconds while something else is wrong.
+func TestARunOfTheCheckThatStopsDoesNotLeaveTheClusterBeingLookedAtEveryFewSeconds(t *testing.T) {
+	w := newOverlayWorld(t, wireGuardMesh(), 2)
+	w.reconcile(t)
+	require.NotEmpty(t, w.r.overlay.clusters)
+	w.advance(10 * time.Minute)
+	handJoined := readyK8sNode("hand-joined", true, time.Now())
+	handJoined.Status.Addresses = []corev1.NodeAddress{internalIP("10.5.0.5")}
+	require.NoError(t, w.c.Create(context.Background(), handJoined))
+
+	require.Equal(t, meshRetry, w.reconcile(t))
+
+	require.Equal(t, meshReasonAttended, w.condition(t).Reason)
+	require.Empty(t, w.r.overlay.clusters)
+	require.Equal(t, 2, w.prober.total(), "and nothing was probed while it was something else's turn")
+}
+
 func TestNoProbeIsMadeForAClusterThatSetsNoMesh(t *testing.T) {
 	for name, network := range map[string]geassv1alpha1.GeassClusterNetworkSpec{"none": {}, "multi-site only": {MultiSite: true}} {
 		t.Run(name, func(t *testing.T) {
