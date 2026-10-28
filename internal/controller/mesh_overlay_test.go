@@ -548,7 +548,7 @@ func TestTheDefaultProbeAnswersFromTheLoopbackAddress(t *testing.T) {
 }
 
 func TestAPassThatRunsOutOfTimeLeavesTheRestUnprobed(t *testing.T) {
-	var targets []mesh.OverlayTarget
+	targets := make([]mesh.OverlayTarget, 0, 30)
 	for i := range 30 {
 		targets = append(targets, mesh.OverlayTarget{Node: fmt.Sprintf("w%d", i), Address: netip.MustParseAddr("10.42.1.1")})
 	}

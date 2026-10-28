@@ -31,7 +31,7 @@ func longReady(name, cidr string) corev1.Node {
 }
 
 func addrs(values ...string) []netip.Addr {
-	var out []netip.Addr
+	out := make([]netip.Addr, 0, len(values))
 	for _, value := range values {
 		out = append(out, netip.MustParseAddr(value))
 	}
@@ -39,7 +39,7 @@ func addrs(values ...string) []netip.Addr {
 }
 
 func targetNames(plan OverlayPlan) []string {
-	var names []string
+	names := make([]string, 0, len(plan.Targets))
 	for _, target := range plan.Targets {
 		names = append(names, target.Node)
 	}
@@ -71,10 +71,11 @@ func TestThePodRangeAddressIsTheBridgeWhateverTheRangeIsWrittenAs(t *testing.T) 
 		require.True(t, ok, cidr)
 		require.Equal(t, want, address.String(), cidr)
 	}
-	for _, cidr := range []string{"10.42.3.0/30", "10.42.3.4/32", "fd00:42::/64", "not a range", ""} {
+	for _, cidr := range []string{"10.42.3.0/30", "10.42.3.4/32", "fd00:42::/64", "not a range", "",
+		"127.0.0.0/24", "0.0.0.0/24", "169.254.0.0/24", "224.0.0.0/24"} {
 		node := longReady("w", cidr)
 		_, ok := podBridgeAddress(&node)
-		require.False(t, ok, "%q has no bridge address that is neither the network nor the broadcast one, or is not IPv4", cidr)
+		require.False(t, ok, "%q has no bridge address that is neither the network nor the broadcast one, is not IPv4, or is an address nothing is probed on", cidr)
 	}
 }
 
@@ -212,7 +213,7 @@ func TestTheUnreachableMessageSaysWhereFromWhatWasTestedAndWhatToCheck(t *testin
 }
 
 func TestTheUnreachableMessageCutsALongList(t *testing.T) {
-	var names []string
+	names := make([]string, 0, 8)
 	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
 		names = append(names, name+" (timed out)")
 	}

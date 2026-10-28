@@ -155,14 +155,24 @@ func podRanges(node *corev1.Node) []netip.Prefix {
 }
 
 // podBridgeAddress is the address after the network address of the node's first IPv4 pod range: where the node answers
-// on the pod network. It returns false for a node with no such range.
+// on the pod network. It returns false for a node with no such range, and for a range that is not one pods could have.
 func podBridgeAddress(node *corev1.Node) (netip.Addr, bool) {
 	for _, prefix := range podRanges(node) {
-		if prefix.Addr().Is4() && prefix.Bits() <= maxOverlayRangeBits {
-			return prefix.Addr().Next(), true
+		if !prefix.Addr().Is4() || prefix.Bits() > maxOverlayRangeBits {
+			continue
+		}
+		// A range that is loopback, unspecified, link-local or multicast is no pod range. The address is taken from a
+		// node object, so it is not connected to unless it is one that pods could have.
+		if bridge := prefix.Addr().Next(); probeable(prefix.Addr()) && probeable(bridge) {
+			return bridge, true
 		}
 	}
 	return netip.Addr{}, false
+}
+
+// probeable is whether an address could be a pod's: not loopback, unspecified, link-local or multicast.
+func probeable(address netip.Addr) bool {
+	return !address.IsLoopback() && !address.IsUnspecified() && !address.IsLinkLocalUnicast() && !address.IsMulticast()
 }
 
 // readyFor is whether the node is Ready and has been for at least d. A node with no recorded time counts as settled.
