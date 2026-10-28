@@ -529,6 +529,21 @@ The first public release, open source under the Apache License 2.0.
 
 ### Fixed
 
+- **The first deploy of a service that carried a secret could fail with `Secret "<service>-secrets" not found`.** A secret set on a
+  service that is still a draft (`POST /api/apps/{name}/secrets/set`) is written to the Secret `<service>-secrets` in the system
+  namespace, and `spec.secretRef` points at it. The operator's pass over a service that is waiting to be deployed cleared what it
+  had made for it, and that clearing also deleted the Secret `spec.secretRef` names. The values were gone before the deploy, which
+  read a Secret that was not there and ended as "Provisioning failed after repeated errors". It depends on whether the operator
+  looks at the draft between setting the secret and deploying, which fits what was seen (a first deploy long after the secret
+  failed; a second service, a service already deployed and a draft with no secret all worked). The same clearing ran for a Git
+  service waiting for its build and when a deployed service was moved to another environment. The values are now removed only when
+  the service is deleted. A service that already lost its secret is not repaired by the upgrade: set the secret again, then deploy
+  or retry the provisioning. The bug is older than the managed-mode, mesh and project-move changes of this release. Found on two
+  real K3s clusters (2026-10-28). **Tested** with five new unit tests on a fake client: a draft, a Git draft and a service moved
+  to another environment keep the Secret, and a draft's secret reaches the service's namespace when it is deployed (these four
+  fail on the code before this change); deleting a service still removes the Secret `spec.secretRef` names (passes before and
+  after). **Not run** on a real cluster, against a real API server (envtest) or through the dashboard and the operator together:
+  the timing above is read from the code and the two runs, not reproduced.
 - **A service could not be deployed from a dashboard that runs outside the cluster.** Deploying records a deployment and then writes
   its status, which the `--controllers=false` dashboard's role (`config/dashboard-only`) did not allow, so the service was saved as a
   draft and "deploying it failed". The role can now update the status of a `GeassDeployment`.
