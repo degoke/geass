@@ -53,6 +53,10 @@ func (s *Server) v1Adapter(next http.Handler) http.Handler {
 			next.ServeHTTP(out, legacy)
 			return
 		}
+		if legacy, ok := v1ProjectTransfer(r); ok {
+			next.ServeHTTP(out, legacy)
+			return
+		}
 		legacy, err := v1Mutation(r)
 		if err != nil {
 			status := http.StatusBadRequest
@@ -65,6 +69,28 @@ func (s *Server) v1Adapter(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(out, legacy)
 	})
+}
+
+// v1ProjectTransfer recognises the two requests whose body is a file and not a form: the export and the import of a project.
+// The form a mutation is turned into holds only text, and no more than v1MaxBody of it, so these go to their handlers as they
+// are, with their query, under the dashboard's path. The handlers bound the body themselves.
+func v1ProjectTransfer(r *http.Request) (*http.Request, bool) {
+	if r.Method != http.MethodPost {
+		return nil, false
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, v1Prefix), "/"), "/")
+	export := len(parts) == 3 && parts[0] == kindProjects && parts[2] == "export"
+	importing := len(parts) == 2 && parts[0] == kindProjects && parts[1] == "import"
+	if !export && !importing {
+		return nil, false
+	}
+	legacy := r.Clone(r.Context())
+	legacyURL := *r.URL
+	legacyURL.Path, legacyURL.RawPath = "/api/"+strings.Join(parts, "/"), ""
+	legacy.URL = &legacyURL
+	legacy.Header = r.Header.Clone()
+	legacy.Header.Set("Accept", "application/json")
+	return legacy, true
 }
 
 // v1Mutation turns a v1 request that changes something into the request its handler expects: the dashboard's

@@ -234,6 +234,10 @@ you can change it, and services restart in the new region.
 **Generate Template from Project** saves one environment's services and in-cluster databases as a reusable template.
 See [Templates](/docs/guides/templates/).
 
+## Move a project to another cluster
+
+A project can be exported as a bundle of its definition and imported on another cluster as a new project, with its services, databases and buckets as drafts and without any secret value. The data in databases and buckets is not in the bundle. See [Moving a project to another cluster](/docs/guides/moving-a-project/).
+
 ## Delete a project
 
 Open **Settings** → **Danger**.
@@ -320,5 +324,6 @@ removes the project. A namespace whose workload will not stop stays in `Terminat
 - [Environment variables and secrets](/docs/guides/environment-variables/)
 - [Pull request environments](/docs/guides/pull-request-environments/)
 - [Templates](/docs/guides/templates/)
+- [Moving a project to another cluster](/docs/guides/moving-a-project/)
 - [Network isolation](/docs/guides/network-isolation/)
 - [Users and API tokens](/docs/guides/users-and-tokens/)
