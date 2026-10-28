@@ -467,3 +467,36 @@ func TestAnUnsandboxableEnginesMessagesAreNotCountedAsFailures(t *testing.T) {
 	}
 	require.False(t, platform.ReconcileFailureShouldCount((&platform.SandboxRuntimeMissingError{RuntimeClass: tenantClass}).Error()))
 }
+
+// A real K3s showed that rqlite, started without -node-id, names its node after the pod's hostname, and that after the Deployment replaces the pod
+// the server answers 503 for good. A server made now gets a node ID that does not change; one that already runs without it is left as it is.
+func TestASQLiteServerIsGivenAStableNodeIDWhenMadeAndALegacyOneIsLeftAlone(t *testing.T) {
+	sqlite := tenantProjectDB(geassv1alpha1.DatabaseEngineSQLite)
+	e := newSandboxDBEnv(t, sqlite, readyTenantProject(tenantOrg)...)
+	_, err := e.r.reconcileSQLite(context.Background(), e.db(), tenantNS, "", platform.Placement{})
+	require.NoError(t, err)
+	deploy := &appsv1.Deployment{}
+	require.True(t, e.get(deploy, tenantNS, tenantDB))
+	args := deploy.Spec.Template.Spec.Containers[0].Args
+	require.Equal(t, []string{"-node-id", tenantDB, "-http-addr", "0.0.0.0:4001", "-http-adv-addr", tenantDB + "." + tenantNS + ".svc:4001"}, args)
+
+	// A later pass (the object now has a creation time, as one stored by an API server does) keeps it.
+	deploy.CreationTimestamp = metav1.Now()
+	require.NoError(t, e.c.Update(context.Background(), deploy))
+	_, err = e.r.reconcileSQLite(context.Background(), e.db(), tenantNS, "", platform.Placement{})
+	require.NoError(t, err)
+	require.True(t, e.get(deploy, tenantNS, tenantDB))
+	require.Equal(t, args, deploy.Spec.Template.Spec.Containers[0].Args)
+
+	// A server made before has no -node-id, and its raft state names its pod: a new ID would strand its data, so it stays as it was.
+	legacy := tenantProjectDB(geassv1alpha1.DatabaseEngineSQLite)
+	le := newSandboxDBEnv(t, legacy, readyTenantProject(tenantOrg)...)
+	old := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: tenantDB, Namespace: tenantNS, CreationTimestamp: metav1.Now()}}
+	old.Spec.Template.Spec.Containers = []corev1.Container{{Name: "sqlite", Image: platform.SQLiteImage, Args: []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", tenantDB + "." + tenantNS + ".svc:4001"}}}
+	require.NoError(t, le.c.Create(context.Background(), old))
+	_, err = le.r.reconcileSQLite(context.Background(), le.db(), tenantNS, "", platform.Placement{})
+	require.NoError(t, err)
+	kept := &appsv1.Deployment{}
+	require.True(t, le.get(kept, tenantNS, tenantDB))
+	require.NotContains(t, kept.Spec.Template.Spec.Containers[0].Args, "-node-id")
+}
