@@ -7,6 +7,7 @@ import { DOCS_URL } from "@/lib/platform-nav";
 import { alertError, notify } from "@/lib/notify";
 import { Badge, Button, Field, FormStack, Input, KeyValueTable, Muted, PageSection, Switch } from "@/components/geass-ui";
 import { CodePanel } from "@/components/CodePanel";
+import { ManagedNotice } from "@/components/ManagedNotice";
 
 /** How copies of the cluster's state are doing, in the words and tones the rest of the page uses. */
 export const BACKUP_STATES = {
@@ -36,8 +37,11 @@ export function backupRows(settings) {
  * of your own, so that it can be rebuilt on a new machine if the control plane's disk is lost. K3s is told once, with the
  * installer, to send them; this says where, and takes effect with no restart. The access key is stored in a Secret and
  * never comes back to the browser.
+ *
+ * `managed` is set when the platform that runs this Geass keeps the installer, and what only it can finish, for itself (see
+ * lib/managed.js): what is there is shown, and there is nothing to change it with and no command to run.
  */
-export function ClusterBackup({ mutable }) {
+export function ClusterBackup({ mutable, managed = null }) {
   const queryClient = useQueryClient();
   const settings = useQuery({
     queryKey: ["etcd-snapshots"],
@@ -60,6 +64,8 @@ export function ClusterBackup({ mutable }) {
     );
   }
   const saved = settings.data;
+  // Whoever manages the cluster is the one who keeps it backed up, so the person is given nothing to change or to run.
+  const canChange = mutable && !managed;
   const state = BACKUP_STATES[saved.state] || BACKUP_STATES.off;
   const set = (field) => (event) => setForm({ ...form, [field]: event.currentTarget.value });
   const keepKey = saved.configured && saved.hasKey && form.accessKey === "" && form.secretKey === "";
@@ -108,14 +114,15 @@ export function ClusterBackup({ mutable }) {
       title="Cluster backup"
       actions={<Badge tone={state.tone}>{state.label}</Badge>}
     >
-      {saved.message ? <Muted size="sm">{saved.message}</Muted> : (
+      <ManagedNotice managed={managed} />
+      {saved.message ? <Muted size="sm">{saved.message}</Muted> : managed ? null : (
         <Muted size="sm">
           Off. K3s snapshots stay on the cluster's own disk and are lost with it.
         </Muted>
       )}
       {backupRows(saved).length ? <KeyValueTable items={backupRows(saved)} /> : null}
 
-      {mutable && !editing ? (
+      {canChange && !editing ? (
         <Stack gap="xs" mt="md">
           <div>
             <Button onClick={open}>{saved.configured ? "Change bucket" : "Set up"}</Button>
@@ -139,7 +146,7 @@ export function ClusterBackup({ mutable }) {
         </Stack>
       ) : null}
 
-      {mutable && editing ? (
+      {canChange && editing ? (
         <FormStack onSubmit={save}>
           <Field label="Bucket" description="Use a dedicated, encrypted, private bucket: a copy holds every secret in the cluster.">
             <Input value={form.bucket} onChange={set("bucket")} required aria-label="Bucket" placeholder="acme-geass-cluster-state" spellCheck={false} />
@@ -180,7 +187,7 @@ export function ClusterBackup({ mutable }) {
         </FormStack>
       ) : null}
 
-      {mutable ? (
+      {canChange ? (
         <Stack gap="xs" mt="md">
           <Text size="sm" fw={600}>What this needs</Text>
           <Muted size="sm">

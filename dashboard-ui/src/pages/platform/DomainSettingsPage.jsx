@@ -4,6 +4,8 @@ import { action } from "@/lib/api";
 import { canMutate, useBootstrap } from "@/lib/dashboard";
 import { alertUser, alertError } from "@/lib/notify";
 import { AppLink } from "@/components/AppLink";
+import { ManagedArea } from "@/components/ManagedNotice";
+import { managedFor } from "@/lib/managed";
 import { Button, Field, FormStack, Input, Select } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 
@@ -63,6 +65,8 @@ export function DomainSettingsPage({
   cloudflareLoading = false,
 }) {
   const { data } = useBootstrap();
+  // The platform that runs this Geass keeps the dashboard's domain: it is shown as it is, and cannot be changed.
+  const managed = managedFor(data, "dashboardDomain");
   const queryClient = useQueryClient();
   const cloudflareConnected = Boolean(cloudflareInfo?.connected ?? data?.platform?.hasCloudflare);
 
@@ -228,6 +232,7 @@ export function DomainSettingsPage({
 
   return (
     <SettingsSection title="Domain" flat>
+      <ManagedArea managed={managed}>
       {cloudflareConnected && !useManual ? (
         <>
           <SettingsPanel className="rw-domain-quick">
@@ -373,6 +378,7 @@ export function DomainSettingsPage({
           </SettingsPanel>
         </>
       )}
+      </ManagedArea>
     </SettingsSection>
   );
 }

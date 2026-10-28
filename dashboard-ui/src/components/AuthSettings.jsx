@@ -5,6 +5,7 @@ import { action, api } from "@/lib/api";
 import { alertError, notify } from "@/lib/notify";
 import { ssoErrorMessage } from "@/lib/sso";
 import { Badge, Button, Field, Input, Muted, Select, Switch, Textarea } from "@/components/geass-ui";
+import { ManagedArea } from "@/components/ManagedNotice";
 import { SettingsFormActions } from "@/layout/SettingsShell";
 
 const emptyForm = {
@@ -28,8 +29,11 @@ const asLines = (map) => Object.entries(map || {}).map(([key, value]) => `${key}
  * Who decides who signs in: the users in a Secret (the default), or an identity provider that speaks OpenID Connect,
  * which owns the people, invitations, organizations and teams. The client secret is kept in a Secret and never comes
  * back to the browser. Turning the provider on needs a successful test sign-in first, so a typo cannot lock everyone out.
+ *
+ * `managed` is set when the platform that runs this Geass keeps sign-in for itself (see lib/managed.js): the settings are
+ * shown as they are, with the reason, and cannot be changed.
  */
-export function AuthSettings({ mutable }) {
+export function AuthSettings({ mutable, managed = null }) {
   const settings = useQuery({
     queryKey: ["auth-settings"],
     queryFn: () => api("/api/settings/auth"),
@@ -125,6 +129,7 @@ export function AuthSettings({ mutable }) {
   const unrestricted = saved.configured && Object.keys(saved.requireClaim || {}).length === 0 && !saved.tenancy?.orgsClaim;
 
   return (
+    <ManagedArea managed={managed}>
     <div className="rw-tokens">
       <Group gap="sm" mb="md">
         <Text fw={600} size="sm">Signing in now</Text>
@@ -287,6 +292,7 @@ export function AuthSettings({ mutable }) {
         </Group>
       </Modal>
     </div>
+    </ManagedArea>
   );
 }
 

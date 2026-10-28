@@ -17,6 +17,20 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **Managed mode, for a platform that runs Geass for other people.** `spec.managed.enabled` on the platform configuration
+  (`spec.managed.provider` names the platform in the messages) makes the dashboard's API refuse every write to sign-in
+  (`/api/settings/auth/*`, and an organization's own provider), to the dashboard's domain and DNS (`/api/settings/domain/*` and the
+  Cloudflare connection) and to the bucket for the copies of the cluster's state (`/api/settings/etcd-snapshots/*`), whoever asks,
+  with `403`, `code` `managed`, and a message that says who manages it. It does so on the dashboard's routes and on the same
+  operations under `/api/v1`, and nothing is written. The dashboard is told in its bootstrap (`platform.managed`, for the platform's
+  administrators) and shows those pages as they are, read-only, with a notice, no installer command, no banner that asks for a
+  domain, and a Version section that says who updates Geass and K3s. The dashboard has no route that updates Geass or sets the K3s
+  version, so for those two it only says who does. Reads, and everything else (organizations, pools, servers, tokens, registry,
+  alerts, GitHub), are untouched, and so are the controllers. It is off unless set, and with it off the answers and the bootstrap are
+  the same, byte for byte, as without the field (tested). It is a guard rail and not a boundary: whoever can write the platform
+  configuration or the cluster's objects, or runs the installer, can still change these. Tested with a fake client through the
+  dashboard's whole handler chain, and the dashboard's own tests in jsdom (17 new); not tested on a real cluster, in a browser, with
+  a real identity provider or Cloudflare, or in rungeass. See [Managed mode](website/src/content/docs/docs/operations/managed-mode.md).
 - **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3

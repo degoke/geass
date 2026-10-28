@@ -5,6 +5,7 @@ import { alertError, notify } from "@/lib/notify";
 import { publicOrigin } from "@/lib/transport";
 import { ssoErrorMessage } from "@/lib/sso";
 import { Badge, Button, Field, Input, Muted, Textarea } from "@/components/geass-ui";
+import { ManagedNotice } from "@/components/ManagedNotice";
 
 const asLines = (map) => Object.entries(map || {}).map(([key, value]) => `${key}=${value}`).join("\n");
 
@@ -13,8 +14,11 @@ const asLines = (map) => Object.entries(map || {}).map(([key, value]) => `${key}
  * a link that names the organization; it maps one claim to a role, and cannot make anyone an administrator of the platform
  * or put them in another organization. It is tested, as someone who maps to admin, before it is turned on, and saving it
  * again turns it off. The client secret is kept in a Secret and never comes back.
+ *
+ * `managed` is set when the platform that runs this Geass keeps sign-in for itself: the provider is shown as it is, and there is
+ * nothing to change it with.
  */
-export function OrganizationIdP({ org, refetch }) {
+export function OrganizationIdP({ org, refetch, managed = null }) {
   const idp = org.idp;
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState("");
@@ -77,7 +81,8 @@ export function OrganizationIdP({ org, refetch }) {
           )}
         </Stack>
       ) : null}
-      {form ? (
+      <ManagedNotice managed={managed} />
+      {managed ? null : form ? (
         <form onSubmit={save}>
           <Stack gap="sm">
             <Field label="Name">

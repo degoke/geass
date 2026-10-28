@@ -4,6 +4,8 @@ import { list } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { isDataConnection } from "@/lib/compute";
 import { Button } from "@/components/geass-ui";
+import { ManagedArea } from "@/components/ManagedNotice";
+import { managedBy, managedFor } from "@/lib/managed";
 import { CloudConnections } from "@/components/compute/CloudConnections";
 import { SettingsDivider, SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
 import { GitHubConnectorPanel } from "@/pages/platform/GitHubConnectorPanel";
@@ -109,11 +111,14 @@ export function ConnectorsPage({ data, reload, githubInfo, cloudflareInfo }) {
       </SettingsSection>
 
       <SettingsSheet opened={active === "github"} onClose={() => setActive(null)} title="GitHub">
-        <GitHubConnectorPanel info={githubInfo || {}} reload={reload} inSheet />
+        <GitHubConnectorPanel info={githubInfo || {}} reload={reload} inSheet domainManagedBy={managedFor(data, "dashboardDomain") ? managedBy(data) : ""} />
       </SettingsSheet>
 
       <SettingsSheet opened={active === "cloudflare"} onClose={() => setActive(null)} title="Cloudflare">
-        <CloudflareConnectorPanel reload={reload} info={cloudflareInfo || {}} inSheet />
+        {/* Cloudflare is how Geass writes the dashboard's DNS records, which a platform that manages the domain keeps. */}
+        <ManagedArea managed={managedFor(data, "dashboardDomain")}>
+          <CloudflareConnectorPanel reload={reload} info={cloudflareInfo || {}} inSheet />
+        </ManagedArea>
       </SettingsSheet>
 
       <SettingsSheet opened={active === "aws"} onClose={() => setActive(null)} title="AWS">

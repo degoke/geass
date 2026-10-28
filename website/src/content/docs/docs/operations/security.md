@@ -13,6 +13,7 @@ had no independent audit, and nothing here should be read as one.
 | Surface | Protected by |
 | --- | --- |
 | Dashboard and REST API | Username and password (bcrypt), a signed session cookie, or an API token; users are `admin` or `viewer`, tokens can also be `observer` |
+| Settings a platform keeps for itself | Off by default. [Managed mode](/docs/operations/managed-mode/), set by the platform in `spec.managed`: the API refuses every caller's writes to sign-in, the dashboard's domain and DNS and the cluster-state backup, and the dashboard shows them read-only. A guard rail for the dashboard and its API, not a boundary against whoever can write the cluster's objects |
 | A deploy hook URL | A 160-bit secret in the path that deploys one service and does nothing else; refused as an API credential |
 | Writes from a browser | Same-origin check on every mutation (the request's `Origin` or `Referer` must match the dashboard host) |
 | Writes from scripts | API tokens sent in a header, stored only as hashes |
@@ -106,8 +107,10 @@ Setting it up and its limits are in [Sign in with an identity provider](/docs/gu
   provider signs in with a mapped role gets in: that is the setting to restrict when anyone can sign up at the provider. The role is
   fixed in the signed session cookie at sign-in, so a change at the provider applies when the session ends (an hour by
   default, 5 to 720 minutes).
-- **Only a signed-in admin can change it, never a token.** The settings, the test and the switch are refused for every API
-  token, observers included. Turning it on needs a test sign-in of exactly the settings as saved, by someone who maps to admin,
+- **Only a signed-in admin can change it, never a token, and nobody when a platform manages it.** With
+  [managed mode](/docs/operations/managed-mode/) on, the settings, the test and the switch (and an organization's own provider) are
+  refused for everyone, administrators included, whatever the rest of this list says. The settings, the test and the switch are
+  refused for every API token, observers included. Turning it on needs a test sign-in of exactly the settings as saved, by someone who maps to admin,
   in the last half hour, and an admin who has a password. Saving is refused while people sign in through the provider.
 - **The way in that does not depend on the provider stays.** A user in the Secret who is an admin and has a password can still
   sign in. While the provider decides, the password of a user who is not an admin is refused, and turning the provider on in the
@@ -632,6 +635,10 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
     Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through the
     [mail relay](/docs/guides/mail-relay/), with a sender domain required, each organization's domains verified at the upstream, and a
     sending quota at the upstream too: the relay's counts start over when it restarts.
+19. If a platform runs your Geass for you, or you run Geass for others, turn on [managed mode](/docs/operations/managed-mode/)
+    (`spec.managed.enabled`) so that nobody signed in to the dashboard can change sign-in, the dashboard's domain or the
+    cluster-state backup. Remember it is a guard rail: protect `GeassPlatformConfig`, `GeassCluster` and the operator's Deployment
+    with Kubernetes RBAC, and keep the installer off a control plane that the platform hosts.
 
 ## What stays your responsibility
 

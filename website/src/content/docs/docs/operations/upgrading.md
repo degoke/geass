@@ -13,6 +13,9 @@ Three things can be updated, and each has its own rules:
 | **K3s** on the control plane | The installer, on the control plane | Add `--k3s-version`. See [Update K3s](#update-k3s) |
 | **K3s** on the workers | The operator, over SSH, one node at a time | Follows the control plane once `spec.k3s.version` says so. See [Workers](#workers) |
 
+On a Geass that a platform runs for you, with [managed mode](/docs/operations/managed-mode/) on, the platform does all three, and the
+dashboard says so instead of telling you to run the installer. Managed mode does not change the installer itself.
+
 ## Update Geass
 
 SSH into the control plane and run the installer of the release you want:

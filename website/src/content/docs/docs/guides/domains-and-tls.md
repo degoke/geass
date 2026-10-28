@@ -8,6 +8,12 @@ Geass publishes two kinds of things on your domain: the **dashboard**, and the *
 setting the platform domain, how Geass checks it, Cloudflare-managed DNS, custom domains on a service, and how Geass gets
 HTTPS certificates, including the contact email it needs.
 
+:::note
+On a Geass that a platform runs for you, with [managed mode](/docs/operations/managed-mode/) on, the dashboard's domain, and the
+Cloudflare connection that writes its DNS records, are the platform's: **Settings** → **Domain** is shown read-only, and the API
+refuses to change them (`403`, `code` `managed`). Services' hostnames are not affected.
+:::
+
 :::caution
 Geass creates the certificate issuer only when the cluster has a contact email for Let's Encrypt. Every HTTPS Ingress
 Geass creates, for the dashboard and for services, asks cert-manager for its certificate from a `ClusterIssuer` named

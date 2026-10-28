@@ -5879,3 +5879,22 @@ code,
 .rw-resource-drawer-panel .rw-tabs {
   gap: 14px;
 }
+
+/* Managed mode: the platform that runs this Geass keeps an area, so it is shown as it is, with the reason above it. */
+.geass-managed-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--geass-border);
+  background: var(--geass-surface);
+}
+
+.geass-managed-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
