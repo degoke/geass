@@ -33,7 +33,10 @@ reads these environment variables (see [Install](/docs/getting-started/install/)
 | --- | --- | --- |
 | `GEASS_ACME_EMAIL` | none | The contact address for the cluster's Let's Encrypt account. Checked at the first step (it must look like `name@host.tld`, with no spaces and at most 254 characters), then written to the `GeassCluster` as `spec.addons.certManager.acmeEmail`. Without it Geass creates no certificate issuer and no HTTPS certificate is issued. Let's Encrypt refuses placeholder domains such as `example.com`. [HTTPS certificates](/docs/getting-started/install/#https-certificates) |
 | `GEASS_MULTI_SITE` | off | `1`, `true`, `yes` or `on` builds a cluster whose nodes are at different providers: an encrypted WireGuard overlay instead of VXLAN. Chosen at install time because changing it later means restarting every node. [Multi-provider clusters](/docs/operations/multi-provider/) |
-| `GEASS_NODE_EXTERNAL_IP` | none | This node's public IP address. Required when `GEASS_MULTI_SITE` is on; must be a valid IP. Workers join on it |
+| `GEASS_NODE_EXTERNAL_IP` | none | This node's public IP address. Required when `GEASS_MULTI_SITE` is on; must be a valid IP. Workers join on it. With `GEASS_MESH=tailscale` it is optional and defaults to the address `tailscale ip -4` prints |
+| `GEASS_MESH` | none | `wireguard` or `tailscale`. `wireguard` is `GEASS_MULTI_SITE=1` and also records `spec.network.mesh`, which turns on the operator's checks of the mesh, and the installer then refuses an address no other machine can use. `tailscale` joins a Tailscale or Headscale network and needs `GEASS_TAILSCALE_AUTH_KEY_FILE`; this machine must already be on the tailnet. Together with `GEASS_MULTI_SITE=1` it is refused, and an additional server refuses it. [Mesh networking](/docs/operations/mesh-networking/) |
+| `GEASS_TAILSCALE_AUTH_KEY_FILE` | none | With `GEASS_MESH=tailscale`: a file that holds the auth key nodes join the tailnet with, 8 to 256 letters, digits, dashes and underscores. The key is written to `/etc/rancher/k3s/vpn-auth` (mode 600) and stored in the Secret `geass-mesh-auth`; it is never logged |
+| `GEASS_TAILSCALE_CONTROL_URL` | none | With `GEASS_MESH=tailscale`: an `https` address of a Headscale server. Empty means Tailscale's own service |
 | `GEASS_K3S_VERSION` | the current `stable` K3s | The K3s release, in full (`v1.36.5+k3s1`), to build a new cluster on. The same as `--k3s-version` for a new cluster; when a cluster that exists is updated it is ignored (with a warning), so a value left over from the install does not upgrade K3s: pass `--k3s-version` for that |
 | `GEASS_JOIN_SERVER` | none | The address of a cluster's server, such as `https://10.0.0.5:6443`. With it the installer does not build a cluster: it makes this machine an additional control plane server of that one. The same as `--join-server`, and it also needs the K3s release the cluster runs, in `GEASS_K3S_VERSION` or `--k3s-version`. See [High availability](/docs/operations/high-availability/#run-three-control-plane-servers) |
 | `GEASS_JOIN_TOKEN` | none | The cluster's server token, from `/var/lib/rancher/k3s/server/token` on its first server. Needed with `GEASS_JOIN_SERVER`. Pass it here and not as `--join-token`, which other users of the machine can read in the process list |
@@ -83,7 +86,7 @@ warning at that last step and creates the cluster without an `acmeEmail`.
 
 :::note
 Running the installer on a machine that already runs Geass updates it and does not apply your `GEASS_ACME_EMAIL`,
-`GEASS_MULTI_SITE` or `GEASS_NODE_EXTERNAL_IP` again: they describe a new cluster. To change a setting of a working cluster,
+`GEASS_MULTI_SITE`, `GEASS_MESH` or `GEASS_NODE_EXTERNAL_IP` again: they describe a new cluster. To change a setting of a working cluster,
 edit the `GeassCluster`.
 :::
 
@@ -91,7 +94,8 @@ Files it writes on the server:
 
 | Path | Content |
 | --- | --- |
-| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below), secrets encryption (`secrets-encryption: true`) and, for multi-site, the WireGuard backend, external IP and certificate name |
+| `/etc/rancher/k3s/config.yaml` | K3s server settings: the kubelet log limits (below), secrets encryption (`secrets-encryption: true`) and, for multi-site, the WireGuard backend, external IP and certificate name (for a Tailscale mesh, `vpn-auth-file`, the external IP and the certificate name, and no flannel setting) |
+| `/etc/rancher/k3s/vpn-auth` | A Tailscale mesh only: the credentials K3s joins the tailnet with, mode 600 |
 | `/etc/rancher/k3s/k3s.yaml` | The admin kubeconfig K3s writes |
 | `/var/lib/rancher/k3s/server/node-token` | The join token, also copied to the Secret `geass-token` |
 
@@ -452,7 +456,7 @@ The `AlertmanagerConfig` `geass-alerts` in `geass-system` is made from the alert
 | 8080 | The scale-to-zero proxy (`keda-add-ons-http-interceptor-proxy` in `keda`), in the cluster only, when that add-on is on | HTTP |
 | 6443 | Kubernetes API | HTTPS |
 | 10250 | kubelet | HTTPS |
-| 8472 or 51820 | Overlay network (VXLAN, or WireGuard for multi-site) | UDP |
+| 8472 or 51820 | Overlay network (VXLAN, or WireGuard for multi-site). A Tailscale mesh opens no port for the cluster | UDP |
 
 ## Troubleshooting
 

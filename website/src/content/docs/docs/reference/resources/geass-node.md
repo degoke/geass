@@ -171,7 +171,7 @@ The name must match the control plane's Kubernetes node name (its hostname). The
 | `spec.cloud.spot` | boolean | `false` | None | Ask for a cheaper machine that the cloud may take back. |
 | `spec.cloud.addressType` | string | `Public` | Enum `Public`, `Private` | Which address of the machine Geass reaches it on. |
 | `spec.cloud.settings` | map of strings | Optional | None | Values specific to the cloud. |
-| `spec.eip` | string | Optional. Required in practice for a worker. | None | The address Geass connects to over SSH: any address or host name the control plane can reach. In a multi-site cluster it is also the address the node advertises. |
+| `spec.eip` | string | Optional. Required in practice for a worker. | None | The address Geass connects to over SSH: any address or host name the control plane can reach. In a multi-site cluster it is also the address the node advertises, and in a [WireGuard mesh](/docs/operations/mesh-networking/) it must be an IP address that other machines can use (a Tailscale node advertises its tailnet address instead). |
 | `spec.sshPort` | integer | CRD default `22` | None | The SSH port used to provision the node and to remove it. |
 | `spec.sshUser` | string | Optional. Required in practice for a worker. | None | The SSH user: `root`, or a user with passwordless `sudo`. An empty user cannot sign in. |
 | `spec.sshKeySecretRef` | SecretReference | Required for a worker. Optional for a control plane. | None | The Secret that holds the private key, and optionally the `known_hosts` that pin the machine's host key. A standard Kubernetes `name` and `namespace` pair. The namespace defaults to the node's. |
@@ -343,9 +343,10 @@ For a worker, the operator waits for the cluster, then runs these steps over SSH
 | --- | --- |
 | `check-curl` | Uses `curl`, or installs it with `apt-get`. |
 | `install-iscsi` | Installs and enables the iSCSI initiator Longhorn needs. Optional: a failure does not stop the join. |
+| `install-tailscale`, `join-tailnet` | A [Tailscale mesh](/docs/operations/mesh-networking/) only, before the check below. The first installs Tailscale with its own script when it is missing. The second writes `/etc/rancher/k3s/vpn-auth` (mode 600) and brings the node onto the tailnet with the auth key, and fails when the node gets no tailnet address. |
 | `check-cluster-reachable` | Runs `curl -sk --max-time 15 <serverURL>/ping`, which must answer `pong`. `<serverURL>` is the cluster's `spec.serverURL`, or, when that is a loopback address, the address the control plane node registered under (its external address in a multi-site cluster). On failure the message is `cannot reach the cluster API at <serverURL> from this node:` followed by what curl found: `the connection was refused`, `the connection timed out`, `the host name does not resolve`, `something answered, but it is not a K3s API server`, or, for a loopback address, that `spec.serverURL` is a loopback address. |
 | `check-wireguard`, `open-overlay-port` | Multi-site clusters only. The first needs a kernel that can create a WireGuard interface. The second opens 51820/udp and 10250/tcp in `ufw` or `firewalld`, if one is active. Optional. |
-| `write-k3s-config` | Overwrites `/etc/rancher/k3s/config.yaml` with the node labels and taints from `spec.placement`, kubelet log rotation settings and, for multi-site, `node-external-ip`. |
+| `write-k3s-config` | Overwrites `/etc/rancher/k3s/config.yaml` with the node labels and taints from `spec.placement`, kubelet log rotation settings and, for multi-site, `node-external-ip` (for a Tailscale mesh, `vpn-auth-file` and the node's tailnet address as `node-external-ip`). |
 | `install-k3s` | Runs the K3s installer in `agent` mode with the cluster's `serverURL`, the join token and the node name. |
 | `enable-k3s` | `systemctl enable k3s-agent && systemctl start k3s-agent`. |
 

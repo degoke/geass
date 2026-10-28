@@ -126,12 +126,73 @@ type GeassClusterNetworkSpec struct {
 	// +optional
 	MultiSite bool `json:"multiSite,omitempty"`
 
+	// Mesh says how nodes at different sites, some of them behind a NAT, are joined into one cluster network. Left
+	// out, nothing changes: multiSite on its own is the same as a mesh with the WireGuard provider, as it always was,
+	// and a cluster that sets neither keeps one private network. Setting it also turns on the checks the operator
+	// makes of a mesh (the MeshReady condition, and a worker is refused while the control plane is not on it), and
+	// makes multiSite redundant. Like multiSite it is chosen when the cluster is installed, because it describes how
+	// the control plane was built and Geass does not rebuild that.
+	// +optional
+	Mesh *GeassClusterMeshSpec `json:"mesh,omitempty"`
+
 	// ControlPlaneFirewall names the cloud firewall in front of the control plane. When it is set, the address of each
-	// machine a pool creates is let through it (the API port and the overlay port) before the machine joins, and
-	// taken out again when the machine is removed, so the control plane need not be open to the internet. Without it
-	// the control plane's TCP 6443 and UDP 51820 must already accept the new machines.
+	// machine a pool creates is let through it (the API port and, in a WireGuard mesh, the overlay port) before the
+	// machine joins, and taken out again when the machine is removed, so the control plane need not be open to the
+	// internet. Without it the control plane's TCP 6443 (and UDP 51820 in a WireGuard mesh) must already accept the
+	// new machines.
 	// +optional
 	ControlPlaneFirewall *GeassControlPlaneFirewall `json:"controlPlaneFirewall,omitempty"`
+}
+
+// MeshProvider is what carries traffic between the sites of a mesh.
+// +kubebuilder:validation:Enum=WireGuard;Tailscale
+type MeshProvider string
+
+const (
+	// MeshProviderWireGuard is K3s's own WireGuard flannel backend (wireguard-native): every node advertises an address
+	// the others can send UDP 51820 to, and a node behind a NAT can join when it is the one that opens the tunnel.
+	// It needs nothing outside the cluster.
+	MeshProviderWireGuard MeshProvider = "WireGuard"
+	// MeshProviderTailscale is K3s's Tailscale integration (vpn-auth), for a Tailscale tailnet or a Headscale server.
+	// Nodes advertise their tailnet address, and Tailscale finds a path between them, through a relay when it must,
+	// so two nodes that are both behind a NAT can reach each other. It needs a tailnet and an auth key.
+	MeshProviderTailscale MeshProvider = "Tailscale"
+)
+
+// GeassClusterMeshSpec chooses the mesh the nodes of a cluster talk over.
+// +kubebuilder:validation:XValidation:rule="self.provider != 'Tailscale' || has(self.tailscale)",message="provider Tailscale needs the tailscale settings (an auth key Secret)"
+// +kubebuilder:validation:XValidation:rule="self.provider == 'Tailscale' || !has(self.tailscale)",message="the tailscale settings are only for provider Tailscale"
+type GeassClusterMeshSpec struct {
+	// Provider is what carries traffic between the sites. WireGuard is the default and needs nothing but UDP 51820
+	// between nodes; Tailscale needs a tailnet (or a Headscale server) and an auth key, and opens no port.
+	// +kubebuilder:default=WireGuard
+	// +optional
+	Provider MeshProvider `json:"provider,omitempty"`
+
+	// Tailscale holds what a node needs to join the tailnet. It is required with provider Tailscale and refused
+	// with any other.
+	// +optional
+	Tailscale *GeassMeshTailscale `json:"tailscale,omitempty"`
+}
+
+// GeassMeshTailscale is how nodes join a tailnet, or a Headscale server's network.
+type GeassMeshTailscale struct {
+	// AuthKeySecretRef names a Secret in geass-system that holds the key nodes join the tailnet with, under the key
+	// authKey. Use a reusable, pre-approved key that is tagged (or that belongs to a user who may have the nodes),
+	// and that expires: it is copied to the disk of every node, where only root can read it. The key is never shown
+	// in a status, an event or the operator's log.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	AuthKeySecretRef string `json:"authKeySecretRef"`
+
+	// ControlServerURL is the address of a Headscale server (or another Tailscale-compatible control server), such as
+	// https://headscale.example.com. Left empty, nodes join Tailscale's own service. It must be https, and has
+	// no user name, query or fragment.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^(https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)?$`
+	// +optional
+	ControlServerURL string `json:"controlServerURL,omitempty"`
 }
 
 // GeassControlPlaneFirewall says which firewall guards the control plane, and the connection that may change it.

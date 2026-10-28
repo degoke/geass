@@ -1,0 +1,7 @@
+{
+  "multi-manifest": "apiVersion: geass.geass.dev/v1alpha1\nkind: GeassCluster\nmetadata:\n  name: default\n  namespace: geass-system\nspec:\n  version: v1\n  serverURL: https://203.0.113.1:6443\n  tokenSecretRef:\n    name: geass-token\n    namespace: geass-system\n  addons:\n    longhorn:\n      enabled: true\n    logging:\n      enabled: true\n    certManager:\n      acmeEmail: \"ops@example.com\"\n  network:\n    multiSite: true\n",
+  "multi-server-config": "flannel-backend: wireguard-native\nflannel-external-ip: true\nkubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nnode-external-ip: 203.0.113.1\nsecrets-encryption: true\ntls-san:\n- 203.0.113.1\n",
+  "multi-server-url": "https://203.0.113.1:6443",
+  "single-manifest": "apiVersion: geass.geass.dev/v1alpha1\nkind: GeassCluster\nmetadata:\n  name: default\n  namespace: geass-system\nspec:\n  version: v1\n  serverURL: https://10.0.0.5:6443\n  tokenSecretRef:\n    name: geass-token\n    namespace: geass-system\n  addons:\n    longhorn:\n      enabled: true\n    logging:\n      enabled: true\n    certManager:\n      acmeEmail: \"ops@example.com\"\n",
+  "single-server-config": "kubelet-arg:\n- container-log-max-size=50Mi\n- container-log-max-files=5\nsecrets-encryption: true\n"
+}

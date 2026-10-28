@@ -8,6 +8,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -29,6 +30,14 @@ type AgentConfig struct {
 	NodeExternalIP string
 	// KubeletArgs are "key=value" kubelet settings.
 	KubeletArgs []string
+	// VPNAuthFile is the file K3s reads its tailnet credentials from (--vpn-auth-file). Only a Tailscale mesh sets it.
+	// The file itself is written by the join step that brings the node onto the tailnet, with mode 0600, so the key is
+	// never in this configuration.
+	VPNAuthFile string
+	// ExternalIPFromTailnet means the node advertises the address it has on the tailnet, which is only known once the
+	// node is on it. The configuration is then written with that address appended by the machine, and NodeExternalIP
+	// is not used.
+	ExternalIPFromTailnet bool
 }
 
 // AgentOptions is what a worker's configuration is built from.
@@ -40,6 +49,8 @@ type AgentOptions struct {
 	// Labels and Taints are what a node of a pool registers with beyond its placement.
 	Labels map[string]string
 	Taints []corev1.Taint
+	// Tailscale is set for a node that joins a Tailscale mesh. It then advertises its tailnet address and not ExternalIP.
+	Tailscale *TailscaleJoin
 }
 
 // NewAgentConfig builds a worker's join-time configuration: its placement, how long its container logs
@@ -57,7 +68,11 @@ func NewAgentConfig(options AgentOptions) AgentConfig {
 	config.NodeLabels = slices.Compact(config.NodeLabels)
 	config.NodeTaints = slices.Compact(config.NodeTaints)
 	config.KubeletArgs = slices.Clone(platform.KubeletLogArgs)
-	if options.MultiSite && options.ExternalIP != "" {
+	switch {
+	case options.Tailscale != nil:
+		config.VPNAuthFile = mesh.AuthFile
+		config.ExternalIPFromTailnet = true
+	case options.MultiSite && options.ExternalIP != "":
 		config.NodeExternalIP = options.ExternalIP
 	}
 	return config
@@ -84,7 +99,8 @@ func AgentConfigFor(placement *geassv1alpha1.GeassNodePlacement) AgentConfig {
 
 // IsZero reports whether there is nothing to write.
 func (c AgentConfig) IsZero() bool {
-	return len(c.NodeLabels) == 0 && len(c.NodeTaints) == 0 && c.NodeExternalIP == "" && len(c.KubeletArgs) == 0
+	return len(c.NodeLabels) == 0 && len(c.NodeTaints) == 0 && c.NodeExternalIP == "" && len(c.KubeletArgs) == 0 &&
+		c.VPNAuthFile == "" && !c.ExternalIPFromTailnet
 }
 
 // YAML renders the k3s configuration file.
@@ -102,6 +118,9 @@ func (c AgentConfig) YAML() string {
 	if len(c.KubeletArgs) > 0 {
 		values["kubelet-arg"] = c.KubeletArgs
 	}
+	if c.VPNAuthFile != "" {
+		values["vpn-auth-file"] = c.VPNAuthFile
+	}
 	raw, err := yaml.Marshal(values)
 	if err != nil {
 		return ""
@@ -116,5 +135,10 @@ func (c AgentConfig) writeConfigCommand() string {
 	b.WriteString("mkdir -p /etc/rancher/k3s && cat > " + k3sConfigPath + " <<'GEASS_K3S_CONFIG'\n")
 	b.WriteString(c.YAML())
 	b.WriteString("GEASS_K3S_CONFIG")
+	if c.ExternalIPFromTailnet {
+		// The address is the one the node was given on the tailnet, so the machine says it. The step that joined the
+		// tailnet has checked that there is one.
+		b.WriteString("\necho \"node-external-ip: $(tailscale ip -4 | head -n 1)\" >> " + k3sConfigPath)
+	}
 	return b.String()
 }

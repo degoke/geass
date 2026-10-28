@@ -127,8 +127,8 @@ func (s *JoinChecks) Run() error {
 	if err := s.Plan.Join.Validate(); err != nil {
 		return err
 	}
-	if envEnabled("GEASS_MULTI_SITE") {
-		return fmt.Errorf("GEASS_MULTI_SITE is for the first server of a cluster. A multi-site cluster keeps its control plane at one site, " +
+	if envEnabled("GEASS_MULTI_SITE") || os.Getenv("GEASS_MESH") != "" {
+		return fmt.Errorf("GEASS_MULTI_SITE and GEASS_MESH are for the first server of a cluster. A multi-site cluster keeps its control plane at one site, " +
 			"and servers at other sites would carry etcd's traffic across the internet")
 	}
 	if err := (&SystemChecks{Network: Network{}}).Run(); err != nil {

@@ -108,6 +108,7 @@ Remove what the installer and K3s left on each server, if you want it gone:
 
 - **Longhorn data.** `sudo rm -rf /var/lib/longhorn`. This deletes the only copies of database volumes on that node. Run it when you are sure you no longer need them.
 - **Firewall rules.** With `ufw` or `firewalld` active, the installer opened 6443/tcp, 10250/tcp and 8472/udp (51820/udp for a multi-site cluster). Delete them in your firewall, for example `sudo ufw delete allow 6443/tcp`, or in your provider's security group. Rules you added yourself, such as 80/tcp and 443/tcp, are yours to remove.
+- **A Tailscale mesh.** Tailscale stays installed and each server stays on the tailnet (K3s did not install it). Remove the servers in the Tailscale or Headscale admin console, or run `sudo tailscale logout` on each, and revoke the auth key you gave Geass. K3s's script deletes `/etc/rancher/k3s`, and with it the file that held the key (`vpn-auth`); the Secret `geass-mesh-auth` goes with the cluster.
 - **iSCSI.** The `iscsid` service and the `open-iscsi` or `iscsi-initiator-utils` package are still installed.
 - **Installer files.** `geass-install-*.log` in the directory you ran the installer from, and the downloaded installer in your temporary directory.
 

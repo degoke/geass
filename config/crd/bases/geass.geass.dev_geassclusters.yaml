@@ -223,9 +223,10 @@ spec:
                   controlPlaneFirewall:
                     description: |-
                       ControlPlaneFirewall names the cloud firewall in front of the control plane. When it is set, the address of each
-                      machine a pool creates is let through it (the API port and the overlay port) before the machine joins, and
-                      taken out again when the machine is removed, so the control plane need not be open to the internet. Without it
-                      the control plane's TCP 6443 and UDP 51820 must already accept the new machines.
+                      machine a pool creates is let through it (the API port and, in a WireGuard mesh, the overlay port) before the
+                      machine joins, and taken out again when the machine is removed, so the control plane need not be open to the
+                      internet. Without it the control plane's TCP 6443 (and UDP 51820 in a WireGuard mesh) must already accept the
+                      new machines.
                     properties:
                       connectionRef:
                         description: |-
@@ -247,6 +248,57 @@ spec:
                     - connectionRef
                     - target
                     type: object
+                  mesh:
+                    description: |-
+                      Mesh says how nodes at different sites, some of them behind a NAT, are joined into one cluster network. Left
+                      out, nothing changes: multiSite on its own is the same as a mesh with the WireGuard provider, as it always was,
+                      and a cluster that sets neither keeps one private network. Setting it also turns on the checks the operator
+                      makes of a mesh (the MeshReady condition, and a worker is refused while the control plane is not on it), and
+                      makes multiSite redundant. Like multiSite it is chosen when the cluster is installed, because it describes how
+                      the control plane was built and Geass does not rebuild that.
+                    properties:
+                      provider:
+                        default: WireGuard
+                        description: |-
+                          Provider is what carries traffic between the sites. WireGuard is the default and needs nothing but UDP 51820
+                          between nodes; Tailscale needs a tailnet (or a Headscale server) and an auth key, and opens no port.
+                        enum:
+                        - WireGuard
+                        - Tailscale
+                        type: string
+                      tailscale:
+                        description: |-
+                          Tailscale holds what a node needs to join the tailnet. It is required with provider Tailscale and refused
+                          with any other.
+                        properties:
+                          authKeySecretRef:
+                            description: |-
+                              AuthKeySecretRef names a Secret in geass-system that holds the key nodes join the tailnet with, under the key
+                              authKey. Use a reusable, pre-approved key that is tagged (or that belongs to a user who may have the nodes),
+                              and that expires: it is copied to the disk of every node, where only root can read it. The key is never shown
+                              in a status, an event or the operator's log.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                          controlServerURL:
+                            description: |-
+                              ControlServerURL is the address of a Headscale server (or another Tailscale-compatible control server), such as
+                              https://headscale.example.com. Left empty, nodes join Tailscale's own service. It must be https, and has
+                              no user name, query or fragment.
+                            maxLength: 253
+                            pattern: ^(https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)?$
+                            type: string
+                        required:
+                        - authKeySecretRef
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: provider Tailscale needs the tailscale settings (an
+                        auth key Secret)
+                      rule: self.provider != 'Tailscale' || has(self.tailscale)
+                    - message: the tailscale settings are only for provider Tailscale
+                      rule: self.provider == 'Tailscale' || !has(self.tailscale)
                   multiSite:
                     description: |-
                       MultiSite means the nodes are at different providers and reach each other over the internet, so

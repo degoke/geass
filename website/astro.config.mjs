@@ -135,6 +135,7 @@ export default defineConfig({
             "docs/operations/disaster-recovery",
             "docs/operations/sizing",
             "docs/operations/multi-provider",
+            "docs/operations/mesh-networking",
             "docs/operations/hosted-control-plane",
             "docs/operations/managed-mode",
             "docs/operations/sandboxed-runtime",

@@ -84,7 +84,7 @@ The installer prints each step with `→`, a `✓` when it finishes and `✗ <st
 | **apply GeassCluster CR** | "wait for GeassCluster CRD: …" | The operator's custom resource definitions did not become established in 60 seconds. Check the operator pod. |
 | **store worker join token** | "read join token: …" or "join token file … is empty" | K3s has not written `/var/lib/rancher/k3s/server/node-token`. Check K3s, then run the installer again. |
 
-In multi-provider mode, see [Nodes at more than one provider](/docs/operations/multi-provider/) for the messages about `GEASS_NODE_EXTERNAL_IP` and WireGuard.
+In multi-provider mode, see [Nodes at more than one provider](/docs/operations/multi-provider/) for the messages about `GEASS_NODE_EXTERNAL_IP` and WireGuard. For a mesh (`spec.network.mesh`), see [Mesh networking](/docs/operations/mesh-networking/#troubleshooting) for the messages that begin "the mesh cannot take", and for the `MeshReady` condition.
 
 :::danger
 On a machine that already runs Geass the installer updates it and keeps what it holds; on any other machine that has K3s it stops and says why. It removes a K3s only when you pass `--reinstall`, after a confirmation. Only reinstall a machine you mean to rebuild.
