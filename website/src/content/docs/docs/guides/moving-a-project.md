@@ -150,7 +150,7 @@ The dry run does not check one thing the import does: whether an engine can run 
 The plan's `next` lists these for the project it describes.
 
 1. **Connect the new project to GitHub**, if any service builds from a repository (`POST /api/v1/projects/{project}/github/install`). See [GitHub and builds](/docs/guides/github-and-builds/).
-2. **Enter the secrets again.** `toReenter` names each one. A secret you set on a service that is still a draft is held by the operator until the service is deployed, so it is in neither the bundle nor `toReenter` until then: write down what a draft needs. A service's secret: `POST /api/v1/apps/{name}/secrets/set` with `key` and `value`. A value that was left out for looking like a secret but is plain configuration: `POST /api/v1/apps/{name}/config/set`. A shared variable: `POST /api/v1/projects/{project}/variables/save`. See [Environment variables](/docs/guides/environment-variables/).
+2. **Enter the secrets again.** `toReenter` names each one. A service's secret: `POST /api/v1/apps/{name}/secrets/set` with `key` and `value`. A value that was left out for looking like a secret but is plain configuration: `POST /api/v1/apps/{name}/config/set`. A shared variable: `POST /api/v1/projects/{project}/variables/save`. See [Environment variables](/docs/guides/environment-variables/).
 3. **Choose backup storage** for the project, if databases have backups on: [Backups and restore](/docs/guides/backups-and-restore/#choose-where-backups-are-stored).
 4. **Deploy the databases** (`POST /api/v1/databases/{name}/deploy`), and move their data if you are keeping it.
 5. **Deploy the buckets**, and copy the objects into them.
