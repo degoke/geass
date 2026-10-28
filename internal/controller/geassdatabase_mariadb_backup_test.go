@@ -231,6 +231,9 @@ func TestMariaDBWindowEndsAtTheNewestCopyUntilTheOperatorSaysMore(t *testing.T) 
 
 func TestMariaDBBinaryLogsOlderThanTheOldestCopyAreRemovedAndTheOthersKept(t *testing.T) {
 	env, mdb := mariaEnv(t, true)
+	// The first pass runs at an hour that is not the pruning hour. On the real clock it listed the logs, and so failed this test, whenever the test ran between
+	// 03:00 and 03:59 UTC (mariadbBinlogPruneHour), because the assertion below looks at everything that was ever listed.
+	env.r.clock = func() time.Time { return time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC) }
 	env.maintainMaria(mdb)
 	now := utcSeconds(time.Now())
 	oldest := now.Add(-10 * 24 * time.Hour)
