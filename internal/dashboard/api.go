@@ -231,16 +231,7 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create" || mutation.URL.Path == "/connections/create":
-		if mutation.ParseForm() == nil && computeConnectionRequested(mutation) {
-			// Machines belong to the cluster. /cloud-connections/create is an organization's route for storage and
-			// databases, and it hands a request for a cloud that makes machines to this handler, so who asks is checked here.
-			if !requirePlatformContext(w, mutation) {
-				return
-			}
-			s.handleComputeConnectionCreate(w, mutation)
-			return
-		}
-		s.handleCloudConnectionCreate(w, mutation)
+		s.handleConnectionCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/connections/"):
 		s.handleConnectionRoutes(w, mutation)
 	case mutation.URL.Path == "/pools/create":
@@ -254,6 +245,21 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}
+}
+
+// handleConnectionCreate makes a connection, and is a method of its own so that handleAPIMutation's route switch stays under
+// the linter's cyclomatic-complexity limit as routes are added to it.
+func (s *Server) handleConnectionCreate(w http.ResponseWriter, mutation *http.Request) {
+	if mutation.ParseForm() == nil && computeConnectionRequested(mutation) {
+		// Machines belong to the cluster. /cloud-connections/create is an organization's route for storage and
+		// databases, and it hands a request for a cloud that makes machines to this handler, so who asks is checked here.
+		if !requirePlatformContext(w, mutation) {
+			return
+		}
+		s.handleComputeConnectionCreate(w, mutation)
+		return
+	}
+	s.handleCloudConnectionCreate(w, mutation)
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
