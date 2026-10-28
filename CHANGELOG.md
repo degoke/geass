@@ -31,13 +31,17 @@ The first public release, open source under the Apache License 2.0.
   control plane that was built without the mesh) and writes a `MeshReady` condition on the cluster naming what needs
   attention (a private `serverURL`, nodes that are not on the mesh, a control plane without the mesh); the installer
   refuses a WireGuard mesh address no other machine can use. It never tests that traffic flows between sites, that UDP 51820
-  is open, a NAT's behaviour or the path's MTU: the documentation gives the commands to check, and a plan for the run that
-  has not been done. A cluster that does not set the field gets exactly the K3s settings, join commands, cluster object and
+  is open, a NAT's behaviour or the path's MTU: the documentation gives the commands to check. A cluster that does not set the field gets exactly the K3s settings, join commands, cluster object and
   monitoring values it got before (tests compare them with what the code produced earlier), and `multiSite` alone is still
-  joined and left alone as it was. Off by default; additive to the CRD. **Not run on real machines:** no node was joined to
-  a real mesh, none behind a NAT, and Tailscale and Headscale were never started with it. Tested with unit tests, tests
-  against a real API server (the CRD's rules and defaults, the condition) and the worker's new shell commands run locally
-  with a stand-in `tailscale`. See [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md).
+  joined and left alone as it was. Off by default; additive to the CRD. **Run once, on EC2, in two networks of one region** (2026-10-28):
+  a WireGuard worker behind a Linux NAT that forwarded only SSH joined in 17 s and stayed joined; with randomised source
+  ports and with UDP 51820 forwarded it worked too; with UDP 51820 dropped the join succeeded and every check in Geass stayed
+  green while pods lost every packet. Tailscale worked against a self-hosted Headscale with exactly what Geass writes. The
+  installer now warns when `GEASS_NODE_EXTERNAL_IP` is on no interface of the machine (an EC2 Elastic IP is not, and the
+  WireGuard install fails without it on `lo`). **Not run:** wide-area paths, other clouds, Tailscale's own service, a pool
+  at a second provider. Also tested with unit tests, tests against a real API server (the CRD's rules and defaults, the
+  condition) and the worker's new shell commands run locally with a stand-in `tailscale`. See
+  [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md).
 - **Mantine 9 for `@geass/dashboard-ui`.** The library's peer dependencies on `@mantine/core`, `hooks`, `notifications` and
   `code-highlight` accept `^8.3.0 || ^9.0.0`, so an application on Mantine 9 can install it without an unmet-peer warning.
   The library's own tests (38) pass and its library build works with Mantine 9.7.3, and rungeass renders it under 9.7.3

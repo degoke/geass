@@ -6,7 +6,7 @@ description: "Join servers at several sites, some behind a NAT with no public ad
 A cluster normally keeps its nodes on one private network. A **mesh** joins nodes that are at different sites, and may be behind a NAT with no public address, into one cluster network. You choose it when you install the control plane, and record it on the cluster with `spec.network.mesh`. Geass supports two meshes: K3s's own WireGuard overlay (the default, nothing extra to run) and a Tailscale or Headscale network (an account or a server, but it finds its way through NATs for you).
 
 :::caution
-**This was not run on real machines.** The code that writes the K3s settings, joins workers, refuses a join that cannot work and reports the state of the mesh is covered by unit tests and tests against a real API server, and the shell commands it sends to a worker were run on this project's own machine with a stand-in for `tailscale`. **No node was joined to a real mesh, no node behind a NAT was tried, and Tailscale and Headscale were never started with it.** The older multi-site mode, which the WireGuard mesh builds on, has run on four servers at one provider over public addresses; it has not run across two providers. Until a test on real machines (see [How far to trust it](#how-far-to-trust-it)) says otherwise, treat a mesh as unproven and try it on servers you can lose.
+**This was run once, on EC2, in one region.** Two networks (VPCs) in the same region, reaching each other by public address only, with a Linux NAT in front of one of the workers. WireGuard joined a worker that sat behind that NAT with only SSH forwarded, with the NAT randomising source ports, and with UDP 51820 forwarded and dropped. Tailscale ran against a self-hosted Headscale. Pods reached each other both ways in every case that should have worked, and workers upgraded one at a time. **Not run:** wide-area paths (the round trips were a few milliseconds), other clouds, Tailscale's own service, a pool at a second provider, and every scenario in [How far to trust it](#how-far-to-trust-it). The older multi-site mode, which the WireGuard mesh builds on, has run on four servers at one provider over public addresses; it has not run across two providers. Treat a mesh as experimental and try it on servers you can lose.
 :::
 
 ## Which mesh
@@ -16,12 +16,12 @@ A cluster normally keeps its nodes on one private network. A **mesh** joins node
 | What carries the traffic | The K3s `wireguard-native` flannel backend, in the kernel | Tailscale (or a Headscale server), as K3s documents it with `vpn-auth` |
 | Runs besides the cluster | Nothing | A Tailscale account or a Headscale server, and the Tailscale client on every node |
 | Ports | UDP 51820 between nodes, and TCP 6443 to the control plane | None for the cluster: nodes open connections outward. Tailnet access rules must allow the cluster's traffic |
-| Node behind a NAT | Joins when it is the one that opens the tunnel, and talks to nodes that have an address the others can reach. Two nodes that are both behind a NAT, with nothing forwarded, are not expected to reach each other | Tailscale finds a path between any two nodes, through its relay servers when it has to |
+| Node behind a NAT | Joins when it is the one that opens the tunnel, keeps it open (K3s sends a keepalive every 25 seconds), and talks to nodes that have an address the others can reach. Two nodes that are both behind a NAT, with nothing forwarded, do not reach each other; one forwarded UDP port at one of them is enough | Tailscale finds a path between any two nodes, through its relay servers when it has to |
 | What a node advertises | An address you give it: its public address, or its NAT gateway's | Its address on the tailnet, which it learns when it joins |
 | What it asks of you | A kernel with WireGuard (Linux 5.6 or newer), UDP 51820 open at every site | A reusable auth key, access rules that allow the pod network, and the K3s integration, which K3s itself marks experimental |
 | Encryption | WireGuard | WireGuard, by Tailscale |
 
-The WireGuard row for NAT comes from how WireGuard and K3s's backend are built (K3s configures a keepalive every 25 seconds, and a WireGuard peer learns the address a valid packet came from). It is a reading of those, not something this project has run. The Tailscale row is Tailscale's own description of what it does.
+The WireGuard row for NAT was run on EC2 against a Linux NAT (see [How far to trust it](#how-far-to-trust-it)): a worker behind it joined in under 20 seconds, stayed joined through ten idle minutes, and was reached when the NAT randomised its source ports (the control plane learned the mapped port from the first packet). A NAT that forgets its mappings costs the node up to about 25 seconds of lost pod traffic, until its next keepalive; forwarding UDP 51820 to the node removes that, and it changes nothing else about joining. Two workers that were both behind a NAT, with nothing forwarded, never reached each other (each reached the control plane), and one forwarded port at one of them was enough. Another make of NAT, a consumer router or a carrier's NAT may behave differently. The Tailscale row was run against Headscale with its own relay: a node behind the NAT reached every other node, directly where it could and through the relay where both ends were behind a NAT, and fell back to the relay for a while after the NAT forgot its mappings.
 
 Pick WireGuard when every site can have one node with a reachable address, or can forward UDP 51820. Pick Tailscale when nodes are behind NATs you do not control, or two of them must reach each other.
 
@@ -37,6 +37,14 @@ Pick WireGuard when every site can have one node with a reachable address, or ca
 ### With WireGuard
 
 On the first server, give the installer the address the other sites send traffic to: its public address, or its NAT gateway's public address with UDP 51820 and TCP 6443 forwarded to it.
+
+K3s advertises its API server on that address, and the pods on the control plane (the operator, DNS, metrics) call it. So **the machine has to be able to reach itself on it.** On EC2 an Elastic IP is not on any interface of the instance, and EC2 does not send an instance's traffic to its own public address back: the install stops at "wait for operator ready" with the operator in `CrashLoopBackOff` and `i/o timeout` against `https://10.43.0.1:443`. Put the address on the loopback interface first. The plain command is lost at reboot, and Geass does not put it back, so make it part of the machine's own network configuration:
+
+```bash
+sudo ip addr add 203.0.113.10/32 dev lo
+```
+
+The installer warns when the address is on no interface of the machine, and goes on. Tailscale is not affected.
 
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | \
@@ -122,7 +130,7 @@ What Geass does to the machine, in order:
 | Write `/etc/rancher/k3s/config.yaml` | `node-external-ip: <eip>`, labels, taints, kubelet log limits | `vpn-auth-file`, `node-external-ip: <the node's tailnet address>`, labels, taints, kubelet log limits |
 | Install and start the K3s agent at the control plane's version | yes | yes |
 
-The auth key is written to `/etc/rancher/k3s/vpn-auth`, mode 600, and appears nowhere else on the node. It is in the Secret `geass-mesh-auth`, and it is on the command line of the setup step while that runs (as the join token already is), where other users of the worker can see it. Use a key that expires, is tagged and can be revoked, and revoke it when the nodes are in. Every error that comes out of a setup step has the key taken out of it.
+The auth key is written to `/etc/rancher/k3s/vpn-auth`, mode 600. It is in the Secret `geass-mesh-auth`, and it is on the command line of the setup step while that runs (as the join token already is), where other users of the worker can see it. **It is also in the worker's `sudo` log** (`/var/log/auth.log` on Ubuntu, which the group `adm` can read), once, in the logged command of the join step, next to the join token. On the run on EC2 the key was not found in the cluster's objects and events, the operator's log, the installer's logs, `config.yaml`, the K3s and Tailscale journals or the process list. Use a key that expires, is tagged and can be revoked, and revoke it when the nodes are in. Every error that comes out of a setup step has the key taken out of it.
 
 A **pool** creates machines at a cloud and joins them the same way. For a Tailscale mesh the firewall Geass makes at the cloud opens no UDP 51820, and the rule Geass adds to the control plane's firewall (`controlPlaneFirewall`) is the TCP 6443 rule only. The machines still need a public address for SSH, because the operator joins them over it.
 
@@ -242,16 +250,16 @@ Run these after the first worker joins, and again for a worker behind a NAT.
 
 ## MTU
 
-Geass does not set the pod network's MTU. flannel works it out from the node's network interface and takes the tunnel's overhead off it: a WireGuard tunnel adds about 60 bytes over IPv4 (80 over IPv6), and Tailscale's interface, `tailscale0`, has an MTU of 1280 unless it is changed. So expect a pod MTU near 1420 over WireGuard on an ordinary 1500-byte link, and lower than that on a link that has less. These are expectations from how the tunnels are built, not something measured here. A path that drops fragments and ICMP messages makes large packets vanish while small ones work, which is what step 3 above finds. If you hit it, lower the MTU of the network interface that carries the tunnel, so that flannel derives a smaller one.
+Geass does not set the pod network's MTU. flannel works it out from the node's network interface and takes the tunnel's overhead off it. Measured on EC2: over WireGuard an instance interface of 9001 bytes gave a pod MTU of 8921, and a full 8921-byte packet with the don't-fragment bit set got through between sites (public paths inside one region carry jumbo frames); with the interface at 1500 the pod MTU was 1420 and the largest packet that passed was 1392 bytes of payload. Over Tailscale the pod MTU was 1280 (largest payload 1252), whatever the interface. Nodes whose interfaces have different MTUs did not cause a black hole in that one region (pings up to 8000 bytes passed), but a wide-area path was not tried. A path that drops fragments and ICMP messages makes large packets vanish while small ones work, which is what step 3 above finds. If you hit it, lower the MTU of the network interface that carries the tunnel, so that flannel derives a smaller one.
 
 ## Limits
 
 - **One control plane site.** If its site is down, the dashboard and the operator are down. See [High availability](/docs/operations/high-availability/).
 - **Cross-site traffic crosses the internet**, so calls between pods at different sites pay the latency and the bandwidth. K3s's documentation warns that a high latency affects cluster health. Give projects a [region](/docs/guides/scaling-and-placement/) so their traffic stays in one place.
-- **Host charts cover one node.** Node exporters publish on private addresses that other sites cannot reach. Container metrics come from every node.
+- **Host charts cover one node over WireGuard.** Node exporters publish on private addresses that other sites cannot reach. Container metrics come from every node. Over Tailscale the node exporters and kubelets of every node, including one behind a NAT, were scraped on their tailnet addresses.
 - **A mesh is not added to a running cluster**, and not removed from one. Reinstall.
-- **The Tailscale integration is K3s's, and K3s calls it experimental.** Geass writes what K3s's documentation shows and does not add to it: it does not set the flannel backend, advertise routes or accept routes for you. What K3s runs over the tailnet is K3s's decision.
-- **Two nodes that are both behind a NAT** are expected to need Tailscale (or a forwarded UDP port at one of them) to reach each other.
+- **The Tailscale integration is K3s's, and K3s calls it experimental.** Geass writes what K3s's documentation shows and does not add to it: it does not set the flannel backend, advertise routes or accept routes for you. What K3s runs over the tailnet is K3s's decision. On the run on EC2 it started flannel with the `tailscale` backend, ran `tailscale set --accept-routes --advertise-routes=<the node's pod range>` (approved by the Headscale policy), routed the pod ranges straight into `tailscale0` (no VXLAN) and overrode `node-external-ip` with the tailnet address.
+- **Two nodes that are both behind a NAT** need Tailscale, or a forwarded UDP port at one of them, to reach each other over WireGuard (run on EC2 with Linux NATs: with nothing forwarded they did not; with one port forwarded they did).
 
 ## Troubleshooting
 
@@ -265,7 +273,9 @@ Geass does not set the pod network's MTU. flannel works it out from the node's n
 
 **A node is `Failed` with "cannot reach the cluster API at https://... from this node".** The message says why. Over WireGuard check TCP 6443 and UDP 51820 at both sites. On a tailnet check that `spec.serverURL` is the control plane's tailnet address and that the access rules let the node reach TCP 6443 on it.
 
-**A node is `Ready` but its pods cannot reach pods elsewhere.** UDP 51820 is blocked, a NAT does not keep the tunnel's mapping, the MTU is too large for the path, or the tailnet's rules or route approval are missing. Work through [Verify the mesh](#verify-the-mesh) between that node and another.
+**A node is `Ready` but its pods cannot reach pods elsewhere.** UDP 51820 is blocked, a NAT does not keep the tunnel's mapping, the MTU is too large for the path, or the tailnet's rules or route approval are missing. **A blocked UDP 51820 looks exactly like this, and Geass shows nothing wrong**: on the run on EC2 the node, the `GeassNode`, the cluster and `MeshReady` all stayed green, pods lost every packet and pod DNS timed out, while `kubectl exec` and `kubectl logs` kept working (K3s uses its own connection for those). Work through [Verify the mesh](#verify-the-mesh) between that node and another.
+
+**`MeshReady` is still `True` after the auth key was removed.** It is looked at again every five minutes while it is `True`: deleting the Secret made the next join fail at once, and the condition changed to `False` with `AuthKeyUnusable` about three and a half minutes later.
 
 **`MeshReady` is `False` with "nodes that advertise no external address".** A node joined without `node-external-ip`, or from before the mesh was on. Rejoin it as above.
 
@@ -277,9 +287,10 @@ Geass does not set the pod network's MTU. flannel works it out from the node's n
 
 | Run | Not run |
 | --- | --- |
-| Unit tests of the settings written for each mesh, the validation, the address classification and the checks of nodes. Tests against a real API server that the CRD refuses the settings above and fills in the default, that a cluster without the field is stored as it was given, and that `MeshReady` is written. Tests that a cluster that does not use the field gets byte for byte what it got before: the K3s settings, the worker join commands, the cluster object and the monitoring values. The worker's Tailscale commands run on this project's machine with a stand-in for `tailscale`: the key file's mode and content, that a node already on the tailnet is not brought up again, that a node with no address stops | Any real machine. A node behind a NAT. A real WireGuard tunnel between sites, and the K3s agent with the configuration written here. Tailscale or Headscale at all. The pod network's MTU. The time a join takes. What happens when UDP is blocked. A pool at a second provider |
+| Unit tests of the settings written for each mesh, the validation, the address classification and the checks of nodes. Tests against a real API server that the CRD refuses the settings above and fills in the default, that a cluster without the field is stored as it was given, and that `MeshReady` is written. Tests that a cluster that does not use the field gets byte for byte what it got before: the K3s settings, the worker join commands, the cluster object and the monitoring values. The worker's Tailscale commands run on this project's machine with a stand-in for `tailscale` | |
+| **On EC2, once** (seven small instances in two unpeered networks of one region, a Linux NAT in front of one worker, Headscale with its own relay; K3s 1.35 to 1.37): WireGuard joined a worker with only SSH forwarded, with the NAT randomising source ports, with UDP 51820 forwarded, and with it dropped (0% loss between pods in the first three, 100% in the last, with nothing reported by Geass). Two workers both behind a NAT, with nothing forwarded and with one port forwarded. Tailscale against Headscale: every pair of nodes reached the others. Joins took 16 to 23 seconds over WireGuard and 33 to 42 over Tailscale. Workers were upgraded one at a time on both, with the K3s configuration unchanged. The refusals (an unusable address, a wrong or missing auth key, a control plane built without the mesh) gave the messages on this page (for the control plane built without the mesh, with nothing installed on the machine). Container and host metrics from a worker behind a NAT over Tailscale | Wide-area conditions: latency, loss, a path's MTU, carrier-grade NAT, consumer routers, a NAT that forgets mappings in under 25 seconds, IPv6. Any NAT but Linux's, and any cloud but AWS. Tailscale's own service (only Headscale was run), key expiry and tags there, MagicDNS, and a Headscale policy without route approval. A pool at a second provider, the dashboard's server form, joining a machine by hand, a public ingress on a mesh cluster, Longhorn or volumes across the mesh, logging, a reboot, rotating a key, and the loss of the control plane. Host metrics from a WireGuard node behind a NAT (only a TCP check was done). The installer's warning about an address on no interface (it is covered by a unit test; the run used a build from before it). K3s's Tailscale integration is still K3s's own experimental feature |
 
-The plan for the run on real machines (two sites, one behind a NAT) is kept with the project's notes. When it has been run, this page is changed to say what it found.
+The run's scripts and findings are kept with the project's notes. A closed UDP port, which Geass cannot see, is the one thing the run found that the page above cannot fix: check it by hand with [Verify the mesh](#verify-the-mesh).
 
 ## Related
 
