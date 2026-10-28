@@ -567,7 +567,7 @@ any machine that can reach port 6443 join the cluster, so guard it like a passwo
   token), which pod and container, the command and a timeout of five minutes. List them with
   `kubectl -n geass-system get geassconsolesessions`. The operator log also notes when each terminal opens and closes. Nothing records what was typed.
 - **SQL console.** An admin can run a statement in a database from the dashboard (`POST /api/databases/{db}/query`), which
-  executes it inside the database pod with `psql`, `mysql`, `redis-cli` or `rqlite`. No session object is created for it and
+  executes it inside the database pod with `psql`, `mysql` or `redis-cli` (for SQLite, a request to rqlite's HTTP API). No session object is created for it and
   the operator log holds only the request path, so nothing records the statements.
 - **Tokens.** Creating and revoking a token writes a line to the operator log, and so does approving a command-line sign-in
   (`Approved a command-line sign-in`, with the token ID, role, client name and approver). Refusing one is not logged.

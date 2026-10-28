@@ -14,9 +14,29 @@ each other, set `spec.tenancy.registry` on the [GeassPlatformConfig](/docs/refer
 It is off until you set it. While it is off nothing changes: the build Jobs, the copies of logins and the pull secrets are
 what they were before it existed, which Geass's tests check against the release before it.
 
-:::caution[Not run against a real registry]
-Geass's tests check what the operator writes, refuses and removes against a fake API server. No build has pushed to a real
-registry under it, and the Harbor and zot steps below follow those projects' documentation and were not run here.
+:::caution[Run against plain registries; Harbor and zot were not]
+Geass's tests check what the operator writes, refuses and removes against a fake API server. It has also been run on real
+K3s v1.36.4+k3s1 against two `registry:2` (2.8.3) instances with htpasswd logins, the platform's and an organization's own,
+with real Kaniko (v1.23.2) builds:
+
+- With the policy off, an organization's build was given a copy of the platform's login and pushed into the platform's
+  registry (its catalog then listed the organization's image).
+- With it on, an organization without a registry of its own made no build (`RegistryIsolated` `False`,
+  `OwnRegistryRequired`), and an organization with one built into `<repository>/<project>/<service>` with its own login
+  only: the Job mounted that login, the image appeared in its registry and the platform's catalog did not change. A build
+  running with the platform's login was stopped when the policy was turned on, and with it off again the organization
+  without a registry was given a build with the platform's repository and login.
+- The platform's login, a copy of it under another Secret name, the platform's repository, an image in it, and an
+  organization registry equal to the platform's repository were each refused with `PlatformCredential` or
+  `ForeignRepository`, before any Job or copy was made.
+- With the [sandboxed runtime](/docs/operations/sandboxed-runtime/) on, a build ran under gVisor `release-20261019.0` and
+  pushed to the organization's registry, and an image service pulled the result from there with the organization's login.
+
+**Not run:** Harbor and zot (the steps below follow those projects' documentation), the dashboard's check for overlapping
+organization registries (it needs a signed-in admin), `AlwaysPullImages`, and a service built from GitHub all the way to
+a running pod: that needs a real GitHub token, because Geass's clone sends `Authorization: Bearer <token>` and GitHub
+answered 401 to an invented one even for a public repository. The builds above were `GeassBuild` objects written without a
+`gitCredentialRef`, which clone without a token and are held to the policy the same way.
 :::
 
 ## How a build gets a registry
@@ -200,6 +220,17 @@ kubectl -n geass-system patch geassorganization $ORG --type merge \
 The label says whose login it is, so no other organization's service can be given it. The dashboard checks for overlaps
 only when an organization saves its own registry: make sure the ones you set do not overlap each other or the platform's
 repository, or both are contested.
+
+## What the registry has to be
+
+Kaniko tries HTTPS first. Kaniko v1.23.2 went on to plain HTTP for an RFC 1918 address and pushed over it to a name ending
+`.local`, but did not for a public address: a build pushing to a plain-HTTP registry on a public address failed with `Get "https://…:5001/v2/": http: server gave HTTP response to HTTPS client`. An organization's
+build namespace reaches no private address, and an [`allow`](/docs/guides/outbound-limits/) for a private range did not
+open one: a registry on the machine's private address was refused (`connection refused`) from the build. So a registry for
+organizations' builds needs an address they can reach and a certificate that the Kaniko image trusts. The test registries
+were given names ending `.local`, pointed at the machine's public address in the cluster's DNS and on the node, with an
+`allow` for that address on their ports and an entry in the node's containerd configuration for plain HTTP. Geass passes
+Kaniko no `--insecure` flag.
 
 ## What it does not cover
 

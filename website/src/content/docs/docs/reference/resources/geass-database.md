@@ -355,7 +355,7 @@ Without the setting the condition is not there, and nothing about the server cha
 | **Settings** tab, **Backups** section (also the **Backups** tab) | **Back up this database** and **Keep backups for** write `spec.backup`. They apply at once. |
 | **Deploy changes** in the top bar | Runs the deploy flow for every pending resource of the environment. It first checks that the cluster has room for the database (or three instances). The API deploys one database with `POST /api/databases/<name>/deploy`. |
 | **Retry** | Resets a `ProvisionFailed` database. |
-| **Console** tab, **Run query** | Runs your SQL in the database pod with `psql -c`, `mysql -e`, `redis-cli` or `rqlite -e`. It is not a field of the resource. |
+| **Console** tab, **Run query** | Runs your SQL in the database pod with `psql -c`, `mysql -e` or `redis-cli`, and for SQLite sends it to rqlite's HTTP API. It is not a field of the resource. |
 | **Restore** buttons on the **Backups** tab | Creates a new database with `spec.restoreFrom`. It is deployed at once, without a draft. |
 | **Settings** > **Databases** > **Set up a server** | Creates a shared server: no project, `spec.deploy.enabled: true`, `highAvailability` from the **High availability** switch (which also sets `instances: 3`), and `serverRegion` from **Region**. |
 | **Settings** tab, **Danger** section | Deletes the database after you type its resource ID. |
@@ -568,6 +568,14 @@ Geass takes a final backup first and waits up to 10 minutes for it. If the datab
 ### `This database cannot run in the sandbox` or `Runs without the sandbox until it is restarted`
 
 The platform runs organizations' code in a sandboxed runtime. PostgreSQL and MariaDB cannot run in it, so an organization's is not made, and one made before is held as it is: use MySQL instead, or ask the platform to turn the sandbox off. A server that ran before the sandbox was set waits for a platform administrator to approve its restart into it. See [Database servers](/docs/operations/sandboxed-runtime/#database-servers).
+
+### A SQLite database answers 503 after its pod was replaced
+
+A SQLite server made before Geass gave rqlite a fixed node ID (`-node-id`) is named after its pod's host name, which a Deployment changes with every pod. The new node is not in the raft configuration kept on the volume, so rqlite logs "not part of a stable configuration" and answers `503` for good. The same image (rqlite v8.36.16) with a fixed `-node-id` on a volume answered with its data after a pod replacement in a test, and a server that this release makes is started with `-node-id <name>` (the arguments are unit-tested; a server made by this release was not run). Recovering one made earlier (rqlite's documentation describes it) was not tried, and Geass has no tool for it.
+
+### A MySQL server in the sandbox is Ready, but its logins are refused
+
+Two new MySQL 8.4.11 servers of 512 MiB, Geass's default size, were killed for lack of memory during their first start under gVisor and left with only `root@localhost` and no password for it, and no `app` login; the first logical database on them stayed at "creating logical database". A server made with 1 GiB started cleanly. See [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs).
 
 ### MySQL volumes remain after deletion
 
