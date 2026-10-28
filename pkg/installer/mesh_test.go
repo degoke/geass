@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -255,4 +256,38 @@ func TestAServerThatJoinsAClusterIsNotGivenAMesh(t *testing.T) {
 	t.Setenv("GEASS_MULTI_SITE", "")
 	err := (&JoinChecks{Plan: &JoinPlan{Join: JoinOptions{ServerURL: "https://203.0.113.1:6443", Token: "fixture-token"}}}).Run()
 	require.ErrorContains(t, err, "GEASS_MESH", "a server that joins is not the first, so it takes no mesh of its own")
+}
+
+// Found on EC2 (spike mesh-nat): with GEASS_NODE_EXTERNAL_IP set to an Elastic IP, which is on no interface, the pods on the
+// control plane cannot reach the API server (it is advertised on that address and EC2 does not send a machine's own traffic to
+// its public address back), so the operator crash-looped and the installer gave up after five minutes with no hint why.
+func TestAWarningSaysWhenTheExternalAddressIsOnNoInterfaceOfThisMachine(t *testing.T) {
+	machine := func(addresses ...string) func() ([]net.Addr, error) {
+		return func() ([]net.Addr, error) {
+			out := make([]net.Addr, 0, len(addresses))
+			for _, address := range addresses {
+				ip := net.ParseIP(address)
+				out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)})
+			}
+			return out, nil
+		}
+	}
+	original := interfaceAddresses
+	t.Cleanup(func() { interfaceAddresses = original })
+
+	interfaceAddresses = machine("127.0.0.1", "10.61.1.170")
+	warning := externalAddressNotOnThisMachine("13.51.184.132")
+	require.Contains(t, warning, "13.51.184.132 is not an address of any network interface of this machine")
+	require.Contains(t, warning, "ip addr add 13.51.184.132/32 dev lo")
+
+	// The workaround itself, a public address on a server that has it on the interface, and an address that is not one.
+	interfaceAddresses = machine("127.0.0.1", "10.61.1.170", "13.51.184.132")
+	require.Empty(t, externalAddressNotOnThisMachine("13.51.184.132"))
+	interfaceAddresses = machine("203.0.113.9")
+	require.Empty(t, externalAddressNotOnThisMachine("203.0.113.9"))
+	require.Empty(t, externalAddressNotOnThisMachine("not-an-ip"))
+
+	// A machine that cannot list its interfaces is not told it is wrong.
+	interfaceAddresses = func() ([]net.Addr, error) { return nil, errors.New("no netlink") }
+	require.Empty(t, externalAddressNotOnThisMachine("13.51.184.132"))
 }

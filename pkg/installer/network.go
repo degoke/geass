@@ -179,8 +179,50 @@ func (n Network) checkAddress() error {
 			Warnf("system checks", "%s is in 100.64.0.0/10, which the internet does not route: only a node on the same carrier or tailnet network "+
 				"can reach it. Use this machine's public address, or GEASS_MESH=tailscale", n.ExternalIP)
 		}
+	case mesh.AddressPublic:
+		if warning := externalAddressNotOnThisMachine(n.ExternalIP); warning != "" && !n.IsTailscale() {
+			Warnf("system checks", "%s", warning)
+		}
 	}
 	return nil
+}
+
+// interfaceAddresses is the addresses on this machine's network interfaces. It is a variable so that a test can say what
+// the machine has.
+var interfaceAddresses = net.InterfaceAddrs
+
+// externalAddressNotOnThisMachine is the warning for an external address that no network interface of this machine
+// has, and empty when it has it or the machine cannot say. A cloud that maps a public address to a private one (an AWS
+// Elastic IP) puts it on no interface and, seen on EC2, does not send a machine's own traffic to it back to the machine.
+// K3s advertises the API server on the external address, so the pods on this machine reach the API through an address
+// they cannot reach: the operator restarts in a loop and the installer stops waiting for it. With the address on the
+// loopback interface the traffic stays on the machine.
+func externalAddressNotOnThisMachine(address string) string {
+	want := net.ParseIP(address)
+	if want == nil {
+		return ""
+	}
+	addrs, err := interfaceAddresses()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		switch a := addr.(type) {
+		case *net.IPNet:
+			if a.IP.Equal(want) {
+				return ""
+			}
+		case *net.IPAddr:
+			if a.IP.Equal(want) {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("%[1]s is not an address of any network interface of this machine (a cloud that maps public addresses to private ones, such as an "+
+		"AWS Elastic IP, does not put it there). The API server is advertised on it, and on EC2 a machine's own traffic to its public address does "+
+		"not come back, so the pods on this machine cannot reach the API and the operator restarts in a loop. Add the address to the loopback "+
+		"interface before installing, so that the traffic stays here: `ip addr add %[1]s/32 dev lo`, and make that persistent, or it is lost at "+
+		"the next reboot. Ignore this if your network does send the traffic back", address)
 }
 
 // ServerURL is the address workers join the cluster on when the network dictates it. A multi-site
