@@ -57,6 +57,13 @@ Every file also has signed build provenance (a GitHub attestation of the workflo
 with `gh attestation verify <file> --repo degoke/geass`. The release notes are the version's section of
 [CHANGELOG.md](../CHANGELOG.md).
 
+The same run also pushes the operator image to `ghcr.io/degoke/geass:vMAJOR.MINOR.PATCH` (the version only, no `latest`)
+for `linux/amd64` and `linux/arm64`; a pre-release gets one too. The installer carries its own copy, so the image is for
+a cluster whose control plane is hosted elsewhere, which pulls it (`config/external-control-plane`). It is not a file of
+the GitHub release and is not in `SHA256SUMS`. A manual run builds it and pushes nothing, so the first real tag is the
+first time the push, and the package's visibility, are exercised: step 6 checks that it can be pulled without a login,
+and if it cannot, make the package public in its settings on GitHub.
+
 `dist/install.yaml` is kept current by CI for people who read or customise the manifests. It names a placeholder image
 and is not published: the supported way to install is the installer.
 
@@ -101,6 +108,7 @@ You need push access to `main` and tags. Nothing in these scripts pushes for you
    sha256sum --check SHA256SUMS
    gh attestation verify geass-linux-amd64 --repo degoke/geass
    chmod +x geass-cli-linux-amd64 && ./geass-cli-linux-amd64 version        # geass v0.2.0
+   docker logout ghcr.io; docker pull ghcr.io/degoke/geass:v0.2.0          # the operator image, with no login
    ```
 
    Then install it on a real server: `curl -sfL .../releases/latest/download/install.sh | sudo sh` on a fresh one, and

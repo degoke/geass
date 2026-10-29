@@ -13,7 +13,7 @@ new version.
 
 ## [Unreleased]
 
-## [0.0.1] - 2026-10-22
+## [0.0.1] - 2026-10-29
 
 The first public release, open source under the Apache License 2.0.
 

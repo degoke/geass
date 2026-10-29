@@ -16,6 +16,8 @@ Every release on the [Releases page](https://github.com/degoke/geass/releases) h
 | `install.sh`, `install-cli.sh` | The scripts behind the one-line installs. |
 | `SHA256SUMS` | The checksum of every file above. |
 
+Each release also has the operator image, `ghcr.io/degoke/geass:vMAJOR.MINOR.PATCH`, for `linux/amd64` and `linux/arm64`. The installer carries its own copy, so you need the image only when the control plane of your cluster is hosted elsewhere: see [Hosted control plane](/docs/operations/hosted-control-plane/).
+
 The installer and the operator report the release they are, and the cluster records it: `sudo k3s kubectl -n geass-system get geasscluster` shows it in the `RELEASE` column, and `geass version` shows the command line's release and the cluster's.
 
 ## Version numbers
