@@ -56,7 +56,7 @@ func TestAProjectThatBlocksTheNodesNamesThemInItsPolicy(t *testing.T) {
 
 	nodes, err := r.nodeNetworkFor(ctx, blockingProject())
 	require.NoError(t, err)
-	require.NoError(t, r.reconcileProjectNetwork(ctx, blockingProject(), "shop-production", nodes))
+	require.NoError(t, r.reconcileProjectNetwork(ctx, blockingProject(), "shop-production", nodes, projectEgress{}))
 
 	require.Equal(t, []string{"169.254.0.0/16", "10.0.0.5/32", "10.0.0.6/32", "10.42.0.0/32", "10.42.0.1/32", "10.42.1.0/32", "10.42.1.1/32"}, egressExceptions(t, c))
 	policy, _ := getPolicy(t, c, "shop-production", platform.CloudMetadataPolicyName)
@@ -93,7 +93,7 @@ func TestThePolicyFollowsNodesAsTheyJoinAndLeave(t *testing.T) {
 		t.Helper()
 		nodes, err := r.nodeNetworkFor(ctx, blockingProject())
 		require.NoError(t, err)
-		require.NoError(t, r.reconcileProjectNetwork(ctx, blockingProject(), "shop-production", nodes))
+		require.NoError(t, r.reconcileProjectNetwork(ctx, blockingProject(), "shop-production", nodes, projectEgress{}))
 	}
 
 	reconcile()

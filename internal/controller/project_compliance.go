@@ -108,35 +108,9 @@ func ensureComplianceAdmission(ctx context.Context, c client.Client) error {
 // and toleration their namespace requires. A cluster older than Kubernetes 1.36 has no such policy, and is left
 // without it: the pods are then refused by the policy that checks, rather than let through unprotected.
 func ensureComplianceMutation(ctx context.Context, c client.Client) error {
-	desiredPolicy := platform.ComplianceMutationPolicy()
-	policy := &admissionv1.MutatingAdmissionPolicy{}
-	switch err := c.Get(ctx, client.ObjectKeyFromObject(desiredPolicy), policy); {
-	case meta.IsNoMatchError(err):
+	installed, err := ensureMutationPolicy(ctx, c, platform.ComplianceMutationPolicy(), platform.ComplianceMutationBinding(), platform.ComplianceAdmissionVersion)
+	if err == nil && !installed {
 		logf.FromContext(ctx).Info("Mutating admission policies are not available, so pods that other operators create in a project that requires node tags are refused instead of being given its node selector")
-		return nil
-	case apierrors.IsNotFound(err):
-		if err := c.Create(ctx, desiredPolicy); client.IgnoreAlreadyExists(err) != nil {
-			return err
-		}
-	case err != nil:
-		return err
-	case policy.Annotations[platform.AnnotationAdmissionVersion] != platform.ComplianceAdmissionVersion:
-		policy.Labels, policy.Annotations, policy.Spec = desiredPolicy.Labels, desiredPolicy.Annotations, desiredPolicy.Spec
-		if err := c.Update(ctx, policy); err != nil {
-			return err
-		}
 	}
-
-	desiredBinding := platform.ComplianceMutationBinding()
-	binding := &admissionv1.MutatingAdmissionPolicyBinding{}
-	switch err := c.Get(ctx, client.ObjectKeyFromObject(desiredBinding), binding); {
-	case apierrors.IsNotFound(err):
-		return client.IgnoreAlreadyExists(c.Create(ctx, desiredBinding))
-	case err != nil:
-		return err
-	case binding.Annotations[platform.AnnotationAdmissionVersion] != platform.ComplianceAdmissionVersion:
-		binding.Labels, binding.Annotations, binding.Spec = desiredBinding.Labels, desiredBinding.Annotations, desiredBinding.Spec
-		return c.Update(ctx, binding)
-	}
-	return nil
+	return err
 }

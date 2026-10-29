@@ -458,6 +458,14 @@ func (s *Server) deployTemplate(ctx context.Context, template templates.Template
 			return nil, sizeErr
 		}
 		db.Spec.StorageSize = size
+		// A template's database is refused, with what was made before it, as one made from the form is.
+		gap, gapErr := platform.DatabaseSandboxGap(ctx, s.system(), db, s.databasePlacement(ctx, db).NodeSelector())
+		if gapErr != nil {
+			return nil, gapErr
+		}
+		if gap != "" {
+			return nil, userErrorf("%s", platform.EngineCannotBeSandboxedMessage(gap, false))
+		}
 		db.Spec.Backup = defaultBackups(db)
 		db.Spec.Deploy.Enabled = false
 		platform.InitializePendingCreated(&db.ObjectMeta)

@@ -216,6 +216,9 @@ func (s *Server) handleDatabaseRestore(w http.ResponseWriter, r *http.Request) {
 	if s.rejectIfNoCapacityForPlacement(w, r, fallback, est, s.databasePlacement(ctx, db)) {
 		return
 	}
+	if s.refuseUnsandboxableDatabase(w, r, fallback, db) {
+		return
+	}
 	// A restore is a deliberate action with nothing to review, so it deploys straight away, as the
 	// database copies made for pull requests do.
 	db.Spec.Deploy.Enabled = true

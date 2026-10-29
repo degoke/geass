@@ -93,6 +93,11 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, "no container registry is set") {
 		return false
 	}
+	// An organization's service that the registry policy holds back waits for its organization's registry, its image or
+	// the platform's setting to change, which may not be the service's own spec: counting it would give the service up.
+	if strings.HasPrefix(msg, strings.ToLower(MessageRegistryIsolation)+":") {
+		return false
+	}
 	if strings.Contains(msg, "installing") && strings.Contains(msg, "chart") {
 		return false
 	}
@@ -114,6 +119,10 @@ func ReconcileFailureShouldCount(message string) bool {
 	if strings.Contains(msg, strings.ToLower(MessageQuotaUsedUp)) || strings.Contains(msg, "exceeded quota") {
 		return false
 	}
+	// Nor is a pod the organization's limits refuse: a change to the limits lets it in, and that is not the service's either.
+	if strings.Contains(msg, strings.ToLower(MessageLimitsRefused)) || strings.Contains(msg, strings.ToLower(MessagePodsInvalid)) {
+		return false
+	}
 	// A copy that is stopped for memory and started again is a crash loop, and a service in one waits to be fixed
 	// without being given up on.
 	if strings.Contains(msg, strings.ToLower(MessageOutOfMemory)) {
@@ -125,6 +134,15 @@ func ReconcileFailureShouldCount(message string) bool {
 		return false
 	}
 	if strings.Contains(msg, strings.ToLower(MessageSetUpObjectStorage)) {
+		return false
+	}
+	// An organization's service waits for the sandboxed runtime until the platform adds it, which changes nothing of the
+	// service: counting the wait would give the service up before the runtime came.
+	if strings.HasPrefix(msg, strings.ToLower(MessageSandboxRuntimeMissing)) {
+		return false
+	}
+	// Nor is an organization's database server whose engine cannot run in the sandbox: only the platform can change that.
+	if strings.Contains(msg, MessageCannotBeSandboxed) {
 		return false
 	}
 	if strings.Contains(msg, strings.ToLower(MessageObjectStorageCredentials)) {
@@ -154,6 +172,11 @@ func ReconcileFailureShouldCount(message string) bool {
 		return false
 	}
 	if strings.Contains(msg, "database server") && strings.Contains(msg, "unavailable") {
+		return false
+	}
+	// A database on a server of another organization waits for the platform to give the project a server of its own
+	// organization's, or to give the server to the project's organization; the project's people can do neither.
+	if strings.Contains(msg, MessageOneOrganizationPerServer) {
 		return false
 	}
 	// A project, or the cluster it is on, that is not ready yet, or is not there yet, is a wait: a project made a moment

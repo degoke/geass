@@ -122,14 +122,20 @@ A process outside the cluster has no Services to resolve and no mounted Secrets.
 | `GEASS_DASHBOARD_SESSION_KEY` | Optional | Signs session cookies. Without it, the key in `geass-dashboard-auth` is used |
 | `GEASS_PUBLIC_URL` | With a GitHub App | The address people reach this dashboard at, for GitHub's callbacks |
 | `GEASS_GITHUB_APP_ID`, `GEASS_GITHUB_APP_SLUG`, `GEASS_GITHUB_APP_CLIENT_ID`, `GEASS_GITHUB_APP_CLIENT_SECRET`, `GEASS_GITHUB_APP_PRIVATE_KEY`, `GEASS_GITHUB_WEBHOOK_SECRET` | Only if the platform settings have no GitHub App | A GitHub App saved in **Settings** → **Connectors** is stored in the cluster and needs none of these |
-| `GEASS_PROMETHEUS_URL` | To show metrics | Prometheus's address. Used when the platform settings have no Prometheus URL. The in-cluster default (`http://…svc:9090`) does not resolve outside the cluster |
+| `GEASS_PROMETHEUS_URL` | To show metrics, without a metrics store outside the cluster | Prometheus's address. Used when the platform settings have no Prometheus URL and no `observability.external.metrics.queryURL`. The in-cluster default (`http://…svc:9090`) does not resolve outside the cluster |
+| `GEASS_MAIL_RELAY_URL` | To read `GET /api/v1/mail/usage` while the [mail relay](/docs/guides/mail-relay/) runs | The relay's admin port. The in-cluster default (`http://geass-mail-relay.geass-system.svc:9187`) does not resolve outside the cluster, and the relay's policy lets only `geass-system` and `monitoring` reach it, so expose it to the dashboard yourself |
 | `GEASS_ALERTMANAGER_URL` | To test alerts and see Alertmanager's state | Alertmanager's address |
-| `GEASS_LOGS_URL` | To search stored logs | The log store's address (VictoriaLogs) |
+| `GEASS_LOGS_URL` | To search stored logs, without a log store outside the cluster | The log store's address (VictoriaLogs). Not used when the platform settings have `observability.external.logs.queryURL` |
 | `GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS` | If a project's webhooks point at a private address | As on the operator |
 
 Prometheus, Alertmanager and VictoriaLogs are plain HTTP services inside the cluster, so a dashboard that cannot
 resolve them degrades instead of failing: the metrics views say that Prometheus is not reachable, and log search is
-reported unavailable. Everything that goes through the API server needs nothing extra: live logs of a running pod,
+reported unavailable. To give a dashboard outside the cluster metrics and log history, name stores outside the cluster in
+the platform settings (`spec.observability.external`): the cluster sends to them, and every dashboard reads from them,
+with the tenant and credentials that the settings and their Secret give, and with no address of the cluster's to reach.
+See [Send metrics and logs outside the cluster](/docs/guides/observability/#send-metrics-and-logs-outside-the-cluster).
+The **Alerts** page still reads Alertmanager in the cluster, so it needs `GEASS_ALERTMANAGER_URL` or shows Alertmanager as
+not reachable. Everything that goes through the API server needs nothing extra: live logs of a running pod,
 terminals, the database query box and the logs of the add-ons' pods work the same as in the cluster. The dashboard makes
 no HTTP request of its own to the cluster's object stores (the controllers do); it reads their pods' logs through the API
 server.

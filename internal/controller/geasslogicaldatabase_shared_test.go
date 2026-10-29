@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -41,6 +42,7 @@ func newSharedFixture(t *testing.T, mutate ...func(objects *[]client.Object)) *s
 	t.Helper()
 	scheme := storageTestScheme(t)
 	require.NoError(t, batchv1.AddToScheme(scheme))
+	require.NoError(t, nodev1.AddToScheme(scheme))
 	logical := &geassv1alpha1.GeassLogicalDatabase{
 		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: platform.SystemNamespace},
 		Spec: geassv1alpha1.GeassLogicalDatabaseSpec{

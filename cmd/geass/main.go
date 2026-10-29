@@ -98,7 +98,10 @@ func run(args []string) int {
 // upgradeSteps updates a cluster that is already here. The settings of a new cluster are not applied to it: its
 // address, region and certificate contact are on the GeassCluster object, which the update leaves alone.
 func upgradeSteps(opts installer.Options) []installer.Step {
-	for _, name := range []string{"GEASS_ACME_EMAIL", "GEASS_MULTI_SITE", "GEASS_NODE_EXTERNAL_IP"} {
+	for _, name := range []string{
+		"GEASS_ACME_EMAIL", "GEASS_MULTI_SITE", "GEASS_NODE_EXTERNAL_IP",
+		"GEASS_MESH", "GEASS_TAILSCALE_AUTH_KEY_FILE", "GEASS_TAILSCALE_CONTROL_URL",
+	} {
 		if os.Getenv(name) != "" {
 			installer.Warnf("installer", "%s is ignored: it sets up a new cluster, and this one is being updated. "+
 				"Change the cluster's settings on its GeassCluster object", name)
@@ -120,6 +123,7 @@ func upgradeSteps(opts installer.Options) []installer.Step {
 func installSteps(opts installer.Options) []installer.Step {
 	// GEASS_MULTI_SITE=1 GEASS_NODE_EXTERNAL_IP=<public ip> builds a cluster whose nodes are at
 	// different providers: an encrypted WireGuard overlay instead of VXLAN, and the public IP advertised.
+	// GEASS_MESH=wireguard is the same and also records spec.network.mesh; GEASS_MESH=tailscale joins a tailnet.
 	network := installer.NetworkFromEnv()
 
 	// GEASS_ACME_EMAIL is the contact address for the cluster's Let's Encrypt account. Without it the
@@ -161,6 +165,8 @@ func installSteps(opts installer.Options) []installer.Step {
 		&installer.WaitForOperator{},
 		// Store the join token the operator needs to add workers.
 		&installer.JoinTokenSecret{},
+		// And, for a Tailscale mesh, the key the operator joins them to the tailnet with.
+		&installer.MeshAuthSecret{Network: network},
 		// Apply the initial GeassCluster object.
 		applyCluster,
 		// Say where the copies go, when that was given.

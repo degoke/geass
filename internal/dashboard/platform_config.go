@@ -22,6 +22,8 @@ type platformReadiness struct {
 	GitHubAppSecret *corev1.Secret
 	HasDashboardURL bool
 	HasGitHubApp    bool
+	// GitHubProvider is who runs the GitHub App the cluster uses when it is not the cluster's own, or "".
+	GitHubProvider  string
 	HasCloudflare   bool
 	CloudflareReady bool
 }
@@ -57,6 +59,13 @@ func (s *Server) platformReadiness(ctx context.Context) (platformReadiness, erro
 	readiness.GitHubAppSecret = secret
 	readiness.GitHubApp = s.resolveGitHubAppConfig(readiness.DashboardURL, secret, config.Spec.GitHubAppRef != nil && config.Spec.GitHubAppRef.Name != "")
 	readiness.HasGitHubApp = readiness.GitHubApp.Configured()
+	connections, err := githubapp.ExternalConnections(asSystem(ctx), s.Client, systemNamespace)
+	if err != nil {
+		return platformReadiness{}, err
+	}
+	if len(connections) > 0 {
+		readiness.GitHubProvider = connections[0].Spec.External.Provider
+	}
 	readiness.HasCloudflare = platform.CloudflareConfigured(config)
 	readiness.CloudflareReady = platform.IsConditionTrue(config.Status.Conditions, platform.ConditionCloudflareReady)
 	return readiness, nil

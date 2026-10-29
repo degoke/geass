@@ -38,6 +38,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/compute"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
@@ -359,6 +360,11 @@ func workerJoinInput(
 		logf.FromContext(ctx).Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
 			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
 	}
+	meshSettings := mesh.From(cluster.Spec.Network)
+	tailnet, err := tailnetJoin(ctx, c, cluster, meshSettings)
+	if err != nil {
+		return ssh.ProvisionInput{}, err
+	}
 	return ssh.ProvisionInput{
 		Host:       node.Address(),
 		Port:       sshPort,
@@ -371,12 +377,14 @@ func workerJoinInput(
 		NodeName:   node.Name,
 		Config: ssh.NewAgentConfig(ssh.AgentOptions{
 			Placement:  node.Spec.Placement,
-			MultiSite:  cluster.Spec.Network.MultiSite,
+			MultiSite:  meshSettings.UsesOverlayPort(),
 			ExternalIP: node.Address(),
 			Labels:     poolNodeLabels(node),
 			Taints:     poolNodeTaints(node),
+			Tailscale:  tailnet,
 		}),
-		MultiSite: cluster.Spec.Network.MultiSite,
+		MultiSite: meshSettings.UsesOverlayPort(),
+		Tailscale: tailnet,
 	}, nil
 }
 
@@ -396,9 +404,14 @@ func (r *GeassNodeReconciler) provision(
 		return ctrl.Result{}, err
 	}
 
+	if refused, err := meshJoinRefusal(ctx, r.Client, cluster, node); err != nil {
+		return ctrl.Result{}, err
+	} else if refused != "" {
+		return r.setFailed(ctx, node, refused)
+	}
 	in, err := workerJoinInput(ctx, r.Client, r.ServerVersion, node, cluster, creds, token)
 	if err != nil {
-		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+		return r.setFailed(ctx, node, joinInputFailure(err))
 	}
 	err = r.SSH.Provision(ctx, in)
 	if err != nil {

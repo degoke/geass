@@ -55,6 +55,7 @@ func (p *PrometheusClient) QueryRange(ctx context.Context, query string, start, 
 	if err != nil {
 		return nil, err
 	}
+	addHeader(req, p.Header)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -65,7 +66,7 @@ func (p *PrometheusClient) QueryRange(ctx context.Context, query string, start, 
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("prometheus range query failed: %s", string(body))
+		return nil, &storeError{status: resp.StatusCode, text: "prometheus range query failed: " + string(body)}
 	}
 	var parsed struct {
 		Data struct {
@@ -195,7 +196,8 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 	queries := metrics.queries()
 
 	payload := map[string]any{"window": window, "step": int(spec.step.Seconds()), "available": false}
-	ranger, ok := s.metricsClient(r.Context(), true).(rangeMetricsClient)
+	metricsClient := s.metricsClient(r.Context(), true)
+	ranger, ok := metricsClient.(rangeMetricsClient)
 	if !ok {
 		payload["message"] = "Metrics are unavailable on this dashboard."
 		writeJSON(w, http.StatusOK, payload)
@@ -205,10 +207,12 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 	start := end.Add(-spec.duration)
 	series := map[string][]metricPoint{}
 	reached := false
+	var lastErr error
 	for _, query := range queries {
 		points, err := ranger.QueryRange(r.Context(), query.query, start, end, spec.step)
 		if err != nil {
 			series[query.key] = []metricPoint{}
+			lastErr = err
 			continue
 		}
 		reached = true
@@ -217,7 +221,7 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request, scope,
 	payload["series"] = series
 	payload["available"] = reached
 	if !reached {
-		payload["message"] = "Metrics appear once Prometheus is installed and reachable from Geass."
+		payload["message"] = metricsUnavailableMessage(metricsClient, lastErr)
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

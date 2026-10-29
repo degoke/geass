@@ -47,12 +47,14 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
+	"github.com/degoke/geass/internal/mailrelay"
 	"github.com/degoke/geass/internal/netcheck"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
 	_ "github.com/degoke/geass/pkg/compute/all"
 	"github.com/degoke/geass/pkg/githubapp"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
 	mariadbv1 "github.com/degoke/geass/pkg/mariadb/v1alpha1"
+	"github.com/degoke/geass/pkg/metering"
 	"github.com/degoke/geass/pkg/migrations"
 	mocov1 "github.com/degoke/geass/pkg/moco/v1beta2"
 	"github.com/degoke/geass/pkg/platform"
@@ -102,6 +104,10 @@ func main() {
 	// is a small program that listens or connects. That is not the operator and must not start it.
 	if len(os.Args) > 1 && os.Args[1] == "netcheck" {
 		os.Exit(netcheck.Run(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// So is the mail relay the operator runs for organizations (spec.tenancy.mail.relay): a Deployment of this image.
+	if len(os.Args) > 1 && os.Args[1] == "mailrelay" {
+		os.Exit(mailrelay.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -394,6 +400,7 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		PodUsage: podUsage,
 		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
 		AsyncReports: true,
+		Recorder:     mgr.GetEventRecorder("geass-app"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassapp")
 		os.Exit(1)
@@ -404,6 +411,7 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		Kube:   kubernetes.NewForConfigOrDie(restConfig),
 		// Reports to GitHub must not hold the controller's worker while GitHub is slow.
 		AsyncReports: true,
+		Recorder:     mgr.GetEventRecorder("geass-build"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassbuild")
 		os.Exit(1)
@@ -433,13 +441,15 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		PodUsage: podUsage,
+		Recorder: mgr.GetEventRecorder("geass-database"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geassdatabase")
 		os.Exit(1)
 	}
 	if err := (&controller.GeassLogicalDatabaseReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("geass-logicaldatabase"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasslogicaldatabase")
 		os.Exit(1)
@@ -513,6 +523,33 @@ func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptio
 		setupLog.Error(err, "Failed to create controller", "controller", "geassnodepool")
 		os.Exit(1)
 	}
+	// What each organization reserves, hour by hour, for billing. It does nothing until spec.usage.enabled is set, and it
+	// is here, with the controllers, so that a dashboard-only process never meters.
+	if err := mgr.Add(&metering.Meter{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
+		setupLog.Error(err, "Failed to add the usage meter")
+		os.Exit(1)
+	}
+	// Abuse detection for organizations' services (spec.tenancy.abuse): the sustained-CPU signal, and what follows from a
+	// suspicion. Both do nothing until it is set.
+	if err := mgr.Add(&controller.AbuseDetector{Client: mgr.GetClient(), Reader: mgr.GetAPIReader()}); err != nil {
+		setupLog.Error(err, "Failed to add the abuse detector")
+		os.Exit(1)
+	}
+	if err := (&controller.AbuseReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder("geass-abuse"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "abuse")
+		os.Exit(1)
+	}
+	// The platform's mail relay for organizations (spec.tenancy.mail.relay). It does nothing while that is unset.
+	if err := (&controller.MailRelayReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder("geass-mail-relay"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "mailrelay")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 	return sharedParts{webhooks: webhookDispatcher, compute: computeFactory}
 }
@@ -536,7 +573,9 @@ func addDashboard(mgr ctrl.Manager, restConfig *rest.Config, addr string, shared
 	}
 	return mgr.Add(&dashboard.Server{
 		// Everything the dashboard reads and writes goes through the client that limits it to the caller's tenant.
-		Client:    dashboard.ScopeClient(mgr.GetClient()),
+		Client: dashboard.ScopeClient(mgr.GetClient()),
+		// What the cache does not keep: the usage meter's hours. Only the platform's own reads use it.
+		APIReader: mgr.GetAPIReader(),
 		Cache:     mgr.GetCache(),
 		Addr:      addr,
 		Kube:      kubernetes.NewForConfigOrDie(restConfig),

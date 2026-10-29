@@ -60,4 +60,5 @@ const (
 	tagCompute   = "compute"
 	tagTemplates = "templates"
 	tagTokens    = "tokens"
+	tagGitHub    = "github"
 )

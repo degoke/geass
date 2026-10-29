@@ -172,6 +172,7 @@ An installation holds at most 600 tokens, and an organization at most 100.
 - **Hostnames.** A service cannot take a hostname another service serves, or the dashboard's, and Geass does not overwrite a DNS record it did not create. An organization can also be limited to some domains (see [Policy](#what-the-platform-sets-for-an-organization)).
 - **GitHub.** An installation of the GitHub App that one organization's project uses cannot be connected to another's, and a person has to show that GitHub lists the installation among the ones their own account can use (see [GitHub](#github)).
 - **Builds.** A project of an organization builds in a namespace of the organization's own, with only the credentials of that organization and that project in it (see [Builds and the registry](#builds-and-the-registry)).
+- **The kernel, when you ask for it.** With `spec.tenancy.sandbox`, organizations' services, schedules, builds and MySQL, Redis and SQLite servers run under a sandboxed runtime such as gVisor, and wait rather than start without it; an organization's PostgreSQL or MariaDB server, which cannot run in it, is not made (see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/)).
 - **Alerts.** An organization has channels of its own, which hear only about its projects (see [Alerts](#alerts)).
 
 ## What the platform sets for an organization
@@ -185,6 +186,13 @@ A platform administrator can set these on an organization, in **Settings** → *
 | **Region** (`region`) | Where its projects run when they name no region of their own. |
 | **Required node tags** (`requiredTags`) | Every workload of every project of the organization runs only on nodes carrying all of them, added to the project's own. With nodes tagged and reserved for the tag, this is how an organization gets machines of its own. The tags have to exist on nodes, and be reserved, as a project's must. |
 | **Allowed domains** (`allowedDomains`) | Its services may take hostnames under these domains only, and the hostname Geass gives a service. Two organizations cannot be given overlapping domains. |
+| **Noisy-neighbour limits** (`limits`) | The pods and ephemeral storage of each of its namespaces, what a container that asks for nothing is given and the most one may ask for, and each pod's bandwidth, in place of the platform's defaults (`spec.tenantLimits.defaults`). Set with `kubectl` only. See [Noisy-neighbour limits](/docs/guides/tenant-limits/). |
+| **Outbound limits** (`egress`) | The ports its pods may reach outside the cluster, in place of the platform's (`spec.tenancy.egress`): mail closed unless opened, further ports closed, or only a list open. Set with `kubectl` only. See [Outbound limits](/docs/guides/outbound-limits/). |
+| **Abuse detection** (`abuse`) | Whether its services, or those of some of its projects, are left out of the sustained-CPU signal of the platform's abuse detection (`spec.tenancy.abuse`), for legitimate heavy work, and what is done to its suspects in place of the platform's action. Set with `kubectl` only. See [Abuse detection](/docs/guides/abuse-detection/). |
+
+## Billing what each organization reserves
+
+With `spec.usage.enabled` on the platform configuration, the operator keeps what the projects of each organization reserve (CPU, memory and storage), hour by hour and by workspace, and `GET /api/v1/usage/hours` gives it to the platform's administrators. Projects that belong to no organization are kept apart from every organization. No organization can read it, its own figures included. See [Usage by organization, for billing](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing).
 
 ## Alerts
 
@@ -200,14 +208,15 @@ So a build of an organization cannot reach the platform's secrets. It does still
 
 - **Set the organization's registry** under **Settings** → **Registry** (an administrator of the whole organization), or with `POST /api/registry/save` (`repository`, `username`, `password`). Its builds then push there, with that login, and the platform's login is never in the organization's namespace. A service that names a registry of its own keeps it.
 - Because the build namespace reaches only public addresses, the registry has to be one that is reachable on the internet.
+- **On a cluster shared by organizations that do not trust each other**, a platform administrator sets [registry isolation](/docs/operations/registry-isolation/) (`spec.tenancy.registry`): no organization's build is ever given the platform's login, an organization without a registry of its own does not build, each service gets a repository of its own under the organization's (`<repository>/<project>/<service>`), and no organization's service may run an image from the platform's repository or another organization's registry.
 
 ## Shared things an organization owns
 
-- **Database servers.** A platform administrator can make a shared Postgres or MySQL server for an organization (`POST /api/shared-databases/create` with `org=`). Only that organization's projects take databases on it, and only its people see it. It runs where the organization requires its work to (its region and tags). Its administrators can delete it when no database is on it. A platform's own server, which every project shared before, is still not available to organizations.
+- **Database servers.** A platform administrator can make a shared Postgres or MySQL server for an organization (`POST /api/shared-databases/create` with `org=`), or give it a server the platform made (`POST /api/shared-databases/{name}/org`). Only that organization's projects take databases on it, and only its people see it. It runs where the organization requires its work to (its region and tags). Its administrators can delete it when no database is on it. A shared server holds the databases of one organization only: the platform's own server, which every project shared before organizations, is for the projects of no organization while they are on. See [Shared database servers and organizations](/docs/guides/shared-database-servers/#organizations).
 - **Cloud connections.** A connection made without a project, for an organization (`org=`, or by an administrator of the whole organization for their own), can be used by every project of that organization and by no other. Any project of the organization can use its credentials, so keep an organization's connections to what its projects may all touch.
 - **Object storage.** An organization's buckets in the cluster are made on the platform's object storage server, which each bucket reaches with a login of its own. The server is the platform's to set up.
 
-An organization cannot be deleted while it owns a database server or a connection, and a project cannot be given to another organization while it has databases on a server that belongs to one.
+An organization cannot be deleted while it owns a database server or a connection. A project cannot be given to another organization while it has databases on a server that belongs to one, nor, while organizations are on, to an organization while it has databases on the platform's server.
 
 ## An organization's own identity provider
 
@@ -227,7 +236,7 @@ One GitHub App serves every organization. With organizations on, a person who co
 
 These are shared, and fine for organizations that trust each other:
 
-- **Machines.** Every organization's pods run on the same nodes, unless you reserve nodes with [node tags](/docs/guides/scaling-and-placement/) and give each organization its own tags (see above). A pod that escapes its container reaches the node.
+- **Machines.** Every organization's pods run on the same nodes, unless you reserve nodes with [node tags](/docs/guides/scaling-and-placement/) and give each organization its own tags (see above). A pod that escapes its container reaches the node. To keep that from strangers, run organizations' services, schedules, builds and database servers under gVisor or Kata with the [sandboxed runtime](/docs/operations/sandboxed-runtime/); their PostgreSQL and MariaDB servers cannot run in it, and the object storage server, which holds every organization's buckets, does not. [Noisy-neighbour limits](/docs/guides/tenant-limits/) bound each organization's pods, disk and bandwidth, but not its pods on one node, nor its disk reads and writes.
 - **The network of shared servers.** A shared database server runs in the platform's namespace, and any pod can open a connection to it. Each logical database has its own login that reaches that database and nothing else, and the administrator's login is in a Secret no organization reads.
 - **The operator and the dashboard.** They hold cluster-wide access; the separation is made by their code and by the network policy.
 - **The GitHub App.** There is one for the installation, and anyone who can install it on an account they own can connect that installation.

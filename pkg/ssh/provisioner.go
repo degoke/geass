@@ -39,9 +39,12 @@ type ProvisionInput struct {
 	NodeName   string
 	// Config is what the node registers with: its labels and taints, and its overlay and log settings.
 	Config AgentConfig
-	// MultiSite means the cluster's nodes reach each other over the internet: the node needs WireGuard
+	// MultiSite means the cluster's nodes reach each other over the internet through WireGuard: the node needs WireGuard
 	// and its overlay port open before it joins.
 	MultiSite bool
+	// Tailscale is set when the cluster's mesh is a tailnet: the node joins it before K3s starts, and advertises its
+	// tailnet address. MultiSite is then false, because nothing needs the WireGuard module or its port.
+	Tailscale *TailscaleJoin
 }
 
 type sshProvisioner struct{}
@@ -59,7 +62,7 @@ func (p *sshProvisioner) Provision(ctx context.Context, in ProvisionInput) error
 
 	for _, step := range provisionSteps(in) {
 		if err := runStep(ctx, client, step.name, step.cmd); err != nil && !step.optional {
-			return err
+			return in.redact(err)
 		}
 	}
 	return nil
@@ -123,6 +126,8 @@ func rootSteps(in ProvisionInput) []provisionStep {
 		{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"},
 		{name: "install-iscsi", cmd: platform.NodePrerequisitesScript, optional: true},
 	}
+	// On a tailnet the control plane is reached over it, so the node joins it first.
+	steps = append(steps, tailnetSteps(in)...)
 	// Joining a cluster that cannot be reached is the commonest way a node fails to join, and k3s's own
 	// failure is a service that restarts forever. Checking first turns it into an error that says what to open.
 	steps = append(steps, provisionStep{name: "check-cluster-reachable", cmd: reachabilityCommand(in)})
@@ -146,11 +151,10 @@ func rootSteps(in ProvisionInput) []provisionStep {
 // that the agent is running the version that was asked for: the install script exits as soon as it has restarted the
 // service, which is not the same as the node being back.
 func upgradeSteps(in ProvisionInput) []provisionStep {
-	steps := []provisionStep{
-		{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"},
-		// An unreachable cluster is the one thing that turns an upgrade into an outage: the new agent could not rejoin.
-		{name: "check-cluster-reachable", cmd: reachabilityCommand(in)},
-	}
+	steps := []provisionStep{{name: "check-curl", cmd: "which curl || (apt-get update -qq && apt-get install -y curl)"}}
+	steps = append(steps, tailnetSteps(in)...)
+	// An unreachable cluster is the one thing that turns an upgrade into an outage: the new agent could not rejoin.
+	steps = append(steps, provisionStep{name: "check-cluster-reachable", cmd: reachabilityCommand(in)})
 	if !in.Config.IsZero() {
 		steps = append(steps, provisionStep{name: "write-k3s-config", cmd: in.Config.writeConfigCommand()})
 	}
@@ -184,7 +188,7 @@ func (p *sshProvisioner) Upgrade(ctx context.Context, in ProvisionInput) error {
 
 	for _, step := range upgradeSteps(in) {
 		if err := runStep(ctx, client, step.name, step.cmd); err != nil {
-			return err
+			return in.redact(err)
 		}
 	}
 	return nil
@@ -218,6 +222,10 @@ func reachabilityFailures(in ProvisionInput) []reachabilityFailure {
 	ports := "and that TCP 6443 is open to this node, in the host firewall and in the provider's security group."
 	if in.MultiSite {
 		ports = strings.TrimSuffix(ports, ".") + ", with UDP " + platform.WireGuardPort + " open between every pair of nodes."
+	}
+	if in.Tailscale != nil {
+		check = "Check that spec.serverURL on the GeassCluster is the control plane's address on the tailnet (what `tailscale ip -4` prints there)"
+		ports = "and that TCP 6443 is open on the control plane for traffic that arrives from the tailnet, and that the tailnet's access rules let this node reach it."
 	}
 
 	if platform.IsLoopbackURL(url) {

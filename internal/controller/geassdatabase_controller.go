@@ -21,18 +21,21 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	utilptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -65,6 +68,9 @@ type GeassDatabaseReconciler struct {
 	HTTP   *http.Client
 	// PodUsage is what the cluster's pods ask of its nodes, for the check that a new database fits. Nil reads the pods.
 	PodUsage *platform.PodUsageIndex
+	// Recorder is told of an organization's server that waits for the sandboxed runtime, cannot run in it, waits for a
+	// restart into it or is restarted into it. Nil tells nobody; the database's Sandboxed condition still says it.
+	Recorder events.EventRecorder
 
 	// newBackupStorage builds the AWS client used for backup storage; tests replace it.
 	newBackupStorage backupStorageFactory
@@ -205,6 +211,10 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	placement, err := r.databaseNodePlacement(ctx, &db)
 	if err != nil {
 		return r.setNotReady(ctx, &db, err.Error())
+	}
+	// An organization's server runs under the sandboxed runtime, decided before anything of it is made or changed.
+	if result, stop, err := r.sandboxDatabase(ctx, &db, wsNS, placement); stop || err != nil {
+		return result, err
 	}
 
 	storageClass, waitForStorage, err := r.databaseStorageClass(ctx, &db, wsNS)
@@ -416,6 +426,23 @@ func (r *GeassDatabaseReconciler) setReadyWithBackups(ctx context.Context, db *g
 	return result, err
 }
 
+// sqliteGetsAStableNodeID says whether the rqlite server of this Deployment is started with a node ID that does not change. Without -node-id,
+// rqlited names the node after the pod's hostname, and a Deployment's pod has a new hostname every time it is replaced (a drain, a rollout,
+// a restart into the sandbox), so the raft configuration kept on the volume never holds the new node and the server answers 503 ("not part of a
+// stable configuration") for good, which a real K3s showed. A server made from now on gets its database's name. One that already runs without it
+// is left as it is: a different ID at its next rollout would leave its data as unreachable.
+func sqliteGetsAStableNodeID(deploy *appsv1.Deployment) bool {
+	if deploy.CreationTimestamp.IsZero() {
+		return true
+	}
+	for _, c := range deploy.Spec.Template.Spec.Containers {
+		if slices.Contains(c.Args, "-node-id") {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS, storageClass string, placement platform.Placement) (ctrl.Result, error) {
 	if db.Spec.HighAvailability {
 		return r.setNotReady(ctx, db, "SQLite does not support high availability")
@@ -434,13 +461,17 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: db.Name, Namespace: wsNS}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		applyGeassLabels(deploy, db, "GeassDatabase")
+		args := []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)}
+		if sqliteGetsAStableNodeID(deploy) {
+			args = append([]string{"-node-id", db.Name}, args...)
+		}
 		deploy.Spec.Replicas = &replicas
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{platform.K8sLabelAppName: db.Name}}
 		deploy.Spec.Template.Labels = map[string]string{platform.K8sLabelAppName: db.Name, platform.LabelManagedBy: platform.ManagedByValue}
 		deploy.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:      "sqlite",
 			Image:     platform.SQLiteImage,
-			Args:      []string{"-http-addr", "0.0.0.0:4001", "-http-adv-addr", fmt.Sprintf("%s.%s.svc:4001", db.Name, wsNS)},
+			Args:      args,
 			Ports:     []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: 4001}},
 			Resources: databaseInstanceResources(db),
 			VolumeMounts: []corev1.VolumeMount{{
@@ -453,6 +484,9 @@ func (r *GeassDatabaseReconciler) reconcileSQLite(ctx context.Context, db *geass
 			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc.Name}},
 		}}
 		placement.ApplyToPodSpec(&deploy.Spec.Template.Spec)
+		// The template is kept from pass to pass, so a server restarted out of the sandbox loses its class here.
+		deploy.Spec.Template.Spec.RuntimeClassName = nil
+		applyServerRuntimeClass(db, &deploy.Spec.Template.Spec)
 		return setSameNamespaceOwner(db, deploy, r.Scheme)
 	}); err != nil {
 		return r.setNotReady(ctx, db, err.Error())
@@ -1072,8 +1106,13 @@ func (r *GeassDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&geassv1alpha1.GeassDatabase{}).
 		// A project choosing or changing its backup storage must reach the databases waiting for it.
 		Watches(&geassv1alpha1.GeassProject{}, handler.EnqueueRequestsFromMapFunc(r.databasesForProject), builder.WithPredicates(readyOrSpecChanged())).
-		// An organization's region and required node tags decide where its projects' databases may be placed.
-		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.databasesForProject)), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// An organization's region and required node tags decide where its projects' databases and its own servers may be
+		// placed, and whether they are on nodes reserved for it.
+		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(r.databasesForOrganization), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// The sandbox setting, its RuntimeClass and nodes' reservations decide how organizations' servers run.
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.everyDatabase), builder.WithPredicates(databaseSandboxChanged())).
+		Watches(&nodev1.RuntimeClass{}, handler.EnqueueRequestsFromMapFunc(r.databasesForRuntimeClass), builder.WithPredicates(runtimeClassCreatedOrDeleted())).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.databasesForReservation), builder.WithPredicates(nodeReservationChanged())).
 		// A database given its first logical database must start giving out its administrative login.
 		Watches(&geassv1alpha1.GeassLogicalDatabase{}, handler.EnqueueRequestsFromMapFunc(r.databasesForLogicalDatabase)).
 		// A restore or final backup finishing should be noticed at once, not at the next poll.

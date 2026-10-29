@@ -37,6 +37,7 @@ import (
 
 	"github.com/degoke/geass/internal/controller"
 	"github.com/degoke/geass/internal/dashboard"
+	"github.com/degoke/geass/pkg/metering"
 	"github.com/degoke/geass/pkg/migrations"
 	"github.com/degoke/geass/pkg/platform"
 )
@@ -163,6 +164,10 @@ func TestADashboardOnlyProcessAddsTheDashboardAndNothingTheControllersOwn(t *tes
 	require.Same(t, cfg, server.Config)
 	require.NotNil(t, server.Webhooks, "it builds its own dispatcher: deploys and tests still tell the project's webhooks")
 	require.NotNil(t, server.Compute, "it builds its own cloud providers: listing a cloud's sizes needs no controller")
+	require.NotNil(t, server.APIReader, "the usage hours are read from the API server, which the cache leaves out")
+	require.False(t, hasRunnable[*metering.Meter](mgr), "a dashboard-only process never meters")
+	require.Nil(t, server.Metrics, "metrics are read from what the platform configuration names: a store outside the cluster when it names one")
+	require.Nil(t, server.LogStore, "and so is log history")
 	require.NotNil(t, mgr.guard())
 	require.False(t, mgr.guard().NeedLeaderElection())
 }
@@ -179,6 +184,13 @@ func TestControllersOnlyAddsNoDashboardAndTheDashboardSharesWhatTheControllersBu
 	require.True(t, hasRunnable[*controller.PodUsageTracker](mgr))
 	require.True(t, hasRunnable[*controller.NetworkPolicyChecker](mgr))
 	require.True(t, hasRunnable[*controller.ProblemExporter](mgr))
+	require.True(t, hasRunnable[*metering.Meter](mgr), "the usage meter runs with the controllers, and is off until it is turned on")
+	for _, r := range mgr.runnables {
+		if meter, ok := r.(*metering.Meter); ok {
+			require.True(t, meter.NeedLeaderElection(), "only the operator that holds the lease meters")
+			require.NotNil(t, meter.Reader)
+		}
+	}
 	require.NotNil(t, shared.webhooks)
 	require.NotNil(t, shared.compute)
 

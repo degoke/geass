@@ -47,6 +47,9 @@ type Account struct {
 	Warnings []string
 	// ExpiresAt is when the credentials stop working, when the provider says.
 	ExpiresAt time.Time
+	// Temporary says the credentials are short-lived by design, and whatever issues them renews them before they lapse
+	// (a session token from sts:AssumeRole). ExpiresAt is still shown, but not counted down in a warning.
+	Temporary bool
 }
 
 // Size is a machine size a provider offers.
@@ -91,8 +94,9 @@ type InstanceSpec struct {
 	// firewall for the machine lets SSH and the kubelet port in from these and no others. Empty means SSH from
 	// anywhere (the machine accepts only the cluster's key) and no kubelet access.
 	ControlPlaneCIDRs []string
-	// MultiSite says the machine joins a cluster whose nodes reach each other over the internet, so the
-	// firewall also lets the overlay's UDP port in from anywhere. The overlay authenticates every packet.
+	// MultiSite says the machine joins a cluster whose nodes reach each other over the internet through
+	// WireGuard, so the firewall also lets the overlay's UDP port in from anywhere. The overlay authenticates
+	// every packet. It is false for a cluster whose mesh is a tailnet, which opens no port.
 	MultiSite bool
 	// PrivateAddress asks for a machine that Geass reaches on a private address. The provider still creates a
 	// public one unless its settings say otherwise.

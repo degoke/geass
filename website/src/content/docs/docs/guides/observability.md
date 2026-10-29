@@ -147,7 +147,7 @@ A session lasts five minutes, then ends with "Session ended: Session time limit 
 
 Only admins can open a terminal. Viewers see "Your viewer role cannot open consoles." Project tokens cannot use it.
 
-A database's **Console** tab is a query box, not a shell. Type one statement and choose **Run query**. Geass runs it in the database's first running pod with `psql -c`, `mysql -e`, `rqlite -e` or `redis-cli` and shows the output. Redis commands may not carry flags. The first running pod is not always the primary: on a highly available database the statement can land on a replica.
+A database's **Console** tab is a query box, not a shell. Type one statement and choose **Run query**. Geass runs it in the database's first running pod with `psql -c`, `mysql -e` or `redis-cli` (for SQLite, a request to rqlite's HTTP API) and shows the output. Redis commands may not carry flags. The first running pod is not always the primary: on a highly available database the statement can land on a replica.
 
 From a script, send the statement with `POST`; a `GET` to the same address is refused. The response is `{"output": "..."}`:
 
@@ -233,7 +233,83 @@ kubectl -n geass-system patch geasscluster default --type merge \
 
 The `full` profile applies Geass's Prometheus settings on top of the chart's own defaults, which include its other components. Switching logging off uninstalls Fluent Bit and VictoriaLogs, so history stops being available. Switching monitoring off uninstalls the monitoring chart.
 
-If Prometheus runs elsewhere, set `spec.prometheusURL` on the `platform` object (`kubectl -n geass-system edit geassplatformconfig platform`), or set the `GEASS_PROMETHEUS_URL` environment variable on the operator. The log store address can be set with `GEASS_LOGS_URL`.
+If Prometheus runs elsewhere, set `spec.prometheusURL` on the `platform` object (`kubectl -n geass-system edit geassplatformconfig platform`), or set the `GEASS_PROMETHEUS_URL` environment variable on the operator. The log store address can be set with `GEASS_LOGS_URL`. To send metrics and logs to stores outside the cluster, with a tenant and credentials, see the next section.
+
+## Send metrics and logs outside the cluster
+
+`spec.observability.external` on the `platform` object names a metrics store and a log store outside the cluster. Geass then sends to them as well as to the stores in the cluster, and the dashboard reads from them instead. This is how a platform that runs many clusters keeps their metrics and logs in multi-tenant stores of its own, and how a [dashboard that runs outside the cluster](/docs/operations/dashboard-only/) shows metrics and log history: it cannot reach Prometheus or VictoriaLogs inside the cluster. Nothing changes until it is set, and every part of it is optional.
+
+| Part | What Geass does with it | Needs |
+| --- | --- | --- |
+| `metrics.remoteWriteURL` | Prometheus remote-writes every sample it keeps to it: Mimir's or Cortex's `/api/v1/push`, VictoriaMetrics' `/api/v1/write`, or anything else that speaks the protocol. Prometheus keeps its own 15 days as before. | The monitoring add-on |
+| `metrics.queryURL` | The dashboard reads every metric from it: the charts, the overview numbers and the **Usage** page's measured use. It is the address that `/api/v1/query` and `/api/v1/query_range` are added to, such as Mimir's `https://mimir.example.com/prometheus` or VictoriaMetrics' `https://vmselect.example.com/select/12/prometheus`. | A Prometheus-compatible query API |
+| `metrics.tenant`, `metrics.tenantHeader` | Sent with every write and every query. The header is `X-Scope-OrgID` (Mimir, Cortex, Loki) unless you name another, such as `THANOS-TENANT`. Leave the tenant out for a store that takes it from the URL (VictoriaMetrics' cluster version) or from the credentials. | |
+| `logs.pushURL` | Fluent Bit sends every line it collects to it as well, with the same fields as to the store in the cluster. Geass adds `/insert/jsonline`, so it is the store's base address. | The logging add-on |
+| `logs.queryURL` | The dashboard reads log history from it. Geass adds `/select/logsql/query`. | VictoriaLogs, or something in front of it that speaks its API |
+| `logs.accountID`, `logs.projectID` | The VictoriaLogs tenant, sent as the `AccountID` and `ProjectID` headers with every line and every query, `0` when left out. | |
+| `logs.retentionDays` | How long the store keeps logs, which log history reports instead of the logging add-on's retention. | |
+| `metrics.credentialRef`, `logs.credentialRef` | A Secret in `geass-system`: a `token` key for `Authorization: Bearer`, or `username` and `password` keys for basic authentication. Leave it out for a store that takes no credentials. | |
+
+```yaml title="platform.yaml (the observability part)"
+apiVersion: geass.geass.dev/v1alpha1
+kind: GeassPlatformConfig
+metadata:
+  name: platform
+  namespace: geass-system
+spec:
+  observability:
+    external:
+      metrics:
+        remoteWriteURL: https://metrics.example.com/api/v1/push
+        queryURL: https://metrics.example.com/prometheus
+        tenant: acme
+        credentialRef:
+          name: observability-credentials
+      logs:
+        pushURL: https://logs.example.com
+        queryURL: https://logs.example.com
+        accountID: 42
+        projectID: 0
+        retentionDays: 30
+        credentialRef:
+          name: observability-credentials
+```
+
+```bash title="The credentials"
+kubectl -n geass-system create secret generic observability-credentials --from-literal=token="$TOKEN"
+# or: --from-literal=username=acme --from-literal=password="$PASSWORD"
+```
+
+Set it with `kubectl -n geass-system edit geassplatformconfig platform` or a merge patch; the dashboard has no screen for it. The operator applies a change within seconds, and a change to the Secret too. Prometheus takes longer: the operator's change reaches it through the kubelet's refresh of the mounted Secret and Prometheus's configuration reload, and on K3s v1.36.4+k3s1 the first remote write reached the store about 100 seconds after the setting was patched. **Change the setting one step at a time and wait for each** (see "Do not change the setting several times in quick succession" below).
+
+**How the credentials travel.** They are never written into the add-ons' settings, which are kept in a HelmChart that anyone who can read HelmCharts can see. Geass copies the keys the store uses into the Secret `geass-external-metrics` in `monitoring` and `geass-external-logs` in `geass-logging`, and the settings name the copy. Prometheus's operator reads the copy for Prometheus. Fluent Bit reads it as environment variables, so new credentials start new Fluent Bit pods. The copies are removed with the setting. A Secret with both a `token` and a `username` or `password` is refused, as is one with neither.
+
+**What the dashboard reads.** A query address is used by every page and for everyone who may see the page, in place of the cluster's store, and wins over `spec.prometheusURL` and the environment variables. Without one, the dashboard reads the cluster's own stores as before, even while it writes elsewhere. The one exception is the three overview numbers a viewer is shown in the bootstrap (running pods, nodes, CPU cores used): they never read the platform settings, so they come from the cluster's Prometheus, as they always did, and read "unavailable" on a dashboard outside the cluster. The queries are the same as for the cluster's stores, built from the project's own namespaces. When the store outside does not answer, the charts and log history say so ("The metrics store outside the cluster is not answering. Try again in a minute."), and when it refuses the credentials they say that it "refused Geass's credentials (HTTP 401)". What the store wrote back is not shown. The dashboard never falls back to the store in the cluster.
+
+**When something is wrong.** An address that is not `http` or `https`, holds a username or password, or (for a query address or `pushURL`) has a query string; a tenant header that Prometheus sets itself (`Authorization`, `Content-Type`, `User-Agent` and the like); or a Secret that is missing or refused: each is logged by the operator ("Ignored the external metrics store", "Ignored the external store: its credentials could not be read") and leaves that store out, so the cluster's own metrics and logs carry on as if it were not set. The dashboard then says the store "cannot be used". There is no status condition for it yet: look in the operator's log.
+
+**Do not change the setting several times in quick succession.** A change that alters the add-ons' settings makes K3s's helm controller replace the chart's install Job. Three changes within about ten seconds (an address with a query string, a Secret that does not exist, and removing the setting) left `helm-install-geass-kube-prometheus-stack` **suspended** (`spec.suspend: true`, and the events `Suspended Job ... for delete` from the HelmChart) on K3s v1.36.4+k3s1. The cluster then said `AddonsReady` `False` (`AddonsPending`) and `Ready` `False`, every project said `Ready` `False` ("Referenced GeassCluster is not ready"), a new service or logical database waited with "project ... is not ready", and the operator logged only "Waiting for monitoring add-on" every 30 seconds. It lasted about five minutes, until the suspended Job was deleted (`kubectl -n kube-system delete job helm-install-geass-kube-prometheus-stack`): the helm controller made a new one, which finished in 39 seconds. It happened once; a later set, verify and remove, one change at a time and each waited for, did not. It is the helm controller's, but Geass shows it as a stall of the whole cluster without saying which Job.
+
+What it does not do:
+
+- **Alerts stay in the cluster.** Alertmanager still sends them, but the **Alerts** page reads Alertmanager in the cluster, so a dashboard outside the cluster shows it as not reachable. Prometheus remote-writes the `ALERTS` series of the alerts that fire, so the store outside can be asked what fires, but the dashboard does not ask it yet.
+- **Loki is not supported for logs.** The shipper writes VictoriaLogs' JSON lines and the dashboard asks in LogsQL.
+- **Metrics of projects that require node tags are sent.** Their logs are not collected at all, so they are not sent either, but metrics are not covered by [compliance tags](/docs/guides/compliance-tags/).
+- **The stores in the cluster stay.** Lower the logging add-on's `retentionDays` if the store outside is the one that keeps history. The **Logs from** menu still labels history with the add-on's retention; the API reports `logs.retentionDays`.
+- **A store that does not take lines holds the shipper back.** Fluent Bit keeps up to 8 MB of lines per node in memory for both of its outputs, and retries each batch five times. While the store outside refuses them, that buffer fills, and lines can reach the store in the cluster late or be dropped. This has not been measured.
+- **No custom certificate authority.** An `https` store must have a certificate that Prometheus and Fluent Bit trust by default.
+- **One store of each.** There is no list of remote writes or outputs.
+
+:::caution[Run on K3s against VictoriaMetrics and VictoriaLogs; Mimir was not]
+Geass's tests use fakes of the stores, of the Prometheus operator's input and of Fluent Bit's. It has also been run on real K3s v1.36.4+k3s1 with the monitoring and logging add-ons (kube-prometheus-stack 69.8.2 with Prometheus v3.2.1, Fluent Bit 5.1.3) against single-node VictoriaMetrics v1.155.0 and VictoriaLogs v1.53.0 on the machine's own network, each behind a proxy that recorded the headers it was sent:
+
+- Prometheus remote-wrote with `X-Scope-OrgID` (the `tenant`) and a bearer token read from the Secret, and Fluent Bit pushed with `AccountID`, `ProjectID` and the same token. The token was in the copies `geass-external-metrics` and `geass-external-logs` and in no HelmChart.
+- VictoriaLogs kept the lines under the tenant (`AccountID` 42, `ProjectID` 7) and none under the default tenant. VictoriaMetrics single-node ignores the tenant header, so only that it was sent is shown.
+- The dashboard's metrics and log history came from the stores: its `query_range` and `/select/logsql/query` calls reached them with the headers and the token, they still answered with the cluster's own Prometheus and VictoriaLogs switched off, and log history said `retentionDays` 30 (the store's) instead of 7 (the add-on's).
+- A store that answered 401 gave "refused Geass's credentials (HTTP 401)"; one that did not answer gave "is not answering"; an address with a query string and a `credentialRef` to a Secret that does not exist both gave "cannot be used", with the operator's log lines. Removing the setting removed both copies of the credentials at once, took `remoteWrite` off Prometheus about 20 seconds later, and the dashboard read the cluster's own stores again.
+
+**Not run:** Mimir, Cortex or Thanos, a multi-tenant VictoriaMetrics, Loki (not supported), a dashboard that runs outside the cluster, a store with its own certificate authority, the `ALERTS` series, and how Fluent Bit's buffer behaves while a store refuses its lines.
+:::
 
 ## Who can see what
 
@@ -298,6 +374,12 @@ The logging add-on is off. Enable it on the cluster (see above).
 
 **History says "The log store is not answering yet. It may still be starting; try again in a minute."**
 VictoriaLogs is starting or unhealthy. Check `kubectl -n geass-logging get pods`.
+
+**Every project says "Referenced GeassCluster is not ready", and the cluster says `AddonsPending`, after the setting was changed.**
+Look at the install Job of the monitoring chart: `kubectl -n kube-system get jobs`. If `helm-install-geass-kube-prometheus-stack` is `Suspended`, delete it (`kubectl -n kube-system delete job helm-install-geass-kube-prometheus-stack`) and the helm controller makes a new one. See [Send metrics and logs outside the cluster](#send-metrics-and-logs-outside-the-cluster).
+
+**Charts or history say the store "outside the cluster cannot be used", "refused Geass's credentials" or "is not answering".**
+They come from the store that `spec.observability.external` names (see [Send metrics and logs outside the cluster](#send-metrics-and-logs-outside-the-cluster)). "Cannot be used" means its address, tenant header or Secret is not right: the operator's log says which (`kubectl -n geass-system logs deploy/geass-controller-manager -c manager | grep "external"`). "Refused" means the store answered 401 or 403: check the `token`, or `username` and `password`, in the Secret, and the tenant. "Not answering" means the dashboard could not reach it.
 
 **The Logs tab says "Your viewer role cannot read logs."**
 Logs need an admin. Ask for the admin role.

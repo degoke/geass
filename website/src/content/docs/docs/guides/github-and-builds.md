@@ -114,8 +114,10 @@ spec.build.registry.repository on the service`, and no build is made.
 Geass reads the destination from the first of these that is set:
 
 1. The service's own `spec.build.registry.repository`.
-2. The platform registry: `spec.registry.repository` on the platform configuration (`GeassPlatformConfig` named
-   `platform`).
+2. For a project of an [organization](/docs/guides/organizations-and-workspaces/#builds-and-the-registry), the
+   organization's own registry.
+3. The platform registry: `spec.registry.repository` on the platform configuration (`GeassPlatformConfig` named
+   `platform`). With [registry isolation](/docs/operations/registry-isolation/) set, never for an organization's project.
 
 An admin sets the platform registry through the API. The dashboard has no form for it yet. The login is optional: a
 registry that needs none is fine.
@@ -501,6 +503,12 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager | gr
 The field is left out when GitHub sent no ID, or one with characters that an ID does not have. Geass does not use the
 ID to skip anything. A delivery that you **Redeliver** from the app's settings keeps its ID, and it is handled as the
 new event it is: a redelivered push runs the builds again.
+
+**Through a provider.** When the cluster's GitHub App is one a provider runs (see
+[GitHub through a provider](/docs/guides/connectors/github/#github-through-a-provider)), GitHub calls the provider, and the
+provider forwards each event to `<dashboard URL>/webhooks/github/forwarded/<connection>`, signed with a secret only it and the
+cluster know. Geass handles it as above, and only for the projects connected to the installation the event names. The signature
+and the answers are in [Forwarded GitHub events](/docs/reference/rest-api/#forwarded-github-events).
 
 ### From your CI to Geass
 

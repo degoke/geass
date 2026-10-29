@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/abuse"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -53,6 +54,7 @@ const (
 	reasonScaleToZeroNeedsAddon     = "AddonNotInstalled"
 	reasonScaleToZeroNeedsHost      = "NoPublicHost"
 	reasonScaleToZeroUsesAutoscaler = "AutoscalingSet"
+	reasonScaleToZeroSuspended      = "Suspended"
 
 	// annotationTemplateFingerprint is on a service's Deployment: what its pods are made from, so a change of
 	// version is known when it happens.
@@ -138,6 +140,11 @@ func scaleToZeroPrefixes(app *geassv1alpha1.GeassApp) []string {
 func (r *GeassAppReconciler) planScaleToZero(ctx context.Context, app *geassv1alpha1.GeassApp) (scaleToZeroPlan, error) {
 	plan := scaleToZeroPlan{requested: scaleToZeroRequested(app), hosts: scaleToZeroHosts(app)}
 	if !plan.requested {
+		return plan, nil
+	}
+	if abuse.Suspended(app) {
+		// A request would wake it: it stays at zero, and the proxy is set aside until it is released.
+		plan.reason, plan.message = reasonScaleToZeroSuspended, "Scale to zero is set aside while the platform's administrators keep the service suspended: it stays at zero copies"
 		return plan, nil
 	}
 	plan.idleSeconds, plan.maxReplicas = app.Spec.ScaleToZero.IdleSeconds, app.Spec.ScaleToZero.MaxReplicas
@@ -488,6 +495,9 @@ func scaleToZeroCondition(plan scaleToZeroPlan, conditions []metav1.Condition) [
 // that is whatever its Deployment has been scaled to: an idle one is at zero, and that is as it should be, so
 // it is ready, not starting.
 func effectiveReplicas(app *geassv1alpha1.GeassApp, deploy *appsv1.Deployment, plan scaleToZeroPlan) int32 {
+	if abuse.Suspended(app) {
+		return 0
+	}
 	if plan.verifying {
 		return max(1, deploymentReplicasOf(deploy))
 	}

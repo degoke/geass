@@ -13,6 +13,7 @@ import (
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/helmchart"
 	helmv1 "github.com/degoke/geass/pkg/helmchart/v1"
+	"github.com/degoke/geass/pkg/observability"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -45,9 +46,16 @@ func logStoreValues(retentionDays int32) string {
 `, platform.LogStoreServiceName, retentionDays)
 }
 
+// logStoreInsertURI is where the shipper sends lines to in a VictoriaLogs server, with the fields that become the
+// stream (so a project's lines are found by namespace without scanning everyone's), the raw line as the message, and
+// the time the node read it.
+const logStoreInsertURI = "/insert/jsonline?_stream_fields=kubernetes_namespace_name,kubernetes_pod_name,kubernetes_container_name&_msg_field=log&_time_field=date"
+
 // logShipperValues are the Fluent Bit chart values. complianceNamespaces are the namespaces of projects
 // that require node tags: one store holds every project's logs on whatever node it runs on, so their
-// logs are never sent to it and stay on the nodes the project is limited to.
+// logs are never sent to it and stay on the nodes the project is limited to. external is a log store outside
+// the cluster that the same lines go to as well, or nil; the lines of those projects are not collected at all,
+// so they are not sent there either.
 //
 // The shipper runs on every node, reserved ones included
 // (its toleration matches everything), and is kept small: logs are not worth starving a workload for.
@@ -55,7 +63,7 @@ func logStoreValues(retentionDays int32) string {
 // It reads each file from its start the first time, so logs appear as soon as the add-on is installed
 // instead of only what is written afterwards, and remembers how far it got in a database on the node, so a
 // restart neither sends everything again nor loses what was written while it was down.
-func logShipperValues(complianceNamespaces []string) string {
+func logShipperValues(complianceNamespaces []string, external *externalSink) string {
 	excluded := slices.Concat(logShipperExcludedNamespaces, complianceNamespaces)
 	paths := make([]string, len(excluded))
 	for i, namespace := range excluded {
@@ -117,12 +125,13 @@ config:
         Match kube.*
         Host %s.%s.svc
         Port %s
-        URI /insert/jsonline?_stream_fields=kubernetes_namespace_name,kubernetes_pod_name,kubernetes_container_name&_msg_field=log&_time_field=date
+        URI %s
         Format json_lines
         Json_date_key date
         Json_date_format iso8601
         Retry_Limit 5
-`, exclude, platform.LogStoreServiceName, platform.LoggingTargetNS, platform.LogStorePort)
+%s`, exclude, platform.LogStoreServiceName, platform.LoggingTargetNS, platform.LogStorePort, logStoreInsertURI,
+		externalLogsOutput(external)) + externalLogsEnvironment(external)
 }
 
 // reconcileLogging installs or removes log collection. It is background work: a problem here is logged and
@@ -136,6 +145,9 @@ func (r *GeassClusterReconciler) reconcileLogging(ctx context.Context, cluster *
 			if err := helmchart.Delete(ctx, r.Client, name); err != nil && !apierrors.IsNotFound(err) {
 				log.Error(err, "Failed to remove the logging add-on", "chart", name)
 			}
+		}
+		if err := r.removeCredentialsCopy(ctx, platform.LoggingTargetNS, observability.LogsCredentialsSecret); err != nil {
+			log.Error(err, "Failed to remove the copy of the external log store's credentials")
 		}
 		return
 	}
@@ -158,6 +170,13 @@ func (r *GeassClusterReconciler) reconcileLogging(ctx context.Context, cluster *
 		log.Error(err, "Failed to read the projects that require node tags, so the log shipper was not updated")
 		return
 	}
+	// A log store outside the cluster that cannot be set up for an API error leaves the shipper as it is too, rather
+	// than stop sending to it until the next pass.
+	external, err := r.externalLogsSink(ctx)
+	if err != nil {
+		log.Error(err, "Failed to set up the external log store, so the log shipper was not updated")
+		return
+	}
 	shipper := helmv1.HelmChartSpec{
 		Chart:           platform.LogShipperReleaseChart,
 		Repo:            platform.LogShipperChartRepo,
@@ -165,7 +184,7 @@ func (r *GeassClusterReconciler) reconcileLogging(ctx context.Context, cluster *
 		TargetNamespace: platform.LoggingTargetNS,
 		// The store's chart creates the namespace; both install into it.
 		CreateNamespace: true,
-		ValuesContent:   logShipperValues(complianceNamespaces),
+		ValuesContent:   logShipperValues(complianceNamespaces, external),
 	}
 	if err := helmchart.Ensure(ctx, r.Client, platform.LogShipperChartName, shipper); err != nil {
 		log.Error(err, "Failed to install the log shipper")

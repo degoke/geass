@@ -312,7 +312,9 @@ func (r *GeassCloudConnectionReconciler) verifyCompute(ctx context.Context, conn
 	return warnAboutExpiry(account, r.now()), wait, err
 }
 
-// warnAboutExpiry adds a warning to credentials that stop working soon or already have.
+// warnAboutExpiry adds a warning to credentials that stop working soon or already have. Temporary credentials are only
+// warned about once they have lapsed: they are renewed long before the countdown for an ordinary key starts, so that
+// countdown would be on all the time. status.expiresAt still says when they lapse.
 func warnAboutExpiry(account compute.Account, now time.Time) compute.Account {
 	if account.ExpiresAt.IsZero() {
 		return account
@@ -320,6 +322,8 @@ func warnAboutExpiry(account compute.Account, now time.Time) compute.Account {
 	switch left := account.ExpiresAt.Sub(now); {
 	case left <= 0:
 		account.Warnings = append(account.Warnings, "the credentials have expired")
+	case account.Temporary:
+		// Nothing to say until they have lapsed.
 	case left < credentialExpiryWarning:
 		account.Warnings = append(account.Warnings, fmt.Sprintf("the credentials expire in %d days: make new ones and update the connection", int(left.Hours()/24)+1))
 	}

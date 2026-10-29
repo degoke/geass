@@ -9,6 +9,11 @@ Any provider that speaks OpenID Connect works: [Better Auth](https://www.better-
 
 Programs are not affected. [API tokens](/docs/guides/users-and-tokens/), deploy hooks and `geass login` work the same in both modes: a token is made by a signed-in admin, and is tied to who made it.
 
+:::note
+On a Geass that a platform runs for you, with [managed mode](/docs/operations/managed-mode/) on, how people sign in is the platform's:
+the settings on this page are shown read-only, and the API refuses to change them (`403`, `code` `managed`).
+:::
+
 ## What changes and what does not
 
 | | Passwords from the Secret (the default) | Through an identity provider |

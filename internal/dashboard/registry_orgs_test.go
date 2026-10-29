@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
@@ -104,4 +105,44 @@ func TestDeletingAnOrganizationDeletesItsRegistryLogin(t *testing.T) {
 	require.NoError(t, f.base.Create(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: platform.OrgRegistrySecretName(gamma), Namespace: platform.SystemNamespace}}))
 	require.Equal(t, http.StatusOK, f.do(platformSession, http.MethodPost, "/api/orgs/"+gamma+"/delete", form("confirmName", gamma)).Code)
 	require.True(t, apierrors.IsNotFound(f.base.Get(context.Background(), key(platform.OrgRegistrySecretName(gamma)), &corev1.Secret{})))
+}
+
+func TestUnderTheRegistryPolicyAnOrganizationCannotTakeAPartOfARegistryThatIsNotItsOwn(t *testing.T) {
+	f := newMatrixFixture(t)
+	var config geassv1alpha1.GeassPlatformConfig
+	require.NoError(t, f.base.Get(context.Background(), key(platform.HAReadinessName), &config))
+	config.Spec.Registry.Repository = "registry.platform.example/builds"
+	config.Spec.Tenancy = &geassv1alpha1.GeassPlatformTenantIsolationSpec{Registry: &geassv1alpha1.GeassTenantRegistrySpec{}}
+	require.NoError(t, f.base.Update(context.Background(), &config))
+	adminA, adminB := sessionIn(orgA, "", "admin"), sessionIn(orgB, "", "admin")
+
+	rec := f.do(adminA, http.MethodGet, "/api/registry", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"ownRequired":true`, "the organization is told its builds need a registry of its own")
+	require.NotContains(t, rec.Body.String(), "registry.platform.example", "and not where the platform's is")
+
+	require.Equal(t, http.StatusOK, f.do(adminA, http.MethodPost, "/api/registry/save", form("repository", "ghcr.io/acme/builds")).Code)
+	for name, repository := range map[string]string{
+		"A's registry":                          "ghcr.io/acme/builds",
+		"inside A's registry":                   "ghcr.io/acme/builds/beta",
+		"around A's registry":                   "ghcr.io/acme",
+		"the platform's repository":             "registry.platform.example/builds",
+		"A's path in the platform's repository": "registry.platform.example/builds/" + orgA,
+	} {
+		rec := f.do(adminB, http.MethodPost, "/api/registry/save", form("repository", repository))
+		require.Equal(t, http.StatusConflict, rec.Code, name)
+		require.NotContains(t, rec.Body.String(), orgA, "%s: whose it is is not said", name)
+	}
+	require.Nil(t, f.org(t, orgB).Spec.Registry, "nothing was saved")
+
+	require.Equal(t, http.StatusOK, f.do(adminB, http.MethodPost, "/api/registry/save", form("repository", "registry.platform.example/builds/"+orgB)).Code, "its own path in the platform's repository")
+	require.Equal(t, http.StatusOK, f.do(adminA, http.MethodPost, "/api/registry/save", form("repository", "ghcr.io/acme/builds/v2")).Code, "A moves inside what was its own")
+}
+
+func TestWithoutTheRegistryPolicyAnOrganizationTakesAnyRegistry(t *testing.T) {
+	f := newMatrixFixture(t)
+	require.Equal(t, http.StatusOK, f.do(sessionIn(orgA, "", "admin"), http.MethodPost, "/api/registry/save", form("repository", "ghcr.io/acme/builds")).Code)
+	require.Equal(t, http.StatusOK, f.do(sessionIn(orgB, "", "admin"), http.MethodPost, "/api/registry/save", form("repository", "ghcr.io/acme/builds")).Code, "as before")
+	rec := f.do(sessionIn(orgA, "", "admin"), http.MethodGet, "/api/registry", nil)
+	require.Contains(t, rec.Body.String(), `"ownRequired":false`)
 }

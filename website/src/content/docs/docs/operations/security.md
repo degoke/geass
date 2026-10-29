@@ -13,6 +13,7 @@ had no independent audit, and nothing here should be read as one.
 | Surface | Protected by |
 | --- | --- |
 | Dashboard and REST API | Username and password (bcrypt), a signed session cookie, or an API token; users are `admin` or `viewer`, tokens can also be `observer` |
+| Settings a platform keeps for itself | Off by default. [Managed mode](/docs/operations/managed-mode/), set by the platform in `spec.managed`: the API refuses every caller's writes to sign-in, the dashboard's domain and DNS and the cluster-state backup, and the dashboard shows them read-only. A guard rail for the dashboard and its API, not a boundary against whoever can write the cluster's objects |
 | A deploy hook URL | A 160-bit secret in the path that deploys one service and does nothing else; refused as an API credential |
 | Writes from a browser | Same-origin check on every mutation (the request's `Origin` or `Referer` must match the dashboard host) |
 | Writes from scripts | API tokens sent in a header, stored only as hashes |
@@ -20,6 +21,8 @@ had no independent audit, and nothing here should be read as one.
 | Project to project traffic | A network policy per project environment (on by default) |
 | Where a project's data runs | Compliance tags: node selectors on everything the project runs, and an admission policy as a backstop |
 | Cloud metadata service | A network policy that blocks `169.254.0.0/16` from every project namespace |
+| Mail and other ports to the outside, for organizations | Off by default. The platform's outbound limits, written into the same policy and an organization's build namespace's: mail ports closed, further ports or all but a list. A port heuristic against mining pools, not detection. See [Outbound limits](/docs/guides/outbound-limits/) |
+| How much mail an organization sends | Off by default. The mail relay: STARTTLS required before sign-in, a login per organization (random, compared as a digest in constant time, rotatable), rates, recipients, size, connections and sender domains per organization, counted in the relay's memory. No content scanning, DKIM or bounce handling. See [Mail relay](/docs/guides/mail-relay/) |
 | The cluster's machines | A network policy that blocks every node address, with the Kubernetes API left open on the control plane. On for projects created in the dashboard or the API; a choice for older projects |
 | One project using all the room | Optional per project: a quota on the CPU, memory, disk and pods of the project, of each environment, or both |
 | Metrics and log stores | Network policies that admit only platform namespaces |
@@ -104,8 +107,10 @@ Setting it up and its limits are in [Sign in with an identity provider](/docs/gu
   provider signs in with a mapped role gets in: that is the setting to restrict when anyone can sign up at the provider. The role is
   fixed in the signed session cookie at sign-in, so a change at the provider applies when the session ends (an hour by
   default, 5 to 720 minutes).
-- **Only a signed-in admin can change it, never a token.** The settings, the test and the switch are refused for every API
-  token, observers included. Turning it on needs a test sign-in of exactly the settings as saved, by someone who maps to admin,
+- **Only a signed-in admin can change it, never a token, and nobody when a platform manages it.** With
+  [managed mode](/docs/operations/managed-mode/) on, the settings, the test and the switch (and an organization's own provider) are
+  refused for everyone, administrators included, whatever the rest of this list says. The settings, the test and the switch are
+  refused for every API token, observers included. Turning it on needs a test sign-in of exactly the settings as saved, by someone who maps to admin,
   in the last half hour, and an admin who has a password. Saving is refused while people sign in through the provider.
 - **The way in that does not depend on the provider stays.** A user in the Secret who is an admin and has a password can still
   sign in. While the provider decides, the password of a user who is not an admin is refused, and turning the provider on in the
@@ -367,7 +372,13 @@ the Cloudflare token, the GitHub App key, app secrets and shared secrets, functi
   `GEASS_TRIGGER_TOKEN`, from the Secret `<app>-trigger` in the environment's namespace. The schedule's CronJob sends it in the
   `x-geass-trigger-token` header, and the function tells a scheduled call from a visitor by comparing it in constant time. Anyone who can
   read that Secret can forge a scheduled call. The token travels inside the cluster as plain HTTP, like all traffic between services.
-- **In transit.** Inside the cluster, traffic to the dashboard is plain HTTP. Publish it over HTTPS.
+- **The mail relay.** While [the relay](/docs/guides/mail-relay/) runs, each organization's login is in `geass-mail-credentials-<organization>`
+  in `geass-system`, and a copy is in `geass-mail` in each environment of its projects, where its own services can read it. The relay itself
+  is given only the SHA-256 digests of the passwords (the passwords are 32 random bytes, so a fast digest is enough), in the Secret
+  `geass-mail-relay`, with the token its metrics and usage are read with. Its certificate's authority key, `geass-mail-relay-ca`, is never
+  mounted in the relay. The upstream's login stays in the Secret you name, which the relay mounts. None of these is ever logged.
+- **In transit.** Inside the cluster, traffic to the dashboard is plain HTTP. Publish it over HTTPS. The mail relay requires TLS before an
+  organization signs in, with a certificate that clients check against `SMTP_CA_CERT`.
 
 :::caution
 The password of an in-cluster database that Geass creates is random, and the MySQL root password is the same value. A database made by an earlier release
@@ -445,6 +456,13 @@ Without network policies every pod in a Kubernetes cluster can reach every other
   before it, and Geass keeps it in step with the nodes. See [Network isolation](/docs/guides/network-isolation/#keep-services-away-from-the-clusters-machines).
 - **Project limits.** A project can cap what it asks for as a whole and what each of its environments asks for. It is off by default. See
   [Project limits](/docs/guides/project-limits/).
+- **Outbound limits.** On a cluster that organizations share, the platform can close mail and other ports to addresses outside
+  the cluster for every organization's pods (`spec.tenancy.egress`), in the same policy, since a policy of its own could not close
+  what this one opens. It is off by default, does not detect mining, and does not limit how much mail is sent. See
+  [Outbound limits](/docs/guides/outbound-limits/).
+- **The mail relay.** When it runs, it has a policy of its own, `geass-mail-relay`: every pod may reach its submission port, which
+  asks for an organization's login, and only `geass-system` and `monitoring` its admin port. It reaches only the cluster's DNS and
+  the upstream's port. Organizations reach it whatever their outbound limits say. See [Mail relay](/docs/guides/mail-relay/#networking).
 - **A check that policies are enforced.** All of this depends on the network plugin acting on policies. Geass tries it, and the **Usage** page says **Not enforced** when it does not. See [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies).
 - **Telemetry.** The Prometheus and log stores have no login and hold every project's data, so Geass limits them to the
   platform namespaces with `geass-restrict-metrics-store` and `geass-restrict-log-store`.
@@ -552,7 +570,7 @@ any machine that can reach port 6443 join the cluster, so guard it like a passwo
   token), which pod and container, the command and a timeout of five minutes. List them with
   `kubectl -n geass-system get geassconsolesessions`. The operator log also notes when each terminal opens and closes. Nothing records what was typed.
 - **SQL console.** An admin can run a statement in a database from the dashboard (`POST /api/databases/{db}/query`), which
-  executes it inside the database pod with `psql`, `mysql`, `redis-cli` or `rqlite`. No session object is created for it and
+  executes it inside the database pod with `psql`, `mysql` or `redis-cli` (for SQLite, a request to rqlite's HTTP API). No session object is created for it and
   the operator log holds only the request path, so nothing records the statements.
 - **Tokens.** Creating and revoking a token writes a line to the operator log, and so does approving a command-line sign-in
   (`Approved a command-line sign-in`, with the token ID, role, client name and approver). Refusing one is not logged.
@@ -598,8 +616,29 @@ kubectl -n geass-system logs deployment/geass-controller-manager -c manager
 12. Run `geass mcp --listen` only on `127.0.0.1`, or behind TLS and a firewall.
 13. Put sensitive values in secrets, not plain configuration, because observer tokens and agents can read plain configuration.
 14. Watch the operator log and your servers' logs.
-15. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
+15. If organizations that do not trust each other share the cluster, run their code under a
+    [sandboxed runtime](/docs/operations/sandboxed-runtime/) (gVisor or Kata), which their builds and their MySQL, Redis
+    and SQLite servers use too. Their PostgreSQL and MariaDB servers cannot run in it, so they are not made for an
+    organization then, and those made before keep running outside it: move their data, and approve the restart of each
+    database server that ran before the sandbox was set.
+16. If organizations that do not trust each other share the cluster, set
+    [registry isolation](/docs/operations/registry-isolation/) so their builds are never given the platform's registry login,
+    give each a registry login of its own, and turn on `AlwaysPullImages`.
+17. If you run organizations, give them only to people and groups you trust to share machines, keep the `platformClaim` to the few who run the
     installation, keep an admin who signs in with a password, and shorten `sessionMinutes` if people are removed from organizations often.
+    Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through a relay you run.
+18. If strangers run code on the cluster, turn on [abuse detection](/docs/guides/abuse-detection/) with `action: None`, review what it
+    finds (`GET /api/v1/abuse/suspects`), exempt the projects that do legitimate heavy work, and only then consider `Suspend`. It
+    is a signal and not proof, and it misses a miner that stays below its threshold, pauses, or uses a GPU; a runtime monitor
+    such as Falco can report to it, except from inside gVisor-sandboxed pods, which it cannot see into. Close the mining pools' ports
+    too (`miningPools: Blocked`), knowing it is a heuristic.
+    Close mail to the outside for them with [outbound limits](/docs/guides/outbound-limits/), and send their mail through the
+    [mail relay](/docs/guides/mail-relay/), with a sender domain required, each organization's domains verified at the upstream, and a
+    sending quota at the upstream too: the relay's counts start over when it restarts.
+19. If a platform runs your Geass for you, or you run Geass for others, turn on [managed mode](/docs/operations/managed-mode/)
+    (`spec.managed.enabled`) so that nobody signed in to the dashboard can change sign-in, the dashboard's domain or the
+    cluster-state backup. Remember it is a guard rail: protect `GeassPlatformConfig`, `GeassCluster` and the operator's Deployment
+    with Kubernetes RBAC, and keep the installer off a control plane that the platform hosts.
 
 ## What stays your responsibility
 
@@ -620,7 +659,9 @@ Geass does not do these for you:
   rules for the operator's own health (rule `geass-operator` in `monitoring`: the operator down, failing or slow reconciles, a backed-up
   work queue, a slow or failing Kubernetes API server). An admin can set up [alerts](/docs/guides/alerts/) to Slack or email, which Alertmanager
   sends: for failed builds and deploys, services that are down, failing backups, crashing pods, filling storage, nodes that are not ready and
-  the operator's own alerts. Geass does not watch the traffic to your services, or what they log or return.
+  the operator's own alerts. Geass does not watch the traffic to your services, or what they log or return. Its
+  [abuse detection](/docs/guides/abuse-detection/) watches organizations' services' CPU use for patterns that look like mining, and takes
+  reports from a runtime monitor you run; it does not look inside containers, and what it finds is a signal for you to review.
 
 ## Related
 

@@ -213,13 +213,13 @@ If provisioning failed, a **Retry** button appears beside the status.
 
 ## Run a query
 
-The **Console** tab has a **Query** box, filled with `SELECT 1`, and a **Run query** button. Geass runs the text inside the database's pod with the engine's own client and shows the output. Only admins can run queries, and viewers see "Your viewer role cannot run queries."
+The **Console** tab has a **Query** box, filled with `SELECT 1`, and a **Run query** button. Geass runs the text inside the database's pod with the engine's own client (for SQLite, a request to rqlite's HTTP API) and shows the output. Only admins can run queries, and viewers see "Your viewer role cannot run queries."
 
 | Engine | Command Geass runs |
 | --- | --- |
 | PostgreSQL | `psql -c <query>` |
 | MySQL | `mysql -e <query>` |
-| SQLite | `rqlite -e <query>` |
+| SQLite | `wget` posting `["<query>"]` to rqlite's `/db/request` on `127.0.0.1:4001`, which runs it as a read or a write. The output is rqlite's JSON, `{"results":[...]}`, and a statement that fails comes back inside it as `{"error":"..."}` |
 | Redis | `redis-cli -- <words>`. Words that start with `-` are refused |
 
 A running pod is required. Otherwise the output says "no database pods are running yet", or "The database console is available after the server reports Ready." Each query is a separate command, so a session does not keep state between queries.
@@ -668,6 +668,12 @@ Check, in order: you deployed the app after adding the reference ("Deploy to app
 
 **The console shows "no database pods are running yet".**
 The database is not running. Check its status and pods.
+
+**A SQLite database answers `503` (rqlite logs "not part of a stable configuration") after its pod was replaced.**
+A SQLite server made before Geass gave rqlite a fixed node ID (`-node-id`) names its node after the pod's host name, and a Deployment's pod has a new name every time it is replaced (a drain, a rollout, a restart into the [sandbox](/docs/operations/sandboxed-runtime/#servers-that-already-run)). The new node is not in the raft configuration kept on the volume, so rqlite does not elect itself and stays unavailable. A server that this release makes is started with `-node-id <ID>`. One made earlier needs its raft configuration recovered (rqlite's documentation describes it; it was not tried here) or its data moved to a new server. Geass has no tool for either.
+
+**A MySQL server in the sandbox says Ready, but its `app` login and the password in `<ID>-bootstrap` are refused.**
+At 512 MiB, MySQL was killed for lack of memory during its first start under gVisor and was left with only `root@localhost` and no password for it. See [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs). A server made with 1 GiB started cleanly. Delete the broken server and its volume and make it again with more memory.
 
 **A restored database stays at "Restoring database from backup".**
 See [Backups and restore](/docs/guides/backups-and-restore/#failure-modes).

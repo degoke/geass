@@ -189,7 +189,7 @@ Defaults marked "CRD default" are filled in by the API server. Defaults marked "
 | Field | Type | Required or default | Validation | Meaning |
 | --- | --- | --- | --- | --- |
 | `spec.project` | string | Optional | None | The owning project. Empty makes this the cluster-wide shared server, which runs in `geass-system`. |
-| `spec.org` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | Makes a shared server (one with no project) an [organization](/docs/reference/resources/geass-organization/)'s: only that organization's projects may take logical databases on it, and only its people see it. It runs where the organization requires its work to (its region and node tags). Ignored when `spec.project` is set. Empty is the platform's, which every project may use. |
+| `spec.org` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | Makes a shared server (one with no project) an [organization](/docs/reference/resources/geass-organization/)'s: only that organization's projects may take logical databases on it, and only its people see it. It runs where the organization requires its work to (its region and node tags). Ignored when `spec.project` is set. Empty is the platform's: while organizations are on, for the projects of no organization only, so that a server never holds two organizations' data; while they are off, for every project. A platform administrator changes it with `POST /api/shared-databases/{name}/org`, which refuses while the server holds a database of another owner. See [Shared database servers](/docs/guides/shared-database-servers/#organizations). |
 | `spec.environment` | string | Optional. Required in practice for a project database. | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 63 | The project environment. It must be one of the project's `spec.environments`. Empty for a shared server. |
 | `spec.engine` | string | Required | Enum `Postgres`, `MySQL`, `SQLite`, `Redis`, `MariaDB` | The database engine. `MariaDB` runs the official image under the MariaDB operator. `SQLite` runs rqlite, which serves SQLite over HTTP on port 4001. `Redis` runs without a volume. A PlanetScale database can be `MySQL` or `Postgres`. |
 | `spec.placement` | string | CRD default `InCluster` | Enum `InCluster`, `External` | `InCluster` runs the database in the cluster. `External` connects to a database elsewhere. |
@@ -289,11 +289,11 @@ The gate only applies when the annotation `geass.dev/deploy-workflow` is `"true"
 | `status.backup.recoveryWindowStart` | date-time | The earliest moment you can restore to. |
 | `status.reconcileRetry` | object | Counters for consecutive failures: `reconcileFailures`, `reconcileFailureStarted`, `reconcileFailureGeneration`. |
 | `status.provision` | object | Deploy history. `activeProvisionAttempt` is the ID of the running attempt. `provisionAttempts` keeps the newest 8, each with `id`, `startedAt`, `completedAt`, `phase` (`Running`, `Succeeded` or `Failed`), `summary` and up to 12 `errors` (`recordedAt`, `message`). `buildRef` and `deploymentRef` are only used by services. |
-| `status.conditions` | list | One condition: `Ready`. |
+| `status.conditions` | list | `Ready`, and `Sandboxed` for an organization's server while the platform runs organizations' code in a sandboxed runtime (see [Sandboxed condition](#sandboxed-condition)). |
 
 ### Ready condition and retries
 
-`Ready` is the only condition. It has three reasons:
+`Ready` has three reasons:
 
 | Reason | Status | Meaning |
 | --- | --- | --- |
@@ -326,6 +326,22 @@ The `Ready` messages you can see, in the order Geass checks them:
 | `Could not pull the database image <image> (<reason>)` | The pod of a MySQL or Redis server cannot get its image. `<reason>` is `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName`. A pull that is only slow is `Service is starting`. It counts as a failure, but only after 10 minutes. |
 | `Service failed to start` | Every pod of the chart failed. |
 | `Restoring database from backup` | A restore is running. |
+| `Waiting for the sandboxed runtime: RuntimeClass "<class>" is not in the cluster, …` | An organization's new server waits for the platform's sandboxed runtime. Nothing of it is made. It does not count as a failure. See [Sandboxed condition](#sandboxed-condition). |
+| `This database cannot run in the sandbox: …, so it is not made. …` | An organization's PostgreSQL or MariaDB server while the platform runs organizations' code in a sandboxed runtime. Nothing of it is made. It does not count as a failure: only the platform can change it. |
+
+### Sandboxed condition
+
+`Sandboxed` is on the server of a project that belongs to an organization, and on a shared server whose `spec.org` names one, while the platform's [`spec.tenancy.sandbox`](/docs/operations/sandboxed-runtime/#database-servers) is set; and on a server that still runs under a RuntimeClass after the setting was taken away. It says how the server's pods run.
+
+| Status | Reason | Message | Meaning |
+| --- | --- | --- | --- |
+| `True` | `RuntimeClass` | `Runs under RuntimeClass gvisor` | The server's pods are written under the platform's RuntimeClass. |
+| `False` | `ReservedNodes` | `Runs without the sandbox, on nodes reserved for the organization (tag …)` | `skipOnReservedNodes` is on, and the server can only run on nodes reserved for its organization. |
+| `False` | `RuntimeClassMissing` | `Waiting for the sandboxed runtime: …` | The RuntimeClass is missing. A new server is not made and is not ready; one that runs is left exactly as it is, and its `Ready` keeps what it last said. A `Warning` event `SandboxRuntimeClassMissing` is recorded when the wait begins. |
+| `False` or `True` | `RestartPending` | `Runs without the sandbox until it is restarted into RuntimeClass gvisor, …` (or `Runs under RuntimeClass … until it is restarted …`) | The server ran before the setting (or before it changed), and waits for its restart to be approved with the annotation `geass.dev/sandbox-restart`, or for `databaseRestarts: Immediate`. It is `True` while it still runs under a RuntimeClass. A `Warning` event `SandboxRestartPending` is recorded when the wait begins, and a `SandboxRestart` event when it is restarted. |
+| `False` | `EngineCannotBeSandboxed` | `This database cannot run in the sandbox: …` | PostgreSQL or MariaDB, whose operators cannot give their pods a RuntimeClass, or MySQL still on the Bitnami chart. A server that is not made is refused (`Ready` says the same); one made before is held: nothing of it is changed or deleted, its pods keep running outside the sandbox, and its `Ready` keeps what it last said. A `Warning` event `SandboxEngineUnsupported` is recorded once. |
+
+Without the setting the condition is not there, and nothing about the server changes.
 
 ## What the dashboard writes
 
@@ -339,7 +355,7 @@ The `Ready` messages you can see, in the order Geass checks them:
 | **Settings** tab, **Backups** section (also the **Backups** tab) | **Back up this database** and **Keep backups for** write `spec.backup`. They apply at once. |
 | **Deploy changes** in the top bar | Runs the deploy flow for every pending resource of the environment. It first checks that the cluster has room for the database (or three instances). The API deploys one database with `POST /api/databases/<name>/deploy`. |
 | **Retry** | Resets a `ProvisionFailed` database. |
-| **Console** tab, **Run query** | Runs your SQL in the database pod with `psql -c`, `mysql -e`, `redis-cli` or `rqlite -e`. It is not a field of the resource. |
+| **Console** tab, **Run query** | Runs your SQL in the database pod with `psql -c`, `mysql -e` or `redis-cli`, and for SQLite sends it to rqlite's HTTP API. It is not a field of the resource. |
 | **Restore** buttons on the **Backups** tab | Creates a new database with `spec.restoreFrom`. It is deployed at once, without a draft. |
 | **Settings** > **Databases** > **Set up a server** | Creates a shared server: no project, `spec.deploy.enabled: true`, `highAvailability` from the **High availability** switch (which also sets `instances: 3`), and `serverRegion` from **Region**. |
 | **Settings** tab, **Danger** section | Deletes the database after you type its resource ID. |
@@ -427,6 +443,7 @@ You can create a `GeassDatabase` with `kubectl` and you can edit one. The dashbo
 
 - Geass writes the annotations `geass.dev/storage-class` and `geass.dev/node-placement` once, when it first provisions the database. They pin the volume's storage class and the nodes it runs on. Do not remove or edit them. `geass.dev/node-placement` is JSON with the `region`, the `tags` from `spec.runOn.tags` and the `required` tags of the project at that moment, for example `{"region":"eu","tags":["storage"],"required":["hipaa"]}`. An empty `{}` means the database runs anywhere. See [Where a database runs](/docs/guides/databases/#where-a-database-runs).
 - The dashboard writes `geass.dev/display-name`, `geass.dev/deploy-workflow`, `geass.dev/pending-updates`, `geass.dev/pending-changes` and `geass.dev/last-deployed`.
+- With the platform's [sandboxed runtime](/docs/operations/sandboxed-runtime/#servers-that-already-run) on, Geass writes `geass.dev/sandbox-runtime-class`, the RuntimeClass the server's pods are written with, when it makes the server and when it restarts it into the sandbox. Do not edit it: Geass writes the server's pods from it. A platform administrator adds `geass.dev/sandbox-restart` (any value) to approve one restart of a running server into what the setting asks for; Geass removes it once it has.
 - The controller does not rewrite the spec of a `GeassDatabase`. Status is the controller's.
 - `spec.restoreFrom`, `spec.runOn` and the storage class are read once. Changing them later has no effect.
 - A volume's size can grow but not shrink.
@@ -448,6 +465,7 @@ Common to every in-cluster engine:
 - Secret `<name>-bootstrap` and Secret `<name>-connection` in the database's namespace.
 - Optionally, Secrets `<name>-backup-credentials` and `<name>-restore-credentials`, which hold credentials scoped to the backup bucket.
 - Annotations `geass.dev/storage-class` and `geass.dev/node-placement` on the `GeassDatabase`.
+- With the platform's [sandboxed runtime](/docs/operations/sandboxed-runtime/#database-servers) on, for an organization's server: the annotation `geass.dev/sandbox-runtime-class` on the `GeassDatabase`, and `runtimeClassName` on the server's pods (the StatefulSet's or Deployment's template, or a MOCO cluster's `spec.podTemplate.spec`) and on the Jobs of its copies, restores and logins.
 
 Per engine:
 
@@ -546,6 +564,18 @@ Read the message against the table in [Restoring](#restoring). Postgres reports 
 ### Deleting a database takes a while
 
 Geass takes a final backup first and waits up to 10 minutes for it. If the database is not running, or the backup fails, Geass skips the wait. The finalizer is released when the resources are gone.
+
+### `This database cannot run in the sandbox` or `Runs without the sandbox until it is restarted`
+
+The platform runs organizations' code in a sandboxed runtime. PostgreSQL and MariaDB cannot run in it, so an organization's is not made, and one made before is held as it is: use MySQL instead, or ask the platform to turn the sandbox off. A server that ran before the sandbox was set waits for a platform administrator to approve its restart into it. See [Database servers](/docs/operations/sandboxed-runtime/#database-servers).
+
+### A SQLite database answers 503 after its pod was replaced
+
+A SQLite server made before Geass gave rqlite a fixed node ID (`-node-id`) is named after its pod's host name, which a Deployment changes with every pod. The new node is not in the raft configuration kept on the volume, so rqlite logs "not part of a stable configuration" and answers `503` for good. The same image (rqlite v8.36.16) with a fixed `-node-id` on a volume answered with its data after a pod replacement in a test, and a server that this release makes is started with `-node-id <name>` (the arguments are unit-tested; a server made by this release was not run). Recovering one made earlier (rqlite's documentation describes it) was not tried, and Geass has no tool for it.
+
+### A MySQL server in the sandbox is Ready, but its logins are refused
+
+Two new MySQL 8.4.11 servers of 512 MiB, Geass's default size, were killed for lack of memory during their first start under gVisor and left with only `root@localhost` and no password for it, and no `app` login; the first logical database on them stayed at "creating logical database". A server made with 1 GiB started cleanly. See [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs).
 
 ### MySQL volumes remain after deletion
 

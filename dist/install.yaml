@@ -2541,9 +2541,10 @@ spec:
                   controlPlaneFirewall:
                     description: |-
                       ControlPlaneFirewall names the cloud firewall in front of the control plane. When it is set, the address of each
-                      machine a pool creates is let through it (the API port and the overlay port) before the machine joins, and
-                      taken out again when the machine is removed, so the control plane need not be open to the internet. Without it
-                      the control plane's TCP 6443 and UDP 51820 must already accept the new machines.
+                      machine a pool creates is let through it (the API port and, in a WireGuard mesh, the overlay port) before the
+                      machine joins, and taken out again when the machine is removed, so the control plane need not be open to the
+                      internet. Without it the control plane's TCP 6443 (and UDP 51820 in a WireGuard mesh) must already accept the
+                      new machines.
                     properties:
                       connectionRef:
                         description: |-
@@ -2565,6 +2566,57 @@ spec:
                     - connectionRef
                     - target
                     type: object
+                  mesh:
+                    description: |-
+                      Mesh says how nodes at different sites, some of them behind a NAT, are joined into one cluster network. Left
+                      out, nothing changes: multiSite on its own is the same as a mesh with the WireGuard provider, as it always was,
+                      and a cluster that sets neither keeps one private network. Setting it also turns on the checks the operator
+                      makes of a mesh (the MeshReady condition, and a worker is refused while the control plane is not on it), and
+                      makes multiSite redundant. Like multiSite it is chosen when the cluster is installed, because it describes how
+                      the control plane was built and Geass does not rebuild that.
+                    properties:
+                      provider:
+                        default: WireGuard
+                        description: |-
+                          Provider is what carries traffic between the sites. WireGuard is the default and needs nothing but UDP 51820
+                          between nodes; Tailscale needs a tailnet (or a Headscale server) and an auth key, and opens no port.
+                        enum:
+                        - WireGuard
+                        - Tailscale
+                        type: string
+                      tailscale:
+                        description: |-
+                          Tailscale holds what a node needs to join the tailnet. It is required with provider Tailscale and refused
+                          with any other.
+                        properties:
+                          authKeySecretRef:
+                            description: |-
+                              AuthKeySecretRef names a Secret in geass-system that holds the key nodes join the tailnet with, under the key
+                              authKey. Use a reusable, pre-approved key that is tagged (or that belongs to a user who may have the nodes),
+                              and that expires: it is copied to the disk of every node, where only root can read it. The key is never shown
+                              in a status, an event or the operator's log.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                          controlServerURL:
+                            description: |-
+                              ControlServerURL is the address of a Headscale server (or another Tailscale-compatible control server), such as
+                              https://headscale.example.com. Left empty, nodes join Tailscale's own service. It must be https, and has
+                              no user name, query or fragment.
+                            maxLength: 253
+                            pattern: ^(https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)?$
+                            type: string
+                        required:
+                        - authKeySecretRef
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: provider Tailscale needs the tailscale settings (an
+                        auth key Secret)
+                      rule: self.provider != 'Tailscale' || has(self.tailscale)
+                    - message: the tailscale settings are only for provider Tailscale
+                      rule: self.provider == 'Tailscale' || !has(self.tailscale)
                   multiSite:
                     description: |-
                       MultiSite means the nodes are at different providers and reach each other over the internet, so
@@ -3008,7 +3060,9 @@ spec:
                 description: |-
                   Org makes a shared server an organization's: the name of a GeassOrganization. Only that organization's projects
                   may take logical databases on it, and only its people see it. It is for a server with no project; one that has a
-                  project belongs to the project, and this is ignored. Empty is the platform's, which every project may use.
+                  project belongs to the project, and this is ignored. Empty is the platform's: while organizations are on it is for
+                  the projects of no organization, so that a server never holds two organizations' data; while they are off every
+                  project may use it.
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
@@ -3611,6 +3665,75 @@ spec:
               token and webhook secret remain in Kubernetes Secrets and are never exposed
               through application resources or status.
             properties:
+              external:
+                description: |-
+                  External makes this the connection of a GitHub App that is not the cluster's own: a provider outside the
+                  cluster (such as rungeass) owns the App and its private key, sends GitHub's events on to Geass signed with the
+                  secret in webhookSecretRef, and gives Geass an installation token for each installation listed here. Geass never
+                  mints a token for these installations and never holds the App's private key. Set through the API, not by hand.
+                properties:
+                  appSlug:
+                    description: |-
+                      AppSlug is the App's name in its address on GitHub (github.com/apps/<appSlug>). Geass uses it to find the comments
+                      it wrote as the App and to link to the App's settings.
+                    maxLength: 100
+                    pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                    type: string
+                  installURL:
+                    description: |-
+                      InstallURL is where a person installs the App on a GitHub account. Connecting a project that has no installation
+                      to use sends the person there.
+                    maxLength: 2048
+                    pattern: ^https://
+                    type: string
+                  installations:
+                    description: Installations are the installations of the App that
+                      belong to this cluster.
+                    items:
+                      description: |-
+                        GeassGitHubInstallation is one installation of an external GitHub App: the GitHub account it is on, and the
+                        organization whose projects may build from it.
+                      properties:
+                        account:
+                          description: Account is the login of the GitHub user or
+                            organization the App is installed on.
+                          maxLength: 100
+                          minLength: 1
+                          type: string
+                        accountType:
+                          description: AccountType is User or Organization, as GitHub
+                            says.
+                          maxLength: 32
+                          type: string
+                        id:
+                          description: ID is GitHub's id of the installation.
+                          format: int64
+                          minimum: 1
+                          type: integer
+                        org:
+                          description: |-
+                            Org is the GeassOrganization whose projects may connect to this installation. Empty is the platform's own: only
+                            projects that belong to no organization may.
+                          maxLength: 63
+                          type: string
+                      required:
+                      - account
+                      - id
+                      type: object
+                    maxItems: 1000
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - id
+                    x-kubernetes-list-type: map
+                  provider:
+                    description: Provider names who runs the App. The dashboard shows
+                      it ("GitHub is provided by rungeass").
+                    maxLength: 63
+                    minLength: 1
+                    type: string
+                required:
+                - provider
+                type: object
               secretRef:
                 description: |-
                   LocalObjectReference contains enough information to let you locate the
@@ -3703,6 +3826,33 @@ spec:
                   - status
                   - type
                   type: object
+                type: array
+              installations:
+                description: |-
+                  Installations is, for an external App, what Geass holds for each of its installations: whether it has a token
+                  for it and when that token stops working. The token itself is only ever in a Secret. One entry per installation of
+                  spec.external, so it has the same bound.
+                items:
+                  description: GeassGitHubInstallationStatus is the state of the token
+                    Geass holds for one installation of an external App.
+                  properties:
+                    id:
+                      format: int64
+                      type: integer
+                    tokenExpiresAt:
+                      description: TokenExpiresAt is when the token the provider gave
+                        last stops working. Unset while there is none.
+                      format: date-time
+                      type: string
+                    tokenState:
+                      description: TokenState is Valid, ExpiringSoon (valid, and due
+                        to be renewed), Expired or Missing.
+                      type: string
+                  required:
+                  - id
+                  - tokenState
+                  type: object
+                maxItems: 1000
                 type: array
               ready:
                 type: boolean
@@ -5591,6 +5741,35 @@ spec:
               it may use. It is the tenant boundary: a project belongs to one organization, and a person who signed in as a member
               of one organization cannot see or change another's.
             properties:
+              abuse:
+                description: |-
+                  Abuse is how the platform's abuse detection (spec.tenancy.abuse on the GeassPlatformConfig) treats the organization:
+                  which of its projects, or all of them, run legitimate heavy work and are left out of the sustained-CPU signal, and
+                  what is done to a suspect in place of the platform's action.
+                properties:
+                  action:
+                    description: Action replaces the platform's action for the organization's
+                      services.
+                    enum:
+                    - None
+                    - Suspend
+                    type: string
+                  exempt:
+                    description: |-
+                      Exempt leaves every service of the organization out of the sustained-CPU signal. A report from an outside detector
+                      still applies.
+                    type: boolean
+                  exemptProjects:
+                    description: |-
+                      ExemptProjects leaves the services of these projects of the organization out of the sustained-CPU signal. A report
+                      from an outside detector still applies.
+                    items:
+                      maxLength: 63
+                      type: string
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               allowedDomains:
                 description: |-
                   AllowedDomains are the domains the organization's services may claim a hostname under: a host is allowed when
@@ -5624,6 +5803,170 @@ spec:
                 maxLength: 100
                 minLength: 1
                 type: string
+              egress:
+                description: |-
+                  Egress is the organization's own limits on what its pods may reach outside the cluster, in place of the platform's
+                  (spec.tenancy.egress on the GeassPlatformConfig): each field set here replaces the platform's for that field, which is
+                  how one organization is let send mail that the others may not, say. Setting it limits the organization even when the
+                  platform sets nothing. Like the rest of this spec it is the platform's to write: no route of the dashboard changes it.
+                properties:
+                  allow:
+                    description: |-
+                      Allow opens ports to ranges of addresses whatever else closes them, such as the mail ports to the platform's mail
+                      relay. It cannot open what the policies close anyway: the cloud's metadata service, the cluster's machines for a
+                      project that keeps away from them, and a build's private addresses. An organization's empty list replaces the
+                      platform's with none.
+                    items:
+                      description: GeassEgressAllowance opens ports to one range of
+                        addresses.
+                      properties:
+                        cidr:
+                          description: |-
+                            CIDR is the range of IPv4 addresses, as its first address and the length of its prefix, such as "203.0.113.25/32"
+                            for one address.
+                          maxLength: 18
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                          type: string
+                        description:
+                          description: Description says what the addresses are, for
+                            whoever reads the configuration.
+                          maxLength: 200
+                          type: string
+                        ports:
+                          description: Ports are the ports opened to it.
+                          items:
+                            description: GeassEgressPortRange is one destination port,
+                              or a range of them, of one protocol.
+                            properties:
+                              endPort:
+                                description: EndPort is the last port of the range,
+                                  which it includes. Unset means Port alone.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              port:
+                                description: Port is the port, or the first port of
+                                  the range.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              protocol:
+                                description: Protocol is TCP or UDP. Unset means TCP.
+                                enum:
+                                - TCP
+                                - UDP
+                                type: string
+                            required:
+                            - port
+                            type: object
+                            x-kubernetes-validations:
+                            - message: endPort must not be below port
+                              rule: '!has(self.endPort) || self.endPort >= self.port'
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                      required:
+                      - cidr
+                      - ports
+                      type: object
+                    maxItems: 32
+                    type: array
+                  allowedPorts:
+                    description: |-
+                      AllowedPorts, when set, are the only destination ports open to addresses outside the cluster: every other port is
+                      closed. List UDP ports too (such as 443, for HTTP/3), or no UDP leaves the cluster. Unset means every port is open
+                      but the closed ones. A port that is allowed and also closed, by mail or by blockedPorts, is closed. The cluster's API
+                      port stays open from project environments, whose Postgres databases use it.
+                    items:
+                      description: GeassEgressPortRange is one destination port, or
+                        a range of them, of one protocol.
+                      properties:
+                        endPort:
+                          description: EndPort is the last port of the range, which
+                            it includes. Unset means Port alone.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        port:
+                          description: Port is the port, or the first port of the
+                            range.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        protocol:
+                          description: Protocol is TCP or UDP. Unset means TCP.
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                      required:
+                      - port
+                      type: object
+                      x-kubernetes-validations:
+                      - message: endPort must not be below port
+                        rule: '!has(self.endPort) || self.endPort >= self.port'
+                    maxItems: 64
+                    minItems: 1
+                    type: array
+                  blockedPorts:
+                    description: |-
+                      BlockedPorts are closed to addresses outside the cluster, besides mail's. Closing the ports public mining pools
+                      listen on (see the documentation for a list) is a heuristic: it makes mining with a pool's defaults fail, and does
+                      nothing against a miner who uses another port, a proxy or port 443. It detects nothing. An organization's empty list
+                      replaces the platform's with none.
+                    items:
+                      description: GeassEgressPortRange is one destination port, or
+                        a range of them, of one protocol.
+                      properties:
+                        endPort:
+                          description: EndPort is the last port of the range, which
+                            it includes. Unset means Port alone.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        port:
+                          description: Port is the port, or the first port of the
+                            range.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        protocol:
+                          description: Protocol is TCP or UDP. Unset means TCP.
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                      required:
+                      - port
+                      type: object
+                      x-kubernetes-validations:
+                      - message: endPort must not be below port
+                        rule: '!has(self.endPort) || self.endPort >= self.port'
+                    maxItems: 64
+                    type: array
+                  mail:
+                    description: Mail is Blocked, which closes the ports mail is sent
+                      on, or Open. Unset means Blocked.
+                    enum:
+                    - Blocked
+                    - Open
+                    type: string
+                  miningPools:
+                    description: |-
+                      MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+                      3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+                      443, any other port or a proxy is not stopped, and it detects nothing.
+                    enum:
+                    - Blocked
+                    - Open
+                    type: string
+                type: object
               idp:
                 description: |-
                   IdP is an identity provider of the organization's own, which its people sign in through instead of the platform's.
@@ -5705,6 +6048,206 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
+              limits:
+                description: |-
+                  Limits are the organization's own noisy-neighbour limits, in place of the platform's (spec.tenantLimits.defaults on
+                  the GeassPlatformConfig): each field set here replaces the platform's for that field. They are held in each of the
+                  organization's namespaces, while its quota is the total over all of them.
+                properties:
+                  bandwidth:
+                    description: |-
+                      Bandwidth caps the network traffic of each pod. It works only where the cluster's network plugin runs the CNI bandwidth
+                      plugin, and only on Kubernetes 1.36 or later, where Geass can add it to every pod as it is made.
+                    properties:
+                      egress:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: Egress is the most a pod may send.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      ingress:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: Ingress is the most a pod may receive.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  container:
+                    description: Container is what a container that asks for nothing
+                      is given, and the most one may ask for.
+                    properties:
+                      defaultLimit:
+                        description: DefaultLimit is the limit a container is given
+                          for a resource it sets no limit on. Without it, that is
+                          Max.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: CPU, such as "500m" or "2".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          ephemeralStorage:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: EphemeralStorage is local disk, such as "1Gi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Memory, such as "512Mi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      defaultRequest:
+                        description: |-
+                          DefaultRequest is the request a container is given for a resource it asks for none of. Without it a container that
+                          is given a limit asks for 50m CPU, 64Mi memory and 64Mi ephemeral storage, or its limit if that is lower.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: CPU, such as "500m" or "2".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          ephemeralStorage:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: EphemeralStorage is local disk, such as "1Gi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Memory, such as "512Mi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      max:
+                        description: |-
+                          Max is the most a container may set as its limit. A pod with a container that sets more, or whose request is above
+                          it, is refused.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: CPU, such as "500m" or "2".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          ephemeralStorage:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: EphemeralStorage is local disk, such as "1Gi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Memory, such as "512Mi".
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                    type: object
+                  ephemeralStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      EphemeralStorage is the most local disk the pods of each namespace may use together, such as "20Gi": the total of
+                      their containers' ephemeral-storage limits, and of their requests. A container's ephemeral storage is what it writes to
+                      its own filesystem, its logs and its emptyDir volumes, on the node's disk. It needs a default limit for containers that
+                      set none (container.defaultLimit.ephemeralStorage, or container.max.ephemeralStorage), or every such pod is refused.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  pods:
+                    description: Pods is the most pods each namespace may have running
+                      or waiting at once. Finished pods are not counted.
+                    format: int32
+                    maximum: 100000
+                    minimum: 1
+                    type: integer
+                type: object
+              mail:
+                description: |-
+                  Mail is what the organization may send through the platform's mail relay (spec.tenancy.mail.relay on the
+                  GeassPlatformConfig): its own limits and the domains it may send from, each in place of the platform's. Like the rest
+                  of this spec it is the platform's to write.
+                properties:
+                  allowedSenderDomains:
+                    description: |-
+                      AllowedSenderDomains are the domains the organization may send from, in place of the platform's list: the envelope
+                      sender and the addresses of the From and Sender headers must be at one of them, or below one. An empty list
+                      replaces the platform's with none.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                      type: string
+                    maxItems: 50
+                    type: array
+                    x-kubernetes-list-type: set
+                  limits:
+                    description: Limits replace the platform's relay limits, each
+                      field it sets for that field.
+                    properties:
+                      connections:
+                        description: Connections is the most connections the organization
+                          may have signed in at once.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                      maxMessageSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: MaxMessageSize is the largest message, headers
+                          and attachments included, such as "10Mi". At most 50Mi.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      messagesPerDay:
+                        description: MessagesPerDay is the most messages in any 24
+                          hours.
+                        format: int32
+                        maximum: 10000000
+                        minimum: 0
+                        type: integer
+                      messagesPerHour:
+                        description: MessagesPerHour is the most messages in any 60
+                          minutes.
+                        format: int32
+                        maximum: 1000000
+                        minimum: 0
+                        type: integer
+                      messagesPerMinute:
+                        description: |-
+                          MessagesPerMinute is the most messages in any 60 seconds. Zero sends nothing, which stops an organization's mail at
+                          once.
+                        format: int32
+                        maximum: 100000
+                        minimum: 0
+                        type: integer
+                      recipientsPerMessage:
+                        description: |-
+                          RecipientsPerMessage is the most recipients one message may have. A recipient past it is refused with 452, which
+                          tells the sender to send it in another message.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               maxProjects:
                 description: |-
                   MaxProjects is how many projects the organization may have. Without it there is no limit; zero keeps it from
@@ -5764,7 +6307,9 @@ spec:
                   Registry is where the organization's builds push their images, and the login they push with, in place of the
                   platform's. It makes the organization's builds run with a credential of its own and not the platform's: the
                   organization's builds run in a namespace of their own, which holds only this login (or, without it, a copy of the
-                  platform's). A service that names a registry of its own keeps it.
+                  platform's). A service that names a registry of its own keeps it. While the platform's spec.tenancy.registry is
+                  set, the platform's login is never used for the organization: its builds push under <repository>/<project>/<service>,
+                  and without a registry here they do not start.
                 properties:
                   credentialRef:
                     description: |-
@@ -5923,6 +6468,7 @@ spec:
                             - cluster.issue
                             - workload.crashlooping
                             - storage.filling
+                            - abuse.suspected
                             type: string
                           type: array
                         id:
@@ -6313,6 +6859,153 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              managed:
+                description: |-
+                  Managed says a platform runs this Geass and keeps the installer, updates, the K3s release, sign-in and the
+                  dashboard's domain for itself: the dashboard's API refuses writes to them and the dashboard shows them read-only.
+                  Unset means off, and everything can be changed as before.
+                properties:
+                  enabled:
+                    description: Enabled turns managed mode on. Unset or false means
+                      off.
+                    type: boolean
+                  provider:
+                    description: |-
+                      Provider names the platform that manages the cluster, such as rungeass. It is put in the messages that say who
+                      manages a setting: "managed by rungeass". Left empty the messages say "the platform that runs this cluster".
+                    maxLength: 60
+                    pattern: ^([A-Za-z0-9][A-Za-z0-9 ._-]*)?$
+                    type: string
+                type: object
+              observability:
+                description: |-
+                  Observability says where the cluster's metrics and logs go besides the stores in the cluster, and where the
+                  dashboard reads them from. Unset, both stay in the cluster.
+                properties:
+                  external:
+                    description: |-
+                      External sends the cluster's metrics and logs to stores outside the cluster as well, and has the dashboard read
+                      them from there. It is what lets a dashboard that runs outside the cluster (--controllers=false) show metrics and
+                      log history. Unset, everything stays in the cluster, as before.
+                    properties:
+                      logs:
+                        description: |-
+                          Logs is a store that speaks VictoriaLogs' JSON lines and LogsQL APIs: VictoriaLogs itself, or something in front
+                          of it.
+                        properties:
+                          accountID:
+                            description: |-
+                              AccountID and ProjectID are the VictoriaLogs tenant the lines are written to and read from, sent as the AccountID
+                              and ProjectID headers with every line and every query. Unset means 0, VictoriaLogs' default tenant.
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          credentialRef:
+                            description: |-
+                              CredentialRef names a Secret in the system namespace that holds how to sign in to the store: a "token" key for a
+                              bearer token, or "username" and "password" keys for basic authentication. Empty sends no credentials. Geass
+                              copies the keys it uses into a Secret beside the log shipper, which reads them from there.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          projectID:
+                            description: ProjectID is the second half of the tenant.
+                              See AccountID.
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          pushURL:
+                            description: |-
+                              PushURL is the address of the store that the log shipper sends every line to, besides the store in the cluster:
+                              /insert/jsonline is added to it. Lines of projects that require node tags are not sent, as they are not sent to the
+                              store in the cluster. Empty sends nothing. It needs the logging add-on.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          queryURL:
+                            description: |-
+                              QueryURL is the address of the store that answers LogsQL: /select/logsql/query is added to it. When it is set,
+                              the dashboard reads log history from it and never from the store in the cluster. Empty leaves the dashboard
+                              reading the cluster's store.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          retentionDays:
+                            description: |-
+                              RetentionDays is how long the store keeps logs, which the dashboard reports with the history it reads from it.
+                              Unset means the logging add-on's retention.
+                            format: int32
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                        type: object
+                      metrics:
+                        description: |-
+                          Metrics is a store that speaks Prometheus remote write and the Prometheus query API, such as Mimir, Cortex,
+                          Thanos or VictoriaMetrics.
+                        properties:
+                          credentialRef:
+                            description: |-
+                              CredentialRef names a Secret in the system namespace that holds how to sign in to the store: a "token" key for a
+                              bearer token, or "username" and "password" keys for basic authentication. Empty sends no credentials. Geass
+                              copies the keys it uses into a Secret beside Prometheus, which reads them from there.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          queryURL:
+                            description: |-
+                              QueryURL is a Prometheus-compatible query API: the address that /api/v1/query and /api/v1/query_range are added to
+                              (for Mimir that is its /prometheus prefix). When it is set, the dashboard reads every metric it shows from it and
+                              never from the Prometheus in the cluster. Empty leaves the dashboard reading the cluster's Prometheus.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          remoteWriteURL:
+                            description: |-
+                              RemoteWriteURL receives every sample the cluster's Prometheus keeps, by Prometheus remote write: Mimir's or
+                              Cortex's /api/v1/push, VictoriaMetrics' /api/v1/write (with the tenant in the path for its cluster version), or
+                              anything else that speaks the protocol. Prometheus keeps its own copy as before. Empty sends nothing. It needs the
+                              monitoring add-on.
+                            maxLength: 2048
+                            pattern: ^https?://[^\s]+$
+                            type: string
+                          tenant:
+                            description: |-
+                              Tenant is sent in TenantHeader with every write and every query, for a store that keeps tenants apart by a
+                              header. Empty sends no tenant header, for a store that takes the tenant from the URL or from the credentials.
+                            maxLength: 150
+                            pattern: ^[A-Za-z0-9!._*'()-]+$
+                            type: string
+                          tenantHeader:
+                            description: |-
+                              TenantHeader is the header that carries Tenant. Unset means X-Scope-OrgID, which Mimir, Cortex and Loki read;
+                              Thanos reads THANOS-TENANT. A header Prometheus sets itself, such as Authorization, cannot be used.
+                            maxLength: 64
+                            pattern: ^[A-Za-z0-9-]+$
+                            type: string
+                        type: object
+                    type: object
+                type: object
               prometheusURL:
                 type: string
               registry:
@@ -6342,6 +7035,615 @@ spec:
                   dashboard at geass.<rootDomain> after DNS verification.
                 pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
                 type: string
+              tenancy:
+                description: |-
+                  Tenancy hardens a cluster that organizations who do not trust each other share: how their code runs on the nodes (a
+                  sandboxed runtime), what their pods may reach outside the cluster, and keeping the platform's registry login from
+                  their builds. Unset means nothing changes.
+                properties:
+                  abuse:
+                    description: |-
+                      Abuse looks for the services of organizations' projects that may be abusing the platform's machines, such as by
+                      mining: a service whose CPU use stays near what it is allowed, and reports from a detector outside Geass. It says so
+                      and, if asked, scales a suspect to zero. What it finds is a signal, not proof. Unset means Geass looks for nothing.
+                    properties:
+                      action:
+                        description: 'Action is what is done to a suspect: None, the
+                          default, or Suspend. An organization''s own spec.abuse.action
+                          replaces it.'
+                        enum:
+                        - None
+                        - Suspend
+                        type: string
+                      cpu:
+                        description: 'CPU is the sustained-CPU signal. Unset means
+                          its defaults: 90 percent of what the copies are allowed,
+                          for 30 minutes.'
+                        properties:
+                          quietTraffic:
+                            description: |-
+                              QuietTraffic, when set, counts the CPU use only while the service is sent few requests: a busy web service is
+                              expected to use its CPU, and a miner is sent nothing. The requests are those the ingress (Traefik) counts, which
+                              Prometheus has only while the monitoring add-on is on. Without them a busy service cannot be told from a quiet one,
+                              so the stricter withoutTrafficData applies in place of the threshold and window.
+                            properties:
+                              maxRequestsPerMinute:
+                                description: |-
+                                  MaxRequestsPerMinute is the most requests a minute, averaged over the last five minutes, that the ingress may pass to
+                                  the service while its CPU use counts. Zero means none at all. Requests that reach the service from inside the
+                                  cluster, not through the ingress, are not seen.
+                                format: int32
+                                maximum: 1000000
+                                minimum: 0
+                                type: integer
+                              withoutTrafficData:
+                                description: |-
+                                  WithoutTrafficData is the threshold and window that apply when the requests cannot be read. Unset means 95 percent
+                                  for twice the window.
+                                properties:
+                                  thresholdPercent:
+                                    description: ThresholdPercent replaces the signal's.
+                                      Unset means the larger of 95 and the signal's
+                                      own.
+                                    format: int32
+                                    maximum: 100
+                                    minimum: 50
+                                    type: integer
+                                  windowMinutes:
+                                    description: WindowMinutes replaces the signal's.
+                                      Unset means twice the signal's own, at most
+                                      1440.
+                                    format: int32
+                                    maximum: 1440
+                                    minimum: 10
+                                    type: integer
+                                type: object
+                            required:
+                            - maxRequestsPerMinute
+                            type: object
+                          thresholdPercent:
+                            description: ThresholdPercent is how much of what its
+                              copies are allowed a service has to use. Unset means
+                              90.
+                            format: int32
+                            maximum: 100
+                            minimum: 50
+                            type: integer
+                          windowMinutes:
+                            description: WindowMinutes is how long the use has to
+                              last without a break. Unset means 30.
+                            format: int32
+                            maximum: 1440
+                            minimum: 10
+                            type: integer
+                        type: object
+                      reviewExemptionDays:
+                        description: |-
+                          ReviewExemptionDays is how long a service that a platform administrator has cleared is left out of the CPU signal.
+                          Unset means 30.
+                        format: int32
+                        maximum: 365
+                        minimum: 1
+                        type: integer
+                    type: object
+                  egress:
+                    description: |-
+                      Egress limits what the pods of organizations' projects may reach outside the cluster: the ports mail is sent on
+                      are closed, and optionally further ports (such as those mining pools listen on), or all but a list of them. An
+                      organization's own spec.egress replaces each field of it that it sets. Unset means the pods reach the internet on
+                      every port, as before.
+                    properties:
+                      allow:
+                        description: |-
+                          Allow opens ports to ranges of addresses whatever else closes them, such as the mail ports to the platform's mail
+                          relay. It cannot open what the policies close anyway: the cloud's metadata service, the cluster's machines for a
+                          project that keeps away from them, and a build's private addresses. An organization's empty list replaces the
+                          platform's with none.
+                        items:
+                          description: GeassEgressAllowance opens ports to one range
+                            of addresses.
+                          properties:
+                            cidr:
+                              description: |-
+                                CIDR is the range of IPv4 addresses, as its first address and the length of its prefix, such as "203.0.113.25/32"
+                                for one address.
+                              maxLength: 18
+                              pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                              type: string
+                            description:
+                              description: Description says what the addresses are,
+                                for whoever reads the configuration.
+                              maxLength: 200
+                              type: string
+                            ports:
+                              description: Ports are the ports opened to it.
+                              items:
+                                description: GeassEgressPortRange is one destination
+                                  port, or a range of them, of one protocol.
+                                properties:
+                                  endPort:
+                                    description: EndPort is the last port of the range,
+                                      which it includes. Unset means Port alone.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  port:
+                                    description: Port is the port, or the first port
+                                      of the range.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  protocol:
+                                    description: Protocol is TCP or UDP. Unset means
+                                      TCP.
+                                    enum:
+                                    - TCP
+                                    - UDP
+                                    type: string
+                                required:
+                                - port
+                                type: object
+                                x-kubernetes-validations:
+                                - message: endPort must not be below port
+                                  rule: '!has(self.endPort) || self.endPort >= self.port'
+                              maxItems: 16
+                              minItems: 1
+                              type: array
+                          required:
+                          - cidr
+                          - ports
+                          type: object
+                        maxItems: 32
+                        type: array
+                      allowedPorts:
+                        description: |-
+                          AllowedPorts, when set, are the only destination ports open to addresses outside the cluster: every other port is
+                          closed. List UDP ports too (such as 443, for HTTP/3), or no UDP leaves the cluster. Unset means every port is open
+                          but the closed ones. A port that is allowed and also closed, by mail or by blockedPorts, is closed. The cluster's API
+                          port stays open from project environments, whose Postgres databases use it.
+                        items:
+                          description: GeassEgressPortRange is one destination port,
+                            or a range of them, of one protocol.
+                          properties:
+                            endPort:
+                              description: EndPort is the last port of the range,
+                                which it includes. Unset means Port alone.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            port:
+                              description: Port is the port, or the first port of
+                                the range.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            protocol:
+                              description: Protocol is TCP or UDP. Unset means TCP.
+                              enum:
+                              - TCP
+                              - UDP
+                              type: string
+                          required:
+                          - port
+                          type: object
+                          x-kubernetes-validations:
+                          - message: endPort must not be below port
+                            rule: '!has(self.endPort) || self.endPort >= self.port'
+                        maxItems: 64
+                        minItems: 1
+                        type: array
+                      blockedPorts:
+                        description: |-
+                          BlockedPorts are closed to addresses outside the cluster, besides mail's. Closing the ports public mining pools
+                          listen on (see the documentation for a list) is a heuristic: it makes mining with a pool's defaults fail, and does
+                          nothing against a miner who uses another port, a proxy or port 443. It detects nothing. An organization's empty list
+                          replaces the platform's with none.
+                        items:
+                          description: GeassEgressPortRange is one destination port,
+                            or a range of them, of one protocol.
+                          properties:
+                            endPort:
+                              description: EndPort is the last port of the range,
+                                which it includes. Unset means Port alone.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            port:
+                              description: Port is the port, or the first port of
+                                the range.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            protocol:
+                              description: Protocol is TCP or UDP. Unset means TCP.
+                              enum:
+                              - TCP
+                              - UDP
+                              type: string
+                          required:
+                          - port
+                          type: object
+                          x-kubernetes-validations:
+                          - message: endPort must not be below port
+                            rule: '!has(self.endPort) || self.endPort >= self.port'
+                        maxItems: 64
+                        type: array
+                      mail:
+                        description: Mail is Blocked, which closes the ports mail
+                          is sent on, or Open. Unset means Blocked.
+                        enum:
+                        - Blocked
+                        - Open
+                        type: string
+                      miningPools:
+                        description: |-
+                          MiningPools is Blocked, which closes a curated list of the TCP ports public mining pools listen on by default (3333 to
+                          3336, 4444, 5555, 7777, 14433, 14444 and 45700), or Open. Unset means Open. It is a heuristic: a miner that uses port
+                          443, any other port or a proxy is not stopped, and it detects nothing.
+                        enum:
+                        - Blocked
+                        - Open
+                        type: string
+                    type: object
+                  mail:
+                    description: |-
+                      Mail is how organizations' services send mail: through a relay that Geass runs in the cluster, which holds each
+                      organization to its limits and hands its mail to the platform's mail service. Unset means no relay.
+                    properties:
+                      relay:
+                        description: |-
+                          Relay runs a mail relay in the cluster, which organizations' services submit mail to with credentials of their
+                          organization's own, and which hands each message to the platform's mail service (the upstream) once it is within
+                          the organization's limits. Unset means no relay.
+                        properties:
+                          allowedSenderDomains:
+                            description: |-
+                              AllowedSenderDomains are the domains organizations may send from: both the envelope sender (MAIL FROM) and every
+                              address of the From and Sender headers must be at one of them, or below one. An organization's own
+                              spec.mail.allowedSenderDomains replaces the list. Unset, and with no list of the organization's, any sender is
+                              taken, unless RequireSenderDomain is set.
+                            items:
+                              maxLength: 253
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                              type: string
+                            maxItems: 50
+                            type: array
+                            x-kubernetes-list-type: set
+                          deniedRecipientDomains:
+                            description: |-
+                              DeniedRecipientDomains are domains the relay never sends to, for every organization: a recipient at one of them, or
+                              below one, is refused.
+                            items:
+                              maxLength: 253
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,63}$
+                              type: string
+                            maxItems: 200
+                            type: array
+                            x-kubernetes-list-type: set
+                          enabled:
+                            description: Enabled runs the relay. Turning it off removes
+                              the relay and every login Geass made for it.
+                            type: boolean
+                          limits:
+                            description: |-
+                              Limits are what each organization may send. An organization's own spec.mail.limits replaces each field it sets.
+                              A field set in neither place has the relay's default: 60 messages a minute, 600 an hour, 2000 a day, 50 recipients
+                              a message, 10Mi a message and 5 connections at once.
+                            properties:
+                              connections:
+                                description: Connections is the most connections the
+                                  organization may have signed in at once.
+                                format: int32
+                                maximum: 1000
+                                minimum: 1
+                                type: integer
+                              maxMessageSize:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: MaxMessageSize is the largest message,
+                                  headers and attachments included, such as "10Mi".
+                                  At most 50Mi.
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              messagesPerDay:
+                                description: MessagesPerDay is the most messages in
+                                  any 24 hours.
+                                format: int32
+                                maximum: 10000000
+                                minimum: 0
+                                type: integer
+                              messagesPerHour:
+                                description: MessagesPerHour is the most messages
+                                  in any 60 minutes.
+                                format: int32
+                                maximum: 1000000
+                                minimum: 0
+                                type: integer
+                              messagesPerMinute:
+                                description: |-
+                                  MessagesPerMinute is the most messages in any 60 seconds. Zero sends nothing, which stops an organization's mail at
+                                  once.
+                                format: int32
+                                maximum: 100000
+                                minimum: 0
+                                type: integer
+                              recipientsPerMessage:
+                                description: |-
+                                  RecipientsPerMessage is the most recipients one message may have. A recipient past it is refused with 452, which
+                                  tells the sender to send it in another message.
+                                format: int32
+                                maximum: 1000
+                                minimum: 1
+                                type: integer
+                            type: object
+                          requireSenderDomain:
+                            description: |-
+                              RequireSenderDomain refuses every message of an organization that has no allowed sender domain, neither its own
+                              nor the platform's, instead of taking any sender. Set it when each organization's domains have to be checked first
+                              (the upstream only sends from verified domains, say).
+                            type: boolean
+                          upstream:
+                            description: 'Upstream is the mail service the relay hands
+                              every message to: Amazon SES, Postmark, a company''s
+                              relay.'
+                            properties:
+                              credentialRef:
+                                description: |-
+                                  CredentialRef names a Secret in the system namespace with the keys username and password, which the relay signs in
+                                  to the upstream with (AUTH PLAIN, only over TLS). The relay reads it from a volume, so a new password in the Secret
+                                  is used within a minute or two, without a restart. Unset means the relay does not sign in.
+                                properties:
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              host:
+                                description: |-
+                                  Host is the upstream's host name or IPv4 address, such as email-smtp.eu-west-1.amazonaws.com. With TLS, its
+                                  certificate must be valid for this name and signed by a public authority.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?)*$
+                                type: string
+                              port:
+                                description: Port is the upstream's port. Unset means
+                                  587, or 465 with TLS.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              tls:
+                                description: |-
+                                  TLS is StartTLS (the default: the upstream must offer STARTTLS, or nothing is sent), TLS (from the first byte, as on
+                                  port 465) or None (plain text, for an upstream inside the cluster or on a private network only).
+                                enum:
+                                - StartTLS
+                                - TLS
+                                - None
+                                type: string
+                            required:
+                            - host
+                            type: object
+                            x-kubernetes-validations:
+                            - message: 'credentialRef needs tls StartTLS or TLS: the
+                                upstream''s password is never sent in plain text'
+                              rule: '!(has(self.credentialRef) && has(self.tls) &&
+                                self.tls == ''None'')'
+                        type: object
+                        x-kubernetes-validations:
+                        - message: an enabled relay needs an upstream
+                          rule: '!self.enabled || has(self.upstream)'
+                    type: object
+                  registry:
+                    description: |-
+                      Registry keeps the platform's registry login out of organizations' builds and namespaces, and each organization's
+                      images apart from the platform's and from every other organization's. Unset means builds use the registry they did
+                      before: an organization without a registry of its own builds with the platform's login.
+                    properties:
+                      policy:
+                        default: requireOwnRegistry
+                        description: |-
+                          Policy is what an organization's builds may push with. requireOwnRegistry: an organization's build is never given the
+                          platform's registry login, its namespaces never hold a copy of it, and its builds push to the organization's own
+                          registry (spec.registry on its GeassOrganization) under <repository>/<project>/<service>; a build of an organization
+                          that has none does not start. An organization's services may not run an image that is in the platform's repository
+                          or in another organization's registry. A registry that authorizes each organization for a path of its own (Harbor,
+                          zot) is how one registry is shared: each organization is given a login for its own path as its registry.
+                        enum:
+                        - requireOwnRegistry
+                        type: string
+                    type: object
+                  sandbox:
+                    description: |-
+                      Sandbox runs the pods Geass makes for organizations' projects under a sandboxed container runtime, such as gVisor or
+                      Kata Containers, so that code one organization wrote does not share the node's kernel directly with another's. Unset
+                      means every pod runs with the node's own runtime, as before.
+                    properties:
+                      databaseRestarts:
+                        description: |-
+                          DatabaseRestarts is when an organization's database server that is already running is restarted to go into the
+                          sandbox, out of it, or to another RuntimeClass, which restarts the database. OnApproval (the default, also when
+                          empty): only once a platform administrator annotates the GeassDatabase geass.dev/sandbox-restart; until then it runs
+                          as it does, and its Sandboxed condition says so. Immediate: at once, every such server together. A server that is
+                          made, or has never been ready, takes the sandbox at once either way.
+                        enum:
+                        - OnApproval
+                        - Immediate
+                        type: string
+                      runtimeClassName:
+                        description: RuntimeClassName is the RuntimeClass the pods
+                          run with, such as gvisor or kata.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      skipOnReservedNodes:
+                        description: |-
+                          SkipOnReservedNodes runs without the sandbox the pods that can only be scheduled on nodes reserved for their own
+                          organization: their node selector asks for a tag the organization requires of all its projects, no other
+                          organization requires it, and every node that carries it is reserved for it, of which there is at least one.
+                          Anything less certain is sandboxed.
+                        type: boolean
+                    required:
+                    - runtimeClassName
+                    type: object
+                type: object
+              tenantLimits:
+                description: |-
+                  TenantLimits keeps one organization's workloads from crowding out another's on a cluster they share: the pods and
+                  local disk of each of its namespaces, what a container is given when it asks for nothing and the most it may ask for,
+                  and each pod's network bandwidth. Unset means none of it, as before.
+                properties:
+                  defaults:
+                    description: |-
+                      Defaults are the limits of every organization. An organization's own spec.limits replaces each of these it sets, field
+                      by field at the top level: an organization that sets container replaces the whole of the default container limits.
+                      Unset means no limits beyond each organization's own. A project that belongs to no organization is never limited by
+                      them.
+                    properties:
+                      bandwidth:
+                        description: |-
+                          Bandwidth caps the network traffic of each pod. It works only where the cluster's network plugin runs the CNI bandwidth
+                          plugin, and only on Kubernetes 1.36 or later, where Geass can add it to every pod as it is made.
+                        properties:
+                          egress:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Egress is the most a pod may send.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          ingress:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Ingress is the most a pod may receive.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      container:
+                        description: Container is what a container that asks for nothing
+                          is given, and the most one may ask for.
+                        properties:
+                          defaultLimit:
+                            description: DefaultLimit is the limit a container is
+                              given for a resource it sets no limit on. Without it,
+                              that is Max.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          defaultRequest:
+                            description: |-
+                              DefaultRequest is the request a container is given for a resource it asks for none of. Without it a container that
+                              is given a limit asks for 50m CPU, 64Mi memory and 64Mi ephemeral storage, or its limit if that is lower.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          max:
+                            description: |-
+                              Max is the most a container may set as its limit. A pod with a container that sets more, or whose request is above
+                              it, is refused.
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: CPU, such as "500m" or "2".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              ephemeralStorage:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: EphemeralStorage is local disk, such
+                                  as "1Gi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: Memory, such as "512Mi".
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                        type: object
+                      ephemeralStorage:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          EphemeralStorage is the most local disk the pods of each namespace may use together, such as "20Gi": the total of
+                          their containers' ephemeral-storage limits, and of their requests. A container's ephemeral storage is what it writes to
+                          its own filesystem, its logs and its emptyDir volumes, on the node's disk. It needs a default limit for containers that
+                          set none (container.defaultLimit.ephemeralStorage, or container.max.ephemeralStorage), or every such pod is refused.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      pods:
+                        description: Pods is the most pods each namespace may have
+                          running or waiting at once. Finished pods are not counted.
+                        format: int32
+                        maximum: 100000
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               traefikAccessLogs:
                 properties:
                   enabled:
@@ -6356,6 +7658,19 @@ spec:
                   for dashboardExposure=cloudflare-tunnel.
                 pattern: ^[a-z0-9-]+(\.[a-z0-9-]+)+$
                 type: string
+              usage:
+                description: |-
+                  Usage keeps, hour by hour, what each organization's projects reserve, for billing on a cluster that organizations
+                  share. Unset means off.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled turns the meter on. Every minute the operator adds what the pods of each organization's projects ask for
+                      (CPU and memory requests) and the size of their bound volumes to the hour it is in, and keeps 62 days of hours in
+                      ConfigMaps named geass-usage-<hour> in the system namespace. GET /api/v1/usage/hours serves them to the platform's
+                      administrators. Turning it off stops the meter and keeps what it stored.
+                    type: boolean
+                type: object
             type: object
           status:
             properties:
@@ -7649,6 +8964,13 @@ rules:
   - update
   - watch
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - geass.geass.dev
   resources:
   - geassapps
@@ -7789,6 +9111,13 @@ rules:
   - list
   - watch
 - apiGroups:
+  - metrics.k8s.io
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+- apiGroups:
   - moco.cybozu.com
   resources:
   - mysqlclusters
@@ -7827,6 +9156,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - node.k8s.io
+  resources:
+  - runtimeclasses
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - postgresql.cnpg.io

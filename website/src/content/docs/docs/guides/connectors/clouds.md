@@ -46,7 +46,7 @@ Whatever the cloud calls it, give Geass a project, a resource group, a compartme
 
 | Cloud | ID | Credentials (a secret is marked) | What `region` means | Pool settings |
 | --- | --- | --- | --- | --- |
-| [Amazon EC2](#amazon-ec2) | `AWS` | `accessKeyId`, `secretAccessKey` (secret), `region` (optional) | A region: `eu-north-1` | `subnetId`, `securityGroupId`, `diskGb` |
+| [Amazon EC2](#amazon-ec2) | `AWS` | `accessKeyId`, `secretAccessKey` (secret), `region` (optional), `sessionToken` (secret, optional), `expiresAt` (optional) | A region: `eu-north-1` | `subnetId`, `securityGroupId`, `diskGb` |
 | [Microsoft Azure](#microsoft-azure) | `Azure` | `tenantId`, `clientId`, `clientSecret` (secret), `subscriptionId`, `resourceGroup` | A location: `westeurope` | `subnetId` (required), `nsgId`, `imageVersion`, `diskGb` |
 | [DigitalOcean](#digitalocean) | `DigitalOcean` | `token` (secret) | A region slug: `fra1`. Empty lets DigitalOcean choose | `firewallId`, `vpcUuid` |
 | [Google Cloud](#google-cloud) | `GCP` | `serviceAccountKey` (secret, JSON) | A zone: `europe-west4-a` | `network`, `subnetwork`, `image`, `diskSizeGb`, `diskType`, `firewallTag`, `skipFirewall` |
@@ -260,6 +260,25 @@ Notes on the policy:
 - The image is the newest Canonical Ubuntu 24.04 for the instance type's architecture.
 - EC2 shows a machine a moment after you launch it, and lists a terminated one for about an hour. Geass waits and ignores the terminated ones.
 - A root volume is deleted with the instance, and so is the address EC2 assigned.
+
+### Temporary credentials
+
+Instead of an IAM user's key, the connection can hold the credentials that `sts:AssumeRole` returns: an access key ID that starts with `ASIA`, a secret access key and a **session token**. Put the token in the optional secret credential `sessionToken`. Geass then sends it with every request to EC2 and STS, as the header `X-Amz-Security-Token`, and signs it with the request. Without a `sessionToken` nothing changes: requests are signed as they always were. The role needs the permissions of the policy above. Only a connection for machines reads the token: a connection for [buckets and backups](/docs/guides/connectors/aws/) uses an IAM user's key.
+
+Temporary credentials expire (after an hour, unless the role says otherwise), so whatever issues them has to replace them before they lapse. Replace the key, the secret and the token together, in one request, and send `expiresAt` with them if you want the connection to show when they lapse:
+
+```bash title="Replace temporary credentials"
+curl -fsS -X PATCH https://geass.example.com/api/v1/connections/aws-compute \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"accessKeyId": "ASIA...", "secretAccessKey": "...", "sessionToken": "...", "expiresAt": "2026-10-22T14:30:00Z"}'
+```
+
+`geass connections update aws-compute --credential-file KEY=PATH` does the same, one `--credential-file` for each key.
+
+- **A new key is used at once.** The operator builds the driver for a connection from its Secret, and builds it again whenever the Secret changes, so the next machine Geass makes, looks at or deletes uses the new credentials. Nothing is restarted. The connection's own status (Available, the account, Credentials expire) is refreshed at the next check, which is within 15 minutes. Ask for it at once with `geass connections verify aws-compute` or `POST /api/v1/connections/aws-compute/verify`.
+- **Credentials that lapse before new ones arrive** make AWS answer `ExpiredToken`, and the connection shows AWS's message and is not available. Geass does not take that for credentials that were refused for good, which would fail the node: a machine waits to be made or deleted, with AWS's message as the node's message, and carries on when new credentials arrive. A node that is running is not replaced meanwhile: Geass cannot ask AWS about its machine, and asks again a minute later. A machine that cannot be deleted keeps billing until new credentials arrive.
+- **AWS does not say when credentials end.** `GetCallerIdentity` has no expiry, so Geass shows one only if you send `expiresAt`, an RFC 3339 time such as `2026-10-22T14:30:00Z`. It appears as Credentials expire (`status.expiresAt`). With a session token Geass adds no "expires in N days" warning, which credentials that are renewed every hour would carry all the time. An `expiresAt` that is not a time is a warning, and changes nothing else. On a key with no session token `expiresAt` works as it does for any cloud, with the warning from 14 days before.
+- **A key or token that was set cannot be cleared through the API**: a field you leave out or send empty keeps its value. To go back from temporary credentials to an IAM user's key, make a new connection, or remove `sessionToken` and `expiresAt` from the Secret `<name>-credentials` with `kubectl`.
 
 ## Microsoft Azure
 
@@ -486,6 +505,7 @@ Most clouds bill each started hour at least (the drivers for Linode, OVHcloud an
 - A real cluster ran the whole path. The control plane was an EC2 machine installed in [multi-provider mode](/docs/operations/multi-provider/). A pool with `maxNodes: 2` made two machines when pods could not start, joined them over SSH in about 50 seconds, and the scheduler placed pods on them. A pod on a pool node reached a pod on the control plane and the cluster's DNS across the WireGuard overlay. The pods that did not fit stayed pending with the message that the pool was at its maximum. About 90 seconds after the load went the pool removed both nodes, the machines were terminated and the rules Geass had opened on the control plane's group were removed.
 - A pool with `minNodes: 1` made a machine with no load. A machine terminated from outside Geass was noticed within about 40 seconds and replaced in about 70. A request that exceeded the account's vCPU limit showed as a node waiting with the problem `Quota` and AWS's own message. Three refused launches in a row paused the pool, and the `geass.dev/resume` annotation ended the pause. Deleting a pool terminated its machines. A single server added from the dashboard became a node and was removed again, with its machine terminated.
 - The dashboard listed the real sizes in the pool form, made the pool, and showed it.
+- Temporary credentials with a session token, from a role assumed for an hour and renewed before they lapsed: AWS accepted them, refused the same credentials with a corrupted token, and accepted the renewed ones, and a pool launched and terminated machines with them. What AWS answers for a lapsed token is taken from its documentation.
 
 What did **not** run, even at Amazon: spot machines (the test account's organization denied the launch with a service control policy, so the spot request itself is untested), private addresses, a subnet or security group of your own, fallback sizes and regions taking effect (a quota refusal waits, as designed), the sweep for machines no node owns, regions other than `eu-north-1`, Arm sizes, and a cluster that spans two clouds. Nothing ran for longer than a few hours. The eleven other drivers have only run against the simulation.
 

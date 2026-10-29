@@ -108,3 +108,26 @@ func TestTheDashboardRoleIsNotTheControllersRole(t *testing.T) {
 	require.True(t, grants(role, "", "pods/exec", "create"), "terminals and the database query box")
 	require.True(t, grants(role, "", "pods/log", "get"), "logs")
 }
+
+// The dashboard writes the status of a few kinds (it has no controller to do it for a record it makes itself): the check above reads, this one writes. Deploying a service
+// records a deployment and then patches its status (recordDeployment), which the role did not allow: a dashboard that runs outside the cluster saved the service as a draft
+// and said deploying it failed. Found by deploying a service through one, against a real API server's authorizer.
+func TestTheDashboardRoleCanWriteTheStatusOfWhatTheDashboardRecords(t *testing.T) {
+	role := dashboardRole(t)
+	for _, resource := range []string{
+		"geassapps/status",           // a retried provision, a deploy
+		"geassbackuparchives/status", // a recorded backup
+		"geassbuilds/status",         // a build it starts
+		"geassconsolesessions/status",
+		"geassdatabases/status",
+		"geassdeployments/status", // the deployment recorded when a service is deployed (server.go, recordDeployment)
+		"geasslogicaldatabases/status",
+		"geassobjectstores/status",
+		"geassplatformconfigs/status", // a domain check
+		"geassprojects/status",        // a preview environment
+	} {
+		for _, verb := range []string{"get", "update", "patch"} {
+			require.True(t, grants(role, "geass.geass.dev", resource, verb), "the dashboard role cannot %s %s: it writes it", verb, resource)
+		}
+	}
+}

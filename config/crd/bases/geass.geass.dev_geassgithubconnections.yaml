@@ -41,6 +41,75 @@ spec:
               token and webhook secret remain in Kubernetes Secrets and are never exposed
               through application resources or status.
             properties:
+              external:
+                description: |-
+                  External makes this the connection of a GitHub App that is not the cluster's own: a provider outside the
+                  cluster (such as rungeass) owns the App and its private key, sends GitHub's events on to Geass signed with the
+                  secret in webhookSecretRef, and gives Geass an installation token for each installation listed here. Geass never
+                  mints a token for these installations and never holds the App's private key. Set through the API, not by hand.
+                properties:
+                  appSlug:
+                    description: |-
+                      AppSlug is the App's name in its address on GitHub (github.com/apps/<appSlug>). Geass uses it to find the comments
+                      it wrote as the App and to link to the App's settings.
+                    maxLength: 100
+                    pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                    type: string
+                  installURL:
+                    description: |-
+                      InstallURL is where a person installs the App on a GitHub account. Connecting a project that has no installation
+                      to use sends the person there.
+                    maxLength: 2048
+                    pattern: ^https://
+                    type: string
+                  installations:
+                    description: Installations are the installations of the App that
+                      belong to this cluster.
+                    items:
+                      description: |-
+                        GeassGitHubInstallation is one installation of an external GitHub App: the GitHub account it is on, and the
+                        organization whose projects may build from it.
+                      properties:
+                        account:
+                          description: Account is the login of the GitHub user or
+                            organization the App is installed on.
+                          maxLength: 100
+                          minLength: 1
+                          type: string
+                        accountType:
+                          description: AccountType is User or Organization, as GitHub
+                            says.
+                          maxLength: 32
+                          type: string
+                        id:
+                          description: ID is GitHub's id of the installation.
+                          format: int64
+                          minimum: 1
+                          type: integer
+                        org:
+                          description: |-
+                            Org is the GeassOrganization whose projects may connect to this installation. Empty is the platform's own: only
+                            projects that belong to no organization may.
+                          maxLength: 63
+                          type: string
+                      required:
+                      - account
+                      - id
+                      type: object
+                    maxItems: 1000
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - id
+                    x-kubernetes-list-type: map
+                  provider:
+                    description: Provider names who runs the App. The dashboard shows
+                      it ("GitHub is provided by rungeass").
+                    maxLength: 63
+                    minLength: 1
+                    type: string
+                required:
+                - provider
+                type: object
               secretRef:
                 description: |-
                   LocalObjectReference contains enough information to let you locate the
@@ -133,6 +202,33 @@ spec:
                   - status
                   - type
                   type: object
+                type: array
+              installations:
+                description: |-
+                  Installations is, for an external App, what Geass holds for each of its installations: whether it has a token
+                  for it and when that token stops working. The token itself is only ever in a Secret. One entry per installation of
+                  spec.external, so it has the same bound.
+                items:
+                  description: GeassGitHubInstallationStatus is the state of the token
+                    Geass holds for one installation of an external App.
+                  properties:
+                    id:
+                      format: int64
+                      type: integer
+                    tokenExpiresAt:
+                      description: TokenExpiresAt is when the token the provider gave
+                        last stops working. Unset while there is none.
+                      format: date-time
+                      type: string
+                    tokenState:
+                      description: TokenState is Valid, ExpiringSoon (valid, and due
+                        to be renewed), Expired or Missing.
+                      type: string
+                  required:
+                  - id
+                  - tokenState
+                  type: object
+                maxItems: 1000
                 type: array
               ready:
                 type: boolean
