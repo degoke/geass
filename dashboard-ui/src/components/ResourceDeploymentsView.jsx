@@ -23,9 +23,7 @@ export function ResourceDeploymentsView({ item, kind, name, deployments, onOpenD
 
   if (!active && !historyRows.length && !showServiceBar) {
     return (
-      <Muted size="sm" className="rw-deploy-empty">
-        No deploys yet. Use <strong>Deploy changes</strong> in the top bar or <strong>Retry</strong> after a failure.
-      </Muted>
+      <Muted size="sm" className="rw-deploy-empty">No deploys yet.</Muted>
     );
   }
 
@@ -43,10 +41,6 @@ export function ResourceDeploymentsView({ item, kind, name, deployments, onOpenD
             {item?.spec?.environment || "production"} · {replicas} {replicas === 1 ? "Replica" : "Replicas"}
           </Muted>
         </div>
-      ) : null}
-
-      {offline && !active && !historyRows.length ? (
-        <Muted size="sm" className="rw-deploy-offline-hint">Use Deploy changes in the top bar to publish this service.</Muted>
       ) : null}
 
       {active ? (

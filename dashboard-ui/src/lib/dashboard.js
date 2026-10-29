@@ -24,6 +24,17 @@ export function canMutate(data) {
   return Boolean(dashboardSession(data).canMutate);
 }
 
+/**
+ * The version a database runs. Every database has a version field, and it starts as a Postgres version whatever the engine,
+ * so a Redis database says 16. Only a Postgres database's own version is shown; for the other engines it is the version
+ * Geass runs, which the server reports.
+ */
+export function databaseVersion(data, item) {
+  const engine = item?.spec?.engine;
+  if (engine === "Postgres") return item.spec?.version || "";
+  return data?.platform?.engineVersions?.[engine] || "";
+}
+
 /** Where the signed-in person may work, once the platform has organizations on: the platform's own place (for a platform
  * administrator) and each organization and workspace they were given. Empty when organizations are off. */
 export function sessionScopes(data) {

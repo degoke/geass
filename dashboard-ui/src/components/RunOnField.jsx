@@ -20,7 +20,7 @@ export function RunOnField({ data, region, value, onChange, disabled = false, no
   return (
     <ResourceSettingsBlock
       title="Run on"
-      description={`Only use nodes with these tags. With none chosen, any node ${where} can be used.`}
+      description={`With none chosen, any node ${where} is used.`}
     >
       <SettingsPanel>
         {available.map((tag) => (

@@ -146,7 +146,8 @@ type GeassBackupArchiveStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Database",type=string,JSONPath=`.spec.database`
 // +kubebuilder:printcolumn:name="Last backup",type=date,JSONPath=`.status.lastBackupTime`
-// +kubebuilder:printcolumn:name="Delete after",type=date,JSONPath=`.spec.deleteAfter`
+// The deletion is in the future: a date column prints how long ago a time was, and a time that has not come is "<invalid>".
+// +kubebuilder:printcolumn:name="Delete after",type=string,JSONPath=`.spec.deleteAfter`
 
 // GeassBackupArchive is the Schema for the geassbackuparchives API.
 type GeassBackupArchive struct {

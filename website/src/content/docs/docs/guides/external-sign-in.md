@@ -9,6 +9,11 @@ Any provider that speaks OpenID Connect works: [Better Auth](https://www.better-
 
 Programs are not affected. [API tokens](/docs/guides/users-and-tokens/), deploy hooks and `geass login` work the same in both modes: a token is made by a signed-in admin, and is tied to who made it.
 
+:::note
+On a Geass that a platform runs for you, with [managed mode](/docs/operations/managed-mode/) on, how people sign in is the platform's:
+the settings on this page are shown read-only, and the API refuses to change them (`403`, `code` `managed`).
+:::
+
 ## What changes and what does not
 
 | | Passwords from the Secret (the default) | Through an identity provider |
@@ -117,6 +122,34 @@ With [organizations](/docs/guides/organizations-and-workspaces/) on, only organi
 
 In both, the person has to administer the organization at the provider, and the provider has to say in so many words that their address is verified. At most 20 can be made this way (`max`, to 500), and the ones a platform administrator makes do not count. Nothing but the organization is made: no workspace, no project. A platform administrator is never given an organization they did not ask for.
 
+## Access tokens as a bearer credential
+
+A program, or a page that is signed in at the provider itself (an application that embeds the Geass dashboard, for one), can call the API as the person with the access token the provider issued to them: `Authorization: Bearer <token>`, and for a terminal's WebSocket the subprotocol `geass.bearer.<token>`. No Geass token is made or kept, and what Geass records (the actor of a deploy, a terminal, a change) is the person: their address, or their subject when the token carries none.
+
+It is **off until you turn it on**, with `spec.auth.oidc.accessTokens` in the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/), and it does something only while people sign in through the provider. It is off by default because it is another way in: a cluster that is updated keeps exactly the credentials it accepted before, and an operator chooses to add this one and what its audience is. It is not on the settings page, and saving the provider there keeps it. It is for the platform's provider; an organization's [own provider](/docs/guides/organizations-and-workspaces/#an-organizations-own-identity-provider) has no access tokens.
+
+```yaml title="Accept the provider's access tokens"
+spec:
+  auth:
+    oidc:
+      accessTokens:
+        enabled: true
+        audience: https://geass.example.com/api   # empty means the client ID
+```
+
+A credential is tried as an access token only when it does not start with one of Geass's own prefixes (`gsw_`, `gsp_`, `gsh_`), which are looked up as the API tokens they are. It is accepted only when all of this holds, and refused with `401 invalid or expired API token` (the answer never says which) when any does not:
+
+- It is a **JWT access token in the form of RFC 9068**: a signed JWT whose header has `typ` `at+jwt` (or `application/at+jwt`). An ID token is signed by the same keys and is addressed to the same client, so this is what tells it from an access token: an ID token is never accepted here, and neither is a token with a `nonce`, `at_hash` or `c_hash`, or a `token_use` that is not `access`. An opaque token (one that is not a JWT) is not accepted; Geass does not ask the provider about it.
+- It is signed by one of the issuer's keys, which Geass reads from the `jwks_uri` of the provider's discovery document, the same keys and the same limits on fetching them again as for ID tokens. Only public-key algorithms are accepted (`EdDSA`, `ES256`/`384`/`512`, `RS256`/`384`/`512`, `PS256`/`384`/`512`); `none` and the HMAC ones never are.
+- `iss` is the configured issuer, and `aud` (a string or a list) contains the **audience**: `accessTokens.audience`, or the client ID when it is empty. This is what keeps a token for one cluster from working on another cluster of the same provider, so give each cluster its own.
+- `sub`, `iat` and `exp` are there. `exp`, `nbf` and `iat` are checked with 30 seconds of difference between the clocks allowed.
+- **It does not live longer than a sign-in** (`exp` minus `iat` is at most `sessionMinutes`, 60 by default). Its claims are those of the moment it was issued and Geass does not ask the provider again, so this is the longest that a role that changed, or a person who was removed, goes on being honoured through it. Have the provider issue short tokens.
+- The person is not signed out: a sign-out in Geass, or a back-channel logout from the provider, ends the person's tokens issued before it too, as it ends their sessions.
+
+The claims then become a session **exactly as an ID token's do**: the role claim, `roleMap` and `requireClaim` for one organization of the provider, or the organizations claim and the platform claim when [organizations](/docs/guides/organizations-and-workspaces/) are on, so it gives nothing that signing in does not. Geass reads those claims from the access token, so the provider has to put them in it (an access token does not carry them unless the provider is told to; see [Better Auth](#better-auth)). A token whose claims map to no role, or to no organization Geass knows, is refused with `403`, and the answer names the short reason code (`no_role`, `required_claim`, `no_org`, `email_unverified`). The `email` claim is optional in an access token; one that carries an address the provider says is not verified is refused. With organizations, a token works in the first place the person would start in at sign-in, and never makes an organization, whatever `autoProvision` says.
+
+What it can do is what a signed-in person can: an admin's role changes things, a viewer's reads. Like an API token it is refused every route that decides who can sign in or makes a credential (the sign-in settings, tokens, approving a device code, changing where a session works), and a stream or a terminal it opened is closed when the token expires, or when the person is signed out.
+
 ## Better Auth
 
 Better Auth can be an OpenID Connect provider with its OAuth provider plugin, which needs the `jwt` plugin for its signing keys. The organization plugin gives people a role in an organization, and a small callback puts that role in the token, because Better Auth does not put it there by default. This is the shape of what was tested against Better Auth 1.7:
@@ -163,6 +196,7 @@ Then:
   To let in one organization only, add `organization_slug=acme` to **Only people with**.
 - **Verified email.** Better Auth reports `email_verified: false` until the person has verified the address, and Geass turns away anyone the provider says is unverified. Verify addresses, or leave `email_verified` out of the claims: Geass accepts a provider that does not say.
 - **Back-channel logout.** Register `https://geass.example.com/auth/oidc/backchannel-logout` as the client's `backchannel_logout_uri`. Better Auth only accepts a public `https` address there.
+- **Access tokens.** To use [the access token as a bearer credential](#access-tokens-as-a-bearer-credential), register the cluster as a resource (the audience), and ask for it with the `resource` parameter (RFC 8707) when the token is requested. Better Auth then issues a JWT access token (`typ` `at+jwt`) whose `aud` is the resource, with `client_id` and `azp` the client and `sid` the session; without a resource it issues an opaque token, which Geass does not accept. It adds the address of its userinfo endpoint to `aud` when the `openid` scope was granted, which Geass ignores. The role and organization claims are not in an access token unless you add them with `customAccessTokenClaims`, which takes the same shape as `customIdTokenClaims` (and may return the `email` and `email_verified` claims too). Its `sub` is the user's id: Geass names a person by the issuer and `sub` of the ID token, so use the same `sub` for both (do not use pairwise subjects), or a person's tokens and their sign-ins are two people.
 
 ## Try it on your own machine
 
@@ -173,7 +207,7 @@ A provider on `localhost`, such as Better Auth during development, is refused by
 - **No roles per project.** Admin and viewer apply to the whole dashboard, as they do for passwords, unless you turn on [organizations and workspaces](/docs/guides/organizations-and-workspaces/): then each organization's people see only its own projects, and a role applies in the place a person works. Teams and organizations at the provider still decide who is in which; Geass reads them from the token and does not keep a list of people.
 - **No provisioning.** Geass does not create people ahead of time or keep a list of them. Someone exists here from their first sign-in. Revoke their tokens at **Settings** → **Tokens** if you need to before a logout reaches it.
 - **One provider for the platform.** One identity provider decides who is in which organization. An organization can bring [a provider of its own](/docs/guides/organizations-and-workspaces/#an-organizations-own-identity-provider) for its people.
-- **The ID token only.** The role and the email are read from the ID token. The provider's userinfo endpoint is not called.
+- **The ID token only, or a JWT access token.** At sign-in, the role and the email are read from the ID token, and the provider's userinfo endpoint is not called. [Access tokens](#access-tokens-as-a-bearer-credential) are read the same way, from their own claims, and only when they are JWTs.
 - **Secure endpoints only.** The issuer, and the authorization, token and keys addresses its discovery document lists, have to be `https` (a provider on this machine, with the operator's opt-in below, may use `http`). A document that lists one over plain `http` is refused, because the client secret and the keys travel there.
 
 ## If the provider is down or set up wrong

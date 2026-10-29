@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Group, Menu, Modal, Stack, Text } from "@mantine/core";
 import { Copy, MoreVertical, Plus, Webhook as WebhookIcon } from "lucide-react";
 import { action, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Checkbox, Field, Input, Muted, Switch } from "@/components/geass-ui";
 
@@ -57,7 +57,7 @@ export function ProjectWebhooks({ project, mutable, reload }) {
       if (message) alertUser(message);
       return result;
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
       return null;
     } finally {
       setBusy(false);
@@ -116,11 +116,6 @@ export function ProjectWebhooks({ project, mutable, reload }) {
 
   return (
     <div className="rw-webhooks">
-      <p className="rw-rail-body">
-        Geass sends a signed POST to each URL when a service deploy starts, succeeds, or fails. Use it to post to chat,
-        trigger a pipeline, or keep a deploy log.
-      </p>
-
       {hooks.length ? (
         <div className="rw-rail-stack">
           {hooks.map((hook) => (
@@ -198,7 +193,7 @@ export function ProjectWebhooks({ project, mutable, reload }) {
         {editing ? (
           <form onSubmit={save}>
             <Stack gap="sm">
-              <Field label="Payload URL" description="Geass sends a POST with a JSON body. Loopback, link-local, and private network addresses are not allowed unless the operator enables them.">
+              <Field label="Payload URL" description="Receives a JSON POST. Private network addresses are not allowed.">
                 <Input
                   required
                   autoFocus
@@ -236,16 +231,15 @@ export function ProjectWebhooks({ project, mutable, reload }) {
       <Modal opened={Boolean(secret)} onClose={() => setSecret(null)} title="Signing secret" centered size="lg">
         <Stack gap="sm">
           <Text size="sm">
-            Copy this secret now. It is shown only once; if you lose it, rotate it from the webhook&apos;s menu.
+            Copy this secret now. It is shown only once.
           </Text>
           <div className="rw-webhook-secret">
             <code>{secret?.value}</code>
             <button type="button" className="rw-icon-btn" aria-label="Copy signing secret" onClick={copySecret}><Copy size={15} /></button>
           </div>
           <Text size="xs" c="dimmed">
-            Each request has an <code>X-Geass-Signature</code> header of the form <code>t=&lt;timestamp&gt;,v1=&lt;hex&gt;</code>, where
-            v1 is the HMAC-SHA256 of <code>&lt;timestamp&gt;.&lt;raw body&gt;</code> using this secret. Reject requests whose timestamp is
-            more than a few minutes old.
+            <code>X-Geass-Signature: t=&lt;timestamp&gt;,v1=&lt;hex&gt;</code>, where v1 is the HMAC-SHA256 of{" "}
+            <code>&lt;timestamp&gt;.&lt;raw body&gt;</code>.
           </Text>
           <Group justify="flex-end"><Button onClick={() => setSecret(null)}>Done</Button></Group>
         </Stack>
@@ -253,7 +247,7 @@ export function ProjectWebhooks({ project, mutable, reload }) {
 
       <Modal opened={Boolean(removing)} onClose={() => { if (!busy) setRemoving(null); }} title="Delete webhook?" centered>
         <Text size="sm" mb="md">
-          Geass will stop sending events to <strong>{removing ? hostOf(removing.url) : ""}</strong>. Its signing secret is deleted.
+          Geass will stop sending events to <strong>{removing ? hostOf(removing.url) : ""}</strong>.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={busy} onClick={() => setRemoving(null)}>Cancel</Button>

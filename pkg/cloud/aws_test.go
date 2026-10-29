@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -699,4 +700,64 @@ func TestFoldersAreTheNamesDirectlyUnderAPrefixAcrossPages(t *testing.T) {
 	_, err = client.ListFolders("state", "")
 	require.NoError(t, err)
 	require.NotContains(t, queries[0], "prefix=", "the top of the bucket has no prefix to name")
+}
+
+// signedEC2Query is the request the signing tests sign: an EC2 Query API call, at a fixed moment.
+func signedEC2Query(t *testing.T, client *AWSClient) *http.Request {
+	t.Helper()
+	body := []byte("Action=DescribeInstances&Version=2016-11-15")
+	req, err := http.NewRequest(http.MethodPost, "https://ec2.eu-north-1.amazonaws.com/", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	require.NoError(t, client.signAt(req, body, "ec2", "eu-north-1", time.Date(2026, time.October, 22, 12, 30, 45, 0, time.UTC)))
+	return req
+}
+
+// The expected signatures in the signing tests were worked out by a separate implementation of SigV4 (a short Python
+// script that shares no code with this package), so that they check the signer and do not repeat it.
+func TestAnIAMUsersKeySignsTheSameThreeHeadersAsEver(t *testing.T) {
+	req := signedEC2Query(t, &AWSClient{AccessKey: "AKIDEXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"})
+
+	require.Equal(t, "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261022/eu-north-1/ec2/aws4_request, "+
+		"SignedHeaders=host;x-amz-content-sha256;x-amz-date, "+
+		"Signature=d548bd8c12a50f1517de6854f30507963779e5ba40d3c1b35636b4ffff4c2fa9", req.Header.Get("Authorization"))
+	require.Equal(t, "20261022T123045Z", req.Header.Get("X-Amz-Date"))
+	require.Equal(t, "6171eb09865e32b0602af0f7957e26573a51f53caaedff02ff88883cb0275885", req.Header.Get("X-Amz-Content-Sha256"))
+	require.Empty(t, req.Header.Values("X-Amz-Security-Token"), "a key with no session token sends none")
+}
+
+func TestTemporaryCredentialsSendTheSessionTokenAndSignIt(t *testing.T) {
+	const token = "FwoGZXIvYXdzEXAMPLE+SESSION/token="
+	client := &AWSClient{AccessKey: "AKIDEXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", SessionToken: token}
+	req := signedEC2Query(t, client)
+
+	require.Equal(t, token, req.Header.Get("X-Amz-Security-Token"))
+	require.Equal(t, "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261022/eu-north-1/ec2/aws4_request, "+
+		"SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, "+
+		"Signature=05928dc7988e1e452dbc1e1c2cb6918dc912884898d7e1a3a34f63dfcdc11961", req.Header.Get("Authorization"))
+
+	client.SessionToken = "another-token"
+	other := signedEC2Query(t, client)
+	require.NotEqual(t, req.Header.Get("Authorization"), other.Header.Get("Authorization"), "the token is part of what is signed, not only attached")
+}
+
+func TestTheSharedSignerSendsASessionTokenOnEveryServiceItSigns(t *testing.T) {
+	var got *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Clone(r.Context())
+		_, _ = w.Write([]byte("state"))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &AWSClient{HTTP: srv.Client(), AccessKey: "AKIA", SecretKey: "secret", SessionToken: "tok", Endpoint: srv.URL}
+	_, err := client.GetObject("state", "key", 100)
+	require.NoError(t, err)
+	require.Equal(t, "tok", got.Header.Get("X-Amz-Security-Token"))
+	require.Contains(t, got.Header.Get("Authorization"), "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token,")
+
+	client.SessionToken = ""
+	_, err = client.GetObject("state", "key", 100)
+	require.NoError(t, err)
+	require.Empty(t, got.Header.Values("X-Amz-Security-Token"))
+	require.Contains(t, got.Header.Get("Authorization"), "SignedHeaders=host;x-amz-content-sha256;x-amz-date,")
 }

@@ -78,7 +78,7 @@ In the dashboard:
 
 1. Open the project and choose **Settings**, then **Compliance**.
 2. Tick the tags. Each tag reads like `hipaa (2 nodes, compliance)`. The count is the nodes in the project's region.
-3. Choose **Save**. The dashboard shows "Compliance settings saved".
+3. Choose **Save**. The dashboard shows "Saved".
 
 Only tags that nodes in the project's region carry are listed. A tag whose nodes are not reserved is disabled, with "Mark this tag as a compliance tag on its nodes first." A tag the project already requires stays listed even when no node carries it any more, as "(no node carries it)", so you can remove it. The tags are saved on `spec.requiredTags` of the project, at most 8.
 
@@ -150,7 +150,7 @@ A project that requires tags can use a server only when the server runs on nodes
 
 ### Logs
 
-The log store is shared by every project and may run on any node, so logs of a project that requires tags are never sent to it. The operator excludes the project's namespaces from the log shipper. When you choose **History** on the project's **Logs** page, it says "Log history is not kept for projects that require node tags, so their logs never leave the nodes they run on. Live logs are still available." Live logs are read from the nodes themselves and keep working. History is not kept for these projects, and Geass does not remove lines that were shipped before the project required tags. See [Logs, metrics and terminal](/docs/guides/observability/).
+The log store is shared by every project and may run on any node, so logs of a project that requires tags are never sent to it. The operator excludes the project's namespaces from the log shipper, so they are not sent to a [log store outside the cluster](/docs/guides/observability/#send-metrics-and-logs-outside-the-cluster) either. Metrics are not covered: a metrics store outside the cluster receives the project's metrics like any other's. When you choose **History** on the project's **Logs** page, it says "Log history is not kept for projects that require node tags, so their logs never leave the nodes they run on. Live logs are still available." Live logs are read from the nodes themselves and keep working. History is not kept for these projects, and Geass does not remove lines that were shipped before the project required tags. See [Logs, metrics and terminal](/docs/guides/observability/).
 
 ## Projects that already have databases
 

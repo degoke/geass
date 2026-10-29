@@ -84,7 +84,8 @@ var writeRetry = wait.Backoff{Steps: 8, Duration: 20 * time.Millisecond, Factor:
 
 // updateReapplying saves obj. When the controller changed the object since it was read (it adds a
 // finalizer to every new resource), the latest copy is fetched and reapply runs again on it, so the
-// request succeeds instead of failing with a conflict.
+// request succeeds instead of failing with a conflict. A copy that is not found yet because the
+// cache is behind is asked for again.
 func (s *Server) updateReapplying(ctx context.Context, obj client.Object, reapply func() error) error {
 	key := client.ObjectKeyFromObject(obj)
 	return retry.RetryOnConflict(writeRetry, func() error {
@@ -92,7 +93,10 @@ func (s *Server) updateReapplying(ctx context.Context, obj client.Object, reappl
 		if !apierrors.IsConflict(err) {
 			return err
 		}
-		if getErr := s.Client.Get(ctx, key, obj); getErr != nil {
+		// The conflict says the object is there. A request that made it a moment ago can still be reading through a cache that has not seen it (the controller added
+		// its finalizer at once, which is what conflicted), so "not found" here is the cache being behind: it is asked again for a moment, not taken for a deletion.
+		getErr := retry.OnError(writeRetry, apierrors.IsNotFound, func() error { return s.Client.Get(ctx, key, obj) })
+		if getErr != nil {
 			return getErr
 		}
 		if reapplyErr := reapply(); reapplyErr != nil {

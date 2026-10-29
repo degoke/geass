@@ -3,6 +3,8 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,44 +24,48 @@ import (
 	"github.com/degoke/geass/pkg/release"
 )
 
+// fixedReadRoutes are the read routes whose path is fixed. None of them is a path that a route of handleAPIRead which
+// matches a prefix or a suffix would take, so they are looked up first, and the dispatch of the rest stays simple.
+var fixedReadRoutes = map[string]func(s *Server, w http.ResponseWriter, r *http.Request){
+	"/api/session":                   (*Server).handleDashboardSession,
+	"/api/bootstrap":                 (*Server).handleBootstrap,
+	"/api/token":                     (*Server).handleAPIToken,
+	"/api/token/services":            (*Server).handleAPITokenServices,
+	"/api/tokens":                    (*Server).handleAPITokensList,
+	"/api/usage":                     (*Server).handleAPIUsage,
+	"/api/orgs":                      (*Server).handleAPIOrgs,
+	"/api/shared-databases/mixed":    (*Server).handleAPISharedDatabaseMixing,
+	"/api/events":                    (*Server).handleDashboardEvents,
+	"/api/settings/github":           (*Server).handleAPIGitHubSettings,
+	"/api/settings/cloudflare":       (*Server).handleAPICloudflareSettings,
+	"/api/settings/registry":         (*Server).handleAPIRegistrySettings,
+	"/api/settings/etcd-snapshots":   (*Server).handleAPIEtcdSnapshotSettings,
+	"/api/settings/auth":             (*Server).handleAPIAuthSettings,
+	"/api/settings/alerts":           (*Server).handleAPIAlertSettings,
+	"/api/alerts":                    (*Server).handleAPIOrgAlerts,
+	"/api/registry":                  (*Server).handleAPIOrgRegistry,
+	"/api/planetscale/cluster-sizes": (*Server).handleAPIPlanetScaleClusterSizes,
+	"/api/templates":                 (*Server).handleAPITemplates,
+	"/api/cluster/metrics": func(s *Server, w http.ResponseWriter, r *http.Request) {
+		s.handleAPIMetrics(w, r, "cluster", "cluster")
+	},
+	"/api/operator/metrics": func(s *Server, w http.ResponseWriter, r *http.Request) {
+		s.handleAPIMetrics(w, r, "operator", "operator")
+	},
+}
+
 func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
+	if handle, ok := fixedReadRoutes[r.URL.Path]; ok {
+		handle(s, w, r)
+		return
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, v1Prefix):
 		s.v1Router().ServeHTTP(w, r)
-	case r.URL.Path == "/api/session":
-		s.handleDashboardSession(w, r)
-	case r.URL.Path == "/api/bootstrap":
-		s.handleBootstrap(w, r)
-	case r.URL.Path == "/api/token":
-		s.handleAPIToken(w, r)
-	case r.URL.Path == "/api/token/services":
-		s.handleAPITokenServices(w, r)
-	case r.URL.Path == "/api/tokens":
-		s.handleAPITokensList(w, r)
-	case r.URL.Path == "/api/usage":
-		s.handleAPIUsage(w, r)
-	case r.URL.Path == "/api/orgs":
-		s.handleAPIOrgs(w, r)
-	case r.URL.Path == "/api/events":
-		s.handleDashboardEvents(w, r)
-	case r.URL.Path == "/api/settings/github":
-		s.handleAPIGitHubSettings(w, r)
-	case r.URL.Path == "/api/settings/cloudflare":
-		s.handleAPICloudflareSettings(w, r)
-	case r.URL.Path == "/api/settings/registry":
-		s.handleAPIRegistrySettings(w, r)
-	case r.URL.Path == "/api/settings/etcd-snapshots":
-		s.handleAPIEtcdSnapshotSettings(w, r)
-	case r.URL.Path == "/api/settings/auth":
-		s.handleAPIAuthSettings(w, r)
-	case r.URL.Path == "/api/settings/alerts":
-		s.handleAPIAlertSettings(w, r)
-	case r.URL.Path == "/api/alerts":
-		s.handleAPIOrgAlerts(w, r)
-	case r.URL.Path == "/api/registry":
-		s.handleAPIOrgRegistry(w, r)
-	case r.URL.Path == "/api/planetscale/cluster-sizes":
-		s.handleAPIPlanetScaleClusterSizes(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/installations"):
+		s.handleProjectGitHubInstallations(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/servers/") && strings.HasSuffix(r.URL.Path, "/impact"):
+		s.handleAPIServerImpact(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/github/repos"):
 		s.handleAPIProjectGitHubRepos(w, r)
 	case strings.Contains(r.URL.Path, "/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -70,8 +76,6 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIAppRuntime(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/variables"):
 		s.handleAPIAppVariables(w, r)
-	case r.URL.Path == "/api/templates":
-		s.handleAPITemplates(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/console/ws"):
 		s.handleAppConsoleWS(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/console/ws"))
 	case strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/metrics"):
@@ -90,10 +94,6 @@ func (s *Server) handleAPIRead(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIProjectLogs(w, r, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/logs"))
 	case strings.HasPrefix(r.URL.Path, "/api/databases/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "databases", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/databases/"), "/metrics"))
-	case r.URL.Path == "/api/cluster/metrics":
-		s.handleAPIMetrics(w, r, "cluster", "cluster")
-	case r.URL.Path == "/api/operator/metrics":
-		s.handleAPIMetrics(w, r, "operator", "operator")
 	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/metrics"):
 		s.handleAPIMetrics(w, r, "projects", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/metrics"))
 	case strings.HasPrefix(r.URL.Path, "/api/object-stores/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -115,11 +115,15 @@ func (s *Server) dashboardPlatform(ctx context.Context, data dashboardBootstrap)
 	info := s.dashboardPlatformFromInventory(ctx, data)
 	if readiness, err := s.platformReadiness(ctx); err == nil {
 		info.HasDashboardURL = readiness.HasDashboardURL
-		info.HasGitHubApp = readiness.HasGitHubApp
+		info.HasGitHubApp = readiness.HasGitHubApp || readiness.GitHubProvider != ""
+		info.GitHubProvider = readiness.GitHubProvider
 		info.HasCloudflare = readiness.HasCloudflare
 		info.RegistryRepository = readiness.Config.Spec.Registry.Repository
 		info.CloudflareReady = readiness.CloudflareReady
 		info.DashboardURL = readiness.DashboardURL
+		// Whether a platform keeps the installer, updates, sign-in and the dashboard's domain for itself is told to the
+		// platform's administrators, whose pages they are, from the configuration this has read already.
+		info.Managed = dashboardManagedOf(managedStateOf(readiness.Config))
 		if readiness.HasCloudflare {
 			summary := s.cloudflareConnectionSummary(ctx, readiness.Config)
 			info.CloudflareZoneID = summary.ZoneID
@@ -154,6 +158,10 @@ func releaseOf(clusters []geassv1alpha1.GeassCluster) dashboardRelease {
 
 func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashboardBootstrap) dashboardPlatform {
 	info := dashboardPlatform{}
+	// Whose GitHub App the cluster uses is not how the platform is set up: an organization's projects connect through it.
+	if connections, err := s.externalGitHubConnections(ctx); err == nil && len(connections) > 0 {
+		info.HasGitHubApp, info.GitHubProvider = true, connections[0].Spec.External.Provider
+	}
 	for _, report := range data.HAReadiness.Items {
 		if report.Status.HealthyNodes > info.HealthyNodes {
 			info.HealthyNodes = report.Status.HealthyNodes
@@ -209,6 +217,7 @@ func (s *Server) dashboardPlatformFromInventory(ctx context.Context, data dashbo
 	classes := s.storageClasses(ctx)
 	info.StorageExpandable = classes.newVolumeExpandable()
 	info.DefaultStorage = platform.DatabaseStorageDefaults()
+	info.EngineVersions = platform.EngineVersions()
 	// The cluster's object storage server has a volume too, which is sized the same way.
 	info.DefaultStorage["objectstore"] = platform.ObjectStoreServerVolumeSize
 	for i := range data.Databases.Items {
@@ -246,6 +255,33 @@ func (s *Server) handleAPIGitHubSettings(w http.ResponseWriter, r *http.Request)
 		"hasGitHubApp":    readiness.HasGitHubApp,
 		"dashboardURL":    readiness.DashboardURL,
 	}
+	// A provider's App is shown as it stands, in place of the steps that set up an App of the cluster's own.
+	connections, err := s.externalGitHubConnections(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+		return
+	}
+	if len(connections) > 0 {
+		projects, err := s.projectsByInstallation(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+			return
+		}
+		views := make([]externalGitHubView, 0, len(connections))
+		for i := range connections {
+			view, err := s.externalView(r.Context(), &connections[i], projects)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load GitHub settings"})
+				return
+			}
+			views = append(views, view)
+		}
+		payload["hasGitHubApp"] = true
+		payload["external"] = views[0]
+		payload["externalConnections"] = views
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
 	if readiness.DashboardURL != "" {
 		base := strings.TrimRight(readiness.DashboardURL, "/")
 		payload["callbackURL"] = base + "/github/callback"
@@ -273,6 +309,12 @@ func (s *Server) handleAPIProjectGitHubRepos(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	token, err := s.githubConnectionToken(r.Context(), connection)
+	if errors.Is(err, githubapp.ErrTokenUnavailable) {
+		// The provider of the cluster's GitHub App has not given a token yet: the message says which installation and
+		// whose App, and nothing of any token.
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{dashboardLiteralError: err.Error()})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{dashboardLiteralError: "could not load GitHub repositories"})
 		return
@@ -600,7 +642,7 @@ func (s *Server) handleDatabaseQuery(w http.ResponseWriter, r *http.Request, nam
 func (s *Server) databaseQueryPod(ctx context.Context, db geassv1alpha1.GeassDatabase) (*corev1.Pod, error) {
 	selectors := []string{
 		"app.kubernetes.io/name=" + db.Name,
-		"cnpg.io/cluster=" + db.Name,
+		platform.CNPGLabelCluster + "=" + db.Name,
 		// A MOCO cluster's replicas refuse writes, so the console goes to the primary.
 		"app.kubernetes.io/instance=" + db.Name + "," + mocoRoleLabel + "=primary",
 		// The same for a MariaDB the operator replicates.
@@ -692,7 +734,17 @@ func databaseQueryCommand(engine geassv1alpha1.GeassDatabaseEngine, query string
 		// Reached with the application's own login (see usesOperatorLogin), which this command is replaced by.
 		return []string{"mariadb", "-e", query}, nil
 	case geassv1alpha1.DatabaseEngineSQLite:
-		return []string{"rqlite", "-e", query}, nil
+		// The rqlite shell has no -e (rqlite 8 answers "ERR! undefined option -e") and only reads from a prompt: given
+		// a pipe it prints its prompt again and again at the end of the input. The statement goes to rqlited's HTTP API
+		// instead, as a JSON array, to the unified endpoint that runs a read or a write as the statement is. The
+		// statement is one argument of wget, never part of a shell command, so it cannot change what is run. The server's
+		// pod has busybox wget, which has no way to send an error status's body, so an error is read in the answer
+		// (`{"results":[{"error":"..."}]}`, status 200).
+		body, err := json.Marshal([]string{query})
+		if err != nil {
+			return nil, err
+		}
+		return []string{"wget", "-q", "-O", "-", "--header=Content-Type: application/json", "--post-data=" + string(body), "http://127.0.0.1:4001/db/request?pretty"}, nil
 	default:
 		return []string{"psql", "-c", query}, nil
 	}

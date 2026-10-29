@@ -165,7 +165,7 @@ func TestThePolicyClosesOnlyTheClosedPodsToEverything(t *testing.T) {
 }
 
 func TestTheChecksPodsRunTheOperatorsImageOnTheControlPlaneWithNothingTheyDoNotNeed(t *testing.T) {
-	pod := netcheckPod("server-open", "geass-operator:v1", "open", "netcheck", "serve")
+	pod := netcheckPod("server-open", "geass-operator:v1", "open", true, "netcheck", "serve")
 
 	require.Equal(t, netcheckNamespace, pod.Namespace)
 	require.Equal(t, "open", pod.Labels[netcheckLabel])
@@ -330,7 +330,7 @@ func TestTheProbeWaitsForTheServersToBeListeningNotJustRunning(t *testing.T) {
 }
 
 func TestOnlyTheServersAreGivenAReadinessProbe(t *testing.T) {
-	require.NotNil(t, netcheckPod("server-closed", "img", "closed").Spec.Containers[0].ReadinessProbe)
-	require.NotNil(t, netcheckPod("server-open", "img", "open").Spec.Containers[0].ReadinessProbe)
-	require.Nil(t, netcheckPod("probe", "img", "probe").Spec.Containers[0].ReadinessProbe, "a pod that is meant to end is not waited for to be ready")
+	require.NotNil(t, netcheckPod("server-closed", "img", "closed", true).Spec.Containers[0].ReadinessProbe)
+	require.NotNil(t, netcheckPod("server-open", "img", "open", true).Spec.Containers[0].ReadinessProbe)
+	require.Nil(t, netcheckPod("probe", "img", "probe", true).Spec.Containers[0].ReadinessProbe, "a pod that is meant to end is not waited for to be ready")
 }

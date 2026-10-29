@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: geass-dashboard
+  namespace: geass-system
+  labels:
+    app.kubernetes.io/name: geass
+    app.kubernetes.io/component: dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: geass-dashboard
+  labels:
+    app.kubernetes.io/name: geass
+    app.kubernetes.io/component: dashboard
+rules:
+# Geass's own objects. The dashboard creates, edits and deletes every kind but the ones the controllers write alone,
+# and updates the status of the few it keeps a record in (webhook deliveries, console sessions, builds, backup
+# archives, provisioning attempts, domain checks, and the deployment it records when a service is deployed). The controllers' own records are in the status of the same kinds,
+# which is why they are listed here: the dashboard reads them and a retry resets some.
+- apiGroups: [geass.geass.dev]
+  resources:
+  - geassapps
+  - geassbackuparchives
+  - geassbuilds
+  - geasscloudconnections
+  - geassclusters
+  - geassconsolesessions
+  - geassdatabases
+  - geassdeployments
+  - geassgithubconnections
+  - geasshareadinesses
+  - geasslogicaldatabases
+  - geassnetworklogs
+  - geassnodepools
+  - geassnodes
+  - geassobjectstores
+  - geassorganizations
+  - geassplatformconfigs
+  - geassprojects
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [geass.geass.dev]
+  resources:
+  - geassapps/status
+  - geassbackuparchives/status
+  - geassbuilds/status
+  - geassconsolesessions/status
+  - geassdatabases/status
+  - geassdeployments/status
+  - geasslogicaldatabases/status
+  - geassobjectstores/status
+  - geassplatformconfigs/status
+  - geassprojects/status
+  verbs: [get, update, patch]
+# Settings the dashboard keeps in Secrets and ConfigMaps: users and sessions, API tokens, deploy hooks, webhook secrets,
+# connections' credentials, alert channels, templates. They are read through a cache that watches the whole cluster, so
+# the access is cluster-wide.
+- apiGroups: [""]
+  resources: [secrets, configmaps]
+  verbs: [get, list, watch, create, update, patch, delete]
+# What the dashboard shows and measures: pods and volume claims for usage and capacity, nodes for placement. A node's
+# labels and taints are edited from the dashboard.
+- apiGroups: [""]
+  resources: [pods, persistentvolumeclaims]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [nodes]
+  verbs: [get, list, watch, update, patch]
+- apiGroups: [storage.k8s.io]
+  resources: [storageclasses]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [get, list, watch]
+# Logs, terminals and the database query box go through the API server.
+- apiGroups: [""]
+  resources: [pods/log]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [pods/exec]
+  verbs: [create]
+# A build that is started again has its finished Job removed first.
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: geass-dashboard
+  labels:
+    app.kubernetes.io/name: geass
+    app.kubernetes.io/component: dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: geass-dashboard
+subjects:
+- kind: ServiceAccount
+  name: geass-dashboard
+  namespace: geass-system

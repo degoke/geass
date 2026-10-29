@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -153,4 +154,43 @@ func TestOtherCrashesAndOtherStartFailuresKeepTheirOwnMessage(t *testing.T) {
 	// A copy that cannot be pulled is not helped by having once run out of memory.
 	r = &GeassAppReconciler{Client: quotaTestClient(oomPod("web-1", app, time.Minute, "128Mi", "256Mi"))}
 	require.Equal(t, "The service cannot start: app is ImagePullBackOff", r.startFailureMessage(context.Background(), app, "shop-production", "app is ImagePullBackOff"))
+}
+
+func TestAPodThatCannotPullItsImageWakesItsServiceOnce(t *testing.T) {
+	waiting := func(reason string) *corev1.Pod {
+		pod := &corev1.Pod{}
+		if reason != "" {
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}}
+		}
+		return pod
+	}
+	update := func(before, after *corev1.Pod) bool {
+		return podStartFailing().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after})
+	}
+
+	require.True(t, update(waiting("ContainerCreating"), waiting("ErrImagePull")), "it has just failed to pull")
+	require.True(t, update(waiting(""), waiting("CrashLoopBackOff")))
+	require.False(t, update(waiting("ErrImagePull"), waiting("ImagePullBackOff")), "it was failing already: the service heard of it, and does not need to again for every retry")
+	require.False(t, update(waiting("ContainerCreating"), waiting("")), "a pod that is only starting is not the service's to hear of")
+	require.False(t, podStartFailing().Create(event.CreateEvent{Object: waiting("ErrImagePull")}))
+}
+
+func TestAServiceWhoseImageCannotBePulledSaysWhichImage(t *testing.T) {
+	app := oomTestApp()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop-production", Labels: map[string]string{"app": "web"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx:does-not-exist"}}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "app", State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "pull access denied, repository does not exist"},
+		}}}},
+	}
+	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop-production"},
+		Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}}}}
+	r := &GeassAppReconciler{Client: quotaTestClient(pod)}
+
+	problem := r.startProblem(context.Background(), "shop-production", deploy)
+
+	require.Equal(t, "app is ImagePullBackOff (image nginx:does-not-exist)", problem)
+	require.NotContains(t, problem, "repository does not exist", "the registry's own words are left to the pod's events")
+	require.False(t, platform.ReconcileFailureIsPermanent(r.startFailureMessage(context.Background(), app, "shop-production", problem)))
 }

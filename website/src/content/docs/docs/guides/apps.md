@@ -87,9 +87,8 @@ The header shows the status and, when it applies, **Redeploy** or **Retry**. The
 ## Settings
 
 Open **Settings** on the service panel. It has a filter box at the top (press `/` to focus it) and a list of sections on
-the right. Each section has its own **Save changes** button. After you save, a toast tells you what happened: "Saved.
-Applied now", "Saved. Deploy to apply them", "Saved. Some changes are live; deploy to apply the rest", or "Nothing to
-save".
+the right. Each section has its own **Save changes** button. After you save, a toast tells you what happened: "Saved
+and applied", "Saved" (the change waits for a deploy), "Saved and deployed", or "Nothing to save".
 
 Sections marked **Applies instantly** take effect on save even for a deployed service. Everything else becomes a pending
 change until you choose **Deploy changes**. See

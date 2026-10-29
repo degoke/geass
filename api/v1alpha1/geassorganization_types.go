@@ -111,6 +111,27 @@ type GeassOrganizationSpec struct {
 	// lowest of them.
 	// +optional
 	Quota *GeassProjectQuota `json:"quota,omitempty"`
+	// Limits are the organization's own noisy-neighbour limits, in place of the platform's (spec.tenantLimits.defaults on
+	// the GeassPlatformConfig): each field set here replaces the platform's for that field. They are held in each of the
+	// organization's namespaces, while its quota is the total over all of them.
+	// +optional
+	Limits *GeassTenantLimits `json:"limits,omitempty"`
+	// Egress is the organization's own limits on what its pods may reach outside the cluster, in place of the platform's
+	// (spec.tenancy.egress on the GeassPlatformConfig): each field set here replaces the platform's for that field, which is
+	// how one organization is let send mail that the others may not, say. Setting it limits the organization even when the
+	// platform sets nothing. Like the rest of this spec it is the platform's to write: no route of the dashboard changes it.
+	// +optional
+	Egress *GeassTenantEgress `json:"egress,omitempty"`
+	// Abuse is how the platform's abuse detection (spec.tenancy.abuse on the GeassPlatformConfig) treats the organization:
+	// which of its projects, or all of them, run legitimate heavy work and are left out of the sustained-CPU signal, and
+	// what is done to a suspect in place of the platform's action.
+	// +optional
+	Abuse *GeassOrganizationAbuse `json:"abuse,omitempty"`
+	// Mail is what the organization may send through the platform's mail relay (spec.tenancy.mail.relay on the
+	// GeassPlatformConfig): its own limits and the domains it may send from, each in place of the platform's. Like the rest
+	// of this spec it is the platform's to write.
+	// +optional
+	Mail *GeassOrganizationMail `json:"mail,omitempty"`
 	// Region is where the organization's projects run when they name none of their own: only nodes in the region
 	// are used. Without it they use the cluster's default region.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -134,7 +155,9 @@ type GeassOrganizationSpec struct {
 	// Registry is where the organization's builds push their images, and the login they push with, in place of the
 	// platform's. It makes the organization's builds run with a credential of its own and not the platform's: the
 	// organization's builds run in a namespace of their own, which holds only this login (or, without it, a copy of the
-	// platform's). A service that names a registry of its own keeps it.
+	// platform's). A service that names a registry of its own keeps it. While the platform's spec.tenancy.registry is
+	// set, the platform's login is never used for the organization: its builds push under <repository>/<project>/<service>,
+	// and without a registry here they do not start.
 	// +optional
 	Registry *GeassPlatformRegistrySpec `json:"registry,omitempty"`
 	// AllowedDomains are the domains the organization's services may claim a hostname under: a host is allowed when

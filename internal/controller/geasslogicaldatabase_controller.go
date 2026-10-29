@@ -13,11 +13,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
@@ -34,6 +36,9 @@ import (
 type GeassLogicalDatabaseReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Recorder is told of a database whose server holds another organization's data (keepToOneOrganization). Nil tells
+	// nobody; the database's condition still says it.
+	Recorder events.EventRecorder
 }
 
 const (
@@ -52,6 +57,7 @@ const (
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassdatabases,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 var databaseNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
@@ -74,12 +80,25 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		return r.setNotReady(ctx, &logical, fmt.Sprintf("database server %q is unavailable", logical.Spec.ServerRef))
 	}
 	shared := platform.IsSharedDatabase(&server)
+	tenancy := false
 	if shared {
 		// The server has to be able to drop this database when it goes, so it is held until it has.
 		if !controllerutil.ContainsFinalizer(&logical, FinalizerLogicalDatabase) {
 			controllerutil.AddFinalizer(&logical, FinalizerLogicalDatabase)
 			return ctrl.Result{}, r.Update(ctx, &logical)
 		}
+		on, err := platform.TenancyOn(ctx, r.Client)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		tenancy = on
+	}
+	if shared && tenancy {
+		if result, stop, err := r.keepToOneOrganization(ctx, &logical, &server); stop || err != nil {
+			return result, err
+		}
+	} else if err := r.clearOrganizationMixing(ctx, &logical); err != nil {
+		return ctrl.Result{}, err
 	}
 	if conditionStatus(server.Status.Conditions, platform.ConditionReady) != string(metav1.ConditionTrue) {
 		return r.setNotReady(ctx, &logical, "database server is not ready")
@@ -97,8 +116,11 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 		return r.setNotReady(ctx, &logical, "database name must contain only letters, numbers, and underscores")
 	}
 	if shared {
-		if message := r.organizationMismatch(ctx, &logical, &server); message != "" {
-			return r.setNotReady(ctx, &logical, message)
+		// With organizations on, keepToOneOrganization has decided this already.
+		if !tenancy {
+			if message := r.organizationMismatch(ctx, &logical, &server); message != "" {
+				return r.setNotReady(ctx, &logical, message)
+			}
 		}
 		if message := r.regionMismatch(ctx, &logical, &server); message != "" {
 			return r.setNotReady(ctx, &logical, message)
@@ -125,6 +147,14 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	jobName := logical.Name + "-create"
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: server.Status.TargetNamespace}}
+	// A Job that is made keeps how it runs: its pod cannot change. One that is not made yet is decided now, and is not made
+	// while an organization's Job would wait for the sandboxed runtime.
+	sandbox, err := r.jobSandboxUnlessMade(ctx, &logical, &server, job)
+	if missing := sandboxWait(err); missing != nil {
+		return r.waitForSandbox(ctx, &logical, missing)
+	} else if err != nil {
+		return r.setNotReady(ctx, &logical, err.Error())
+	}
 	container := logicalDatabaseJobContainer(&server, admin, target, false)
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, job, func() error {
 		job.Labels = map[string]string{
@@ -139,6 +169,9 @@ func (r *GeassLogicalDatabaseReconciler) Reconcile(ctx context.Context, req ctrl
 			job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 			job.Spec.Template.Spec.Containers = []corev1.Container{container}
 			jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
+			if job.ResourceVersion == "" {
+				sandbox.Apply(&job.Spec.Template.Spec)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -381,10 +414,28 @@ func logicalDatabaseJobContainer(server *geassv1alpha1.GeassDatabase, admin logi
 	}
 }
 
+// A pod's network rules are programmed a moment after it starts, and the first connection is refused until they are, so
+// each script below holds until the server answers, for up to a minute (see waitForServerScript).
+const waitForPostgres = `tries=0
+until pg_isready -q; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then echo "the database server did not answer" >&2; exit 1; fi
+  sleep 1
+done
+`
+
+const waitForMySQL = `tries=0
+until mysqladmin --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" ping --silent; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 60 ]; then echo "the database server did not answer" >&2; exit 1; fi
+  sleep 1
+done
+`
+
 // The scripts take their values from the environment and hand them to the client as variables, so nothing
 // a project controls is ever interpolated into SQL by the shell.
 const postgresCreateScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
-psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_password="${APP_PASSWORD:-}" -v app_db="$APP_DB" -v conn_limit="$CONNECTION_LIMIT" -v create_login="${CREATE_LOGIN:-0}" <<'SQL'
+` + waitForPostgres + `psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_password="${APP_PASSWORD:-}" -v app_db="$APP_DB" -v conn_limit="$CONNECTION_LIMIT" -v create_login="${CREATE_LOGIN:-0}" <<'SQL'
 SELECT :create_login::int = 1 AS make_login \gset
 \if :make_login
   SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS present \gset
@@ -404,14 +455,14 @@ SQL
 `
 
 const postgresDropScript = `export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USER" PGPASSWORD="$DB_PASSWORD"
-psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
+` + waitForPostgres + `psql -d postgres -v ON_ERROR_STOP=1 -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
 DROP DATABASE IF EXISTS :"app_db" WITH (FORCE);
 DROP ROLE IF EXISTS :"app_user";
 SQL
 `
 
 const mysqlCreateScript = `export MYSQL_PWD="$DB_PASSWORD"
-{
+` + waitForMySQL + `{
   echo "CREATE DATABASE IF NOT EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
   if [ "${CREATE_LOGIN:-0}" = "1" ]; then
     echo "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD';"
@@ -422,7 +473,7 @@ const mysqlCreateScript = `export MYSQL_PWD="$DB_PASSWORD"
 `
 
 const mysqlDropScript = `export MYSQL_PWD="$DB_PASSWORD"
-{
+` + waitForMySQL + `{
   echo "DROP DATABASE IF EXISTS \` + "`" + `$APP_DB\` + "`" + `;"
   echo "DROP USER IF EXISTS '$APP_USER'@'%';"
 } | mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER"
@@ -475,13 +526,27 @@ func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context,
 	target := logicalTarget{database: database, username: login}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-drop", Namespace: ns}}
 	err = r.Get(ctx, client.ObjectKeyFromObject(job), job)
+	expired := time.Since(logical.DeletionTimestamp.Time) > logicalDropTimeout
 	switch {
 	case apierrors.IsNotFound(err):
+		sandbox, err := r.logicalJobSandbox(ctx, logical, &server)
+		if missing := sandboxWait(err); missing != nil {
+			// The drop of an organization's database is not run outside the sandbox. Like a server that is not ready, a
+			// runtime that does not come in time does not keep the object: the database and its login stay on the server.
+			if expired {
+				logf.FromContext(ctx).Info("Gave up dropping the logical database: the sandboxed runtime is missing", "logicalDatabase", logical.Name, "runtimeClass", missing.RuntimeClass)
+				return 0, nil
+			}
+			return 15 * time.Second, nil
+		} else if err != nil {
+			return 0, err
+		}
 		job.Labels = map[string]string{platform.LabelManagedBy: platform.ManagedByValue, platform.LabelLogicalDatabase: logical.Name, labelLogicalRole: "drop"}
 		job.Spec.BackoffLimit = int32ptr(3)
 		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 		job.Spec.Template.Spec.Containers = []corev1.Container{logicalDatabaseJobContainer(&server, admin, target, true)}
 		jobPlacement(pinnedNodePlacement(&server)).ApplyToPodSpec(&job.Spec.Template.Spec)
+		sandbox.Apply(&job.Spec.Template.Spec)
 		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
 			return 0, err
 		}
@@ -490,7 +555,6 @@ func (r *GeassLogicalDatabaseReconciler) dropSharedDatabase(ctx context.Context,
 		return 0, err
 	}
 	finished := job.Status.Succeeded > 0 || job.Status.Failed > 0
-	expired := time.Since(logical.DeletionTimestamp.Time) > logicalDropTimeout
 	if finished || expired {
 		_ = client.IgnoreNotFound(r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)))
 		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: logical.Name + "-login", Namespace: ns}}))
@@ -526,6 +590,12 @@ func (r *GeassLogicalDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		// An organization's region and required tags are its projects' too.
 		Watches(&geassv1alpha1.GeassOrganization{}, handler.EnqueueRequestsFromMapFunc(forOrganizationsProjects(r.Client, r.logicalDatabasesForProject)),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Whose a shared server is decides whose databases it may hold, and organizations being on decides whether that of
+		// the platform's server is checked at all (keepToOneOrganization).
+		Watches(&geassv1alpha1.GeassDatabase{}, handler.EnqueueRequestsFromMapFunc(r.logicalDatabasesOnServer),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}, predicate.NewPredicateFuncs(isSharedServer))).
+		Watches(&geassv1alpha1.GeassPlatformConfig{}, handler.EnqueueRequestsFromMapFunc(r.everyLogicalDatabase),
+			builder.WithPredicates(organizationsToggled())).
 		Named("geasslogicaldatabase").
 		Complete(r)
 }

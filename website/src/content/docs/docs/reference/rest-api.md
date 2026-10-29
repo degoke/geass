@@ -87,6 +87,7 @@ On `/api/v1` every error is a JSON object with a message and a code a program ca
 | `400` | `invalid_request` | The request is invalid, a rule refused it, or the cluster lacks capacity. `error` says why. A body that is not a JSON object, or a verb with no mapping (`there is no PUT /api/v1/nodes/...`), also gets this |
 | `401` | `unauthenticated` | No valid session or token: `authentication required` or `invalid or expired API token` |
 | `403` | `forbidden` | The caller's role or token scope does not allow it: `viewer role cannot access this`, `this token cannot access that endpoint`, or a token limited to another project |
+| `403` | `managed` | The write is to something the platform that runs this Geass keeps (sign-in, the dashboard's domain and DNS, the backup of the cluster's state), with [managed mode](/docs/operations/managed-mode/) on. `error` says who manages it, and `area` and `managedBy` say which area and who. Nothing is written |
 | `404` | `not_found` | The resource, or the route, does not exist. A project token gets `app not found` for services it cannot see |
 | `405` | `method_not_allowed` | The path does not take that method |
 | `413` | `too_large` | The body is larger than 2 MiB |
@@ -97,14 +98,14 @@ A rule that fails a write returns `400` with its plain-language message, for exa
 environment` or `variable name must use uppercase letters, numbers, and underscores`. The device-code endpoints answer with their own
 codes (`authorization_pending`, `slow_down`, `access_denied`, `expired_token`) in the same `code` field.
 
-The dashboard routes under `/api` answer with `{"error": "..."}` and no `code`. Most of their `404` answers are the plain text
+The dashboard routes under `/api` answer with `{"error": "..."}` and no `code` (the refusal of managed mode, `403`, is the exception: it has `code`, `area` and `managedBy`). Most of their `404` answers are the plain text
 `404 page not found`, and these statuses apply:
 
 | Status | Meaning |
 | --- | --- |
 | `400` | The request is invalid, a rule refused it, or the cluster lacks capacity. `error` says why |
 | `401` | No valid session or token. `authentication required` or `invalid or expired API token` |
-| `403` | `viewer role cannot access this` (for a viewer, and for an observer that tries a write), `this token cannot access that endpoint`, or a token limited to another project |
+| `403` | `viewer role cannot access this` (for a viewer, and for an observer that tries a write), `this token cannot access that endpoint`, a token limited to another project, or, with [managed mode](/docs/operations/managed-mode/) on, a write to something the platform keeps, as `{"error": "...", "code": "managed", "area": "signIn"}` |
 | `404` | The resource does not exist. Most handlers answer with the plain text `404 page not found`, not JSON, and a project token gets `app not found` for services it cannot see |
 | `405` | `{"error": "method not allowed"}`: an `/api/` path called with a method other than `GET` or `POST`. A `GET` on a `POST`-only path is a plain-text `404`, except `POST /api/databases/{db}/query`, whose `GET` is a `405` |
 | `415` | `send form-encoded data`: a project token sent another content type to a dashboard route. `/api/v1` converts JSON for you, so it never gets this |
@@ -209,10 +210,12 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
 | `GET /version` | Any, project token | none | `{"api": "v1", "name": "geass", "release": "v0.3.0"}`. `release` is the Geass release that runs the API, which the command line compares itself with |
-| `GET /me` | Any, project token | none | `username`, `role`, `canMutate`, `canReadSensitive`, `authentication` (`session` or `token`), and for a token `scope`, `expiresAt` and, for a project token, `project` and `environment` |
+| `GET /me` | Any, project token | none | `username`, `role`, `canMutate`, `canReadSensitive`, `authentication` (`session`, `token`, or `oidc` for the identity provider's access token, see [Access tokens as a bearer credential](/docs/guides/external-sign-in/#access-tokens-as-a-bearer-credential)), and for a token `scope`, `expiresAt` and, for a project token, `project` and `environment`; `expiresAt` also for an access token |
 | `GET /openapi.json` | Any | none | The OpenAPI document |
 | `GET /events` | Any | none | A server-sent event stream that says when something changed; see [Events](#events) |
 | `GET /usage` | Any | none | What each project reserves and uses; see [Usage](#usage) |
+| `GET /usage/hours` | Admin acting for the platform (a platform administrator or an install-wide admin token; not an organization's caller, a viewer, an observer or a project token) | `?from=`, `?to=` (RFC 3339), `?org=` | What each organization reserved, hour by hour, once `spec.usage.enabled` is on; see [Usage by organization](#usage-by-organization) |
+| `GET /mail/usage` | Admin acting for the platform, as for `/usage/hours` | `?org=` | What each organization sent through the mail relay, and was refused, since the relay started; see [Mail relay usage](#mail-relay-usage) |
 
 #### Sign-in and tokens
 
@@ -237,6 +240,8 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `DELETE /projects/{name}` | Admin | `confirmName`* (the display name) | `{"ok": true}` |
 | `POST /projects/{name}/deploy` | Admin | `environment`* | `{"ok": true, "deployed": 2}` |
 | `POST /projects/{name}/environments` | Admin | `environment`* | `{"ok": true}`; an environment that exists is a `400` |
+| `POST /projects/{name}/export` | Admin; not a project token | `?summary=true` for the manifest alone | The project's bundle, `application/gzip` (`Content-Disposition: attachment`), or with `summary` the manifest as JSON: what is to be entered again and what a bundle does not carry. It only reads. See [Moving a project to another cluster](/docs/guides/moving-a-project/) |
+| `POST /projects/import` | Admin; not a project token | The bundle as the raw body (`Content-Type: application/gzip`) with `?dryRun=`, `?name=`, `?region=`, `?keepProjectId=` (platform administrators); or JSON `bundle` (base64), `dryRun`, `name`, `region`, `keepProjectId` | `200` `{"dryRun": true, "ok": ..., "plan": {...}}` for a dry run; `201` `{"project": {"id", "name"}, "created": [...], "warnings", "toReenter", "notMoved", "data", "next"}` for an import, which makes a new project and drafts and no Secret; `409` with the `plan` when a blocker stands in the way; `400` for a bundle that is not valid; `413` over 16 MiB. These two do not go through the JSON-to-form conversion, so they take a body of up to 16 MiB and not 2 MiB |
 | `POST /projects/{name}/compliance` | Admin | `requiredTags` (list, up to 8; an empty list clears them) | `{"ok": true, "requiredTags": ["hipaa"]}` |
 | `GET /projects/{name}/compliance` | Any | none | `{"requiredTags", "region", "databases": [{"name", "compliant", "missing"}], "openNodes"}`: where the project falls short of its tags |
 | `GET /projects/{name}/network` | Any workspace token | none | `{"isolation", "allowFromProjects", "blockNodeAddresses"}`: who can reach the project's services now |
@@ -248,6 +253,8 @@ that forward to a dashboard route, the other fields of that route's table furthe
 | `GET /projects/{name}/logs` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `tail`, `previous` | Merged live logs |
 | `GET /projects/{name}/logs/stream` | Observer | the same query | The same as server-sent events |
 | `GET /projects/{name}/logs/history` | Observer | `?environment=`, `service`, `q`, `level`, `since`, `limit` | Stored history. A project that requires node tags gets `{"available": false, ...}`: its history is not kept |
+| `POST /projects/{name}/github/install` | Admin | `environment`, and with [a provider's GitHub App](#github-an-app-a-provider-runs) `installation` | With the cluster's own App, `{"ok": true, "url": "https://github.com/apps/.../installations/new?state=..."}`. With a provider's App, the project is connected to an installation of it: the one sent, or the only one its organization has (`{"ok": true, "connected": true, "installation": 42, "account": "acme"}`). With none, `{"ok": true, "url": "<the provider's install address>?project=...&environment=..."}`; with several and none sent, a `400` that names them |
+| `GET /projects/{name}/github/installations` | Admin | none | With a provider's App: `{"items": [{"id", "account", "accountType", "provider", "tokenState"}], "external": true, "installURL"}`, the installations the project's organization may connect to. Never a token |
 
 #### Services
 
@@ -320,10 +327,10 @@ Geass creates machines at clouds for [node pools](/docs/guides/node-pools/) and 
 | --- | --- | --- | --- |
 | `GET /compute/providers` | Any (not a project token) | none | `{"items": [{"id", "label", "summary", "fields": [{"key", "label", "help", "secret", "optional", "multiline"}], "settings": [{"key", "label", "help", "required"}], "freeSettings", "regionHelp"}]}`: the clouds, the credentials each takes and the settings a pool can give it. Never a credential value |
 | `GET /compute/sizes` | Admin (not a project token) | `?connection=`* , `?region=` | `{"items": [{"id", "description", "vcpus", "memoryMiB", "diskGB", "hourlyPrice", "currency", "arch"}]}`, cheapest first. It calls the cloud with the connection's credentials, so `403` for anyone but an admin, `502` when the cloud cannot list its sizes, and `503` when the server cannot reach clouds |
-| `GET /connections` | Any (not a project token) | none | `{"items": [connection, ...]}` of every cloud connection, sorted by name. A connection has `name`, `provider`, `purposes`, `project`, `region`, `available`, `account`, `message`, `warnings`, `verifiedAt`, `expiresAt`, `usedBy` (pools), `machines` and `createdAt`, and never a credential |
+| `GET /connections` | Any (not a project token) | none | `{"items": [connection, ...]}` of every cloud connection, sorted by name. A connection has `name`, `provider`, `purposes`, `project`, `org` (the organization it belongs to, when it has no project), `region`, `available`, `account`, `message`, `warnings`, `verifiedAt`, `expiresAt`, `usedBy` (pools), `machines` and `createdAt`, and never a credential |
 | `GET /connections/{name}` | Any (not a project token) | none | One connection; `404` `no such connection` |
 | `POST /connections` | Admin | `name`* (lowercase letters, numbers and hyphens, at most 50 characters), `provider`* (an ID from `/compute/providers`), `purposes` (list: `Compute`, and for AWS `Storage` and `Database`; `Compute` when left out), `region`, and each credential the cloud names, as a field of its own key (`token`, `accessKeyId`, ...) | `{"ok": true, "name": "hetzner"}`. The credentials go into the Secret `<name>-credentials` in `geass-system` and are never shown again. `400` when a required credential is missing or `project` is sent |
-| `PATCH /connections/{name}` | Admin | `purposes`, `region`, and the credentials to replace (send only the ones that change) | `{"ok": true}` |
+| `PATCH /connections/{name}` | Admin | `purposes`, `region`, and the credentials to replace (send only the ones that change; for temporary AWS credentials send `accessKeyId`, `secretAccessKey` and `sessionToken` together, and `expiresAt`). A credential that is left out or empty keeps its value | `{"ok": true}`. The credentials are used by the next machine made or deleted; `POST /connections/{name}/verify` refreshes the connection's status at once |
 | `DELETE /connections/{name}` | Admin | `confirmName`* | `{"ok": true}`. Removes the connection and its Secret. Refused while a pool or a machine uses it |
 | `POST /connections/{name}/verify` | Admin | none | `{"ok": true}`. Asks the cloud again whether it accepts the credentials; read `GET /connections/{name}` for the answer |
 | `GET /pools` | Any (not a project token) | none | `{"items": [pool, ...]}` without nodes |
@@ -336,6 +343,91 @@ Geass creates machines at clouds for [node pools](/docs/guides/node-pools/) and 
 | `DELETE /servers/{name}` | Admin | `confirmName`* | `{"ok": true}`. Refused for the control plane, and for a node that belongs to a pool |
 
 A pool in a response has `name`, `cluster`, `connection`, `provider`, `inventory`, `region`, `size`, `fallbackSizes`, `fallbackRegions`, `image`, `spot`, `addressType`, `settings`, `placement`, `storage`, `minNodes`, `maxNodes`, `autoscaling` (with every setting, defaults filled in), `orphanPolicy`, `suspended`, and its state: `phase`, `message`, `desiredNodes`, `nodes`, `readyNodes`, `pendingPods`, `activeSize`, `estimatedHourlyCost`, `consecutiveFailures`, `lastFailure`, `lastFailureAt`, `pausedUntil`, `lastScaleUp`, `lastScaleDown`, `orphans`, `fallbackStep` and `createdAt`. A node under `members` has `name`, `phase`, `message`, `ready`, `deleting`, `instanceId`, `address`, `size`, `region`, `createdAt` and `readyAt`.
+
+#### GitHub: an App a provider runs
+
+A cluster normally has a GitHub App of its own (see [Connect GitHub](/docs/guides/connectors/github/)). A provider that runs Geass
+for many clusters, such as rungeass, can run one App for all of them instead: these routes tell a cluster about it. The provider
+alone holds the App's private key; it records which installations of the App belong to the cluster and to which
+[organization](/docs/guides/organizations-and-workspaces/), gives Geass an installation access token for each and renews it, and
+forwards GitHub's events (see [Forwarded GitHub events](#forwarded-github-events)). Every route here is the platform's: an
+organization's caller is answered `403`, a viewer can read and not write, and no project token reaches them. A token or a webhook
+secret is never in an answer, a log line or an event, and one sent in the query string instead of the body is refused (`400`). See [GitHub through a provider](/docs/guides/connectors/github/#github-through-a-provider).
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /github/connections` | Any platform caller | none | `{"items": [connection, ...]}` |
+| `PUT /github/connections/{name}` | Admin | `provider`* (on creation), `appSlug`, `installURL` (https), `webhookSecret`* (on creation, 32 to 512 characters; send it again to change it). A field that is not sent stays; `appSlug` or `installURL` sent empty is cleared | `201` on creation, `200` after, with the connection. `{name}` is lowercase letters, digits and hyphens, at most 40, and does not end in `-github`. The secret goes into the Secret `github-app-<name>-webhook` and is never shown again. `409` for a name that is a project's connection |
+| `GET /github/connections/{name}` | Any platform caller | none | One connection; `404` for a name that is not one |
+| `DELETE /github/connections/{name}` | Admin | `confirmName`* | `{"deleted": "<name>"}`, with its token Secrets and its webhook Secret. `409` with `projects` while a project is connected through it |
+| `GET /github/connections/{name}/installations` | Any platform caller | none | `{"items": [installation, ...]}` |
+| `PUT /github/connections/{name}/installations/{id}` | Admin | `account`* (the GitHub login the App is installed on), `accountType` (`User`, `Organization` or `Enterprise`), `org` (the [organization](/docs/guides/organizations-and-workspaces/) whose projects may connect to it; empty is the platform's: projects of no organization) | The installation. `{id}` is GitHub's installation id. `400` for an `org` that does not exist; `409` for an installation another connection lists, and for moving it to another organization while a project of the one it is in is connected to it |
+| `DELETE /github/connections/{name}/installations/{id}` | Admin | none | `{"removed": 42, "projects": ["proj-1a2b3c4d"]}`: the projects that were connected through it, which stop building from GitHub (a build says to connect the project again) until they are connected again |
+| `PUT /github/connections/{name}/installations/{id}/token` | Admin | `token`*, `expiresAt`* (RFC 3339, as GitHub returns with the token) | `{"connection", "installation", "tokenState", "tokenExpiresAt"}`, never the token. Stored in the Secret `github-app-<name>-installation-<id>`. `400` for a token with characters a token does not have, and for an `expiresAt` that has passed or is less than a minute away; `404` for an installation the connection does not list (record it first) |
+
+A connection in an answer is `{"name", "provider", "appSlug", "installURL", "webhookPath", "webhookURL", "ready", "tokensReady",
+"tokensReason", "tokensMessage", "installations"}`. `webhookPath` is `/webhooks/github/forwarded/<name>` and `webhookURL` the same on
+the dashboard's address when the cluster has one; `ready` is whether the webhook secret is stored. `tokensReady` (`True` or `False`),
+`tokensReason` and `tokensMessage` are the connection's `TokensReady` condition worked out at the moment of the request:
+`TokensValid`, `NoInstallations`, `TokenExpiringSoon` (every token still works, and one has less than ten minutes left), `TokenMissing`
+or `TokenExpired`. An installation is `{"id", "account", "accountType", "org", "tokenState", "tokenExpiresAt", "projects"}`, where
+`tokenState` is `Valid`, `ExpiringSoon`, `Expired` (also when less than a minute is left) or `Missing`.
+
+```bash title="Give a cluster the provider's App, an installation and its token"
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"provider":"rungeass","appSlug":"rungeass","installURL":"https://app.rungeass.app/github/install","webhookSecret":"'"$FORWARDING_SECRET"'"}'
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass/installations/42 \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"account":"acme","accountType":"Organization","org":"org-acme"}'
+curl -X PUT https://geass.example.com/api/v1/github/connections/rungeass/installations/42/token \
+  -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"token":"'"$INSTALLATION_TOKEN"'","expiresAt":"2026-10-23T13:00:00Z"}'
+# {"connection":"rungeass","installation":42,"tokenExpiresAt":"2026-10-23T13:00:00Z","tokenState":"Valid"}
+```
+
+#### Forwarded GitHub events
+
+The provider forwards each GitHub event for an installation of the cluster to `POST /webhooks/github/forwarded/<name>` (not under
+`/api`, and reached without signing in: the signature is the credential). It sends GitHub's body as it came, byte for byte, with these
+headers:
+
+| Header | Value |
+| --- | --- |
+| `X-GitHub-Event` | GitHub's event name, such as `push`. Required |
+| `X-GitHub-Delivery` | GitHub's delivery id. Optional: it is logged and echoed as `delivery` |
+| `X-Geass-Signature` | `t=<unix seconds>,v1=<hex>`, where `<hex>` is HMAC-SHA256, keyed with the connection's webhook secret, of `<t>.<X-GitHub-Event>.<body>`. Several `v1=` values (up to four) are accepted, so a provider changing the secret can sign with both |
+
+Geass compares in constant time, refuses a `t` more than five minutes from its own clock (only once the signature has matched),
+remembers the signatures of the events it did for ten minutes and answers `409` to the same one again (one it answered `5xx`
+is not remembered, so it may be sent again as it was; each dashboard process remembers its own), and reads at most 2 MiB (`413` beyond).
+It answers `401` alike for a connection that does not exist, one without a webhook secret and a signature that does not match. Once it is
+verified, the event is handled exactly as one from GitHub's own webhook (`ping`, `push` and `pull_request`, others ignored), with one
+difference: the event must name an installation the connection lists (`422` otherwise, and `{"accepted": true, "ignored": true}` for
+an event that names none), and it counts only for the projects connected to that installation.
+
+```bash title="Sign and forward an event"
+t=$(date +%s)
+# The body is signed exactly as it is sent: the bytes of the file, a final newline included.
+sig=$({ printf '%s.push.' "$t"; cat body.json; } | openssl dgst -sha256 -hmac "$FORWARDING_SECRET" | awk '{print $2}')
+curl -X POST https://geass.example.com/webhooks/github/forwarded/rungeass \
+  -H "X-GitHub-Event: push" -H "X-GitHub-Delivery: $DELIVERY" -H "X-Geass-Signature: t=$t,v1=$sig" \
+  --data-binary @body.json
+# {"accepted":true,"delivery":"...","triggered":1}
+```
+
+#### Abuse detection
+
+The suspects of [abuse detection](/docs/guides/abuse-detection/) (`spec.tenancy.abuse`), and what the platform does about them. Every
+route is for an admin acting for the platform (a platform administrator or an install-wide admin token): an organization's caller,
+a viewer, an observer and a project token are refused with `403` and told nothing. The writes answer `409` while abuse detection is off.
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /abuse/suspects` | Admin acting for the platform | `?org=` | `{"enabled", "note", "action", "cpu", "suspects": [...], "counting": [...], "reviewed": [...]}`: each suspect with where it is (`service`, `project`, `environment`, `namespace`, `org`), its evidence (for the CPU signal `averagePercent`, `minPercent`, `thresholdPercent`, `windowMinutes`, `samples`, `traffic`; for a report `reporter`, `detail`, `pod`, `priority`), `since`, `detectedAt`, `suspended`, `releasedAt` and the condition's `message`; the services the CPU signal is counting now, and those cleared, until when. `cpu` gives the settings and whether the metrics server (and Prometheus, for `quietTraffic`) answered at the last sample. `note` says, every time, that a suspect is a signal and not proof |
+| `POST /abuse/suspects/{name}/clear` | Admin acting for the platform | `days` (1 to 365; default `reviewExemptionDays`, or 30), `note` | `{"service", "wasSuspected", "reviewedUntil", "message"}`. The suspicion goes (a suspended service runs again) and the CPU signal leaves the service alone until then. A service that is not suspected can be cleared ahead of a heavy job. `404` for no such service |
+| `POST /abuse/suspects/{name}/release` | Admin acting for the platform | none | `{"service", "released", "message"}`. A suspended service runs again and stays suspected. `409` for one that is not suspended |
+| `POST /abuse/reports` | Admin acting for the platform (a token, from a detector) | `service`, or `namespace` and `pod`; `reporter`, `reason`, `priority`, `time` (RFC 3339). Or falcosidekick's webhook body as it is: `rule`, `priority`, `time` and `output_fields` (`k8s.ns.name`, `k8s.pod.name`) are read, and Falco's `output` and command line are not kept | `{"service", "project", "org", "alreadySuspected", "suspended"}`. `400` for no service or pod to go by, `404` for a service that does not exist or does not run in the namespace, `422` for a pod that is not a copy of a service, and for a service of a project of no organization |
 
 #### Templates and project tokens
 
@@ -370,6 +462,118 @@ explains a `pending` or `failed` state. `details` depends on the kind: a functio
 sleeps when idle has `scaleToZero` (`idleSeconds`, `maxReplicas`, and whether it is `active`), a project has `environments`, `region`
 and `requiredTags`, a database has `engine`, `highAvailability`, `placement` and `version`, a logical database has `server` and
 `database`. A caller who cannot change things gets the same redactions as in the dashboard, so a viewer sees an empty `engine`.
+
+### Usage by organization
+
+`GET /api/v1/usage/hours` is what the usage meter kept: for each hour (UTC), what the projects of each organization reserved, by
+workspace. It is for billing the organizations of a shared cluster, so it is the platform's alone: an organization's people and tokens
+get `403` (their own organization's figures included), and so do viewers, observers and project tokens. The meter runs only while
+`spec.usage.enabled` is on in the [platform configuration](/docs/reference/resources/geass-platform-config/); what it measures, and
+what it does not, is in [Usage by organization, for billing](/docs/guides/usage-and-capacity/#usage-by-organization-for-billing).
+
+| Query | Default | Meaning |
+| --- | --- | --- |
+| `from` | 24 hours before `to` | The first hour, as an RFC 3339 time. It is taken back to the start of its hour, and to the oldest hour that is kept (`retainedFrom`, 62 days back) when it is older |
+| `to` | the end of the hour going on | The answer holds the hours that start before it. A later time is the end of the hour going on: no hour is answered that has not begun |
+| `org` | every organization | One organization's name. The answer then has only its entries, and no `unassigned` or `platform` |
+
+`from` must be before `to`, and the range at most 744 hours (31 days); otherwise `400`. Every hour of the range is answered, those the
+meter never wrote as empty, so an hour is never missing.
+
+```json title="GET /api/v1/usage/hours?from=2026-10-23T09:00:00Z (one hour shown)"
+{
+  "enabled": true,
+  "source": "requests",
+  "from": "2026-10-23T09:00:00Z",
+  "to": "2026-10-23T11:00:00Z",
+  "next": "2026-10-23T10:00:00Z",
+  "retainedFrom": "2026-08-22T10:00:00Z",
+  "egress": { "available": false, "reason": "Geass does not meter traffic that leaves the cluster. ..." },
+  "hours": [
+    {
+      "start": "2026-10-23T09:00:00Z",
+      "end": "2026-10-23T10:00:00Z",
+      "closed": true,
+      "meteredSeconds": 3600,
+      "orgs": [
+        { "org": "org-a", "workspace": "", "cpuCoreHours": 0.25, "memoryGiBHours": 0.5, "storageGiBHours": 0, "egressBytes": null,
+          "cpuMilliSeconds": 900000, "memoryByteSeconds": 1932735283200, "storageByteSeconds": 0 },
+        { "org": "org-a", "workspace": "ws-aaaaaa", "cpuCoreHours": 0.5, "memoryGiBHours": 1, "storageGiBHours": 10, "egressBytes": null,
+          "cpuMilliSeconds": 1800000, "memoryByteSeconds": 3865470566400, "storageByteSeconds": 38654705664000 }
+      ],
+      "unassigned": { "cpuCoreHours": 0.1, "memoryGiBHours": 0.125, "storageGiBHours": 0, "egressBytes": null,
+        "cpuMilliSeconds": 360000, "memoryByteSeconds": 483183820800, "storageByteSeconds": 0 },
+      "platform": { "cpuCoreHours": 0.2, "memoryGiBHours": 0.25, "storageGiBHours": 0, "egressBytes": null,
+        "cpuMilliSeconds": 720000, "memoryByteSeconds": 966367641600, "storageByteSeconds": 0 }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Whether the meter is on now. Hours it stored before it was turned off are still answered |
+| `source` | `requests`: the figures are what pods asked for (their CPU and memory requests) and the size of bound volumes, not what was used |
+| `from`, `to` | The hours the answer holds, from the start of the first to the end of the last |
+| `next` | Where the next read should start: the first hour of the answer that is still open, or `to` when all are closed |
+| `retainedFrom` | The oldest hour that is kept |
+| `egress` | Always `{"available": false, "reason": ...}`: Geass does not meter traffic, and every `egressBytes` is `null` |
+| `hours[].closed` | Whether the hour can still change. It closes once it is metered to its end, or five minutes after it ends, and never changes after that. An open hour comes again in the next answer |
+| `hours[].meteredSeconds` | How much of the hour the meter saw, 0 to 3600. In a closed hour, less than 3600 is time it did not see, which is not counted; `0` is an hour it did not run in, which is not the same as an hour in which nothing was reserved |
+| `hours[].orgs[]` | One entry for each organization and workspace that had a pod on a node or a bound volume in the hour, sorted by organization and workspace. `workspace` is `""` for the organization as a whole: its projects in no workspace, and its builds |
+| `hours[].unassigned` | The projects that belong to no organization. Never added to an organization |
+| `hours[].platform` | What is no project's: Geass, K3s, monitoring, storage, and the shared database and bucket servers |
+| `cpuCoreHours`, `memoryGiBHours`, `storageGiBHours` | The amounts in the units they are billed in, to six decimals |
+| `cpuMilliSeconds`, `memoryByteSeconds`, `storageByteSeconds` | The same amounts exactly, in the units they were added up in (millicores, or bytes, times seconds) |
+
+A program that bills as it goes asks every hour or so with `from` set to the `next` of its last answer, and stores each hour by its `start`,
+`org` and `workspace`, replacing what it stored for the same hour before. Asking again for an hour that is closed gives the same numbers, until it is
+older than 62 days and no longer kept.
+
+### Mail relay usage
+
+`GET /api/v1/mail/usage` is what the [mail relay](/docs/guides/mail-relay/) counted for each organization. Like the usage hours it is
+the platform's alone: an organization's people and tokens, viewers, observers and project tokens get `403`. The dashboard asks the relay
+on its admin port, with the token from the relay's Secret, so the answer is as current as the relay. The counts are kept only in the
+relay's memory: `countedSince` is when the relay started, and a restart starts them over.
+
+```json title="GET /api/v1/mail/usage?org=org-a"
+{
+  "enabled": true,
+  "counters": "memory",
+  "countedSince": "2026-10-27T09:00:00Z",
+  "now": "2026-10-27T10:00:00Z",
+  "org": "org-a",
+  "organizations": [
+    {
+      "org": "org-a",
+      "limits": { "messagesPerMinute": 60, "messagesPerHour": 600, "messagesPerDay": 2000, "recipientsPerMessage": 50,
+        "maxMessageBytes": 10485760, "connections": 5 },
+      "lastMinute": 2, "lastHour": 40, "lastDay": 40, "connections": 1,
+      "accepted": 40, "recipients": 52, "bytes": 812345,
+      "rejected": { "rate_minute": 3, "sender_domain": 1 },
+      "upstreamFailures": { "unreachable": 1 },
+      "authFailures": 0,
+      "lastAcceptedAt": "2026-10-27T09:59:12Z"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Whether the relay runs. When it does not, `organizations` is empty and there is no `countedSince` |
+| `counters` | Always `memory`: the counts are in the memory of the relay's one replica |
+| `countedSince`, `now` | When the relay started, and when it answered |
+| `organizations[].limits` | The limits the organization is held to, with every default worked out |
+| `lastMinute`, `lastHour`, `lastDay` | The messages its windows hold now, which its rates are checked against: those sent, and those being sent |
+| `connections` | Its connections signed in now |
+| `accepted`, `recipients`, `bytes` | What the upstream took, since `countedSince` |
+| `rejected` | What the relay refused, by reason: `rate_minute`, `rate_hour`, `rate_day`, `recipients`, `size`, `sender_domain`, `recipient_domain`, `connections`, `organization_removed` |
+| `upstreamFailures` | What the upstream did not take, by kind: `unreachable`, `deferred`, `refused`, `auth` |
+| `authFailures` | Failed sign-ins with the organization's username |
+
+`?org=` that is not a name is `400`. A relay that is set but does not answer, or has no admin token yet, is `503`, with the reason.
 
 ### Sign in from a program
 
@@ -648,6 +852,8 @@ All of these are admin writes.
 | `POST /api/projects/create` | `region` (optional) | Creates a project with a generated ID and name and one environment, `production`. It starts isolated from other projects and kept away from the cluster's machines. `201` `{"project":"proj-1a2b3c4d"}` |
 | `POST /api/projects/{project}/settings/save` | `displayName` (required), `environments` (repeat; at least one), `region` | Renames the project, sets its environments, and optionally its region. The region cannot change while the project has in-cluster databases |
 | `POST /api/projects/{project}/settings/delete` | `confirmName` (the display name) | Deletes the project, its services, databases, logical databases, buckets, cloud connections and GitHub connection, and revokes its tokens. Delete AWS buckets first and wait for them to go; see [Connect AWS](/docs/guides/connectors/aws/#remove-an-aws-connection) |
+| `POST /api/projects/{project}/export` | none; `?summary=true` | The project's bundle, `application/gzip`, or its manifest as JSON. Admin; the same as `POST /api/v1/projects/{name}/export` |
+| `POST /api/projects/import` | the bundle as the body; `dryRun`, `name`, `region`, `keepProjectId` in the address | Makes a new project from a bundle, or says what it would make. Admin; the same as `POST /api/v1/projects/import` |
 | `POST /api/projects/{project}/environments/create` | `environment` | Adds an environment (a lowercase DNS label; the project ID plus the name must fit in 63 characters) |
 | `POST /api/projects/{project}/environments/archive` | `environment`, `confirmName` (the environment name) | Deletes an environment and everything in it. `{"ok":true,"deleted":3}`. The last environment cannot be removed |
 | `POST /api/projects/{project}/variables/save` | `name` (`^[A-Z_][A-Z0-9_]*$`), `environment`, `value`, `secret` (`on` to store it as a secret) | Creates or updates a shared variable |
@@ -769,17 +975,19 @@ server sends `{"type":"exit"}` at the end. The session ends after five minutes. 
 
 | Method and path | Fields | Meaning |
 | --- | --- | --- |
-| `POST /api/databases/create` | `name`, `project`, `environment`, `engine` (`postgres`, `mysql`, `sqlite`, `redis`; case does not matter, anything else becomes Postgres), `placement` (`InCluster` or `External`), `provider` (`PlanetScale` or `AWS`), `mode` (`Create` or `Connect`), `highAvailability`, `databaseName`, `clusterSize` (PlanetScale only), `host`, `port`, `username`, `password`, `version`, `storageSize`, `connectionRef`, `cpu`, `memory`, `runOnTags` | Creates a draft. `{"ok":true,"name":"orders-db","kind":"databases"}` |
+| `POST /api/databases/create` | `name`, `project`, `environment`, `engine` (`postgres`, `mysql`, `sqlite`, `redis`; case does not matter, anything else becomes Postgres), `placement` (`InCluster` or `External`), `provider` (`PlanetScale` or `AWS`), `mode` (`Create` or `Connect`), `highAvailability`, `databaseName`, `clusterSize` (PlanetScale only), `host`, `port`, `username`, `password`, `version`, `storageSize`, `connectionRef`, `cpu`, `memory`, `runOnTags` | Creates a draft. `{"ok":true,"name":"orders-db","kind":"databases"}`. `400` for a PostgreSQL or MariaDB database of an organization's project while the platform runs organizations' code in a [sandboxed runtime](/docs/operations/sandboxed-runtime/#engines-that-cannot-run-in-it), whose message starts `This database cannot run in the sandbox` |
 | `POST /api/databases/{db}/update` | `version`, `storageSize`, `cpu`, `memory`, `backups` (`on` or `off`), `backupRetentionDays` (1 to 365), `clusterSize` (PlanetScale only, and only until the database has been created there), `runOnTags`, `environment` | `{"ok":true,"applied":"live","liveChanged":true}` |
 | `GET /api/planetscale/cluster-sizes` | `project`, `connection`, `engine` (`mysql` or `postgres`) as query fields | Lists the cluster sizes a PlanetScale connection can create: `{"items":[{"name","displayName","cpu","ramBytes","storageBytes","development","production","metal","provider","architecture","monthlyUsd","replicaMonthlyUsd"}]}`. Observer. `400` for a bad connection or engine, `502` `could not load PlanetScale cluster sizes`. See [Connect PlanetScale](/docs/guides/connectors/planetscale/#choosing-a-size) |
 | `POST /api/databases/{db}/deploy` | none | Deploys the draft or the pending change |
 | `POST /api/databases/{db}/retry-provision` | none | Retries a failed deploy |
 | `POST /api/databases/{db}/delete` | `confirmName` | Deletes it (see [Backups and restore](/docs/guides/backups-and-restore/) for the final backup) |
 | `POST /api/databases/{db}/display-name` | `displayName` | Sets the label |
-| `POST /api/databases/{db}/query` | `query` | Runs a statement with `psql -c`, `mysql -e`, `redis-cli` or `rqlite -e` inside the database pod: `{"output":"..."}`. Admin. Problems such as a database that is not running come back as `output` text with status `200`. `GET` on this path returns `405`. Nothing records the statements, see [Security](/docs/operations/security/#auditing) |
-| `POST /api/databases/restore` | `archive`, `restorePoint` or `time` (RFC 3339), `environment` | Creates and deploys a new database from backups. [Backups and restore](/docs/guides/backups-and-restore/) |
-| `POST /api/shared-databases/create` | `engine` (`Postgres` or `MySQL`), `name`, `region`, `runOnTags`, `version`, `storageSize`, `highAvailability`, `cpu`, `memory` | Starts a cluster-wide server at once. `201` `{"database":"cluster-postgres"}`. [Shared database servers](/docs/guides/shared-database-servers/) |
-| `POST /api/logical-databases/create` | `name`, `project`, `environment`, `server`, `database`, `connectionLimit` (1 to 1000) | Creates a database on a server. It needs no deploy call |
+| `POST /api/databases/{db}/query` | `query` | Runs a statement with `psql -c`, `mysql -e` or `redis-cli` inside the database pod, or for SQLite sends it to rqlite's HTTP API from inside the pod: `{"output":"..."}`. Admin. Problems such as a database that is not running come back as `output` text with status `200`. `GET` on this path returns `405`. Nothing records the statements, see [Security](/docs/operations/security/#auditing) |
+| `POST /api/databases/restore` | `archive`, `restorePoint` or `time` (RFC 3339), `environment` | Creates and deploys a new database from backups. [Backups and restore](/docs/guides/backups-and-restore/). `400` as for `create` for an engine that cannot run in the sandbox |
+| `POST /api/shared-databases/create` | `engine` (`Postgres` or `MySQL`), `name`, `region`, `runOnTags`, `version`, `storageSize`, `highAvailability`, `cpu`, `memory`, `org` | Starts a cluster-wide server at once, for an organization with `org`. `201` `{"database":"cluster-postgres"}`. `400` for PostgreSQL with `org` while the platform runs organizations' code in a sandboxed runtime. [Shared database servers](/docs/guides/shared-database-servers/#the-sandboxed-runtime) |
+| `POST /api/shared-databases/{db}/org` | `org` (empty for the platform) | Gives a shared server to an organization, or to the platform: `{"ok":true,"database","org"}`. `409` while the server holds a database whose project is not that organization's (for the platform while organizations are on, any organization's), naming up to five; `409` for a PostgreSQL server given to an organization while the platform runs organizations' code in a sandboxed runtime; `404` for an organization or server that does not exist; `400` for a project's own server. Platform administrators only. [Organizations](/docs/guides/shared-database-servers/#organizations) |
+| `GET /api/shared-databases/mixed` | none | The logical databases whose shared server is not their project's organization's, as it is while organizations are on: `{"enforced","items":[{"name","project","environment","projectOrg","server","serverOrg","made","message"}],"servers":[{"name","org","owners":[{"org","databases"}]}]}`. `enforced` says organizations are on; `made` that the database is on its server already, and so kept and served. Also `GET /api/v1/shared-databases/mixed`. Platform administrators only |
+| `POST /api/logical-databases/create` | `name`, `project`, `environment`, `server`, `database`, `connectionLimit` (1 to 1000) | Creates a database on a server. It needs no deploy call. `400` for a server of another organization than the project's, or, while organizations are on, the platform's server for a project of an organization |
 | `POST /api/logical-databases/{db}/retry-provision` | none | Retries |
 | `POST /api/logical-databases/{db}/delete`, `.../display-name` | `confirmName`, `displayName` | Deletes, relabels |
 
@@ -811,7 +1019,7 @@ See [Templates](/docs/guides/templates/).
 
 ### Metrics and logs
 
-These need Prometheus (and, for history, the logging add-on) to be installed. See [Observability](/docs/guides/observability/).
+These need Prometheus (and, for history, the logging add-on) to be installed, or the metrics and log stores outside the cluster that `spec.observability.external` names, which they are then read from. See [Observability](/docs/guides/observability/).
 
 | Method and path | Access | Query | Meaning |
 | --- | --- | --- | --- |
@@ -831,14 +1039,14 @@ These need Prometheus (and, for history, the logging add-on) to be installed. Se
 list of `{"t": unixSeconds, "v": number}` points. Series are `cpu` (cores), `memory` (bytes, the total of every replica), `network` and `networkIn` (bytes per
 second), `memoryPerReplica` (bytes, services: the busiest replica), `requests` (per second, services), `storage` (bytes, databases), and `nodeCpu` and `nodeMemory` (cluster). The operator's series
 are `reconcileErrors` and `statusWrites` and `statusSkipped` (per second), `reconcileTime` and `apiLatency` (the 99th percentile, in seconds), `apiRequests`
-(per second) and `queueDepth`. When Prometheus cannot be reached, `available` is `false` with a `message`.
+(per second) and `queueDepth`. When Prometheus, or the metrics store outside the cluster, cannot be reached, refuses Geass's credentials or cannot be used, `available` is `false` with a `message` that says which.
 
 Log queries: `environment`; `service` (a service or database name); `q` (up to 200 characters); `level` (`error`, `warn`, `info`, `debug`);
 `since` (a Go duration such as `15m`; up to 7 days live, 90 days in history, default 1 hour in history); `tail` (1 to 1000, default 200);
 `previous` (`true` for output from before a container's last restart); `limit` (history only, 1 to 3000, default 500). A line is
 `{"t","service","pod","container","line","level","previous"}`. The response also has `services`, `truncated` and `note`; history adds
-`available` and `retentionDays`, and returns `{"available":false,"message":"..."}` when the logging add-on is off, and for a project that requires node tags:
-the shared log store never receives those logs, so only live logs work.
+`available` and `retentionDays` (the log store outside the cluster's `retentionDays` when it is read and says one), and returns `{"available":false,"message":"..."}` when the logging add-on is off, when the log store does not answer
+or refuses Geass's credentials, and for a project that requires node tags: the shared log store never receives those logs, so only live logs work.
 
 ```bash title="Errors in the last hour"
 curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
@@ -874,7 +1082,7 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/registry/save` | `repository`, `username`, `password`, `keepExisting` | Sets the registry that repository builds push to. The login is optional: both `username` and `password`, or neither. It is stored as the Secret `platform-registry` in `geass-system`. `keepExisting=on` keeps the stored login when only the repository changes |
 | `POST /api/settings/registry/clear` | none | Removes the registry and its login |
 | `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |
-| `GET /api/settings/auth` | none | How people sign in: `{"mode","configured","displayName","issuer","clientID","hasSecret","scopes","roleClaim","roleMap","requireClaim","sessionMinutes","refreshMinutes","staleGraceMinutes","callbackURL","backchannelLogoutURL","revokeTokensOnLogout","test","hasPasswordAdmin","canEnable","tenancy"}`. `test` is what the last test sign-in found (`ok`, `email`, `role`, `reason`, `detail`, and with organizations read, `platformAdmin` and `orgs`: each organization the token named, with `idpID`, `name` when it is set up, `role`, `suspended` and `workspaces`). `tenancy` is `{"enabled","orgsClaim","platformClaim","platformValues","organizations","enableProblem","autoProvision","autoProvisionAllow","autoProvisionMax"}`. It never returns the client secret. A signed-in admin only: any token, observers included, and viewers get `403` |
+| `GET /api/settings/auth` | none | How people sign in: `{"mode","configured","displayName","issuer","clientID","hasSecret","scopes","roleClaim","roleMap","requireClaim","sessionMinutes","refreshMinutes","staleGraceMinutes","callbackURL","backchannelLogoutURL","revokeTokensOnLogout","accessTokens","accessTokenAudience","test","hasPasswordAdmin","canEnable","tenancy"}`. `test` is what the last test sign-in found (`ok`, `email`, `role`, `reason`, `detail`, and with organizations read, `platformAdmin` and `orgs`: each organization the token named, with `idpID`, `name` when it is set up, `role`, `suspended` and `workspaces`). `tenancy` is `{"enabled","orgsClaim","platformClaim","platformValues","organizations","enableProblem","autoProvision","autoProvisionAllow","autoProvisionMax"}`. It never returns the client secret. A signed-in admin only: any token, observers included, and viewers get `403` |
 | `POST /api/settings/auth/tenancy` | `orgsClaim`, `platformClaim`, `platformValues`, `enabled` (`on` or `off`), `autoProvision` (`off`, `pending` or `open`), `autoProvisionAllow` (ids or prefixes ending in `*`), `autoProvisionMax` (1 to 500); only what is sent changes | Says how the token lists a person's organizations, and turns [organizations](/docs/guides/organizations-and-workspaces/) on or off. Turning on needs sign-in through the provider, a test sign-in of exactly these settings in the last 30 minutes that put the person in an organization that is set up (or made them a platform administrator), an admin with a password, and an organization; `400` says which. The claims cannot change while it is on. Turning it on or off ends the earlier sessions of the provider's people. A signed-in admin only, not a token |
 | `GET /api/orgs` | none | `{"items":[{"name","displayName","idpID","suspended","clusterRef","workspaces":[{"id","displayName","idpID","projects"}],"projects","maxProjects","quota":{"cpu","memory","storage","pods"},"region","requiredTags","allowedDomains","autoCreated","idp"}]}`. `idp` is the organization's own identity provider, without its secret: `{"displayName","issuer","clientID","hasSecret","scopes","roleClaim","roleMap","requireClaim","enabled","loginPath","callbackPath","test","canEnable"}`. The platform's administrators only |
 | `POST /api/orgs/create` | `displayName`, `idpID`, `clusterRef` (optional) | Creates an organization. `201` `{"ok":true,"name":"org-1a2b3c4d"}`. `409` when another is known by that `idpID`; `400` for a missing or too long value or a cluster that does not exist. Platform administrators only |
@@ -882,11 +1090,11 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/orgs/{name}/idp/save`, `.../idp/enable`, `.../idp/clear` | `displayName`, `issuer`, `clientID`, `clientSecret` (or `keepSecret=on`), `roleClaim`, `roleMap`, `requireClaim`, `scopes`; `enabled` (`on` or `off`); none | Sets up an organization's own identity provider (turned off, and tested again before it is turned on), turns it on or off, or removes it. Turning it on needs organizations on and a test sign-in of the provider as it is saved (`/auth/oidc/login?org=<name>&purpose=test`). Ends the sessions made through it. A platform administrator signed in to the dashboard only, not a token |
 | `GET /api/alerts` | none | An organization's own channels, the alerts it can choose from and what is firing for its projects: `{"kinds","channels","listening","alertmanager","firing"}`. A signed-in administrator of the organization; `403` for the platform, which has `/api/settings/alerts` |
 | `POST /api/alerts/channels/save`, `.../delete`, `.../test` | `name`, `type` (`slack`), `url` (`https://hooks.slack.com/...`), `event`, `project`, `environment`, `notifyResolved`, `disabled`, `id` (to change one); `id` | An organization's alert channel. `400` "not found" for another organization's. Ten per organization |
-| `GET /api/registry` | none | An organization's own registry: `{"repository","configured","hasLogin","platformRepository"}`. Never the login. An administrator of the whole organization, signed in |
-| `POST /api/registry/save`, `.../clear` | `repository`, `username`, `password` (both or neither), `keepExisting=on`; none | Sets or removes the registry the organization's builds push to, with a login of its own |
+| `GET /api/registry` | none | An organization's own registry: `{"repository","configured","hasLogin","platformRepository","ownRequired"}`. Never the login. `ownRequired` is true while the platform's `spec.tenancy.registry` is set, when the organization's builds use its own registry or none. An administrator of the whole organization, signed in |
+| `POST /api/registry/save`, `.../clear` | `repository`, `username`, `password` (both or neither), `keepExisting=on`; none | Sets or removes the registry the organization's builds push to, with a login of its own. While `spec.tenancy.registry` is set, `409` for a repository that overlaps the platform's repository (outside `<platform repository>/<organization>`) or another organization's registry |
 | `POST /api/orgs/{name}/delete` | `confirmName` (the name) | Deletes an organization that has no projects, database servers or connections (`409` otherwise), with its alert channels and registry login. Platform administrators only |
 | `POST /api/orgs/{name}/workspaces/create`, `.../workspaces/{id}/delete` | `displayName`, `idpID` (to create) | Adds a workspace (`{"ok":true,"workspace":"ws-a1b2c3"}`), or removes one that has no projects (`409` otherwise). Platform administrators only |
-| `POST /api/projects/{project}/assign` | `org`, `workspace` | Puts a project in an organization and a workspace of it. Both empty takes it out of its organization. `404` for an organization or workspace that does not exist; `409` when the organization is at its project limit, or the project has databases on a server another organization owns. Platform administrators only: an organization's own administrators get `403` |
+| `POST /api/projects/{project}/assign` | `org`, `workspace` | Puts a project in an organization and a workspace of it. Both empty takes it out of its organization. `404` for an organization or workspace that does not exist; `409` when the organization is at its project limit, or the project has databases on a server another organization owns, or, while organizations are on, on the platform's server when it is given to an organization (a move within the organization it is in is not refused). Platform administrators only: an organization's own administrators get `403` |
 | `POST /api/settings/auth/save` | `displayName`, `issuer`, `clientID`, `clientSecret`, `keepSecret`, `scopes`, `roleClaim`, `orgsClaim`, `roleMap` (`provider-role=admin` or `=viewer`, one per line), `requireClaim` (`claim=value`, one per line), `sessionMinutes` (5 to 720) | Stores the identity provider's settings and the client secret (the Secret `platform-auth`). It does not connect and does not turn the provider on. `orgsClaim` is the claim that lists the organizations, the same as `POST /api/settings/auth/tenancy` saves; with it `roleClaim` can be left out, which is how a first setup for organizations starts, and while organizations are on it cannot change (`400`). A form that does not send `orgsClaim` leaves it as it was; one that sends it empty takes it away. `keepSecret=on` with no `clientSecret` keeps the saved one, only for the same issuer and client ID. `400` for an invalid setting and while people sign in through the provider. A signed-in admin only, not a token |
 | `POST /api/settings/auth/mode` | `mode` (`local` or `external`) | Switches how people sign in. `external` needs the settings to be complete, a test sign-in of exactly them in the last 30 minutes as someone who maps to admin, and an admin with a password; `400` says which is missing. Turning it on ends the open sessions of users of the Secret who are not admins. `local` is always allowed. A signed-in admin only, not a token |
 | `POST /api/settings/auth/logout-policy` | `revokeTokens` (`on` or `off`) | Sets whether a back-channel logout from the identity provider also revokes the tokens and deploy hooks the person made (their sessions always end). Default on. It does not change who can sign in, so it can be changed while people sign in through the provider. `400` for another value or while no provider is set up. A signed-in admin only, not a token |

@@ -521,8 +521,18 @@ func (s *Server) handleProjectAssign(w http.ResponseWriter, r *http.Request, nam
 }
 
 // databasesOnForeignServers says why a project cannot be given to the organization (empty for the platform): it has
-// logical databases on a shared server that belongs to another organization. It is empty when there are none.
+// logical databases on a shared server that belongs to another organization or, while organizations are on, on the
+// platform's server, which is for the projects of none (platform.SharedServerAllows). A project that stays in the
+// organization it is in changes nothing about whose its servers are, so it is never held back. It is empty when there are
+// none.
 func (s *Server) databasesOnForeignServers(ctx context.Context, project, org string) (string, error) {
+	var current geassv1alpha1.GeassProject
+	if err := s.Client.Get(asSystem(ctx), client.ObjectKey{Name: project, Namespace: systemNamespace}, &current); err == nil && current.Spec.Org == org {
+		return "", nil
+	} else if err != nil && !apierrors.IsNotFound(err) {
+		return "", err
+	}
+	tenancy := s.tenancyOn(ctx)
 	var logical geassv1alpha1.GeassLogicalDatabaseList
 	if err := s.Client.List(asSystem(ctx), &logical, client.InNamespace(systemNamespace)); err != nil {
 		return "", err
@@ -538,9 +548,14 @@ func (s *Server) databasesOnForeignServers(ctx context.Context, project, org str
 			}
 			return "", err
 		}
-		if server.Spec.Org != "" && server.Spec.Org != org {
+		if !platform.IsSharedDatabase(&server) || platform.SharedServerAllows(tenancy, server.Spec.Org, org) {
+			continue
+		}
+		if server.Spec.Org != "" {
 			return "the project has databases on a server that belongs to another organization: delete them first", nil
 		}
+		return fmt.Sprintf("the project has databases on the platform's database server %s, and with organizations on %s: "+
+			"move their data to a server of the organization, or delete them, first", server.Name, platform.MessageOneOrganizationPerServer), nil
 	}
 	return "", nil
 }

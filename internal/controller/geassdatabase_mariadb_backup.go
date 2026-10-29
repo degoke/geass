@@ -703,7 +703,10 @@ func (r *GeassDatabaseReconciler) correctRestoredPassword(ctx context.Context, d
 	if err := r.Get(ctx, client.ObjectKey{Name: db.Name + "-bootstrap", Namespace: wsNS}, secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	want := origin + "-password"
+	want, err := r.restoredPassword(ctx, db, origin)
+	if err != nil {
+		return err
+	}
 	if secretValue(secret, "password") == want {
 		return nil
 	}

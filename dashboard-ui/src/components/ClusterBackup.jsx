@@ -7,6 +7,7 @@ import { DOCS_URL } from "@/lib/platform-nav";
 import { alertError, notify } from "@/lib/notify";
 import { Badge, Button, Field, FormStack, Input, KeyValueTable, Muted, PageSection, Switch } from "@/components/geass-ui";
 import { CodePanel } from "@/components/CodePanel";
+import { ManagedNotice } from "@/components/ManagedNotice";
 
 /** How copies of the cluster's state are doing, in the words and tones the rest of the page uses. */
 export const BACKUP_STATES = {
@@ -36,8 +37,11 @@ export function backupRows(settings) {
  * of your own, so that it can be rebuilt on a new machine if the control plane's disk is lost. K3s is told once, with the
  * installer, to send them; this says where, and takes effect with no restart. The access key is stored in a Secret and
  * never comes back to the browser.
+ *
+ * `managed` is set when the platform that runs this Geass keeps the installer, and what only it can finish, for itself (see
+ * lib/managed.js): what is there is shown, and there is nothing to change it with and no command to run.
  */
-export function ClusterBackup({ mutable }) {
+export function ClusterBackup({ mutable, managed = null }) {
   const queryClient = useQueryClient();
   const settings = useQuery({
     queryKey: ["etcd-snapshots"],
@@ -60,6 +64,8 @@ export function ClusterBackup({ mutable }) {
     );
   }
   const saved = settings.data;
+  // Whoever manages the cluster is the one who keeps it backed up, so the person is given nothing to change or to run.
+  const canChange = mutable && !managed;
   const state = BACKUP_STATES[saved.state] || BACKUP_STATES.off;
   const set = (field) => (event) => setForm({ ...form, [field]: event.currentTarget.value });
   const keepKey = saved.configured && saved.hasKey && form.accessKey === "" && form.secretKey === "";
@@ -92,7 +98,7 @@ export function ClusterBackup({ mutable }) {
       ...form,
       insecure: form.insecure ? "on" : undefined,
       keepKey: keepKey ? "on" : undefined,
-    }, "Saved. K3s on the control plane sends the first copy at its next snapshot, at 00:00 or 12:00 server time.");
+    }, "Saved");
     if (stored) {
       setEditing(false);
       setForm(emptyForm);
@@ -100,23 +106,23 @@ export function ClusterBackup({ mutable }) {
   };
 
   const turnOff = async () => {
-    if (await run("clear", "/settings/etcd-snapshots/clear", {}, "The cluster no longer names a bucket.")) setConfirming(false);
+    if (await run("clear", "/settings/etcd-snapshots/clear", {}, "Backup turned off")) setConfirming(false);
   };
 
   return (
     <PageSection
       title="Cluster backup"
-      description="A copy of the cluster's own state in a bucket of your own, so that it can be rebuilt on a new machine if the control plane's disk is lost."
       actions={<Badge tone={state.tone}>{state.label}</Badge>}
     >
-      {saved.message ? <Muted size="sm">{saved.message}</Muted> : (
+      <ManagedNotice managed={managed} />
+      {saved.message ? <Muted size="sm">{saved.message}</Muted> : managed ? null : (
         <Muted size="sm">
-          Off. K3s keeps its own snapshots on the same disk as the cluster, so they are lost with it. Copies in a bucket of your own are what a rebuild starts from.
+          Off. K3s snapshots stay on the cluster's own disk and are lost with it.
         </Muted>
       )}
       {backupRows(saved).length ? <KeyValueTable items={backupRows(saved)} /> : null}
 
-      {mutable && !editing ? (
+      {canChange && !editing ? (
         <Stack gap="xs" mt="md">
           <div>
             <Button onClick={open}>{saved.configured ? "Change bucket" : "Set up"}</Button>
@@ -133,22 +139,22 @@ export function ClusterBackup({ mutable }) {
           </div>
           {confirming ? (
             <Muted size="sm">
-              This takes the bucket and its key out of the cluster. Copies already in the bucket stay there. To stop K3s on the control plane sending them
-              too, run the installer on it with <code>etcd-snapshots disable</code>.
+              Removes the bucket and its key from the cluster. Copies already in the bucket stay there. K3s keeps sending them until you run the
+              installer with <code>etcd-snapshots disable</code>.
             </Muted>
           ) : null}
         </Stack>
       ) : null}
 
-      {mutable && editing ? (
+      {canChange && editing ? (
         <FormStack onSubmit={save}>
-          <Field label="Bucket" description="One made for this alone, with encryption on and public access blocked: a copy holds every secret in the cluster.">
+          <Field label="Bucket" description="Use a dedicated, encrypted, private bucket: a copy holds every secret in the cluster.">
             <Input value={form.bucket} onChange={set("bucket")} required aria-label="Bucket" placeholder="acme-geass-cluster-state" spellCheck={false} />
           </Field>
-          <Field label="Region" description="The bucket's region. Leave empty for a server that has no regions.">
+          <Field label="Region" description="Leave empty for a server that has no regions.">
             <Input value={form.region} onChange={set("region")} aria-label="Region" placeholder="eu-north-1" spellCheck={false} />
           </Field>
-          <Field label="Server (not AWS)" description="The address of an S3-compatible server, with no https:// in front. Leave empty for AWS S3.">
+          <Field label="Server (not AWS)" description="Without https://. Leave empty for AWS S3.">
             <Input
               value={form.endpoint}
               // The switch below is only there while a server is named: with none the copies go to AWS, which is never plain HTTP.
@@ -165,10 +171,10 @@ export function ClusterBackup({ mutable }) {
               label="Send over plain HTTP (only on a network that is closed to everyone else)"
             />
           ) : null}
-          <Field label="Folder" description="Where in the bucket the copies go. geass when left empty.">
+          <Field label="Folder" description="geass when left empty.">
             <Input value={form.folder} onChange={set("folder")} aria-label="Folder" placeholder="geass" spellCheck={false} />
           </Field>
-          <Field label="Access key ID" description={saved.configured && saved.hasKey ? "A key is stored. Leave both fields empty to keep it." : "The key of a user that can use this bucket and nothing else."}>
+          <Field label="Access key ID" description={saved.configured && saved.hasKey ? "Leave both fields empty to keep the stored key." : undefined}>
             <Input value={form.accessKey} onChange={set("accessKey")} aria-label="Access key ID" autoComplete="off" spellCheck={false} />
           </Field>
           <Field label="Secret access key">
@@ -181,21 +187,21 @@ export function ClusterBackup({ mutable }) {
         </FormStack>
       ) : null}
 
-      {mutable ? (
+      {canChange ? (
         <Stack gap="xs" mt="md">
           <Text size="sm" fw={600}>What this needs</Text>
           <Muted size="sm">
-            K3s on the control plane has to be told to send copies, once. If you did not answer yes when you installed, run this on the control plane. It
-            restarts K3s, which takes the API server away for a minute and does not stop what is running:
+            Run once on the control plane, unless you enabled this when installing. It restarts K3s: the API server is away for a minute, and what
+            is running keeps running.
           </Muted>
           <CodePanel code={`${INSTALLER} etcd-snapshots enable`} />
           <Muted size="sm">
-            A user for the bucket that can do only this (an AWS IAM policy; other servers have their own way to say the same):
+            Policy for the bucket's user (AWS IAM):
           </Muted>
           <CodePanel code={saved.policy} language="json" />
           <Muted size="sm">
-            <strong>Keep the cluster&apos;s server token somewhere that is not that machine.</strong> A copy cannot be restored without it, and it is on the disk
-            the copies are for: <code>sudo cat /var/lib/rancher/k3s/server/token</code>. How to rebuild a cluster from a copy is in{" "}
+            <strong>Keep the cluster&apos;s server token off that machine.</strong> A copy cannot be restored without it:{" "}
+            <code>sudo cat /var/lib/rancher/k3s/server/token</code>. See{" "}
             <a href={`${DOCS_URL}operations/disaster-recovery/`} target="_blank" rel="noreferrer">the disaster recovery guide</a>.
           </Muted>
         </Stack>

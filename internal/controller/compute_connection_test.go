@@ -165,6 +165,24 @@ func TestCredentialsThatExpireSoonAreSaidToBeAboutToExpire(t *testing.T) {
 	require.Contains(t, connection.Status.Warnings[0], "expired")
 }
 
+func TestTemporaryCredentialsShowWhenTheyExpireAndAreNotCountedDown(t *testing.T) {
+	cloud := computefake.New()
+	r, c, now := connectionReconciler(t, cloud, computeConnection()...)
+	expires := now.Add(20 * time.Minute)
+	cloud.VerifyAccount = compute.Account{Name: "AWS account 123456789012", ExpiresAt: expires, Temporary: true}
+
+	connection, _ := reconcileConnection(t, r, c)
+
+	require.True(t, connection.Status.Available)
+	require.NotNil(t, connection.Status.ExpiresAt, "the connection says when the credentials lapse")
+	require.True(t, connection.Status.ExpiresAt.Time.Equal(expires))
+	require.Empty(t, connection.Status.Warnings, "credentials that are renewed every hour would carry a warning for ever")
+
+	*now = now.Add(30 * time.Minute)
+	connection, _ = reconcileConnection(t, r, c)
+	require.Equal(t, []string{"the credentials have expired"}, connection.Status.Warnings, "but ones that lapsed without being renewed are said to have")
+}
+
 func TestChangedCredentialsAreVerifiedAtOnce(t *testing.T) {
 	cloud := computefake.New()
 	r, c, _ := connectionReconciler(t, cloud, computeConnection()...)

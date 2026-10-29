@@ -10,8 +10,8 @@ export function HAReadinessPage({ data }) {
   const report = list(data, "haReadiness")[0];
   const healthy = report?.status?.healthyNodes ?? data?.platform?.healthyNodes ?? 0;
   return (
-    <PlatformPage title="HA readiness" description="High availability databases need at least three healthy nodes.">
-      <PageSection title="Cluster HA" description="Run a check after changing nodes or storage.">
+    <PlatformPage title="HA readiness" description="Needs at least three healthy nodes.">
+      <PageSection title="Cluster HA">
         <KeyValueTable
           items={[
             { label: "Healthy nodes", value: String(healthy) },

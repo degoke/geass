@@ -37,7 +37,7 @@ You choose storage once per project. Every database in the project uses it. Geas
 
 1. Open the project and select **Settings**, then **Backups**.
 2. Under **Backup storage**, choose an **AWS connection**. If the project has none, the page says "Connect an AWS account first" and links to **Connectors**.
-3. Select **Use this connection**. The dashboard confirms with "Backup storage saved".
+3. Select **Use this connection**. The dashboard confirms with "Saved".
 
 The same chooser appears on a database's **Backups** tab, under **Choose where backups are stored**, whenever the database needs storage. After you save, the page shows the **AWS connection**, **Bucket** and, if one was set, **Region**, with **Change** and **Remove** buttons.
 
@@ -103,6 +103,7 @@ Retention is 1 to 365 days, and the default is 7. Lowering it lets Geass remove 
 - Geass has Postgres copy its write-ahead log to your bucket continuously and take a full base backup once a day.
 - The daily backup runs at about 02:00 UTC. The minute is derived from the database's UID, so databases do not all start together. The first base backup runs right after storage is ready.
 - A **restore point** is a base backup. You can restore to a restore point, to the most recent state, or to any time in the recovery window.
+- A base backup can be restored only if every log file from its start to its end is in the bucket. Geass checks this, and lists a backup as a restore point only when it holds. The last file of a backup taken from a standby is still the one being written when the backup finishes, and a quiet database archives it after about five minutes, so a new backup is trusted for seven minutes and checked after that, and Geass looks at the database every minute until it has. The first backup after you choose storage can come before the database has begun to save its log files (the login that saves them is made a moment after); such a backup is not listed, the status says "A backup was taken before the database could save its log files, so it cannot be restored. A new one is being taken", and Geass takes another once a log file has reached the bucket, up to three times. A restore is pinned to a backup that holds, so it does not pick one that cannot be restored. If the new database cannot start because of a backup, its status says what the restore reported and does not stay on "Restoring database from backup".
 - The recovery window starts at the oldest retained base backup. It ends about five minutes before now, because the newest changes may not have reached the bucket yet. It stops moving if archiving fails.
 - Retention keeps the base backups and log needed to restore anywhere in the last N days.
 
@@ -122,6 +123,7 @@ Retention is 1 to 365 days, and the default is 7. Lowering it lets Geass remove 
 
 - A Kubernetes CronJob named `<database ID>-backup` runs daily at about 02:00 UTC (the CronJob uses the `Etc/UTC` time zone). A first copy is taken right after setup, so the database is not unprotected until the first night. If that first copy fails, Geass starts another after 10 minutes while no copy exists.
 - MariaDB is dumped the same way with `mariadb-dump` inside its own image, and restored with `mariadb`. A job waits until the database can be reached before it starts, because a MariaDB client gives up on a connection that a new pod's network has not yet allowed.
+- A job that dumps or loads a database starts by waiting, for up to a minute, until the server accepts a connection. A new pod's first connection can be refused for a moment while the network policy that lets it reach the server is applied (K3s enforces it, and the first backup and the final backup on delete both run in new pods), and the dump tools do not retry by themselves.
 - MySQL is dumped with `mysqldump` inside the database's own image, with a consistent view and without locking tables. It includes routines, events and triggers. It dumps the server's main database only, so logical databases created on a project's own MySQL server, and users and grants, are not in the copy.
 - SQLite runs on rqlite, which serves a SQL dump over HTTP. Geass saves that dump.
 - Each copy is compressed and uploaded to the bucket as `<project ID>/<folder>/dumps/<UTC date and time>.sql.gz`. The bucket listing is the source of truth for restore points.
@@ -148,7 +150,7 @@ A restore creates a new database. The original is not changed. You check the new
    - MySQL, SQLite and MariaDB as one server: **Restore latest backup**, or a **Restore** button beside a restore point.
    - MariaDB with high availability: the same choices as PostgreSQL.
 3. In the **Restore to a new database** dialog, confirm. If the original environment no longer exists, choose another **Environment**.
-4. Select **Restore**. The dashboard says "Restore started. Your original database is untouched." and opens the new database's **Deployments** tab.
+4. Select **Restore**. The dashboard says "Restore started" (your original database is untouched) and opens the new database's **Deployments** tab.
 
 The panel lists the five newest restore points with **Show all N restore points** for the rest. It says "Restore points appear after the first backup finishes" until one exists. A restore point stays available until retention removes it.
 
@@ -160,7 +162,7 @@ The new database:
 - is placed like any new database: in the project's region, on nodes that carry the tags the project requires at that moment. It does not copy the original's **Run on** choice. See [Where a database runs](/docs/guides/databases/#where-a-database-runs),
 - has backups on, with the original's retention,
 - deploys at once, with no draft, and shows "Restoring database from backup" until it is ready, and
-- gets its own password and connection secret, except for MariaDB with high availability: a physical copy holds the logins of the server it came from, so that restore keeps the original's password (the one derived from the original's resource name) and its connection secret holds it. A database restored from a restore keeps the first one's. Restoring into another environment therefore gives it the original's password: change it by hand in the new database if the two should not share one.
+- gets its own random password and connection secret, except for MariaDB with high availability: a physical copy holds the logins of the server it came from, so that restore keeps the original's password and its connection secret holds it. Geass keeps that password in a Secret that goes with the backups and lives as long as they do, so it is there when the original database is gone; for a database made by an earlier release it is the one derived from the original's resource name (`<name>-password`). A database restored from a restore keeps the first one's. Restoring into another environment therefore gives it the original's password: change it by hand in the new database if the two should not share one.
 
 Add a reference from your app to the new database and deploy the app to switch over. See [Databases](/docs/guides/databases/#connect-an-app-to-a-database). For Postgres, the new database takes a fresh owner password from the new resource, so the old connection string does not work on it.
 
@@ -206,7 +208,7 @@ A database you create from a manifest with `spec.restoreFrom` is checked by the 
 
 ## Recover databases from a bucket
 
-The record of a database's backups lives in the cluster, and a cluster can be lost. Beside each database's backups Geass therefore keeps a small file in the bucket, `geass-archive.json`, that says what they are copies of: the engine and version, the size, the database's name, the project and the environment. It holds nothing secret. A new cluster reads these files and offers the databases for restore again. See [Disaster recovery](/docs/operations/disaster-recovery/#recover-databases-from-a-bucket) for how.
+The record of a database's backups lives in the cluster, and a cluster can be lost. Beside each database's backups Geass therefore keeps a small file in the bucket, `geass-archive.json`, that says what they are copies of: the engine and version, the size, the database's name, the project and the environment. For a MariaDB database with high availability it also holds the password of the server the copies were taken from, because a restored copy holds that server's logins and cannot start without it (the copies themselves hold the same logins). Read access to the bucket's folder therefore opens that database, as it opens the copies. For every other database it holds nothing secret. A new cluster reads these files and offers the databases for restore again. See [Disaster recovery](/docs/operations/disaster-recovery/#recover-databases-from-a-bucket) for how.
 
 What is found there appears under **Recently deleted databases** in the project's **Settings**, **Backups**, marked "Found in the bucket", and is restored like any other. These records are offered for 30 days, and when they expire only the record is removed: Geass never deletes the data in a bucket it found, because the cluster that put it there may still be running.
 
@@ -277,6 +279,7 @@ Do a test restore now and then. Restore to a new database, check the data, and d
 | "Backup storage is not working: AccessDenied: ..." | The connection's keys cannot create the bucket or the user | Give the keys the permissions listed above, then save storage again |
 | "Backup storage is not working" naming a missing connection | The AWS connection was removed or belongs to another project | Recreate it, or choose another connection |
 | Stuck on **Starting** | The first backup has not finished. A Postgres base backup of a large database takes time. A MySQL or SQLite copy retries after 10 minutes | Check the jobs and backups with the commands above |
+| **At risk**, "A backup was taken before the database could save its log files, so it cannot be restored. A new one is being taken" | The first Postgres backup came before archiving worked | Wait: Geass takes another when a log file has reached the bucket, up to three times. If it stays, check the archive with the commands above |
 | **At risk**, "Recent changes are not being saved" | Postgres cannot write its log to the bucket | Check the bucket, the IAM user and network access from the nodes |
 | **At risk**, "The latest backup failed" | The last backup or dump job failed | Read the job's logs. A MySQL or SQLite copy over 5 GB fails at upload |
 | The new database stays at "Restoring database from backup" | The restore is still running | Wait. A Postgres restore replays log from the bucket. If it never ends, check the pods in the namespace |

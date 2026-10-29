@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Group, Modal, Stack, Text } from "@mantine/core";
 import { useNavigate } from "@tanstack/react-router";
 import { action, list, resourceName } from "@/lib/api";
-import { alertUser, notify } from "@/lib/notify";
+import { notify } from "@/lib/notify";
 import {
   archiveDisplayName,
   formatDateTime,
@@ -102,7 +102,7 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
       const result = await action("/databases/restore", values);
       await Promise.resolve(reload?.()).catch(() => {});
       onClose();
-      notify("Restore started. Your original database is untouched.", "success");
+      notify("Restore started", "success");
       if (result?.name) {
         navigate({
           to: `/projects/${archive.spec.project}/databases/${result.name}`,
@@ -110,7 +110,9 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
         });
       }
     } catch (error) {
-      alertUser(error.message);
+      // In the dialog, where the person is looking: the cluster refuses a restore it has no room for, and says why, and a
+      // notice that opens behind the dialog is not seen.
+      setProblem(error.message);
     } finally {
       setBusy(false);
     }
@@ -191,7 +193,7 @@ export function RestoreDatabaseDialog({ archive, target, data, reload, onClose }
               </Field>
             ) : null}
 
-            <Text size="sm">This creates a new database from the backup. Your current database is not changed.</Text>
+            <Text size="sm">Creates a new database. Your current one is not changed.</Text>
             {problem ? <Text size="sm" c="red">{problem}</Text> : null}
             <Group justify="flex-end" gap="sm">
               <Button type="button" variant="outline" disabled={busy} onClick={close}>Cancel</Button>

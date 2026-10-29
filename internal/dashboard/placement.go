@@ -87,7 +87,15 @@ func (s *Server) placementFor(ctx context.Context, project string, tags []string
 
 // appPlacement is where a service may run.
 func (s *Server) appPlacement(ctx context.Context, app *geassv1alpha1.GeassApp) platform.Placement {
-	return s.placementFor(ctx, app.Spec.Project, app.Spec.RunOn.Tags)
+	placement := s.placementFor(ctx, app.Spec.Project, app.Spec.RunOn.Tags)
+	// Like the operator, a service may use the nodes that must not hold data (a pool's) while such nodes exist. A
+	// list that fails leaves it out: the capacity check is advice, and must not fail a request over a lookup.
+	if s != nil && s.Client != nil {
+		if ephemeral, err := platform.EphemeralNodesInUse(asSystem(ctx), s.Client); err == nil {
+			placement.Ephemeral = ephemeral
+		}
+	}
+	return placement
 }
 
 // databasePlacement is where a database runs. Like the operator, it reads the placement the database
@@ -188,8 +196,35 @@ func (s *Server) rejectIfNoCapacityForPlacement(w http.ResponseWriter, r *http.R
 	if ok {
 		return false
 	}
+	// A cluster that is full is not a reason to refuse a workload that an autoscaling pool can make room for: the
+	// operator lets it in on the same promise, and its pods wait for the node the pool adds.
+	if s.poolsCanMakeRoom(r.Context(), placement, est) {
+		return false
+	}
 	redirectFormError(w, r, fallback, message)
 	return true
+}
+
+// poolsCanMakeRoom asks the autoscaling pools whether they could add nodes that make the workload fit, with the same
+// rules as the operator's check (platform.PoolsCanMakeRoom).
+func (s *Server) poolsCanMakeRoom(ctx context.Context, placement platform.Placement, est platform.WorkloadEstimate) bool {
+	if s == nil || s.Client == nil {
+		return false
+	}
+	sys := asSystem(ctx)
+	var pools geassv1alpha1.GeassNodePoolList
+	if err := s.Client.List(sys, &pools, client.InNamespace(platform.SystemNamespace)); err != nil || len(pools.Items) == 0 {
+		return false
+	}
+	var nodes corev1.NodeList
+	if err := s.Client.List(sys, &nodes); err != nil {
+		return false
+	}
+	var pods corev1.PodList
+	if err := s.Client.List(sys, &pods); err != nil {
+		return false
+	}
+	return platform.PoolsCanMakeRoom(pools.Items, nodes.Items, platform.UsageOfPods(pods.Items), placement, est)
 }
 
 // handleNodeRoutes serves /nodes/{name}/placement.
@@ -549,7 +584,7 @@ func (s *Server) runOnTagsFromForm(w http.ResponseWriter, r *http.Request, fallb
 	if !formHasValue(r, "runOnTags") {
 		return nil, false, true
 	}
-	if tokenFromRequest(r) != nil {
+	if credentialIsBearer(r) {
 		redirectFormError(w, r, fallback, "Only a dashboard admin can choose which nodes a resource runs on")
 		return nil, true, false
 	}

@@ -6,12 +6,9 @@ import { action, api } from "@/lib/api";
 import { canMutate, sessionScopes } from "@/lib/dashboard";
 import { alertError, notify } from "@/lib/notify";
 import { OrganizationIdP } from "@/components/OrganizationIdP";
+import { managedFor } from "@/lib/managed";
 import { Badge, Button, DataTable, Field, Input, Muted, Switch } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsSection, SettingsSheet } from "@/layout/SettingsShell";
-
-const DESCRIPTION =
-  "An organization is a group of people your identity provider knows, whose projects the other organizations do not see. " +
-  "Set one up with the id the provider uses for it, then give it projects.";
 
 /** Runs one change to an organization, then refreshes the list and says what happened. */
 function useRun(refetch) {
@@ -44,10 +41,10 @@ function NewOrganization({ refetch, onDone }) {
   return (
     <form onSubmit={submit}>
       <Stack gap="sm">
-        <Field label="Name" description="What the dashboard calls it.">
+        <Field label="Name">
           <Input required value={displayName} aria-label="Organization name" placeholder="Acme" onChange={(event) => setDisplayName(event.currentTarget.value)} />
         </Field>
-        <Field label="Id at the identity provider" description="How the sign-in token names the organization, such as org_acme. A person whose token names it can sign in to it.">
+        <Field label="Id at the identity provider" description="How the sign-in token names it.">
           <Input required value={idpID} aria-label="Id at the identity provider" placeholder="org_acme" onChange={(event) => setIdpID(event.currentTarget.value)} />
         </Field>
         <SettingsFormActions>
@@ -91,10 +88,8 @@ function OrganizationPolicy({ org, refetch }) {
     <form onSubmit={save}>
       <Stack gap="sm">
         <Text fw={600} size="sm">Limits and policy</Text>
-        <Muted size="sm">
-          What every project of the organization gets. An empty field sets no limit. Lowering a limit never removes what is already there.
-        </Muted>
-        <Field label="Most projects" description="Checked when a project is made or given to the organization. 0 keeps it from making any.">
+        <Muted size="sm">Empty means no limit. Lowering a limit removes nothing.</Muted>
+        <Field label="Most projects" description="0 allows none.">
           <Input type="number" min="0" value={maxProjects} aria-label="Most projects" placeholder="No limit" onChange={(event) => setMaxProjects(event.currentTarget.value)} />
         </Field>
         <Group grow align="flex-end" gap="sm">
@@ -111,13 +106,13 @@ function OrganizationPolicy({ org, refetch }) {
             <Input type="number" min="1" value={pods} aria-label="Total pods" placeholder="200" onChange={(event) => setPods(event.currentTarget.value)} />
           </Field>
         </Group>
-        <Field label="Region" description="Where projects run that name no region of their own.">
+        <Field label="Region" description="For projects that name no region.">
           <Input value={region} aria-label="Region" placeholder="eu" onChange={(event) => setRegion(event.currentTarget.value)} />
         </Field>
-        <Field label="Required node tags" description="Every workload of the organization runs only on nodes carrying all of these. Comma separated.">
+        <Field label="Required node tags" description="Comma separated. Workloads run only on nodes with all of them.">
           <Input value={tags} aria-label="Required node tags" placeholder="acme" onChange={(event) => setTags(event.currentTarget.value)} />
         </Field>
-        <Field label="Allowed domains" description="Its services may take hostnames under these domains only. Empty allows any hostname nobody else holds.">
+        <Field label="Allowed domains" description="Comma separated. Empty allows any free hostname.">
           <Input value={domains} aria-label="Allowed domains" placeholder="acme.com, acme.dev" onChange={(event) => setDomains(event.currentTarget.value)} />
         </Field>
         <SettingsFormActions>
@@ -128,7 +123,7 @@ function OrganizationPolicy({ org, refetch }) {
   );
 }
 
-function EditOrganization({ org, refetch, onClose }) {
+function EditOrganization({ org, refetch, onClose, managed = null }) {
   const [displayName, setDisplayName] = useState(org.displayName);
   const [idpID, setIdpID] = useState(org.idpID);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -160,7 +155,7 @@ function EditOrganization({ org, refetch, onClose }) {
           <Field label="Name">
             <Input required value={displayName} aria-label="Organization name" onChange={(event) => setDisplayName(event.currentTarget.value)} />
           </Field>
-          <Field label="Id at the identity provider" description="Changing it changes who can sign in to this organization.">
+          <Field label="Id at the identity provider" description="Changing it changes who can sign in.">
             <Input required value={idpID} aria-label="Id at the identity provider" onChange={(event) => setIdpID(event.currentTarget.value)} />
           </Field>
           <SettingsFormActions>
@@ -169,7 +164,7 @@ function EditOrganization({ org, refetch, onClose }) {
         </Stack>
       </form>
 
-      <OrganizationIdP org={org} refetch={refetch} />
+      <OrganizationIdP org={org} refetch={refetch} managed={managed} />
 
       <OrganizationPolicy key={`${org.name}:${JSON.stringify([org.maxProjects, org.quota, org.region, org.requiredTags, org.allowedDomains])}`} org={org} refetch={refetch} />
 
@@ -178,16 +173,13 @@ function EditOrganization({ org, refetch, onClose }) {
         disabled={Boolean(busy)}
         label={org.autoCreated && org.suspended ? "Waiting for approval" : "Suspended"}
         description={org.autoCreated && org.suspended
-          ? "A sign-in made this organization. Nobody can sign in to it until you approve it: turn this off."
-          : "Nobody can sign in to a suspended organization and open sessions stop at once. Its projects keep running."}
+          ? "Nobody can sign in until you turn this off."
+          : "Nobody can sign in and open sessions end. Projects keep running."}
         onChange={(event) => run("suspend", `${base}/update`, { suspended: event.currentTarget.checked ? "on" : "off" }, event.currentTarget.checked ? "Organization suspended" : "Organization open again")}
       />
 
       <Stack gap="xs">
         <Text fw={600} size="sm">Workspaces</Text>
-        <Muted size="sm">
-          Groups of projects inside the organization, such as a team's. A member who is not an administrator works in the workspaces they are in.
-        </Muted>
         <DataTable
           columns={[
             { label: "Workspace", key: "displayName" },
@@ -212,7 +204,7 @@ function EditOrganization({ org, refetch, onClose }) {
           ]}
           rows={org.workspaces || []}
           getRowKey={(row) => row.id}
-          empty="No workspaces: the organization's projects belong to it as a whole."
+          empty="No workspaces yet."
         />
         <form onSubmit={addWorkspace}>
           <Group grow align="flex-end" gap="sm">
@@ -229,11 +221,9 @@ function EditOrganization({ org, refetch, onClose }) {
 
       <Stack gap="xs">
         <Text fw={600} size="sm">Delete</Text>
-        <Muted size="sm">
-          {org.projects > 0
-            ? `It still has ${org.projects} ${org.projects === 1 ? "project" : "projects"}. Give them to another organization first (project settings).`
-            : "It has no projects. Deleting it does not affect the identity provider."}
-        </Muted>
+        {org.projects > 0 ? (
+          <Muted size="sm">It still has {org.projects} {org.projects === 1 ? "project" : "projects"}. Move them first.</Muted>
+        ) : null}
         <div>
           <Button type="button" variant="outline" disabled={org.projects > 0 || Boolean(busy)} onClick={() => setDeleting(true)}>Delete organization</Button>
         </div>
@@ -278,15 +268,11 @@ export function OrganizationsPage({ data }) {
     <>
       <SettingsSection
         title="Organizations"
-        description={DESCRIPTION}
         flat
         actions={mutable ? <Button leftSection={<Building2 size={14} />} onClick={() => setCreating(true)}>New organization</Button> : null}
       >
         {!on ? (
-          <Muted size="sm" mb="sm">
-            Organizations are off. Everyone who can sign in sees everything. Set up the organizations here, say how the sign-in token names them under
-            Sign-in, then turn them on.
-          </Muted>
+          <Muted size="sm" mb="sm">Organizations are off. Everyone who can sign in sees everything.</Muted>
         ) : null}
         <DataTable
           columns={[
@@ -310,15 +296,15 @@ export function OrganizationsPage({ data }) {
           ]}
           rows={items}
           getRowKey={(row) => row.name}
-          empty="No organizations yet. Create one for each group of people whose projects should be kept apart."
+          empty="No organizations yet."
         />
       </SettingsSection>
 
-      <SettingsSheet opened={creating} onClose={() => setCreating(false)} title="New organization" description="Someone whose sign-in token names this id can sign in to it.">
+      <SettingsSheet opened={creating} onClose={() => setCreating(false)} title="New organization">
         <NewOrganization refetch={orgs.refetch} onDone={() => setCreating(false)} />
       </SettingsSheet>
       <SettingsSheet opened={Boolean(editingOrg)} onClose={() => setEditing("")} title={editingOrg?.displayName || "Organization"} description={editingOrg?.name}>
-        {editingOrg ? <EditOrganization key={editingOrg.name} org={editingOrg} refetch={orgs.refetch} onClose={() => setEditing("")} /> : null}
+        {editingOrg ? <EditOrganization key={editingOrg.name} org={editingOrg} refetch={orgs.refetch} onClose={() => setEditing("")} managed={managedFor(data, "signIn")} /> : null}
       </SettingsSheet>
     </>
   );

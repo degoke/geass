@@ -172,6 +172,54 @@ func TestRotatingACredentialReplacesOnlyTheFieldsSent(t *testing.T) {
 	require.Equal(t, "fsn1", connection.Spec.Region)
 }
 
+func TestTemporaryAWSCredentialsAreStoredAndRenewedTogetherWithTheirSessionToken(t *testing.T) {
+	f := newComputeFixture(t)
+	status, body := f.call(t, f.viewer, http.MethodGet, "/api/v1/compute/providers", nil)
+	require.Equal(t, http.StatusOK, status)
+	for _, item := range body["items"].([]any) {
+		provider := item.(map[string]any)
+		if provider["id"] != "AWS" {
+			continue
+		}
+		for _, field := range provider["fields"].([]any) {
+			if field.(map[string]any)["key"] == platform.SecretKeySessionToken {
+				require.Equal(t, true, field.(map[string]any)["secret"], "a form must hide the session token")
+				require.Equal(t, true, field.(map[string]any)["optional"], "an IAM user's key has none")
+			}
+		}
+	}
+
+	status, out := f.call(t, f.admin, http.MethodPost, "/api/v1/connections", map[string]any{
+		"name": "aws-machines", "provider": "AWS", "purposes": []string{"Compute"}, "region": "eu-north-1",
+		"accessKeyId": "ASIA-FIRST", "secretAccessKey": "secret-first", "sessionToken": "token-first",
+	})
+	require.Equal(t, http.StatusOK, status, "%v", out)
+	secret := func() corev1.Secret {
+		var secret corev1.Secret
+		require.NoError(t, f.srv.Client.Get(context.Background(), client.ObjectKey{Name: "aws-machines-credentials", Namespace: platform.SystemNamespace}, &secret))
+		return secret
+	}
+	require.Equal(t, "token-first", string(secret().Data[platform.SecretKeySessionToken])+secret().StringData[platform.SecretKeySessionToken])
+
+	// What the platform that issues the credentials sends about every 45 minutes.
+	status, out = f.call(t, f.admin, http.MethodPatch, "/api/v1/connections/aws-machines", map[string]any{
+		"accessKeyId": "ASIA-SECOND", "secretAccessKey": "secret-second", "sessionToken": "token-second",
+	})
+	require.Equal(t, http.StatusOK, status, "%v", out)
+	renewed := secret()
+	require.Equal(t, "ASIA-SECOND", string(renewed.Data[platform.SecretKeyAccessKeyID]))
+	require.Equal(t, "secret-second", string(renewed.Data[platform.SecretKeySecretAccessKey]))
+	require.Equal(t, "token-second", string(renewed.Data[platform.SecretKeySessionToken]))
+	require.Equal(t, "eu-north-1", string(renewed.Data[platform.SecretKeyRegion])+secret().StringData[platform.SecretKeyRegion], "what was not sent stays")
+
+	for _, path := range []string{"/api/v1/connections", "/api/v1/connections/aws-machines"} {
+		rec := f.do(jsonRequest(f.viewer, http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, path)
+		require.NotContains(t, rec.Body.String(), "token-second", "no one reads the session token back")
+		require.NotContains(t, rec.Body.String(), "secret-second")
+	}
+}
+
 func TestVerifyingAConnectionAsksTheOperatorToLookAgain(t *testing.T) {
 	f := newComputeFixture(t)
 	f.connect(t)

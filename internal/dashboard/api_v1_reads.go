@@ -87,6 +87,9 @@ func (s *Server) v1Router() *http.ServeMux {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /api/v1/version", s.v1Version)
 		mux.HandleFunc("GET /api/v1/me", s.v1Me)
+		mux.HandleFunc("GET /api/v1/usage/hours", s.v1UsageHours)
+		mux.HandleFunc("GET /api/v1/abuse/suspects", s.v1AbuseSuspects)
+		mux.HandleFunc("GET /api/v1/mail/usage", s.v1MailUsage)
 		mux.HandleFunc("GET /api/v1/nodes", s.v1Nodes)
 		mux.HandleFunc("GET /api/v1/compute/providers", s.v1ComputeProviders)
 		mux.HandleFunc("GET /api/v1/compute/sizes", s.v1ComputeSizes)
@@ -94,6 +97,9 @@ func (s *Server) v1Router() *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/connections/{name}", s.v1ConnectionGet)
 		mux.HandleFunc("GET /api/v1/pools", s.v1Pools)
 		mux.HandleFunc("GET /api/v1/pools/{name}", s.v1PoolGet)
+		mux.HandleFunc("GET /api/v1/github/connections", s.v1GitHubConnections)
+		mux.HandleFunc("GET /api/v1/github/connections/{name}", s.v1GitHubConnection)
+		mux.HandleFunc("GET /api/v1/github/connections/{name}/installations", s.v1GitHubInstallations)
 		mux.HandleFunc("GET /api/v1/openapi.json", s.v1OpenAPIHandler)
 		mux.HandleFunc("GET /api/v1/auth/device/{code}", s.handleDeviceLookup)
 		for _, kind := range []string{kindProjects, kindApps, kindDatabases, kindObjectStores, kindLogicalDatabases} {
@@ -160,6 +166,9 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		if caller.token.ExpiresAt != nil {
 			me["expiresAt"] = caller.token.ExpiresAt
 		}
+	}
+	if bearer := oidcBearerFromRequest(r); bearer != nil {
+		me["authentication"], me["expiresAt"] = "oidc", bearer.Expires
 	}
 	writeJSON(w, http.StatusOK, me)
 }
@@ -391,8 +400,8 @@ func databaseView(db *geassv1alpha1.GeassDatabase) v1Resource {
 	if db.Spec.Placement != "" {
 		details["placement"] = string(db.Spec.Placement)
 	}
-	if db.Spec.Version != "" {
-		details["version"] = db.Spec.Version
+	if version := platform.DatabaseVersion(db); version != "" {
+		details["version"] = version
 	}
 	return v1Resource{
 		Kind: "database", Name: db.Name, DisplayName: platform.ResourceDisplayName(db.ObjectMeta),

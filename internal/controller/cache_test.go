@@ -10,25 +10,34 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
-func TestTheCacheLeavesOutHelmReleasesAndFinishedPods(t *testing.T) {
+func TestTheCacheLeavesOutHelmReleasesFinishedPodsAndUsageHours(t *testing.T) {
 	options := CacheOptions()
 	require.NotNil(t, options.DefaultTransform, "managed fields are dropped from everything")
 
-	var secrets, pods string
+	var secrets, pods, configMaps string
 	for object, config := range options.ByObject {
 		switch object.(type) {
 		case *corev1.Secret:
 			secrets = config.Field.String()
 		case *corev1.Pod:
 			pods = config.Field.String()
+		case *corev1.ConfigMap:
+			require.Nil(t, config.Field)
+			require.Nil(t, config.Transform, "a ConfigMap that is cached is cached whole")
+			configMaps = config.Label.String()
+			require.False(t, config.Label.Matches(labels.Set{platform.LabelUsageHour: "2026102310"}), "the usage meter's hours are read from the API server")
+			require.True(t, config.Label.Matches(labels.Set{}))
+			require.True(t, config.Label.Matches(labels.Set{platform.LabelManagedBy: platform.ManagedByValue, "geass.dev/template": "true"}))
 		default:
 			t.Fatalf("unexpected object in the cache options: %T", object)
 		}
 	}
 	require.Equal(t, "type!=helm.sh/release.v1", secrets)
 	require.Equal(t, "status.phase!=Succeeded", pods, "failed pods stay: a failing workload is read from them")
+	require.Equal(t, "!geass.dev/usage-hour", configMaps)
 
 	secretSelector, err := fields.ParseSelector(secrets)
 	require.NoError(t, err)

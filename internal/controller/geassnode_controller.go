@@ -38,6 +38,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/compute"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
@@ -57,6 +58,12 @@ type GeassNodeReconciler struct {
 	Compute ComputeFactory
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
+	// ServerVersion asks the API server which release it runs. It is how a cluster whose control plane is hosted
+	// outside its nodes learns the K3s version a worker installs; nil leaves such a cluster to K3s's stable release.
+	ServerVersion ServerVersionFunc
+	// OutboundIP says which public address the operator's SSH leaves from. A cluster whose control plane is hosted
+	// outside its nodes lets SSH into the machines Geass creates from there; nil leaves only the nodes' addresses.
+	OutboundIP OutboundIPFunc
 }
 
 func (r *GeassNodeReconciler) now() time.Time {
@@ -325,6 +332,7 @@ func (r *GeassNodeReconciler) dropRetryAnnotation(ctx context.Context, node *gea
 func workerJoinInput(
 	ctx context.Context,
 	c client.Reader,
+	serverVersion ServerVersionFunc,
 	node *geassv1alpha1.GeassNode,
 	cluster *geassv1alpha1.GeassCluster,
 	creds sshCredentials,
@@ -343,10 +351,19 @@ func workerJoinInput(
 	if err != nil {
 		return ssh.ProvisionInput{}, err
 	}
+	hosted, err := hostedServerVersion(ctx, controlPlane, serverVersion)
+	if err != nil {
+		return ssh.ProvisionInput{}, err
+	}
 	serverURL := workerServerURL(cluster, controlPlane)
 	if serverURL != cluster.Spec.ServerURL {
 		logf.FromContext(ctx).Info("Cluster serverURL is a loopback address, joining on the control plane's own address instead",
 			"serverURL", cluster.Spec.ServerURL, "joiningOn", serverURL)
+	}
+	meshSettings := mesh.From(cluster.Spec.Network)
+	tailnet, err := tailnetJoin(ctx, c, cluster, meshSettings)
+	if err != nil {
+		return ssh.ProvisionInput{}, err
 	}
 	return ssh.ProvisionInput{
 		Host:       node.Address(),
@@ -354,18 +371,20 @@ func workerJoinInput(
 		User:       sshUser,
 		PrivateKey: creds.privateKey,
 		KnownHosts: creds.knownHosts,
-		K3sVersion: workerK3sVersion(controlPlane, cluster),
+		K3sVersion: workerK3sVersion(controlPlane, hosted, cluster),
 		ServerURL:  serverURL,
 		Token:      token,
 		NodeName:   node.Name,
 		Config: ssh.NewAgentConfig(ssh.AgentOptions{
 			Placement:  node.Spec.Placement,
-			MultiSite:  cluster.Spec.Network.MultiSite,
+			MultiSite:  meshSettings.UsesOverlayPort(),
 			ExternalIP: node.Address(),
 			Labels:     poolNodeLabels(node),
 			Taints:     poolNodeTaints(node),
+			Tailscale:  tailnet,
 		}),
-		MultiSite: cluster.Spec.Network.MultiSite,
+		MultiSite: meshSettings.UsesOverlayPort(),
+		Tailscale: tailnet,
 	}, nil
 }
 
@@ -385,9 +404,14 @@ func (r *GeassNodeReconciler) provision(
 		return ctrl.Result{}, err
 	}
 
-	in, err := workerJoinInput(ctx, r.Client, node, cluster, creds, token)
+	if refused, err := meshJoinRefusal(ctx, r.Client, cluster, node); err != nil {
+		return ctrl.Result{}, err
+	} else if refused != "" {
+		return r.setFailed(ctx, node, refused)
+	}
+	in, err := workerJoinInput(ctx, r.Client, r.ServerVersion, node, cluster, creds, token)
 	if err != nil {
-		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+		return r.setFailed(ctx, node, joinInputFailure(err))
 	}
 	err = r.SSH.Provision(ctx, in)
 	if err != nil {

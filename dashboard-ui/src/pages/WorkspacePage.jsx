@@ -1,6 +1,7 @@
 import { projectResources } from "@/lib/project-resources";
 import { resourceDisplayName, resourceName } from "@/lib/api";
 import { databaseHasVolume } from "@/lib/capacity";
+import { databaseVersion } from "@/lib/dashboard";
 import { resourceHref } from "@/lib/resource-links";
 import { functionSourceLabel } from "@/lib/functions";
 import { backupSpec, backupWarning, isSnapshotDatabase, supportsBackups } from "@/lib/backups";
@@ -62,7 +63,7 @@ export function WorkspacePage({ project, data, environment }) {
     ...resources.databases.map((item) => ({
       item,
       kind: item.spec?.engine || "Database",
-      meta: `${String(item.spec?.engine || "database").toLowerCase()}${item.spec?.version ? ` ${item.spec.version}` : ""}`,
+      meta: `${String(item.spec?.engine || "database").toLowerCase()}${databaseVersion(data, item) ? ` ${databaseVersion(data, item)}` : ""}`,
       source: databaseSource(item),
       warning: isResourceDeleting(item) ? "" : backupWarning(item),
     })),

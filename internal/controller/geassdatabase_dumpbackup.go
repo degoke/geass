@@ -61,9 +61,22 @@ type dumpOutcome struct {
 	failed bool
 }
 
-// dumpTarget finds how Jobs reach a MySQL or SQLite database, and whether it is running. A MySQL
-// dump must come from the server's own image, so the image is read from its workload.
+// dumpTarget finds how Jobs reach a MySQL or SQLite database, whether it is running, and how the Jobs run. A Job of an
+// organization's database is not made while the sandboxed runtime is missing: the error says so.
 func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (*dumpTarget, bool, error) {
+	target, running, err := r.findDumpTarget(ctx, db, wsNS)
+	if err != nil {
+		return nil, false, err
+	}
+	if target.sandbox, err = r.jobSandbox(ctx, db); err != nil {
+		return nil, false, err
+	}
+	return target, running, nil
+}
+
+// findDumpTarget finds how Jobs reach a MySQL or SQLite database, and whether it is running. A MySQL
+// dump must come from the server's own image, so the image is read from its workload.
+func (r *GeassDatabaseReconciler) findDumpTarget(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string) (*dumpTarget, bool, error) {
 	if databaseEngine(db) == geassv1alpha1.DatabaseEngineSQLite {
 		deploy := &appsv1.Deployment{}
 		if err := r.Get(ctx, client.ObjectKey{Name: db.Name, Namespace: wsNS}, deploy); err != nil {
@@ -120,7 +133,7 @@ func (r *GeassDatabaseReconciler) dumpTarget(ctx context.Context, db *geassv1alp
 
 func dumpInputFor(db *geassv1alpha1.GeassDatabase, archive *geassv1alpha1.GeassBackupArchive, credentialsSecret string, target dumpTarget) dumpJobInput {
 	return dumpJobInput{
-		db: db, target: target, objectBase: platform.BackupObjectBaseURL(archive.Spec.Storage.Bucket, archive.Spec.Storage.Region),
+		db: db, target: target, objectBase: backupObjectBaseURL(archive.Spec.Storage.Bucket, archive.Spec.Storage.Region),
 		prefix:            platform.DumpObjectPrefix(archive.Spec.Project, archive.Spec.ServerName),
 		credentialsSecret: credentialsSecret,
 	}
@@ -441,7 +454,7 @@ func (r *GeassDatabaseReconciler) reconcileDumpRestore(ctx context.Context, db *
 		return "", err
 	}
 	in := dumpJobInput{
-		db: db, target: *target, objectBase: platform.BackupObjectBaseURL(archive.Spec.Storage.Bucket, region), prefix: prefix,
+		db: db, target: *target, objectBase: backupObjectBaseURL(archive.Spec.Storage.Bucket, region), prefix: prefix,
 		credentialsSecret: secretName, restoreKey: prefix + id + "." + platform.DumpFileExtension,
 	}
 	if err := client.IgnoreAlreadyExists(r.Create(ctx, r.newBackupJob(db, wsNS, name, roleRestore, in))); err != nil {
@@ -471,6 +484,11 @@ func (r *GeassDatabaseReconciler) markRestored(ctx context.Context, db *geassv1a
 func (r *GeassDatabaseReconciler) finalizeDumpBackups(ctx context.Context, db *geassv1alpha1.GeassDatabase, wsNS string, live *geassv1alpha1.GeassBackupArchive) (time.Duration, error) {
 	log := logf.FromContext(ctx)
 	target, running, err := r.dumpTarget(ctx, db, wsNS)
+	if missing := sandboxWait(err); missing != nil {
+		// Deleting is never held up for long, and an organization's copy is never made outside the sandbox.
+		log.Info("Skipped final backup because the sandboxed runtime is missing", "database", db.Name, "runtimeClass", missing.RuntimeClass)
+		return 0, r.retireDumpArchive(ctx, db, live)
+	}
 	if err != nil || !running {
 		log.Info("Skipped final backup because the database is not running", "database", db.Name)
 		return 0, r.retireDumpArchive(ctx, db, live)

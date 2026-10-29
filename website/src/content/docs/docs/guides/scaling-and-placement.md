@@ -317,7 +317,7 @@ It is arithmetic over the whole pool, not a simulation of the scheduler. A workl
 
 The word "service" is the workload's kind, so you may read "PostgreSQL database" or "Object storage server" instead.
 
-When the operator refuses, the dashboard shows the resource as **Unavailable**. For the first and third messages it adds the hint "There isn't enough capacity for this size. Choose a smaller size or add capacity in Platform settings." For the others it shows a generic line such as "This service isn't available yet. Check Platform settings or your configuration.", so read the exact message in the `Ready` condition:
+When the operator refuses, the dashboard shows the resource as **Unavailable**. For the first and third messages it adds the hint "Not enough capacity for this size. Choose a smaller one or add capacity." For the others it shows a generic line such as "This service isn't available yet.", so read the exact message in the `Ready` condition:
 
 ```bash
 kubectl -n geass-system get geassapp web \

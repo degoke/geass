@@ -6,13 +6,14 @@ import { action, api, resourceName } from "@/lib/api";
 import { alertError, notify } from "@/lib/notify";
 import { formatRelativeTime } from "@/lib/services";
 import { Badge, Button, Checkbox, Field, Input, Muted, Select, Switch, Textarea } from "@/components/geass-ui";
+import { SettingsFormActions, SettingsSheet } from "@/layout/SettingsShell";
 
 const SECURITY_SHORT = { starttls: "STARTTLS", tls: "TLS", none: "no encryption" };
 
 const SECURITY = [
   { value: "starttls", label: "STARTTLS (port 587)" },
-  { value: "tls", label: "TLS from the start (port 465 only)" },
-  { value: "none", label: "None (no password can be used)" },
+  { value: "tls", label: "TLS (port 465)" },
+  { value: "none", label: "None (no sign-in)" },
 ];
 
 const emptySMTP = { host: "", port: "587", security: "starttls", username: "", password: "", from: "" };
@@ -144,7 +145,7 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
   // loaded the channel first, and then says whether it sent the message.
   const testChannel = async (channel) => {
     setBusy(`test-${channel.id}`);
-    notify(`Sending a test to ${channel.name} through Alertmanager…`);
+    notify(`Sending a test to ${channel.name}…`);
     try {
       const result = await action(`${base}/channels/test`, { id: channel.id });
       if (result.ok) notify(`Test sent to ${channel.name}`, "success");
@@ -199,7 +200,7 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
     setBusy("smtp-test");
     try {
       const result = await action("/settings/alerts/smtp/test");
-      if (result.ok) notify(saved.smtp?.username ? "Connected to the mail server and signed in" : "Connected to the mail server", "success");
+      if (result.ok) notify(saved.smtp?.username ? "Connected and signed in" : "Connected", "success");
       else alertError(result.error || "Could not reach the mail server");
     } catch (error) {
       alertError(error.message);
@@ -229,29 +230,21 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
 
   return (
     <div className="rw-webhooks rw-alerts">
-      <p className="rw-rail-body">
-        {org
-          ? "Geass tells you when a build or a deploy fails, a service is down, a database's backups are failing, a pod keeps crashing, or storage is filling, in your organization's projects. Add a Slack channel and choose which alerts it hears and for which projects."
-          : "Geass tells you when a build or a deploy fails, a service is down, a database's backups are failing, a pod keeps crashing, storage is filling, or a node stops responding. Add a Slack channel or a list of email addresses, and choose which alerts each one hears. Alerts that belong to the cluster itself (nodes, certificates, upgrades) go to channels that are not limited to projects."}
-      </p>
-
       <Stack gap="xs">
         <Group gap="sm">
           <Text fw={600} size="sm">Alerting</Text>
           <Badge tone={saved.listening ? "success" : "neutral"}>{saved.listening ? "On" : "Off"}</Badge>
-          {!saved.listening ? <Muted size="sm">Add a channel to turn it on.</Muted> : null}
         </Group>
         {!saved.alertmanager.ready ? (
           <Muted size="sm" c="red.4">
             {org
               ? saved.alertmanager.error || "Alerts cannot be sent right now."
-              : `Alertmanager cannot be reached, so nothing can be sent. It is part of the monitoring add-on, which has to be on for alerts.${saved.alertmanager.error ? ` (${saved.alertmanager.error})` : ""}`}
+              : `Alertmanager cannot be reached. Turn on monitoring.${saved.alertmanager.error ? ` (${saved.alertmanager.error})` : ""}`}
           </Muted>
         ) : null}
         {failedDeliveries.map(([integration, delivery]) => (
           <Muted size="sm" c="red.4" key={integration}>
-            Alertmanager has failed to send {delivery.failed} of {delivery.sent} requests to {INTEGRATIONS[integration] || integration} since it started. Check
-            the webhook URL or the mail server, and that the monitoring namespace can reach it.
+            {delivery.failed} of {delivery.sent} requests to {INTEGRATIONS[integration] || integration} failed.
           </Muted>
         ))}
       </Stack>
@@ -322,13 +315,8 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
             {saved.smtp.host}:{saved.smtp.port} ({SECURITY_SHORT[saved.smtp.security] || saved.smtp.security})
             {saved.smtp.username ? ` · signs in as ${saved.smtp.username}` : " · no sign-in"} · from {saved.smtp.from}
           </Muted>
-        ) : (
-          <Muted size="sm">Email channels send through a mail server of your own: SES, Postmark, Mailgun, your company&apos;s, or any SMTP server.</Muted>
-        )}
-        {needsMailServer ? <Muted size="sm" c="red.4">An email channel cannot send until a mail server is set up.</Muted> : null}
-        {saved.privateNetworks ? null : (
-          <Muted size="xs">Mail servers and Slack addresses on private networks are refused unless the operator sets GEASS_WEBHOOKS_ALLOW_PRIVATE_NETWORKS=true.</Muted>
-        )}
+        ) : null}
+        {needsMailServer ? <Muted size="sm" c="red.4">Email channels need a mail server.</Muted> : null}
       </Stack>
       )}
 
@@ -348,37 +336,24 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
           </div>
         ) : (
           <Muted size="sm" className="rw-settings-empty-inline">
-            {saved.alertmanager.ready ? "Nothing is firing." : "Alertmanager cannot be reached, so what is firing is not known."}
+            {saved.alertmanager.ready ? "Nothing is firing." : "Not known: Alertmanager cannot be reached."}
           </Muted>
         )}
-        <Muted size="xs">
-          Adding the first channel announces what is already firing. A problem that is still there is mentioned again every twelve hours, and
-          one that has ended is announced as resolved a few minutes after it does.
-        </Muted>
       </Stack>
 
-      <Modal
+      <SettingsSheet
         opened={Boolean(editing)}
         onClose={() => { if (busy !== "channel") setEditing(null); }}
         title={editing ? `${editing.id ? "Edit" : "New"} ${editing.type === "slack" ? "Slack channel" : "email channel"}` : ""}
-        centered
-        size="lg"
       >
         {editing ? (
           <form onSubmit={saveChannel} className="rw-alert-form">
             <Stack gap="sm">
-              <Field label="Name" description="What this channel is called in the dashboard.">
+              <Field label="Name">
                 <Input required autoFocus value={editing.name} maxLength={60} aria-label="Channel name" placeholder={editing.type === "slack" ? "#ops-alerts" : "On call"} onChange={field(setEditing, editing, "name")} />
               </Field>
               {editing.type === "slack" ? (
-                <Field
-                  label="Slack incoming webhook URL"
-                  description={editing.id
-                    ? "Leave blank to keep the saved one. It is a secret: anyone who has it can post to the channel."
-                    : org
-                      ? "Create one under Slack apps, Incoming Webhooks. It starts with https://hooks.slack.com/ and is stored as a secret."
-                      : "Create one under Slack apps, Incoming Webhooks. It works with anything that takes Slack's webhook JSON, such as Mattermost. It is stored as a secret."}
-                >
+                <Field label="Slack webhook URL" description={editing.id ? "Leave blank to keep the saved one." : undefined}>
                   <Input
                     type="password"
                     required={!editing.id}
@@ -390,24 +365,23 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
                   />
                 </Field>
               ) : (
-                <Field label="Send to" description="Email addresses, separated by commas, spaces or lines. Needs the mail server below.">
+                <Field label="Send to" description="Separate addresses with commas or new lines.">
                   <Textarea required rows={3} value={editing.recipients} aria-label="Recipients" placeholder={"ops@example.com\noncall@example.com"} onChange={field(setEditing, editing, "recipients")} />
                 </Field>
               )}
-              <Field label="Alerts this channel hears">
+              <Field label="Alerts">
                 <Stack gap={6}>
                   {kinds.map((kind) => (
                     <Checkbox
                       key={kind.id}
                       label={kind.label}
-                      description={kind.description}
                       checked={editing.events.includes(kind.id)}
                       onChange={(change) => setEditing({ ...editing, events: toggle(editing.events, kind.id, change.currentTarget.checked) })}
                     />
                   ))}
                 </Stack>
               </Field>
-              <Field label="Projects" description={org ? "Leave all unchecked for all of your organization's projects, including ones made later." : "Leave all unchecked for every project. Only a channel that is not limited to projects hears about the cluster itself: nodes, certificates and upgrades."}>
+              <Field label="Projects" description={org ? "None checked means all." : "None checked means all. Cluster alerts (nodes, certificates, upgrades) go only to channels with none checked."}>
                 <Stack gap={6} className="rw-alert-checks">
                   {projects.length ? projects.map((project) => (
                     <Checkbox
@@ -416,10 +390,10 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
                       checked={editing.projects.includes(resourceName(project))}
                       onChange={(change) => setEditing({ ...editing, projects: toggle(editing.projects, resourceName(project), change.currentTarget.checked) })}
                     />
-                  )) : <Muted size="sm">There are no projects yet.</Muted>}
+                  )) : <Muted size="sm">No projects yet.</Muted>}
                 </Stack>
               </Field>
-              <Field label="Environments" description="Leave all unchecked for every environment. For example, check production only to keep staging out of a pager.">
+              <Field label="Environments" description="None checked means all.">
                 <Group gap="md">
                   {environmentNames.map((name) => (
                     <Checkbox
@@ -439,16 +413,16 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
               {editing.id ? (
                 <Switch label="Paused" checked={editing.disabled} onChange={(event) => setEditing({ ...editing, disabled: event.currentTarget.checked })} />
               ) : null}
-              <Group justify="flex-end" gap="sm">
+              <SettingsFormActions>
                 <Button type="button" variant="outline" disabled={busy === "channel"} onClick={() => setEditing(null)}>Cancel</Button>
                 <Button type="submit" loading={busy === "channel"}>{editing.id ? "Save" : "Add channel"}</Button>
-              </Group>
+              </SettingsFormActions>
             </Stack>
           </form>
         ) : null}
-      </Modal>
+      </SettingsSheet>
 
-      <Modal opened={Boolean(smtp)} onClose={() => { if (busy !== "smtp") setSMTP(null); }} title="Mail server" centered>
+      <SettingsSheet opened={Boolean(smtp)} onClose={() => { if (busy !== "smtp") setSMTP(null); }} title="Mail server">
         {smtp ? (
           <form onSubmit={saveSMTP} className="rw-alert-form">
             <Stack gap="sm">
@@ -460,13 +434,13 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
                   <Input required type="number" min={1} max={65535} value={smtp.port} aria-label="Port" onChange={field(setSMTP, smtp, "port")} />
                 </Field>
               </Group>
-              <Field label="Security" description="Alertmanager sends the mail. It connects encrypted from the first byte only on port 465, and it will not send a password over a connection that is not encrypted.">
+              <Field label="Security">
                 <Select value={smtp.security} aria-label="Security" onChange={chooseSecurity}>
                   {SECURITY.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </Select>
               </Field>
               <Group grow align="flex-start">
-                <Field label="Username" description="Leave it empty for a server that does not ask.">
+                <Field label="Username">
                   <Input value={smtp.username} disabled={smtp.security === "none"} autoComplete="off" aria-label="Username" onChange={field(setSMTP, smtp, "username")} />
                 </Field>
                 <Field label="Password">
@@ -481,22 +455,21 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
                   />
                 </Field>
               </Group>
-              <Field label="From" description="The address alerts come from, such as alerts@example.com or Geass <alerts@example.com>.">
+              <Field label="From">
                 <Input required value={smtp.from} aria-label="From address" placeholder="Geass <alerts@example.com>" onChange={field(setSMTP, smtp, "from")} />
               </Field>
-              <Group justify="flex-end" gap="sm">
+              <SettingsFormActions>
                 <Button type="button" variant="outline" disabled={busy === "smtp"} onClick={() => setSMTP(null)}>Cancel</Button>
                 <Button type="submit" loading={busy === "smtp"}>Save</Button>
-              </Group>
+              </SettingsFormActions>
             </Stack>
           </form>
         ) : null}
-      </Modal>
+      </SettingsSheet>
 
       <Modal opened={Boolean(removing)} onClose={() => { if (!busy) setRemoving(null); }} title="Delete channel?" centered>
         <Text size="sm" mb="md">
-          Geass stops sending alerts to <strong>{removing?.name}</strong>
-          {removing?.type === "slack" ? ", and forgets its webhook URL" : ""}. Alerts that already went out stay in Slack or in the inbox.
+          Stop sending alerts to <strong>{removing?.name}</strong>{removing?.type === "slack" ? " and forget its webhook URL" : ""}.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={Boolean(busy)} onClick={() => setRemoving(null)}>Cancel</Button>
@@ -506,7 +479,7 @@ export function AlertSettings({ mutable, projects = [], org = false }) {
 
       <Modal opened={removingSMTP} onClose={() => { if (!busy) setRemovingSMTP(false); }} title="Remove the mail server?" centered>
         <Text size="sm" mb="md">
-          Email channels keep their addresses but cannot send until a mail server is set up again. Its password is deleted.
+          Email channels stop sending until a mail server is set up again.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={Boolean(busy)} onClick={() => setRemovingSMTP(false)}>Cancel</Button>

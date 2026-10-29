@@ -31,7 +31,10 @@ type dashboardBootstrap struct {
 type dashboardPlatform struct {
 	HasDashboardURL bool `json:"hasDashboardURL"`
 	HasGitHubApp    bool `json:"hasGitHubApp"`
-	HasCloudflare   bool `json:"hasCloudflare"`
+	// GitHubProvider names who runs the cluster's GitHub App when it is not the cluster's own (rungeass). Projects
+	// then connect to the installations it gave the cluster, and there is nothing to set up.
+	GitHubProvider string `json:"githubProvider,omitempty"`
+	HasCloudflare  bool   `json:"hasCloudflare"`
 	// RegistryRepository is where repository builds push their images when a service names no registry.
 	// Empty means builds wait for one to be set.
 	RegistryRepository   string `json:"registryRepository,omitempty"`
@@ -63,8 +66,16 @@ type dashboardPlatform struct {
 	// for example ones created before Longhorn was installed.
 	FixedSizeDatabases []string `json:"fixedSizeDatabases,omitempty"`
 	// DefaultStorage is the default volume size per engine, so the UI carries no copy.
-	DefaultStorage map[string]string    `json:"defaultStorage"`
+	DefaultStorage map[string]string `json:"defaultStorage"`
+	// EngineVersions is the version Geass runs of each engine whose version it picks, so the UI shows that and not the
+	// version field every database carries.
+	EngineVersions map[string]string    `json:"engineVersions"`
 	Session        dashboardSessionInfo `json:"session"`
+	// Managed says that a platform runs this Geass and keeps the installer, updates, the K3s release, sign-in and the
+	// dashboard's domain for itself (spec.managed), so the dashboard shows them read-only. Absent unless managed mode is on,
+	// and only the platform's administrators are told: a read-only session's bootstrap never reads the platform's
+	// configuration, and an organization's has no pages it would be about.
+	Managed *dashboardManaged `json:"managed,omitempty"`
 }
 
 // dashboardRelease is what the cluster runs. Geass is the release of the operator that serves this dashboard, which is
@@ -116,6 +127,9 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	mutation.URL = &mutationURL
 	mutation.URL.Path = apiMutationPath(r.URL.Path)
 	mutation.URL.RawPath = ""
+	if s.refuseWhenManaged(w, mutation) {
+		return
+	}
 
 	switch {
 	case mutation.URL.Path == "/login":
@@ -140,6 +154,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAPITokenDeploy(w, mutation)
 	case mutation.URL.Path == "/projects/create":
 		s.handleProjectCreate(w, mutation)
+	case mutation.URL.Path == "/projects/import":
+		s.handleProjectImport(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/projects/"):
 		s.handleProjectRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/templates/"):
@@ -148,8 +164,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAppCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/apps/"):
 		s.handleAppRoutes(w, mutation)
-	case mutation.URL.Path == "/shared-databases/create":
-		s.handleSharedDatabaseCreate(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/shared-databases/"):
+		s.handleSharedDatabaseRoutes(w, mutation)
 	case mutation.URL.Path == "/databases/create":
 		s.handleDatabaseCreate(w, mutation)
 	case mutation.URL.Path == "/databases/restore":
@@ -172,12 +188,12 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handlePlatformDomainSave(w, mutation)
 	case mutation.URL.Path == "/settings/domain/verify":
 		s.handlePlatformDomainVerify(w, mutation)
-	case mutation.URL.Path == "/settings/github/save":
-		s.handlePlatformGitHubSettingsSave(w, mutation)
-	case mutation.URL.Path == "/settings/github/test":
-		s.handlePlatformGitHubTest(w, mutation)
-	case mutation.URL.Path == "/settings/github/clear":
-		s.handlePlatformGitHubClear(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/settings/github/"):
+		s.handlePlatformGitHubRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/github/connections/"):
+		s.handleGitHubConnectionRoutes(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/abuse/"):
+		s.handleAbuseRoutes(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/save":
 		s.handlePlatformCloudflareSettingsSave(w, mutation)
 	case mutation.URL.Path == "/settings/cloudflare/clear":
@@ -215,16 +231,7 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create" || mutation.URL.Path == "/connections/create":
-		if mutation.ParseForm() == nil && computeConnectionRequested(mutation) {
-			// Machines belong to the cluster. /cloud-connections/create is an organization's route for storage and
-			// databases, and it hands a request for a cloud that makes machines to this handler, so who asks is checked here.
-			if !requirePlatformContext(w, mutation) {
-				return
-			}
-			s.handleComputeConnectionCreate(w, mutation)
-			return
-		}
-		s.handleCloudConnectionCreate(w, mutation)
+		s.handleConnectionCreate(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/connections/"):
 		s.handleConnectionRoutes(w, mutation)
 	case mutation.URL.Path == "/pools/create":
@@ -238,6 +245,21 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{dashboardLiteralError: "not found"})
 	}
+}
+
+// handleConnectionCreate makes a connection, and is a method of its own so that handleAPIMutation's route switch stays under
+// the linter's cyclomatic-complexity limit as routes are added to it.
+func (s *Server) handleConnectionCreate(w http.ResponseWriter, mutation *http.Request) {
+	if mutation.ParseForm() == nil && computeConnectionRequested(mutation) {
+		// Machines belong to the cluster. /cloud-connections/create is an organization's route for storage and
+		// databases, and it hands a request for a cloud that makes machines to this handler, so who asks is checked here.
+		if !requirePlatformContext(w, mutation) {
+			return
+		}
+		s.handleComputeConnectionCreate(w, mutation)
+		return
+	}
+	s.handleCloudConnectionCreate(w, mutation)
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {

@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ExternalLink, Gauge, GitBranch, Globe, Hammer, Rocket, Settings } from "lucide-react";
 import { action, resourceName } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { useHidden } from "@/lib/options";
+import { alertUser, alertError } from "@/lib/notify";
 import { outOfMemoryNotice, settingsSavedMessage } from "@/lib/services";
 import { projectRegion, tagsInRegion } from "@/lib/placement";
 import { DeployHook } from "@/components/DeployHook";
@@ -42,6 +43,7 @@ function ToggleRow({ label, description, checked, onChange, disabled }) {
 }
 
 export function ServiceSettings({ item, name, data, project, reload, navigate, onClose }) {
+  const hideTokens = useHidden("tokens");
   const spec = item.spec || {};
   const git = spec.source?.git;
   const fn = spec.source?.function;
@@ -96,7 +98,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
   if (!canMutate(data)) {
     return (
       <div className="rw-resource-settings-shell rw-rail-settings">
-        <Muted size="sm">Your viewer role can inspect this service but cannot change it.</Muted>
+        <Muted size="sm">Your viewer role cannot change this service.</Muted>
       </div>
     );
   }
@@ -106,7 +108,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
     setSaving(section);
     action(`/apps/${name}/update`, values)
       .then((result) => { reload?.(); alertUser(settingsSavedMessage(result)); })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(""));
   };
 
@@ -142,7 +144,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       : { image })}
                 >
                   {fn ? (
-                    <ResourceSettingsBlock title="Function runtime" description="The language runtime that runs your code. Edit the code itself in the Code tab.">
+                    <ResourceSettingsBlock title="Function runtime">
                       <SettingsPanel>
                         <Field label="Runtime">
                           <Select value={functionRuntime} onChange={(event) => setFunctionRuntime(event.currentTarget.value)} aria-label="Function runtime">
@@ -153,19 +155,19 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     </ResourceSettingsBlock>
                   ) : git ? (
                     <>
-                      <ResourceSettingsBlock title="Source repo" description="The GitHub repository this service is built from.">
+                      <ResourceSettingsBlock title="Source repo">
                         <SettingsPanel>
                           <Field label="Repository">
                             <Input required value={repository} onChange={(event) => setRepository(event.currentTarget.value)} placeholder="org/app" />
                           </Field>
-                          <Field label="Root directory" description="The folder of the repository the Dockerfile is built from. Leave empty for the repository root.">
+                          <Field label="Root directory" description="Leave empty for the repository root.">
                             <Input value={context} onChange={(event) => setContext(event.currentTarget.value)} placeholder="/apps/api" />
                           </Field>
                         </SettingsPanel>
                       </ResourceSettingsBlock>
                       <ResourceSettingsBlock
                         title="Branch connected to production"
-                        description="Pushes to this branch are built and deployed automatically through the GitHub connection."
+                        description="Pushes to it deploy automatically."
                       >
                         <SettingsPanel>
                           <Field label="Branch">
@@ -173,12 +175,12 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                           </Field>
                         </SettingsPanel>
                       </ResourceSettingsBlock>
-                      <ResourceSettingsBlock title="Wait for CI" description="Trigger deployments after all GitHub Actions checks have completed successfully.">
+                      <ResourceSettingsBlock title="Wait for CI" description="Deploy only after GitHub Actions checks pass.">
                         <ToggleRow label="Wait for CI" checked={waitForCI} onChange={setWaitForCI} />
                       </ResourceSettingsBlock>
                     </>
                   ) : (
-                    <ResourceSettingsBlock title="Container image" description="The registry image this service runs. Save here, then deploy.">
+                    <ResourceSettingsBlock title="Container image">
                       <SettingsPanel>
                         <Field label="Image">
                           <Input required value={image} onChange={(event) => setImage(event.currentTarget.value)} placeholder="nginx:alpine" />
@@ -202,7 +204,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     port: port.trim(),
                   })}
                 >
-                  <ResourceSettingsBlock title="Public networking" description="Access your service over HTTP with a domain.">
+                  <ResourceSettingsBlock title="Public networking">
                     {publicUrl ? (
                       <SettingsPanel className="rw-net-url">
                         <a href={publicUrl} target="_blank" rel="noreferrer" className="rw-net-url-link">
@@ -215,28 +217,26 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                         </Muted>
                       </SettingsPanel>
                     ) : (
-                      <Muted size="sm">
-                        No public domain yet. Add one below, or connect Cloudflare in platform settings for automatic domains.
-                      </Muted>
+                      <Muted size="sm">No public domain yet.</Muted>
                     )}
                     <SettingsPanel className="rw-resource-settings-panel-spaced">
-                      <Field label="Custom domain" description="Point a DNS record at your cluster, then enter the hostname. Applies instantly.">
+                      <Field label="Custom domain" description="Point a DNS record at your cluster first.">
                         <Input value={host} onChange={(event) => setHost(event.currentTarget.value)} placeholder="api.example.com" />
                       </Field>
-                      <Field label="Port" description="The port your service listens on. Defaults to 8080.">
+                      <Field label="Port" description="Defaults to 8080.">
                         <Input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.currentTarget.value)} placeholder="8080" />
                       </Field>
                     </SettingsPanel>
-                    <ToggleRow label="HTTPS" description="Serve this domain over TLS. Applies instantly." checked={tls} onChange={setTls} />
-                    <ToggleRow label="Verify DNS" description="Check that the hostname resolves before reporting the domain as ready. Applies instantly." checked={dnsVerification} onChange={setDnsVerification} />
+                    <ToggleRow label="HTTPS" description="Applies instantly." checked={tls} onChange={setTls} />
+                    <ToggleRow label="Verify DNS" description="Wait for the hostname to resolve before reporting it ready. Applies instantly." checked={dnsVerification} onChange={setDnsVerification} />
                   </ResourceSettingsBlock>
                   {saveButton("networking")}
                 </FormStack>
-                <ResourceSettingsBlock title="Private networking" description="Other services in this environment can reach this service on the cluster network.">
+                <ResourceSettingsBlock title="Private networking">
                   {privateHost ? (
                     <RailCopyField label="Address" value={`${privateHost}:${servicePort}`} onCopy={() => copyText(`${privateHost}:${servicePort}`)} aria-label="Private address" />
                   ) : (
-                    <Muted size="sm">The private address appears once this service has been deployed.</Muted>
+                    <Muted size="sm">Available after the first deploy.</Muted>
                   )}
                 </ResourceSettingsBlock>
               </ResourceSettingsSection>
@@ -263,14 +263,14 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     ...(runOnShown ? { runOnTags: runOn.join(",") } : {}),
                   })}
                 >
-                  <ResourceSettingsBlock title="Replicas" description="How many instances of this service run." live>
+                  <ResourceSettingsBlock title="Replicas" live>
                     <SettingsPanel>
                       <Field label="Replicas">
                         <Input type="number" min="1" value={replicas} onChange={(event) => setReplicas(Number(event.currentTarget.value) || 1)} />
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Resources" description="CPU and memory for each replica. What it reserves is set aside for it; it may use more, up to the ceiling, while the server has room.">
+                  <ResourceSettingsBlock title="Resources">
                     {outOfMemoryNotice(item) ? <SettingsAlert tone="warning">{outOfMemoryNotice(item)}</SettingsAlert> : null}
                     <SettingsPanel>
                       <SizeFields
@@ -291,7 +291,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     </SettingsPanel>
                   </ResourceSettingsBlock>
                   <RunOnField data={data} region={region} value={runOn} onChange={setRunOn} note="Applies on deploy." />
-                  <ResourceSettingsBlock title="Autoscaling" description="Scale out when average CPU crosses your target." live>
+                  <ResourceSettingsBlock title="Autoscaling" live>
                     <ToggleRow
                       label="Enable autoscaling"
                       checked={autoscaling}
@@ -313,7 +313,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                   </ResourceSettingsBlock>
                   <ResourceSettingsBlock
                     title="Sleep when idle"
-                    description="Stop this service when nobody is using it and start it on the next request, which waits a few seconds while it wakes. It needs a public domain, and the serverless add-on on the cluster."
+                    description="Needs a public domain and the serverless add-on. The next request waits a few seconds while it wakes."
                     live
                   >
                     <ToggleRow
@@ -331,7 +331,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                         </Field>
                       </SettingsPanel>
                     ) : null}
-                    {sleeps && sleepCondition && sleepCondition.status !== "True" ? <Muted size="sm">{sleepCondition.message} Until then it keeps running.</Muted> : null}
+                    {sleeps && sleepCondition && sleepCondition.status !== "True" ? <Muted size="sm">{sleepCondition.message}</Muted> : null}
                   </ResourceSettingsBlock>
                   {saveButton("scale")}
                 </FormStack>
@@ -345,28 +345,26 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     className="rw-rail-form"
                     onSubmit={save("build", { dockerfile, watchPatterns, buildCache: buildCache ? "on" : "" })}
                   >
-                    <ResourceSettingsBlock title="Builder" description="Geass builds your repository with a Dockerfile using Kaniko.">
+                    <ResourceSettingsBlock title="Builder">
                       <SettingsPanel>
-                        <Field label="Dockerfile path" description="Path to your Dockerfile in the repository. Defaults to Dockerfile at the root directory.">
+                        <Field label="Dockerfile path" description="Defaults to Dockerfile at the root directory.">
                           <Input value={dockerfile} onChange={(event) => setDockerfile(event.currentTarget.value)} placeholder="/apps/api/Dockerfile" />
                         </Field>
                       </SettingsPanel>
                     </ResourceSettingsBlock>
-                    <ResourceSettingsBlock title="Watch paths" description="Gitignore-style rules that decide which changed files trigger a new deployment. One pattern per line." live>
+                    <ResourceSettingsBlock title="Watch paths" description="Gitignore-style patterns, one per line." live>
                       <SettingsPanel>
                         <Textarea rows={4} value={watchPatterns} onChange={(event) => setWatchPatterns(event.currentTarget.value)} placeholder={"/src/**\n!/docs/**"} spellCheck={false} aria-label="Watch paths" />
                       </SettingsPanel>
                     </ResourceSettingsBlock>
-                    <ResourceSettingsBlock title="Build cache" description="Reuse image layers between builds.">
+                    <ResourceSettingsBlock title="Build cache">
                       <ToggleRow label="Use build cache" checked={buildCache} onChange={setBuildCache} />
                     </ResourceSettingsBlock>
                     {saveButton("build")}
                   </FormStack>
                 ) : (
                   <ResourceSettingsBlock title="Builder">
-                    <Muted size="sm">
-                      {fn ? "Functions run your code directly on the runtime, so there is nothing to build." : "This service runs a prebuilt container image, so there is nothing to build."}
-                    </Muted>
+                    <Muted size="sm">Nothing to build.</Muted>
                   </ResourceSettingsBlock>
                 )}
               </ResourceSettingsSection>
@@ -384,7 +382,7 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                     metrics: metrics ? "on" : "",
                   })}
                 >
-                  <ResourceSettingsBlock title="Custom start command" description="Overrides the image entrypoint when new deployments start. Leave empty to use the image default.">
+                  <ResourceSettingsBlock title="Custom start command" description="Leave empty to use the image default.">
                     <SettingsPanel>
                       <Field label="Command">
                         <Input value={command} onChange={(event) => setCommand(event.currentTarget.value)} placeholder="node server.js" />
@@ -397,34 +395,36 @@ export function ServiceSettings({ item, name, data, project, reload, navigate, o
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Healthcheck path" description="Endpoint called before a deploy completes to make sure the new deployment is live. Leave empty to skip.">
+                  <ResourceSettingsBlock title="Healthcheck path" description="Leave empty to skip.">
                     <SettingsPanel>
                       <Field label="Path">
                         <Input value={healthPath} onChange={(event) => setHealthPath(event.currentTarget.value)} placeholder="/healthz" />
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Restart policy" description="Configure what to do when the process exits.">
+                  <ResourceSettingsBlock title="Restart policy">
                     <SettingsPanel>
                       <Field label="Policy">
                         <Input value="Always" disabled readOnly aria-label="Restart policy" />
                       </Field>
                     </SettingsPanel>
                   </ResourceSettingsBlock>
-                  <ResourceSettingsBlock title="Metrics" description="Expose Prometheus metrics from /metrics. Requires Prometheus Operator in the cluster." live>
+                  <ResourceSettingsBlock title="Metrics" description="Serves /metrics. Needs Prometheus Operator." live>
                     <ToggleRow label="Enable metrics" checked={metrics} onChange={setMetrics} />
                   </ResourceSettingsBlock>
                   {saveButton("deploy")}
                 </FormStack>
-                <ResourceSettingsBlock title="Deploy hook" description="A URL that deploys this service when something calls it.">
-                  <DeployHook project={resourceName(project)} environment={spec.environment} app={name} gitSource={Boolean(git)} />
-                </ResourceSettingsBlock>
+                {hideTokens ? null : (
+                  <ResourceSettingsBlock title="Deploy hook">
+                    <DeployHook project={resourceName(project)} environment={spec.environment} app={name} gitSource={Boolean(git)} />
+                  </ResourceSettingsBlock>
+                )}
               </ResourceSettingsSection>
             )}
 
             {show("general") && (
               <ResourceSettingsSection id="general" icon={Settings} title="General">
-                <ResourceSettingsBlock title="Resource" description="Where this service lives in your project.">
+                <ResourceSettingsBlock title="Resource">
                   <SettingsPanel>
                     <div className="rw-settings-usage-lines">
                       <div className="rw-settings-usage-line"><span>Project</span><strong>{spec.project || "—"}</strong></div>

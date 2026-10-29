@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, KeyRound, MoreVertical, Plus } from "lucide-react";
 import { action, api, resourceDisplayName, resourceName } from "@/lib/api";
 import { dashboardSession, isPlatformSession, sessionScopes } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
+import { publicOrigin } from "@/lib/transport";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Field, Input, Muted, Select } from "@/components/geass-ui";
 
@@ -133,7 +134,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
       setCreated(result);
       await tokens.refetch();
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setBusy(false);
     }
@@ -145,9 +146,9 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
       await action("/tokens/revoke", { id: revoking.id });
       setRevoking(null);
       await tokens.refetch();
-      alertUser("Token revoked");
+      alertUser("Removed token");
     } catch (error) {
-      alertUser(error.message);
+      alertError(error.message);
     } finally {
       setBusy(false);
     }
@@ -160,19 +161,13 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
     );
   };
 
-  const origin = typeof window === "undefined" ? "https://geass.example.com" : window.location.origin;
+  const origin = publicOrigin() || "https://geass.example.com";
   const usage = created?.item?.scope === "project"
     ? `export GEASS_TOKEN=${created.token}\ncurl -X POST -H "Authorization: Bearer $GEASS_TOKEN" ${origin}/api/token/deploy`
     : `export GEASS_TOKEN=${created?.token}\ncurl -H "Authorization: Bearer $GEASS_TOKEN" ${origin}/api/bootstrap`;
 
   return (
     <div className="rw-tokens">
-      <p className="rw-rail-body">
-        {scope === "project"
-          ? "A project token can deploy, read logs, and edit variables in one environment of this project, and nothing else. Use it in CI."
-          : "A workspace token acts like a dashboard user across every project you can see. Prefer a project token when a script only needs to deploy."}
-      </p>
-
       {!mutable ? (
         <Muted size="sm" className="rw-settings-empty-inline">Only admins can manage API tokens.</Muted>
       ) : tokens.isLoading ? (
@@ -227,7 +222,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
         {editing ? (
           <form onSubmit={create}>
             <Stack gap="sm">
-              <Field label="Name" description="Say where it is used, for example github-actions.">
+              <Field label="Name">
                 <Input
                   required
                   autoFocus
@@ -238,7 +233,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
                 />
               </Field>
               {scope === "project" ? (
-                <Field label="Environment" description="The token can only touch services in this environment.">
+                <Field label="Environment" description="The token works in this environment only.">
                   <Select
                     value={editing.environment}
                     aria-label="Token environment"
@@ -248,7 +243,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
                   </Select>
                 </Field>
               ) : (
-                <Field label="Access" description="Read only can view resources but change nothing. With logs, it can also read logs and the names of variables.">
+                <Field label="Access" description="With logs also reads logs and variable names.">
                   <Select
                     value={editing.role}
                     aria-label="Token access"
@@ -259,7 +254,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
                 </Field>
               )}
               {scope === "workspace" && places.options.length > 1 ? (
-                <Field label="Acts in" description="Where the token works. It sees and changes what that place does, and nothing else.">
+                <Field label="Acts in">
                   <Select
                     value={editing.place}
                     aria-label="Token scope"
@@ -290,7 +285,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
       <Modal opened={Boolean(created)} onClose={() => setCreated(null)} title="Your new token" centered size="lg">
         <Stack gap="sm">
           <Text size="sm">
-            Copy this token now. It is shown only once; if you lose it, revoke it and create another.
+            Copy this token now. It is shown only once.
           </Text>
           <div className="rw-webhook-secret">
             <code>{created?.token}</code>
@@ -306,7 +301,7 @@ export function ApiTokens({ scope, project, projects = [], mutable, data }) {
 
       <Modal opened={Boolean(revoking)} onClose={() => { if (!busy) setRevoking(null); }} title="Revoke token?" centered>
         <Text size="sm" mb="md">
-          Anything using <strong>{revoking?.name}</strong> stops working immediately. This cannot be undone.
+          Anything using <strong>{revoking?.name}</strong> stops working immediately.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={busy} onClick={() => setRevoking(null)}>Cancel</Button>

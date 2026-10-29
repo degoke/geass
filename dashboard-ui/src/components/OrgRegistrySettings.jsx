@@ -15,7 +15,7 @@ export function OrgRegistrySettings({ mutable }) {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState("");
 
-  if (!mutable) return <Muted size="sm" className="rw-settings-empty-inline">Only administrators of the whole organization can see and change its registry.</Muted>;
+  if (!mutable) return <Muted size="sm" className="rw-settings-empty-inline">Only organization administrators can manage the registry.</Muted>;
   if (registry.isLoading) return <Muted size="sm" className="rw-settings-empty-inline">Loading…</Muted>;
   if (registry.isError) return <Muted size="sm" className="rw-settings-empty-inline">{registry.error.message}</Muted>;
   const saved = registry.data;
@@ -43,21 +43,16 @@ export function OrgRegistrySettings({ mutable }) {
 
   return (
     <div className="rw-webhooks">
-      <p className="rw-rail-body">
-        Your organization&apos;s builds push their images to a registry. Set one of your own so that they push with a login that is yours alone.
-        Your builds run in a namespace of their own, which holds only that login, and cannot reach the cluster&apos;s private network: use a
-        registry that is reachable on the internet.
-      </p>
       <Group gap="sm">
         <Text fw={600} size="sm">Registry</Text>
         <Badge tone={saved.configured ? "success" : "neutral"}>{saved.configured ? "Your own" : saved.platformRepository ? "The platform's" : "None"}</Badge>
       </Group>
       {saved.configured ? <Muted size="sm">Images are pushed to {saved.repository}{saved.hasLogin ? ", with a saved login." : ", without a login."}</Muted> : null}
-      {!saved.configured && !saved.platformRepository ? <Muted size="sm">There is no registry yet, so builds do not run until you set one.</Muted> : null}
+      {!saved.configured && !saved.platformRepository ? <Muted size="sm">No registry set, so builds do not run.</Muted> : null}
       {form ? (
         <form onSubmit={save}>
           <Stack gap="sm">
-            <Field label="Repository" description="Where images are pushed, such as ghcr.io/acme/builds.">
+            <Field label="Repository" description="Must be reachable from the internet.">
               <Input required autoFocus value={form.repository} aria-label="Repository" placeholder="ghcr.io/acme/builds" onChange={(event) => setForm({ ...form, repository: event.currentTarget.value })} />
             </Field>
             <Group grow align="flex-start">

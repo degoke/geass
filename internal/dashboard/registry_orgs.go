@@ -7,13 +7,15 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
 // An organization's own registry. Its builds push there with a login of its own, and run in a namespace that holds that login
-// and not the platform's (see platform.OrgBuildPolicy). Without one they use the platform's registry. It is set by an
+// and not the platform's (see platform.OrgBuildPolicy). Without one they use the platform's registry, unless the platform's
+// spec.tenancy.registry is set, under which they do not build at all (see platform.RegistryIsolation). It is set by an
 // administrator of the whole organization, who is the only one to see or change it.
 
 const orgRegistryWhat = "The registry"
@@ -51,6 +53,8 @@ func (s *Server) handleAPIOrgRegistry(w http.ResponseWriter, r *http.Request) {
 		"configured":         registry != nil && registry.Repository != "",
 		"hasLogin":           registry != nil && registry.CredentialRef != nil && registry.CredentialRef.Name != "",
 		"platformRepository": config.Spec.Registry.Repository != "",
+		// Under spec.tenancy.registry the organization's builds use its own registry or none: the platform's is no fallback.
+		"ownRequired": platform.RegistryPolicyOf(&config) != "",
 	})
 }
 
@@ -84,6 +88,15 @@ func (s *Server) orgRegistrySave(w http.ResponseWriter, r *http.Request, orgName
 	repository := strings.TrimSpace(r.FormValue("repository"))
 	if repository == "" || !validImageReference(repository) || strings.Contains(repository, "@") || !strings.Contains(repository, "/") {
 		orgFail(w, http.StatusBadRequest, "enter the repository images are pushed to, like ghcr.io/acme/builds")
+		return
+	}
+	switch conflict, err := s.orgRegistryConflicts(r.Context(), orgName, repository); {
+	case err != nil:
+		orgFail(w, http.StatusInternalServerError, "could not check the registry")
+		return
+	case conflict:
+		// Who holds it is not said: one organization does not learn another's registry from this.
+		orgFail(w, http.StatusConflict, "that repository overlaps a part of a registry that belongs to the platform or to another organization: choose another")
 		return
 	}
 	username, password := strings.TrimSpace(r.FormValue("username")), r.FormValue("password")
@@ -154,6 +167,24 @@ func (s *Server) orgRegistryClear(w http.ResponseWriter, r *http.Request, orgNam
 	}
 	_ = s.deleteSystemSecret(asSystem(r.Context()), platform.OrgRegistrySecretName(orgName))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// orgRegistryConflicts reports whether, under spec.tenancy.registry, the organization may not take the repository as its
+// registry: it overlaps the platform's repository outside the organization's own path in it, or another organization's
+// registry. The first organization to take a repository keeps it; one that takes an overlapping one some other way (with
+// kubectl, or in a race with this check) makes both unusable, and the operator says so on their services. Without the
+// setting anything goes, as before.
+func (s *Server) orgRegistryConflicts(ctx context.Context, orgName, repository string) (bool, error) {
+	config, err := s.platformConfig(ctx)
+	if err != nil || platform.RegistryPolicyOf(&config) == "" {
+		return false, err
+	}
+	var orgs geassv1alpha1.GeassOrganizationList
+	if err := s.Client.List(asSystem(ctx), &orgs, client.InNamespace(systemNamespace)); err != nil {
+		return false, err
+	}
+	claims := platform.NewRegistryClaims(config.Spec.Registry.Repository, orgs.Items)
+	return claims.WouldConflict(config.Spec.Registry.Repository, orgName, repository), nil
 }
 
 // removeOrganizationRegistry takes the login of an organization that is gone out of the system namespace.

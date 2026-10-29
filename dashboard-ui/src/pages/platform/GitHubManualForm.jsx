@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { action } from "@/lib/api";
 import { canMutate, useBootstrap } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Field, FormStack, Input, Textarea } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
 
@@ -13,8 +13,7 @@ export function GitHubManualForm({ reload }) {
   return (
     <SettingsPanel variant="flat" className="rw-settings-panel-spaced">
       <h3 className="rw-settings-section-title">Manual credentials</h3>
-      <p className="rw-rail-body">Paste values from an existing GitHub App.</p>
-      <FormStack className="rw-rail-form" onSubmit={(event) => { event.preventDefault(); action("/settings/github/save", values).then(() => { reload(); queryClient.invalidateQueries({ queryKey: ["github-settings"] }); alertUser("GitHub App credentials saved"); }).catch((error) => alertUser(error.message)); }}>
+      <FormStack className="rw-rail-form" onSubmit={(event) => { event.preventDefault(); action("/settings/github/save", values).then(() => { reload(); queryClient.invalidateQueries({ queryKey: ["github-settings"] }); alertUser("GitHub App saved"); }).catch((error) => alertError(error.message)); }}>
         <Field label="App ID"><Input required value={values.appID} onChange={(event) => setValues({ ...values, appID: event.target.value })} /></Field>
         <Field label="Client ID"><Input required value={values.clientID} onChange={(event) => setValues({ ...values, clientID: event.target.value })} /></Field>
         <Field label="App slug"><Input required value={values.slug} onChange={(event) => setValues({ ...values, slug: event.target.value })} /></Field>

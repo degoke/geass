@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { action, list, resourceDisplayName, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { action, list, projectDisplayName, resourceName } from "@/lib/api";
+import { alertUser, alertError } from "@/lib/notify";
 import { Button, Checkbox, Switch } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
 
@@ -27,21 +27,17 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
     event.preventDefault();
     setBusy(true);
     action(`/projects/${name}/network`, { isolation: isPrivate ? "Project" : "None", allowFromProjects: isPrivate ? allowed : [], blockNodeAddresses: blockNodes })
-      .then(() => { reload(); alertUser("Network settings saved"); })
-      .catch((error) => alertUser(error.message))
+      .then(() => { reload(); alertUser("Saved"); })
+      .catch((error) => alertError(error.message))
       .finally(() => setBusy(false));
   };
 
   return (
     <form className="rw-rail-form" onSubmit={save}>
-      <p className="rw-rail-body">
-        Services can always reach each other, other projects and the internet. This controls who can reach this
-        project&apos;s services. It applies instantly <span className="rw-live-badge">Applies instantly</span>
-      </p>
       <SettingsPanel className="rw-resource-settings-toggle-row">
         <Switch
           label="Keep this project's services private"
-          description="Only this project's own services (in every environment), Geass itself, and visitors who arrive through your domains can reach them. Other projects cannot."
+          description="Other projects cannot reach them."
           checked={isPrivate}
           disabled={!mutable}
           onChange={(event) => setIsPrivate(event.currentTarget.checked)}
@@ -58,7 +54,7 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
                 return (
                   <Checkbox
                     key={other}
-                    label={resourceDisplayName(item) === other ? other : `${resourceDisplayName(item)} (${other})`}
+                    label={projectDisplayName(item)}
                     checked={allowed.includes(other)}
                     disabled={!mutable}
                     onChange={(event) => toggle(other, event.currentTarget.checked)}
@@ -67,27 +63,23 @@ export function ProjectNetwork({ project, data, mutable, reload }) {
               })}
             </div>
           ) : (
-            <p className="rw-rail-hint">There are no other projects.</p>
+            <p className="rw-rail-hint">No other projects.</p>
           )}
         </div>
       ) : (
-        <p className="rw-rail-hint">Every project in the cluster can reach this project&apos;s services.</p>
+        <p className="rw-rail-hint">Every project can reach this project&apos;s services.</p>
       )}
 
       <SettingsPanel className="rw-resource-settings-toggle-row">
         <Switch
-          label="Keep this project's services away from the cluster's machines"
-          description="Services cannot open connections to the addresses of the servers Geass runs on, where each server's own tools and metrics answer. The Kubernetes API stays reachable for databases that need it. Geass follows the servers as they join and leave. A service that calls another through a server's address, such as its own public address, stops working."
+          label="Keep this project's services away from the cluster's servers"
+          description="Services cannot connect to the servers' own addresses, including their own public address."
           checked={blockNodes}
           disabled={!mutable}
           onChange={(event) => setBlockNodes(event.currentTarget.checked)}
         />
       </SettingsPanel>
 
-      <p className="rw-rail-hint">
-        Whatever you choose here, services are never allowed to read the cloud provider&apos;s credentials for the
-        machine they run on.
-      </p>
       <SettingsFormActions>
         <Button type="submit" disabled={!mutable || busy || !changed}>Save</Button>
       </SettingsFormActions>

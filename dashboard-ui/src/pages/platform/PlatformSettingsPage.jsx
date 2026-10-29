@@ -8,6 +8,8 @@ import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
 import { SETTINGS_LINKS } from "@/lib/platform-nav";
 import { canMutate, isPlatformSession } from "@/lib/dashboard";
+import { managedFor } from "@/lib/managed";
+import { useDashboardOptions, visibleSettingsLinks } from "@/lib/options";
 import { SettingsDivider, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 import { DomainSettingsPage } from "@/pages/platform/DomainSettingsPage";
 import { ClusterCapacityPage } from "@/pages/platform/ClusterCapacityPage";
@@ -51,6 +53,7 @@ function cloudflareInfoFromBootstrap(data, apiPayload) {
 }
 
 export function PlatformSettingsPage({ data, page, reload }) {
+  const { hidden } = useDashboardOptions();
   const config = data?.platformConfig?.items?.[0];
   const connectorsPage = page === "connectors";
   const github = useQuery({ queryKey: ["github-settings"], queryFn: () => api("/api/settings/github"), enabled: connectorsPage });
@@ -65,7 +68,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page !== "tokens" && page !== "alerts" && page !== "registry" && !isPlatformSession(data)) {
     return (
       <SettingsSection title="Settings" flat>
-        <p className="rw-rail-body">These settings belong to the platform's administrators. As an administrator of an organization you manage its API tokens and its alerts here.</p>
+        <p className="rw-rail-body">Only the platform's administrators can change these.</p>
       </SettingsSection>
     );
   }
@@ -101,7 +104,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
   if (page === "auth") {
     return (
       <SettingsSection title="Sign-in" flat>
-        <AuthSettings mutable={canMutate(data)} />
+        <AuthSettings mutable={canMutate(data)} managed={managedFor(data, "signIn")} />
       </SettingsSection>
     );
   }
@@ -125,7 +128,6 @@ export function PlatformSettingsPage({ data, page, reload }) {
   return (
     <>
       <SettingsSection title="General settings" flat>
-        <p className="rw-rail-body">Workspace overview and links to platform configuration.</p>
         <SettingsPanel>
           <KeyValueTable
             items={[
@@ -139,7 +141,7 @@ export function PlatformSettingsPage({ data, page, reload }) {
       <SettingsDivider />
       <SettingsSection title="Platform" flat>
         <SettingsPanel className="rw-settings-link-list">
-          {SETTINGS_LINKS.filter((item) => item.id !== "general" && item.id !== "usage").map((item) => (
+          {visibleSettingsLinks(SETTINGS_LINKS, hidden).filter((item) => item.id !== "general" && item.id !== "usage").map((item) => (
             <AppLink key={item.id} href={item.to} className="rw-settings-platform-link">
               {item.label}
             </AppLink>

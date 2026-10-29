@@ -42,6 +42,8 @@ const (
 	// backupRetryInterval is how soon a database is looked at again after its backups could not be
 	// brought up to date. The database itself stays up meanwhile.
 	backupRetryInterval = time.Minute
+	// backupFirstLookInterval is how soon a database with no restore point is looked at again.
+	backupFirstLookInterval = time.Minute
 
 	messageRestoringDatabase = "Restoring database from backup"
 	defaultPostgresVersion   = "16"
@@ -166,6 +168,9 @@ func (r *GeassDatabaseReconciler) planBackups(ctx context.Context, db *geassv1al
 		return nil, err
 	}
 	plan.archive = archive
+	if err := r.ensureArchiveCredentials(ctx, db, archive, wsNS); err != nil {
+		return nil, err
+	}
 	plan.health.StorageReady = true
 	return plan, nil
 }
@@ -381,6 +386,7 @@ func cnpgBackupConfiguration(plan *backupPlan) *cnpgv1.BackupConfiguration {
 		RetentionPolicy: platform.BackupRetentionPolicy(archive.Spec.RetentionDays),
 		BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{
 			DestinationPath: platform.BackupDestinationPath(archive.Spec.Storage.Bucket, archive.Spec.Project),
+			EndpointURL:     standInS3URL(),
 			ServerName:      archive.Spec.ServerName,
 			S3Credentials: &cnpgv1.S3Credentials{
 				AccessKeyID:     selector(platform.BackupSecretKeyAccessKeyID),
@@ -427,12 +433,13 @@ func (r *GeassDatabaseReconciler) planRecovery(ctx context.Context, db *geassv1a
 			Database:       databaseName(db),
 			Owner:          appContainerName,
 			Secret:         &corev1.LocalObjectReference{Name: db.Name + "-bootstrap"},
-			RecoveryTarget: recoveryTarget(restore),
+			RecoveryTarget: recoveryTarget(restore, archive),
 		},
 		external: cnpgv1.ExternalCluster{
 			Name: recoverySourceName,
 			BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{
 				DestinationPath: platform.BackupDestinationPath(archive.Spec.Storage.Bucket, archive.Spec.Project),
+				EndpointURL:     standInS3URL(),
 				ServerName:      archive.Spec.ServerName,
 				S3Credentials: &cnpgv1.S3Credentials{
 					AccessKeyID:     selector(platform.BackupSecretKeyAccessKeyID),
@@ -446,16 +453,51 @@ func (r *GeassDatabaseReconciler) planRecovery(ctx context.Context, db *geassv1a
 	return plan, nil
 }
 
-func recoveryTarget(restore *geassv1alpha1.GeassDatabaseRestoreSpec) *cnpgv1.RecoveryTarget {
+// recoveryTarget is where a restore stops, and the base copy it starts from. A restore that does not name a copy would
+// start from the newest one in the archive's catalog, which may be one that cannot be restored (see verifyArchivedWal),
+// so it starts from the newest restore point the archive lists: those are the copies that can.
+func recoveryTarget(restore *geassv1alpha1.GeassDatabaseRestoreSpec, archive *geassv1alpha1.GeassBackupArchive) *cnpgv1.RecoveryTarget {
 	switch {
 	case restore.RestorePoint != "":
 		immediate := true
 		return &cnpgv1.RecoveryTarget{BackupID: restore.RestorePoint, TargetImmediate: &immediate}
 	case restore.Time != nil:
-		return &cnpgv1.RecoveryTarget{TargetTime: platform.RestoreTargetTime(restore.Time.Time)}
+		target := &cnpgv1.RecoveryTarget{TargetTime: platform.RestoreTargetTime(restore.Time.Time)}
+		if point := newestRestorePointNotAfter(archive, restore.Time.Time); point != "" {
+			target.BackupID = point
+		}
+		return target
 	default:
+		if points := archive.Status.RestorePoints; len(points) > 0 {
+			newest := points[0]
+			for _, point := range points {
+				if point.Time.After(newest.Time.Time) {
+					newest = point
+				}
+			}
+			return &cnpgv1.RecoveryTarget{BackupID: newest.ID}
+		}
 		return nil
 	}
+}
+
+// newestRestorePointNotAfter is the newest restore point that finished at or before the moment a restore is asked to
+// reach. An empty ID means none is listed, and the restore picks its copy as it always did.
+func newestRestorePointNotAfter(archive *geassv1alpha1.GeassBackupArchive, at time.Time) string {
+	var best *geassv1alpha1.GeassRestorePoint
+	for i := range archive.Status.RestorePoints {
+		point := &archive.Status.RestorePoints[i]
+		if point.Time.After(at) {
+			continue
+		}
+		if best == nil || point.Time.After(best.Time.Time) {
+			best = point
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	return best.ID
 }
 
 // validateRestore rejects restores that cannot succeed, with messages written for end users.
@@ -542,6 +584,11 @@ func (r *GeassDatabaseReconciler) reconcileBackupLifecycle(ctx context.Context, 
 	if err != nil {
 		return err
 	}
+	r.verifyArchivedWal(ctx, plan, &observed)
+	r.backupLook.set(db, len(observed.restorePoints) == 0 || observed.unverified)
+	if err := r.retakeBackupIfNone(ctx, db, wsNS, plan, observed); err != nil {
+		return err
+	}
 	if err := r.writeArchiveStatus(ctx, plan.archive, observed, r.liveWindowEnd(plan.archive, observed)); err != nil {
 		return err
 	}
@@ -553,6 +600,7 @@ func (r *GeassDatabaseReconciler) reconcileBackupLifecycle(ctx context.Context, 
 // storage and the observed backups say.
 func backupStatusFor(health platform.BackupHealth, observed observedBackups, archive string) *geassv1alpha1.GeassDatabaseBackupStatus {
 	health.Archiving, health.LastSuccess, health.LastFailure = observed.archiving, observed.lastBackup(), observed.lastFailure
+	health.Unrestorable = observed.unrestorableMessage()
 	state, message := platform.DatabaseBackupState(health)
 	status := &geassv1alpha1.GeassDatabaseBackupStatus{State: state, Message: message, Archive: archive}
 	if last := observed.lastBackup(); last != nil {
@@ -634,6 +682,12 @@ type observedBackups struct {
 	lastFailure   *time.Time
 	archiving     *bool
 	restorePoints []geassv1alpha1.GeassRestorePoint
+	// candidates are the completed backups the restore points were made from, with the log files each needs.
+	candidates []cnpgv1.Backup
+	// unusable are base copies that are in the bucket and cannot be restored (see verifyArchivedWal).
+	unusable []unusableBackup
+	// unverified is that a restore point is listed whose log files have not been checked yet, because the copy is new.
+	unverified bool
 }
 
 // lastBackup is when the newest base backup finished, from whichever source knows.
@@ -678,6 +732,7 @@ func (r *GeassDatabaseReconciler) observeBackups(ctx context.Context, db *geassv
 			continue // already pruned from backup storage by retention
 		}
 		observed.restorePoints = append(observed.restorePoints, geassv1alpha1.GeassRestorePoint{ID: backup.Status.BackupID, Time: *backup.Status.StoppedAt})
+		observed.candidates = append(observed.candidates, *backup)
 	}
 	slices.SortFunc(observed.restorePoints, func(a, b geassv1alpha1.GeassRestorePoint) int { return b.Time.Compare(a.Time.Time) })
 	if len(observed.restorePoints) > platform.MaxRestorePoints {

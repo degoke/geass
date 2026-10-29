@@ -47,6 +47,8 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/openapi.json", "This description of the API", accessViewer, tagService, nil, false},
 	{http.MethodGet, "/events", "A stream that says when anything changes, so a caller need not poll", accessViewer, tagService, nil, true},
 	{http.MethodGet, "/usage", "Resource use across the cluster", accessViewer, tagService, nil, false},
+	{http.MethodGet, "/usage/hours", "What each organization reserved, hour by hour, for billing (spec.usage.enabled). Send ?from= and ?to= (RFC 3339) and optionally ?org=. The platform's administrators only", accessAdmin, tagService, nil, false},
+	{http.MethodGet, "/mail/usage", "What each organization sent through the platform's mail relay (spec.tenancy.mail.relay), and what it was refused, since the relay started: counts kept in the relay's memory. Send ?org= for one. The platform's administrators only", accessAdmin, tagService, nil, false},
 
 	// ---- signing in ----
 	{http.MethodPost, "/auth/device", "Start a sign-in from a program. Returns a code for the person to approve", accessPublic, tagAuth,
@@ -108,6 +110,14 @@ var v1Operations = []v1Operation{
 	{http.MethodPost, "/projects/{name}/variables/save", "Set a shared variable", accessAdmin, kindProjects, []v1Field{
 		{pathNameParam, jsonString, "The variable's name", true}, {formEnvironment, jsonString, "The environment", true},
 		{"value", jsonString, "The value", true}, {"secret", jsonBoolean, "Keep the value secret", false},
+	}, false},
+	{http.MethodPost, "/projects/{name}/export", "Export a project as a bundle (application/gzip): its definition, with its services, databases and buckets, and none of its secret values. Add ?summary=true for the manifest alone, as JSON: what has to be entered again on the target, and what a bundle cannot carry. It only reads", accessAdmin, kindProjects, nil, false},
+	{http.MethodPost, "/projects/import", "Make a new project from a bundle that another cluster (or this one) exported. Send the bundle as the body (Content-Type: application/gzip) with ?dryRun=true&name=&region=&keepProjectId=true, or as JSON with the same fields and the bundle's base64 as bundle. A dry run says what would be made and what the cluster lacks, and changes nothing. An import makes drafts: nothing runs until it is deployed", accessAdmin, kindProjects, []v1Field{
+		{"bundle", jsonString, "The bundle, base64. Send the raw bytes as the body instead when the body is not JSON", false},
+		{"dryRun", jsonBoolean, "Only say what would be made", false},
+		{pathNameParam, jsonString, "The new project's name. Default: the name in the bundle. Refused when a project you can see has it", false},
+		{formRegion, jsonString, "Put the project in this region instead of the bundle's", false},
+		{"keepProjectId", jsonBoolean, "Make the project under the id it had, which database backups are filed under. For the platform's administrators", false},
 	}, false},
 	{http.MethodGet, "/projects/{name}/metrics", "CPU, memory and network over time for a project", accessViewer, kindProjects, nil, false},
 	{http.MethodGet, "/projects/{name}/logs", "Recent logs of the project's services", accessObserver, kindProjects, nil, false},
@@ -292,6 +302,51 @@ var v1Operations = []v1Operation{
 	{http.MethodDelete, "/servers/{name}", "Remove a server that was added on its own: its services move elsewhere and a machine made for it is deleted", accessAdmin, tagCompute, []v1Field{fieldConfirm}, false},
 	{http.MethodGet, "/cluster/metrics", "What services use across the cluster, and what the machines are doing", accessViewer, tagNodes, nil, false},
 	{http.MethodGet, "/operator/metrics", "How the operator is doing", accessViewer, tagNodes, nil, false},
+
+	// ---- GitHub through an App a provider runs (external mode) ----
+	{http.MethodGet, "/github/connections", "The connections of GitHub Apps that a provider outside the cluster runs, each with its installations and the state of their tokens. The platform's administrators only", accessViewer, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}", "Make or change the connection of a GitHub App a provider runs: Geass then never mints a token or holds the App's key. The webhook secret is kept in a Secret and never shown again. The platform's administrators only", accessAdmin, tagGitHub, []v1Field{
+		{formProvider, jsonString, "Who runs the App, as the dashboard names it. Required when the connection is made", false},
+		{formAppSlug, jsonString, "The App's slug on GitHub (github.com/apps/<appSlug>)", false},
+		{formInstallURL, jsonString, "An https address where a person installs the App; connecting a project with no installation sends them there", false},
+		{formWebhookSecret, jsonString, "The secret the provider signs forwarded events with, 32 to 512 characters. Required when the connection is made; send it again to change it", false},
+	}, false},
+	{http.MethodGet, "/github/connections/{name}", "One connection of a GitHub App a provider runs. The platform's administrators only", accessViewer, tagGitHub, nil, false},
+	{http.MethodDelete, "/github/connections/{name}", "Remove a connection of a GitHub App a provider runs, with its tokens. Refused while a project is connected through it", accessAdmin, tagGitHub, []v1Field{fieldConfirm}, false},
+	{http.MethodGet, "/github/connections/{name}/installations", "The installations of the App that belong to this cluster, with the state and expiry of each one's token", accessViewer, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}/installations/{id}", "Record an installation of the App as this cluster's, and the organization whose projects may connect to it", accessAdmin, tagGitHub, []v1Field{
+		{formAccount, jsonString, "The login of the GitHub user or organization the App is installed on", true},
+		{formAccountType, jsonString, "User, Organization or Enterprise", false},
+		{formOrg, jsonString, "The organization whose projects may connect to it. Empty is the platform's: projects of no organization", false},
+	}, false},
+	{http.MethodDelete, "/github/connections/{name}/installations/{id}", "Remove an installation and its token. The projects connected through it are named in the answer, and stop building from GitHub until connected again", accessAdmin, tagGitHub, nil, false},
+	{http.MethodPut, "/github/connections/{name}/installations/{id}/token", "Give Geass the installation's access token, which it uses for everything it does on GitHub for that installation. Stored in a Secret, never returned", accessAdmin, tagGitHub, []v1Field{
+		{formToken, jsonString, "The installation access token GitHub issued", true},
+		{formExpiresAt, jsonString, "When it expires (RFC 3339), as GitHub said with it", true},
+	}, false},
+	{http.MethodPost, "/projects/{name}/github/install", "Connect a project to GitHub. With the cluster's own App, the answer is where to install it; with a provider's, the project is connected to an installation of it (the only one its organization has, or the one sent)", accessAdmin, kindProjects, []v1Field{
+		{formEnvironment, jsonString, "The environment the person came from", false},
+		{formInstallation, jsonInteger, "With a provider's App: the installation to connect to", false},
+	}, false},
+	{http.MethodGet, "/projects/{name}/github/installations", "With a provider's App: the GitHub accounts a project can be connected to", accessAdmin, kindProjects, nil, false},
+
+	// ---- abuse detection (spec.tenancy.abuse), the platform's alone ----
+	{http.MethodGet, "/abuse/suspects", "The services suspected of abuse, with their evidence (a signal, not proof), those the CPU signal is counting, and those that were cleared. Send ?org= for one organization's. The platform's administrators only", accessAdmin, tagAbuse, nil, false},
+	{http.MethodPost, "/abuse/suspects/{name}/clear", "Clear a service that was reviewed: the suspicion goes (a suspended service runs again), and the CPU signal leaves it alone for some days. A service that is not suspected can be cleared ahead of a heavy job. The platform's administrators only", accessAdmin, tagAbuse, []v1Field{
+		{formAbuseDays, jsonInteger, "How many days the CPU signal leaves it alone, 1 to 365. Default: spec.tenancy.abuse.reviewExemptionDays, or 30", false},
+		{formAbuseNote, jsonString, "Why, for the record", false},
+	}, false},
+	{http.MethodPost, "/abuse/suspects/{name}/release", "Let a suspended service run again. It stays suspected until it is cleared. The platform's administrators only", accessAdmin, tagAbuse, nil, false},
+	{http.MethodPost, "/abuse/reports", "Report a workload from a detector outside Geass (Falco through falcosidekick's webhook output, or a provider's own tooling): the same suspicion, condition, event and action as the CPU signal's. A token of the platform's administrators only", accessAdmin, tagAbuse, []v1Field{
+		{formAbuseService, jsonString, "The service, by name. Or send namespace and pod", false},
+		{formAbuseNS, jsonString, "The namespace of the pod (Falco: output_fields.k8s.ns.name)", false},
+		{formAbusePod, jsonString, "A pod that is a copy of the service (Falco: output_fields.k8s.pod.name)", false},
+		{formAbuseReporter, jsonString, "Who reports it, such as falco. Default for a Falco event: falco", false},
+		{formAbuseReason, jsonString, "What was seen, such as a rule's name. Default for a Falco event: its rule. It is shown to the organization on its service", false},
+		{formAbusePriority, jsonString, "How urgent the reporter thinks it is", false},
+		{formAbuseTime, jsonString, "When it was seen (RFC 3339)", false},
+		{formFalcoFields, "object", "Falco's output_fields, as falcosidekick sends them: the namespace and pod are read from it", false},
+	}, false},
 
 	// ---- templates ----
 	{http.MethodGet, "/templates", "Catalog and saved templates", accessObserver, tagTemplates, nil, false},

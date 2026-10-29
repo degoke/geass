@@ -1,0 +1,14 @@
+# The access a dashboard-only Geass process needs (the operator started with --controllers=false), for when it runs as
+# a ServiceAccount of the cluster it serves. A process that runs outside the cluster with a kubeconfig binds the same
+# ClusterRole to its own user instead (kubectl create clusterrolebinding ... --clusterrole=geass-dashboard).
+#
+#   kubectl apply -k config/dashboard-only
+#
+# It is smaller than the controllers' ClusterRole: it cannot create Deployments, Services, Ingresses, Jobs,
+# NetworkPolicies, PersistentVolumeClaims or any add-on's objects, and it has no access to the leader election Lease.
+# See website/src/content/docs/docs/operations/dashboard-only.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: geass-system
+resources:
+- rbac.yaml

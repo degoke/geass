@@ -19,7 +19,9 @@ database backups there. Geass supports three things with it:
 This page is about the AWS connection for buckets and backups, which belongs to one project. Geass can also create **EC2
 machines** in your AWS account, for [node pools](/docs/guides/node-pools/). That needs a different connection, with the purpose
 Compute, that belongs to the cluster and has its own key and policy: see [Cloud connections for machines](/docs/guides/connectors/clouds/#amazon-ec2).
-A connection made as described below never creates machines, and the key on this page cannot launch instances.
+A connection made as described below never creates machines, and the key on this page cannot launch instances. It also
+takes an IAM user's key only: the session token of temporary credentials, such as the ones an assumed role gets, is read by
+the connection for machines (see [Temporary credentials](/docs/guides/connectors/clouds/#temporary-credentials)).
 
 ## Before you start
 
@@ -87,9 +89,8 @@ creates is named `geass-...`, which is what the IAM statement above matches.
 
 1. Open **Settings** → **Connectors** and choose **Configure** (or **Manage**) on the **AWS** card.
 2. Enter a **Name** such as `prod-aws`. It becomes the name of the connection.
-3. Enter the **Project scope**. Use the project ID, which starts with `proj-` and appears in the project's address
-   (`/projects/proj-1a2b3c4d`). The placeholder shows `payments`, but a project's display name is rejected with
-   "project was not found". `kubectl -n geass-system get geassprojects` lists the IDs.
+3. Choose the **Project** by its name. The connection is saved under the project's ID, which starts with `proj-` and appears in
+   the project's address (`/projects/proj-1a2b3c4d`); the API and `kubectl -n geass-system get geassprojects` use the ID.
 4. Enter the **Access key ID**, the **Secret access key** and the **Region** (the field starts as `us-east-1`).
 5. Choose **Save connection**.
 
@@ -176,7 +177,7 @@ For project backups:
 
 ## Rotate AWS credentials
 
-Under **Settings** → **Connectors** → **Cloud connections**, **Edit** on the connection replaces its credentials: type only the
+Under **Settings** → **Connectors** → **AWS**, **Edit** on the connection replaces its credentials: type only the
 values that change. You can also replace the values in the connection's Secret yourself:
 
 ```bash title="Rotate the connection key"
@@ -203,7 +204,7 @@ is refused instead with "that name is already taken": it may not take a Secret t
 
 Remove it after you delete the buckets and backups that use it. Deleting an AWS bucket needs the connection, so a
 connection you remove too early leaves the bucket stuck deleting with "AWS connection is unavailable". **Remove** on the
-connection under **Settings** → **Connectors** → **Cloud connections** (or `DELETE /api/v1/connections/{name}`) refuses
+connection under **Settings** → **Connectors** → **AWS** (or `DELETE /api/v1/connections/{name}`) refuses
 while a pool, a machine, an object store, a database, the backups of a deleted database, a project's backup bucket or the
 control plane firewall still uses it, and says which. `kubectl` does not check, so it will let you remove a connection that
 they still need:

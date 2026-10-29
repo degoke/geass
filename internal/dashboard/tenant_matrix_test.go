@@ -243,6 +243,8 @@ func matrixAttacks() []attack {
 		{"project network", get, "/api/projects/pa1/network", nil, true},
 		{"project quota", get, "/api/projects/pa1/quota", nil, true},
 		{"project github repos", get, "/api/projects/pa1/github/repos", nil, true},
+		{"project export", post, "/api/projects/pa1/export", nil, true},
+		{"v1 project export", post, "/api/v1/projects/pa1/export", nil, true},
 		// Changing a service.
 		{"app update", post, "/api/apps/app-a1/update", form("port", "9191"), false},
 		{"app display name", post, "/api/apps/app-a1/display-name", form("displayName", "hijacked"), true},
@@ -435,10 +437,15 @@ func TestAnOrganizationCannotReachThePlatformsOwnRoutes(t *testing.T) {
 		{http.MethodPost, "/api/settings/registry/save"}, {http.MethodPost, "/api/settings/alerts/channels"},
 		{http.MethodPost, "/api/nodes/worker-1/placement"}, {http.MethodPost, "/api/platform/default-region"},
 		{http.MethodPost, "/api/shared-databases/create"}, {http.MethodPost, "/api/ha-readiness/check"},
+		{http.MethodPost, "/api/shared-databases/shared-db/org"}, {http.MethodGet, "/api/shared-databases/mixed"},
+		{http.MethodGet, "/api/v1/shared-databases/mixed"},
 		{http.MethodPost, "/api/templates/create"}, {http.MethodPost, "/api/templates/x/delete"},
 		{http.MethodGet, "/api/orgs"}, {http.MethodPost, "/api/orgs/create"}, {http.MethodPost, "/api/settings/auth/tenancy"},
 		{http.MethodGet, "/api/cluster/metrics"}, {http.MethodGet, "/api/operator/metrics"}, {http.MethodGet, "/api/v1/nodes"},
+		{http.MethodGet, "/api/v1/usage/hours"}, {http.MethodGet, "/api/v1/mail/usage"},
 		{http.MethodGet, "/api/object-stores/" + platform.ClusterObjectStoreName + "/logs"},
+		{http.MethodGet, "/api/v1/github/connections"}, {http.MethodPost, "/api/github/connections/rungeass/save"},
+		{http.MethodPost, "/api/github/connections/rungeass/installations/42/token"},
 		{http.MethodGet, "/api/something-nobody-classified"},
 	} {
 		// Each is tried on a cluster of its own: what the platform's administrator does to the settings (turning

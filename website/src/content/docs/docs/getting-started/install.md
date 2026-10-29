@@ -182,6 +182,9 @@ With `GEASS_ACME_EMAIL` set, the object also has this under `addons`:
 | `GEASS_ACME_EMAIL` | installer | Contact address for the cluster's Let's Encrypt account. Checked at the first step, then stored as `spec.addons.certManager.acmeEmail`. Without it Geass creates no certificate issuer. See [HTTPS certificates](#https-certificates) | none |
 | `GEASS_MULTI_SITE` | installer | `1`, `true`, `yes` or `on`. Builds a cluster whose nodes are at different providers. Needs `GEASS_NODE_EXTERNAL_IP` | off |
 | `GEASS_NODE_EXTERNAL_IP` | installer | This server's public IP address. Required with `GEASS_MULTI_SITE`, and must parse as an IP address | none |
+| `GEASS_MESH` | installer | `wireguard` or `tailscale`: nodes at different sites, some behind a NAT, joined over a mesh. `tailscale` also needs `GEASS_TAILSCALE_AUTH_KEY_FILE`. See [Mesh networking](/docs/operations/mesh-networking/) | none |
+| `GEASS_TAILSCALE_AUTH_KEY_FILE` | installer | With `GEASS_MESH=tailscale`: a file that holds the auth key | none |
+| `GEASS_TAILSCALE_CONTROL_URL` | installer | With `GEASS_MESH=tailscale`: the `https` address of a Headscale server | none |
 
 The installer passes its whole environment on to the K3s install script, so K3s's own `INSTALL_K3S_*` variables take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself and overrides yours, and sets `INSTALL_K3S_VERSION` when you pass `GEASS_K3S_VERSION`. K3s selects its release channel when you set nothing: the `stable` channel at the moment you install.
 
@@ -268,6 +271,8 @@ The installer then:
 - Sets `spec.serverURL` of the cluster object to `https://203.0.113.10:6443` and `spec.network.multiSite` to `true`, so workers join on the public address.
 
 The mode is chosen at install time: switching an existing cluster means restarting every node. Keep the control plane at one site.
+
+For nodes behind a NAT with no public address, or to use Tailscale or Headscale instead of WireGuard, use `GEASS_MESH=wireguard` or `GEASS_MESH=tailscale`: see [Mesh networking](/docs/operations/mesh-networking/). That page says plainly that it was not run on real machines.
 
 :::caution
 Multi-provider clusters are experimental. The project has run a four-node cluster across three availability zones of one provider over public addresses, and has not yet run one across two different providers. See [Multi-provider clusters](/docs/operations/multi-provider/) for the ports to open and the limits.

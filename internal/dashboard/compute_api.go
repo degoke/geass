@@ -86,6 +86,7 @@ type v1Connection struct {
 	Provider   string     `json:"provider"`
 	Purposes   []string   `json:"purposes"`
 	Project    string     `json:"project,omitempty"`
+	Org        string     `json:"org,omitempty"`
 	Region     string     `json:"region,omitempty"`
 	Available  bool       `json:"available"`
 	Account    string     `json:"account,omitempty"`
@@ -101,7 +102,7 @@ type v1Connection struct {
 
 func connectionView(c *geassv1alpha1.GeassCloudConnection) v1Connection {
 	view := v1Connection{
-		Name: c.Name, Provider: string(c.Spec.Provider), Project: c.Spec.Project, Region: c.Spec.Region,
+		Name: c.Name, Provider: string(c.Spec.Provider), Project: c.Spec.Project, Org: c.Spec.Org, Region: c.Spec.Region,
 		Available: c.Status.Available, Account: c.Status.Account, Message: c.Status.Message, Warnings: c.Status.Warnings,
 		CreatedAt: c.CreationTimestamp.Time, Purposes: []string{},
 	}

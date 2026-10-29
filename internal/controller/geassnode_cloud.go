@@ -36,6 +36,7 @@ import (
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/compute"
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 	"github.com/degoke/geass/pkg/ssh"
 )
@@ -360,7 +361,7 @@ func (r *GeassNodeReconciler) cloudInstanceSpec(ctx context.Context, provider co
 		Settings:          cloud.Settings,
 		Incarnation:       string(node.UID),
 		ControlPlaneCIDRs: controlPlaneCIDRs,
-		MultiSite:         cluster.Spec.Network.MultiSite,
+		MultiSite:         mesh.From(cluster.Spec.Network).UsesOverlayPort(),
 		PrivateAddress:    cloud.AddressType == geassv1alpha1.AddressPrivate,
 	}
 	init := compute.CloudInit{AuthorizedKeys: spec.AuthorizedKeys, HostKey: &hostKey, Hostname: node.Name}
@@ -371,33 +372,57 @@ func (r *GeassNodeReconciler) cloudInstanceSpec(ctx context.Context, provider co
 	return spec, nil
 }
 
-// controlPlaneCIDRs are the control plane's addresses as /32 and /128 networks: the only places a machine's firewall
-// lets SSH and the kubelet port in from. An empty list means "from anywhere" to every provider, so a lookup that fails
-// or finds nothing is an error, and the machine waits instead of being made with an open firewall.
+// controlPlaneCIDRs are the addresses a machine's firewall lets SSH and the kubelet port in from, as /32 and /128
+// networks. An empty list means "from anywhere" to every provider, so a lookup that fails or finds nothing is an error,
+// and the machine waits instead of being made with an open firewall.
+//
+// They are the control plane's addresses: the operator runs there and logs in from there. A cluster whose control plane
+// is hosted outside its nodes has no control plane node, and the operator runs on a worker, which may be any of them and
+// may sit behind a NAT. Its SSH then comes from one of the nodes' addresses or from the address the operator's
+// connections leave the network from, so those are let in. The kubelet port needs nothing from the hosted control
+// plane, which reaches every kubelet through the tunnel each agent keeps open to it.
 func (r *GeassNodeReconciler) controlPlaneCIDRs(ctx context.Context) ([]string, error) {
 	nodes, err := controlPlaneNodes(ctx, r.Client)
 	if err != nil {
 		return nil, fmt.Errorf("looking up the control plane's addresses for the machine's firewall: %w", err)
 	}
+	hosted := len(nodes) == 0
+	if hosted {
+		var all corev1.NodeList
+		if err := r.List(ctx, &all); err != nil {
+			return nil, fmt.Errorf("looking up the nodes' addresses for the machine's firewall: %w", err)
+		}
+		nodes = all.Items
+	}
 	var cidrs []string
+	add := func(ip string) {
+		if cidr := addressCIDR(ip); validIPLiteral(ip) && !slices.Contains(cidrs, cidr) {
+			cidrs = append(cidrs, cidr)
+		}
+	}
 	for _, node := range nodes {
 		for _, addr := range node.Status.Addresses {
 			if addr.Type != corev1.NodeExternalIP && addr.Type != corev1.NodeInternalIP {
 				continue
 			}
-			ip := strings.TrimSpace(addr.Address)
-			cidr := ip + "/32"
-			if strings.Contains(ip, ":") {
-				cidr = ip + "/128"
-			}
-			if platform.IsPublicIP(ip) || addr.Type == corev1.NodeInternalIP {
-				if !slices.Contains(cidrs, cidr) && validIPLiteral(ip) {
-					cidrs = append(cidrs, cidr)
-				}
+			if ip := strings.TrimSpace(addr.Address); platform.IsPublicIP(ip) || addr.Type == corev1.NodeInternalIP {
+				add(ip)
 			}
 		}
 	}
+	if hosted && r.OutboundIP != nil {
+		// Without it, an operator behind a NAT could not reach the machines it makes; with the nodes' addresses
+		// there is still somewhere SSH may come from, so a failure to ask is not the machine's failure.
+		if ip, err := r.OutboundIP(ctx); err == nil {
+			add(strings.TrimSpace(ip))
+		} else {
+			logf.FromContext(ctx).Info("Could not learn the operator's outbound address; the machine's firewall lets SSH in from the nodes' addresses only", "error", err.Error())
+		}
+	}
 	if len(cidrs) == 0 {
+		if hosted {
+			return nil, errors.New("no address of the cluster's nodes or of the operator's way out is known yet, so the machine's firewall cannot say where SSH may come from")
+		}
 		return nil, errors.New("no address of the control plane is known yet, so the machine's firewall cannot say where SSH may come from")
 	}
 	slices.Sort(cidrs)
@@ -548,9 +573,14 @@ func (r *GeassNodeReconciler) cloudJoin(ctx context.Context, node *geassv1alpha1
 	if err != nil {
 		return r.setFailed(ctx, node, "join token: "+err.Error())
 	}
-	in, err := workerJoinInput(ctx, r.Client, node, cluster, creds, token)
+	if refused, err := meshJoinRefusal(ctx, r.Client, cluster, node); err != nil {
+		return ctrl.Result{}, err
+	} else if refused != "" {
+		return r.setFailed(ctx, node, refused)
+	}
+	in, err := workerJoinInput(ctx, r.Client, r.ServerVersion, node, cluster, creds, token)
 	if err != nil {
-		return r.setFailed(ctx, node, "could not determine the cluster's k3s version: "+err.Error())
+		return r.setFailed(ctx, node, joinInputFailure(err))
 	}
 	if claimed, err := r.claimJoin(ctx, node); err != nil {
 		return ctrl.Result{}, err
@@ -857,10 +887,10 @@ func (r *GeassNodeReconciler) handleCloudDeletion(ctx context.Context, node *gea
 }
 
 // controlPlaneRules are what a machine at address needs to reach the control plane: its API port, and in a multi-site
-// cluster the overlay port.
+// cluster whose mesh is WireGuard the overlay port. A Tailscale mesh opens no port on the control plane.
 func controlPlaneRules(cluster *geassv1alpha1.GeassCluster, cidr string) []compute.AccessRule {
 	rules := []compute.AccessRule{{Protocol: "tcp", Port: 6443, CIDR: cidr}}
-	if cluster.Spec.Network.MultiSite {
+	if mesh.From(cluster.Spec.Network).UsesOverlayPort() {
 		rules = append(rules, compute.AccessRule{Protocol: "udp", Port: compute.OverlayPortUDP, CIDR: cidr})
 	}
 	return rules

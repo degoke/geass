@@ -214,7 +214,7 @@ Open a project's **Settings** tab. The page is called **Project Settings** and h
 | **Limits** | What the project, and each of its environments, can ask for in CPU, memory, disk and pods. See [Project limits](/docs/guides/project-limits/). |
 | **Compliance** | The node tags this project requires, such as `hipaa`. Everything the project runs stays on nodes that carry them. See [Compliance tags](/docs/guides/compliance-tags/). |
 | **Tokens** | API tokens limited to this project. See [Users and API tokens](/docs/guides/users-and-tokens/). |
-| **Integrations** | **Connect to GitHub** or **Disconnect**, and a link to the cluster's connectors. See [GitHub and builds](/docs/guides/github-and-builds/). |
+| **GitHub** | **Connect to GitHub** or **Disconnect**, and **Report to GitHub**. See [GitHub and builds](/docs/guides/github-and-builds/). |
 | **Danger** | **Manage Services** and **Delete Project**. |
 
 ### Name and region
@@ -233,6 +233,10 @@ you can change it, and services restart in the new region.
 
 **Generate Template from Project** saves one environment's services and in-cluster databases as a reusable template.
 See [Templates](/docs/guides/templates/).
+
+## Move a project to another cluster
+
+A project can be exported as a bundle of its definition and imported on another cluster as a new project, with its services, databases and buckets as drafts and without any secret value. The data in databases and buckets is not in the bundle. See [Moving a project to another cluster](/docs/guides/moving-a-project/).
 
 ## Delete a project
 
@@ -320,5 +324,6 @@ removes the project. A namespace whose workload will not stop stays in `Terminat
 - [Environment variables and secrets](/docs/guides/environment-variables/)
 - [Pull request environments](/docs/guides/pull-request-environments/)
 - [Templates](/docs/guides/templates/)
+- [Moving a project to another cluster](/docs/guides/moving-a-project/)
 - [Network isolation](/docs/guides/network-isolation/)
 - [Users and API tokens](/docs/guides/users-and-tokens/)

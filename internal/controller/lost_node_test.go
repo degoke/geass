@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	cnpgv1 "github.com/degoke/geass/pkg/cnpg/v1"
@@ -446,6 +447,91 @@ func TestAnInstanceWhoseVolumeCanStillComeBackIsNotReplaced(t *testing.T) {
 	}
 }
 
+// strandedInstance is an instance that CloudNativePG made again after its server was removed: Pending, with a volume that
+// can only be used from the node `volumeOn`. Nothing about the volume says it is faulted, so none of this depends on what
+// Longhorn reports.
+func strandedInstance(volumeOn string, age time.Duration) []client.Object {
+	pod := pgPod("pg-2", "pg", "", false)
+	pod.Status = corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.NewTime(lostNodeNow.Add(-age))}}}
+	pod.CreationTimestamp = metav1.NewTime(lostNodeNow.Add(-age))
+	claim := instanceClaim("pg", "pg-2", platform.StorageClassSingle)
+	claim.Spec.VolumeName = "pv-2"
+	pv := longhornPV("pv-2", platform.StorageClassSingle)
+	pv.Spec.NodeAffinity = &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+		MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpIn, Values: []string{volumeOn}}},
+	}}}}
+	return []client.Object{pod, claim, pv}
+}
+
+func hostnamed(node *corev1.Node) *corev1.Node {
+	node.Labels = map[string]string{"kubernetes.io/hostname": node.Name}
+	return node
+}
+
+func TestAnInstanceWhoseVolumeIsOnAServerThatWasRemovedIsReplacedWithoutWaitingForTheLostNodeLimit(t *testing.T) {
+	calls := &deletions{}
+	objects := append([]client.Object{hostnamed(readyNode("a")), pgCluster("pg", 2, "pg-1"), pgPod("pg-1", "pg", "a", false), instanceClaim("pg", "pg-1", platform.StorageClassSingle)},
+		strandedInstance("removed", 4*time.Minute)...)
+	c := lostNodeClient(t, calls, objects...)
+
+	wait := lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Equal(t, []string{"pvc/pg-2", "pod/pg-2"}, calls.removed, "four minutes, and the node is not in the cluster: the instance was not going to start")
+	require.Equal(t, lostNodeRecheck, wait)
+}
+
+func TestAnInstanceThatHasJustBeenMadeAgainIsGivenTimeBeforeItsServerIsGivenUpOn(t *testing.T) {
+	calls := &deletions{}
+	objects := append([]client.Object{hostnamed(readyNode("a")), pgCluster("pg", 2, "pg-1"), pgPod("pg-1", "pg", "a", false), instanceClaim("pg", "pg-1", platform.StorageClassSingle)},
+		strandedInstance("removed", time.Minute)...)
+	c := lostNodeClient(t, calls, objects...)
+
+	wait := lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Empty(t, calls.removed, "a server that is taken out and put back is a minute away, not three")
+	require.Equal(t, 2*time.Minute+time.Second, wait, "the pass that could replace it is made when it could, and not at the next regular one")
+}
+
+func TestAnInstanceWhoseServerIsStillInTheClusterIsNotTakenToBeStranded(t *testing.T) {
+	for name, nodes := range map[string][]client.Object{
+		"a server that is up":                {hostnamed(readyNode("a")), hostnamed(readyNode("volume-node"))},
+		"a server that is away for a minute": {hostnamed(readyNode("a")), hostnamed(notReadyNode("volume-node", time.Minute))},
+	} {
+		calls := &deletions{}
+		objects := append(append([]client.Object{pgCluster("pg", 2, "pg-1"), pgPod("pg-1", "pg", "a", false), instanceClaim("pg", "pg-1", platform.StorageClassSingle)}, nodes...),
+			strandedInstance("volume-node", time.Hour)...)
+		c := lostNodeClient(t, calls, objects...)
+
+		lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+		require.Empty(t, calls.removed, name+": it may be back, and the lost node limit is for waiting for that")
+	}
+}
+
+func TestAnInstanceIsNotReplacedWhenThereIsNoPrimaryToBuildItFrom(t *testing.T) {
+	calls := &deletions{}
+	primary := pgPod("pg-1", "pg", "a", false)
+	primary.Status.Conditions[0].Status = corev1.ConditionFalse
+	objects := append([]client.Object{hostnamed(readyNode("a")), pgCluster("pg", 2, "pg-1"), primary, instanceClaim("pg", "pg-1", platform.StorageClassSingle)},
+		strandedInstance("removed", time.Hour)...)
+	c := lostNodeClient(t, calls, objects...)
+
+	lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Empty(t, calls.removed, "the one copy left may be the primary's")
+}
+
+func TestAClusterThatListsNoNodesDoesNotTakeEveryVolumeToBeStranded(t *testing.T) {
+	calls := &deletions{}
+	objects := append([]client.Object{pgCluster("pg", 2, "pg-1"), pgPod("pg-1", "pg", "a", false), instanceClaim("pg", "pg-1", platform.StorageClassSingle)},
+		strandedInstance("removed", time.Hour)...)
+	c := lostNodeClient(t, calls, objects...)
+
+	lostNodeReconciler(c).reconcileLostNodes(context.Background(), &geassv1alpha1.GeassCluster{})
+
+	require.Empty(t, calls.removed, "a list with nothing in it says nothing about where a volume can be used")
+}
+
 func TestAHealthyDatabaseCostsNothingToLookAt(t *testing.T) {
 	calls := &deletions{}
 	pg := pgCluster("pg", 2, "pg-1")
@@ -525,4 +611,34 @@ func TestAPassThatHadNothingToDoLooksAgainLaterThanOneThatDid(t *testing.T) {
 
 	require.Empty(t, calls.removed)
 	require.Equal(t, lostNodeIdleRecheck, wait, "a node that is never removed must not keep the cluster busy every two minutes")
+}
+
+// Removing a server leaves nothing that wakes the pass for lost nodes after the node itself: the instance that was on it is
+// made again, cannot be placed, and waits. Those are the changes the pass hears of.
+func TestThePassForLostNodesHearsOfAPostgresInstanceThatCannotStart(t *testing.T) {
+	instance := func(ready bool, scheduled corev1.ConditionStatus) *corev1.Pod {
+		pod := pgPod("pg-2", "pg", "", false)
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: scheduled}}
+		if ready {
+			pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue})
+		}
+		return pod
+	}
+	update := func(before, after *corev1.Pod) bool {
+		return postgresInstanceTroubled().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after})
+	}
+
+	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(false, corev1.ConditionUnknown)}), "an instance that is made has not failed to be placed yet")
+	require.True(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: instance(false, corev1.ConditionFalse)}), "one that is already known not to fit")
+	require.False(t, postgresInstanceTroubled().Delete(event.DeleteEvent{Object: instance(true, corev1.ConditionTrue)}), "a removed pod is not trouble: its replacement is, when it cannot be placed")
+	require.True(t, update(instance(false, corev1.ConditionUnknown), instance(false, corev1.ConditionFalse)), "it cannot be placed")
+	require.False(t, update(instance(true, corev1.ConditionTrue), instance(false, corev1.ConditionTrue)), "stopping being ready is what a drain does to hundreds of pods")
+	require.False(t, update(instance(false, corev1.ConditionFalse), instance(false, corev1.ConditionFalse)), "nor again for each change that follows while it waits")
+	require.False(t, update(instance(false, corev1.ConditionTrue), instance(true, corev1.ConditionTrue)), "getting ready is not trouble")
+
+	job := instance(false, corev1.ConditionFalse)
+	job.Labels[cnpgJobRoleLabel] = "initdb"
+	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: job}), "the operator's own jobs are not instances")
+	other := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "app-prod"}}
+	require.False(t, postgresInstanceTroubled().Create(event.CreateEvent{Object: other}), "and a pod of no database is of no interest")
 }

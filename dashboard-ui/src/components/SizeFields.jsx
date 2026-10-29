@@ -61,7 +61,7 @@ export function SizeFields({ cpu, memory, onChange, data, bursts = false, cpuMax
           </Field>
           <Field
             label="Memory can use up to"
-            description="Reserved is always yours. The rest is used only while the server has room, so a service that goes beyond what it reserved is the first to restart if the server runs out of memory."
+            description="Above the reserve it is first to restart if the server runs out of memory."
           >
             <Select value={memoryMax} onChange={(event) => onChange("memoryMax", event.target.value)}>
               <option value="">Same as reserved</option>

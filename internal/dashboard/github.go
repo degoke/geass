@@ -72,7 +72,8 @@ func (s *Server) listGitHubRepositories(ctx context.Context, connection *geassv1
 	if err != nil {
 		return nil, err
 	}
-	if githubapp.InstallationIDFromSecret(secret) > 0 && s.githubAppConfigured(ctx) {
+	_, external := s.githubTokenResolver().ExternalAppSlug(ctx, secret)
+	if githubapp.InstallationIDFromSecret(secret) > 0 && (external || s.githubAppConfigured(ctx)) {
 		repos, err := s.githubAppClient().ListInstallationRepositories(token)
 		if err != nil {
 			return nil, err
@@ -111,6 +112,15 @@ func (s *Server) handleProjectGitHubInstall(w http.ResponseWriter, r *http.Reque
 		environment = strings.TrimSpace(r.URL.Query().Get("environment"))
 	}
 	fallback = workspaceCreateURL(project, environment, "app-git")
+	// With a provider's App the installation is made at the provider's, and the project is connected to one of the
+	// installations it gave this cluster.
+	if connections, err := s.externalGitHubConnections(r.Context()); err != nil {
+		redirectFormInternalError(w, r, fallback)
+		return
+	} else if len(connections) > 0 {
+		s.handleProjectGitHubInstallExternal(w, r, project, environment, connections)
+		return
+	}
 	if err := s.platformGitHubReadyError(r.Context()); err != nil {
 		redirectFormUserError(w, r, fallback, err)
 		return
@@ -287,19 +297,33 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 		}
 	}
 
-	connectionName := githubConnectionName(project)
+	var webhookSecretRef *corev1.LocalObjectReference
+	if readiness.Config.Spec.GitHubAppRef != nil && readiness.Config.Spec.GitHubAppRef.Name != "" {
+		webhookSecretRef = &corev1.LocalObjectReference{Name: readiness.Config.Spec.GitHubAppRef.Name}
+	}
+	return s.storeProjectGitHubConnection(ctx, &p, webhookSecretRef, func(secret *corev1.Secret) {
+		secret.Data["token"] = []byte(token)
+		secret.Data["installation_id"] = []byte(strconv.FormatInt(installationID, 10))
+		secret.Data["account"] = []byte(installation.Account.Login)
+		secret.Data["account_type"] = []byte(installation.Account.Type)
+		// The installation is the cluster's own App's now, whatever it was reached through before.
+		delete(secret.Data, githubapp.SecretKeyExternalConnection)
+	})
+}
+
+// storeProjectGitHubConnection writes a project's token Secret <project>-github-token with fill, makes or updates its
+// connection <project>-github, and points the project at it. The Secret is written as the dashboard's own work: the
+// caller has shown that the project is theirs by reading it.
+func (s *Server) storeProjectGitHubConnection(ctx context.Context, p *geassv1alpha1.GeassProject, webhookSecretRef *corev1.LocalObjectReference, fill func(*corev1.Secret)) error {
+	connectionName := githubConnectionName(p.Name)
 	tokenSecretName := connectionName + "-token"
 
 	tokenSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: tokenSecretName, Namespace: systemNamespace},
 		Type:       corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"token":           []byte(token),
-			"installation_id": []byte(strconv.FormatInt(installationID, 10)),
-			"account":         []byte(installation.Account.Login),
-			"account_type":    []byte(installation.Account.Type),
-		},
+		Data:       map[string][]byte{},
 	}
+	fill(tokenSecret)
 	if err := s.Client.Create(asSystem(ctx), tokenSecret); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return err
@@ -311,22 +335,16 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 		if existing.Data == nil {
 			existing.Data = map[string][]byte{}
 		}
-		existing.Data["token"] = []byte(token)
-		existing.Data["installation_id"] = []byte(strconv.FormatInt(installationID, 10))
-		existing.Data["account"] = []byte(installation.Account.Login)
-		existing.Data["account_type"] = []byte(installation.Account.Type)
+		fill(existing)
 		if err := s.Client.Update(asSystem(ctx), existing); err != nil {
 			return err
 		}
 	}
 
 	connection := &geassv1alpha1.GeassGitHubConnection{}
-	err = s.Client.Get(ctx, client.ObjectKey{Name: connectionName, Namespace: systemNamespace}, connection)
+	err := s.Client.Get(ctx, client.ObjectKey{Name: connectionName, Namespace: systemNamespace}, connection)
 	if apierrors.IsNotFound(err) {
-		spec := geassv1alpha1.GeassGitHubConnectionSpec{SecretRef: corev1.LocalObjectReference{Name: tokenSecretName}}
-		if readiness.Config.Spec.GitHubAppRef != nil && readiness.Config.Spec.GitHubAppRef.Name != "" {
-			spec.WebhookSecretRef = &corev1.LocalObjectReference{Name: readiness.Config.Spec.GitHubAppRef.Name}
-		}
+		spec := geassv1alpha1.GeassGitHubConnectionSpec{SecretRef: corev1.LocalObjectReference{Name: tokenSecretName}, WebhookSecretRef: webhookSecretRef}
 		connection = &geassv1alpha1.GeassGitHubConnection{
 			ObjectMeta: metav1.ObjectMeta{Name: connectionName, Namespace: systemNamespace},
 			Spec:       spec,
@@ -338,8 +356,8 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 		return err
 	} else {
 		connection.Spec.SecretRef = corev1.LocalObjectReference{Name: tokenSecretName}
-		if readiness.Config.Spec.GitHubAppRef != nil && readiness.Config.Spec.GitHubAppRef.Name != "" {
-			connection.Spec.WebhookSecretRef = &corev1.LocalObjectReference{Name: readiness.Config.Spec.GitHubAppRef.Name}
+		if webhookSecretRef != nil {
+			connection.Spec.WebhookSecretRef = webhookSecretRef
 		}
 		if err := s.Client.Update(ctx, connection); err != nil {
 			return err
@@ -347,7 +365,7 @@ func (s *Server) saveGitHubInstallation(ctx context.Context, project, environmen
 	}
 
 	p.Spec.GitHubConnectionRef = &corev1.LocalObjectReference{Name: connectionName}
-	return s.Client.Update(ctx, &p)
+	return s.Client.Update(ctx, p)
 }
 
 func (s *Server) handleProjectGitHubDisconnect(w http.ResponseWriter, r *http.Request, project string) {

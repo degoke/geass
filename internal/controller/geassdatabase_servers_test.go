@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -181,7 +182,8 @@ func TestRedisPasswordIsReadFromTheBootstrapSecretAndIsInNoSpec(t *testing.T) {
 	e := newServerEnv(t, geassv1alpha1.DatabaseEngineRedis)
 	e.reconcileRedis()
 
-	require.Equal(t, "orders-password", string(e.secret("orders-bootstrap").Data["password"]))
+	password := string(e.secret("orders-bootstrap").Data["password"])
+	requireGeneratedPassword(t, "orders", password, "")
 	container := e.sts(redisServerName).Spec.Template.Spec.Containers[0]
 	envNames := map[string]string{}
 	for _, variable := range container.Env {
@@ -193,7 +195,7 @@ func TestRedisPasswordIsReadFromTheBootstrapSecretAndIsInNoSpec(t *testing.T) {
 	require.Equal(t, map[string]string{"REDIS_PASSWORD": "password", "REDISCLI_AUTH": "password"}, envNames,
 		"REDISCLI_AUTH is what lets redis-cli, in the probe and in the console, log in")
 	for _, part := range append(container.Command, container.Args...) {
-		require.NotContains(t, part, "orders-password")
+		require.NotContains(t, part, password)
 	}
 }
 
@@ -210,7 +212,7 @@ func TestRedisIsReadyOncePodRunsAndPublishesItsConnection(t *testing.T) {
 	connection := e.secret("orders-connection")
 	require.Equal(t, "geass-redis-db-orders-master.payments-dev.svc", string(connection.Data[platform.ConnectionKeyHost]))
 	require.Equal(t, "6379", string(connection.Data[platform.ConnectionKeyPort]))
-	require.Equal(t, "redis://:orders-password@geass-redis-db-orders-master.payments-dev.svc:6379", string(connection.Data[platform.ConnectionKeyURI]))
+	require.Equal(t, "redis://:"+string(e.secret("orders-bootstrap").Data["password"])+"@geass-redis-db-orders-master.payments-dev.svc:6379", string(connection.Data[platform.ConnectionKeyURI]))
 }
 
 func TestServerSizeIsTheDatabasesAndFallsBackToThePlatformsForBothLimits(t *testing.T) {
@@ -350,7 +352,7 @@ func TestMySQLIsReadyOncePodRunsAndPublishesItsConnection(t *testing.T) {
 
 	require.Equal(t, string(metav1.ConditionTrue), got.ready, got.message)
 	require.Equal(t, "geass-mysql-orders.payments-dev.svc", got.host)
-	require.Equal(t, "mysql://app:orders-password@geass-mysql-orders.payments-dev.svc:3306/orders",
+	require.Equal(t, "mysql://app:"+string(e.secret("orders-bootstrap").Data["password"])+"@geass-mysql-orders.payments-dev.svc:3306/orders",
 		string(e.secret("orders-connection").Data[platform.ConnectionKeyURI]))
 }
 
@@ -693,4 +695,50 @@ func TestAnImagePullThatRecoversStartsTheCountAgain(t *testing.T) {
 	e.podWaits(redisServerName, "ImagePullBackOff") // a later failure is a new one
 	e.reconcileRedis()
 	require.Equal(t, platform.ConditionReasonReconcileError, e.reason())
+}
+
+// unplacedVolume is what a server's volume looks like when Longhorn found no disk for it: the claim is bound, and the volume
+// behind it has a Scheduled condition that is false.
+func (e *serverEnv) unplacedVolume(scheduled string) {
+	e.t.Helper()
+	ctx := context.Background()
+	size := resource.MustParse("10Gi")
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: mysqlClaimName, Namespace: testDevTargetNS},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "pv-orders",
+			Resources:  corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: size}},
+		},
+	}
+	require.NoError(e.t, e.client.Create(ctx, claim))
+	require.NoError(e.t, e.client.Create(ctx, longhornPV("pv-orders", platform.StorageClassSingle)))
+	volume := longhornVolume("pv-orders", 1)
+	require.NoError(e.t, unstructured.SetNestedSlice(volume.Object, []any{
+		map[string]any{"type": "Scheduled", "status": scheduled, "reason": "ReplicaSchedulingFailure"},
+	}, "status", "conditions"))
+	require.NoError(e.t, e.client.Create(ctx, volume))
+}
+
+func TestAServerWhoseVolumeNoDiskHasRoomForSaysSoInsteadOfStarting(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineMySQL)
+	e.reconcileMySQL("")
+	e.podWaits(mysqlServerName, "ContainerCreating")
+	e.unplacedVolume("False")
+
+	got := e.reconcileMySQL("")
+
+	require.Equal(t, string(metav1.ConditionFalse), got.ready)
+	require.Equal(t, platform.VolumeNotPlacedMessage("10Gi"), got.message)
+	require.Contains(t, got.message, "Add a server or more disk, or choose a smaller volume")
+	require.False(t, platform.ReconcileFailureShouldCount(got.message),
+		"disks that are full are not a failure to give up on after three minutes: a server added ends it")
+}
+
+func TestAServerWhoseVolumeIsPlacedIsOnlyStarting(t *testing.T) {
+	e := newServerEnv(t, geassv1alpha1.DatabaseEngineMySQL)
+	e.reconcileMySQL("")
+	e.podWaits(mysqlServerName, "ContainerCreating")
+	e.unplacedVolume("True")
+
+	require.Equal(t, "Service is starting", e.reconcileMySQL("").message)
 }

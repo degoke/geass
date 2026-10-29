@@ -6,6 +6,7 @@ import { useDashboardLiveSync } from "@/lib/dashboard-events";
 import { AppLayout } from "@/layout/AppLayout";
 import { Empty } from "@/components/geass-ui";
 import { GeassLogo } from "@/components/GeassLogo";
+import { useDashboardOptions, pageHidden } from "@/lib/options";
 import { LoginPage } from "@/pages/LoginPage";
 import { DeviceApprovePage } from "@/pages/DeviceApprovePage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
@@ -21,18 +22,34 @@ import { PlatformSettingsLayout } from "@/layout/PlatformSettingsLayout";
 
 export function DashboardScreen({ mode }) {
   const { data, error, isPending, refetch } = useBootstrap();
+  const { embedded, hidden, onUnauthorized } = useDashboardOptions();
+  // A page of its own fills the window; one inside another app fills the room the host gave it.
+  const fill = embedded ? "100%" : "100vh";
   useDashboardLiveSync(Boolean(data) && !error);
   const navigate = useNavigate();
   const routeState = useRouterState({ select: (state) => ({ location: state.location, params: state.matches.at(-1)?.params || {} }) });
   const search = routeState.location.search || {};
   const params = routeState.params;
+  // Mounted in another app there is no sign-in page: the host signs people in, so what is left is to ask it for a new token.
+  if (error?.status === 401 && embedded) {
+    return (
+      <Center mih={fill} px="md">
+        <Stack align="center" gap="sm" maw={520} ta="center">
+          <GeassLogo symbol alt="" width={40} height={40} />
+          <Title order={2}>Session ended</Title>
+          <Text size="sm">This dashboard could not sign in to the cluster. Your access may have expired.</Text>
+          <Button onClick={() => { onUnauthorized?.(); refetch(); }}>Reconnect</Button>
+        </Stack>
+      </Center>
+    );
+  }
   if (error?.status === 401) return <LoginPage onSuccess={() => refetch()} />;
   if (error) {
-    const devHint = error.status === 404
-      ? "From the repo root, run make dashboard-backend (API on :8085) while pnpm dev runs the UI on :5176, or use make run for both."
+    const devHint = error.status === 404 && !embedded
+      ? "Run make dashboard-backend, or make run for UI and API."
       : null;
     return (
-      <Center mih="100vh" px="md">
+      <Center mih={fill} px="md">
         <Stack align="center" gap="sm" maw={520} ta="center">
           <GeassLogo symbol alt="" width={40} height={40} />
           <Title order={2}>Dashboard unavailable</Title>
@@ -45,7 +62,7 @@ export function DashboardScreen({ mode }) {
   }
   if (isPending || !data) {
     return (
-      <Center mih="100vh">
+      <Center mih={fill}>
         <Stack align="center" gap="sm">
           <GeassLogo symbol alt="" width={36} height={36} />
           <Loader color="signal" type="dots" />
@@ -59,7 +76,9 @@ export function DashboardScreen({ mode }) {
   let content;
   let environment = search.environment || project?.spec?.environments?.[0] || "";
   const setEnvironment = (next) => navigate({ search: (previous) => ({ ...previous, environment: next || undefined }) });
-  if (mode === "projects") { content = <ProjectsPage data={data} />; }
+  if (pageHidden(mode, hidden)) {
+    content = <Empty title="Not available here" description="This page is managed for you, so it is not part of this dashboard." action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
+  } else if (mode === "projects") { content = <ProjectsPage data={data} />; }
   else if (mode === "templates") { content = <TemplatesPage data={data} />; }
   else if (mode === "pools") { content = <PoolsPage data={data} />; }
   else if (mode === "pool") { content = <PoolDetailPage name={params.poolName} data={data} />; }
@@ -99,7 +118,7 @@ export function DashboardScreen({ mode }) {
       </PlatformSettingsLayout>
     );
   } else {
-    content = <Empty title="Page not found" description="The requested dashboard page does not exist." action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
+    content = <Empty title="Page not found" action={<Button onClick={() => navigate({ to: "/projects" })}>Open projects</Button>} />;
   }
   return (
     <AppLayout>{content}</AppLayout>

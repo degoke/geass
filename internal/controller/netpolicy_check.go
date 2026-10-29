@@ -200,7 +200,8 @@ func networkPolicyCondition(result netcheck.Result, err error) (metav1.Condition
 
 // probe runs the check in the cluster: a namespace with two pods that listen and a policy that closes one of them
 // to everyone, and a third pod that tries both. The pods run the operator's own image, which every cluster that
-// installed Geass has, and which can be run on the control plane, where the installer put it.
+// installed Geass has: on the control plane, where the installer put it, or, in a cluster whose control plane is
+// hosted outside its nodes, on any node, which pulls it from the registry the operator came from.
 func (c *NetworkPolicyChecker) probe(ctx context.Context) (netcheck.Result, error) {
 	reader := c.Reader
 	if reader == nil {
@@ -210,6 +211,11 @@ func (c *NetworkPolicyChecker) probe(ctx context.Context) (netcheck.Result, erro
 	if err != nil {
 		return netcheck.Result{}, err
 	}
+	controlPlane, err := controlPlaneNodes(ctx, reader)
+	if err != nil {
+		return netcheck.Result{}, err
+	}
+	onControlPlane := len(controlPlane) > 0
 	if err := c.resetNetcheckNamespace(ctx, reader); err != nil {
 		return netcheck.Result{}, err
 	}
@@ -225,7 +231,7 @@ func (c *NetworkPolicyChecker) probe(ctx context.Context) (netcheck.Result, erro
 	}
 	servers := map[string]string{}
 	for _, role := range []string{"open", "closed"} {
-		pod := netcheckPod("server-"+role, image, role, "netcheck", "serve", "--listen", fmt.Sprintf(":%d", netcheck.Port))
+		pod := netcheckPod("server-"+role, image, role, onControlPlane, "netcheck", "serve", "--listen", fmt.Sprintf(":%d", netcheck.Port))
 		if err := c.createWithRetry(ctx, pod); err != nil {
 			return netcheck.Result{}, fmt.Errorf("start the %s server: %w", role, err)
 		}
@@ -239,7 +245,7 @@ func (c *NetworkPolicyChecker) probe(ctx context.Context) (netcheck.Result, erro
 		}
 		addresses[role] = fmt.Sprintf("%s:%d", ip, netcheck.Port)
 	}
-	probe := netcheckPod("probe", image, "probe", "netcheck", "probe", "--open", addresses["open"], "--closed", addresses["closed"])
+	probe := netcheckPod("probe", image, "probe", onControlPlane, "netcheck", "probe", "--open", addresses["open"], "--closed", addresses["closed"])
 	probe.Spec.RestartPolicy = corev1.RestartPolicyNever
 	if err := c.createWithRetry(ctx, probe); err != nil {
 		return netcheck.Result{}, fmt.Errorf("start the probe: %w", err)
@@ -401,9 +407,10 @@ func netcheckPolicy() *networkingv1.NetworkPolicy {
 	}
 }
 
-// netcheckPod is one of the check's pods: the operator's image running one of its own commands, on the control
-// plane where that image is, with nothing it does not need.
-func netcheckPod(name, image, role string, args ...string) *corev1.Pod {
+// netcheckPod is one of the check's pods: the operator's image running one of its own commands, with nothing it does
+// not need. onControlPlane keeps it on the control plane, where the installer put that image; a cluster with no
+// control plane node pulls the image from a registry, and the pod may run on any node.
+func netcheckPod(name, image, role string, onControlPlane bool, args ...string) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: netcheckNamespace,
@@ -411,12 +418,6 @@ func netcheckPod(name, image, role string, args ...string) *corev1.Pod {
 		},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken: utilptr.To(false),
-			Affinity: &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-				NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{
-					Key: "node-role.kubernetes.io/control-plane", Operator: corev1.NodeSelectorOpExists,
-				}}}},
-			}}},
-			Tolerations: []corev1.Toleration{{Key: "node-role.kubernetes.io/control-plane", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}},
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   utilptr.To(true),
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
@@ -445,6 +446,14 @@ func netcheckPod(name, image, role string, args ...string) *corev1.Pod {
 			ProbeHandler:  corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(netcheck.Port)}},
 			PeriodSeconds: 1,
 		}
+	}
+	if onControlPlane {
+		pod.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{
+				Key: controlPlaneLabel, Operator: corev1.NodeSelectorOpExists,
+			}}}},
+		}}}
+		pod.Spec.Tolerations = []corev1.Toleration{{Key: controlPlaneLabel, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}}
 	}
 	return pod
 }

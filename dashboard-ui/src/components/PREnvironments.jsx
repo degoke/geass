@@ -3,7 +3,7 @@ import { Group, Modal, Text } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
 import { ExternalLink, GitPullRequest } from "lucide-react";
 import { action, resourceName } from "@/lib/api";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { formatRelativeTime } from "@/lib/services";
 import { Button, Field, Input, Muted, Select, Switch } from "@/components/geass-ui";
 
@@ -34,8 +34,8 @@ export function PREnvironments({ project, data, mutable, reload }) {
     event.preventDefault();
     setSaving(true);
     action(`/projects/${name}/pr-environments/save`, { ...(enabled ? { enabled: "on" } : {}), baseEnvironment: base, maxOpen })
-      .then(() => { reload(); alertUser(enabled ? "PR environments are on" : "PR environments are off"); })
-      .catch((error) => alertUser(error.message))
+      .then(() => { reload(); alertUser("Saved"); })
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
@@ -43,7 +43,7 @@ export function PREnvironments({ project, data, mutable, reload }) {
     setSaving(true);
     action(`/projects/${name}/pr-environments/close`, { number: String(closing.number), repository: closing.repository })
       .then(() => { setClosing(null); reload(); alertUser(`Environment ${closing.environment} deleted`); })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
@@ -51,23 +51,22 @@ export function PREnvironments({ project, data, mutable, reload }) {
     <div className="rw-pr">
       <h3 className="rw-settings-subtitle">PR Environments</h3>
       <p className="rw-rail-body">
-        Geass creates a temporary copy of an environment for every pull request in the repositories it builds, deploys the pull
-        request&apos;s branch into it, and deletes it when the pull request is closed or merged. Pull requests from forks are ignored.
+        Deleted when the pull request closes or merges. Forks are ignored.
       </p>
       {!githubLinked ? (
         <p className="rw-rail-hint">
           Link this project to GitHub first (<Link to={`/projects/${name}/settings`} className="rw-settings-text-btn">Integrations</Link>).
-          {!githubReady ? " GitHub is not set up for this cluster yet." : ""}
+          {!githubReady ? " GitHub is not set up yet." : ""}
         </p>
       ) : null}
       <form className="rw-rail-form" onSubmit={save}>
         <Switch label="Create an environment for each pull request" checked={enabled} disabled={!mutable} onChange={(event) => setEnabled(event.currentTarget.checked)} />
-        <Field label="Copy this environment" description="Its services and in-cluster databases are copied; buckets and external databases are not.">
+        <Field label="Copy this environment" description="Buckets and external databases are not copied.">
           <Select value={base} onChange={(event) => setBase(event.currentTarget.value)} disabled={!mutable} aria-label="Base environment">
             {baseChoices.map((env) => <option key={env} value={env}>{env}</option>)}
           </Select>
         </Field>
-        <Field label="Open at once" description="New pull requests beyond this limit do not get an environment until one closes.">
+        <Field label="Open at once">
           <Input type="number" min="1" max="25" value={maxOpen} disabled={!mutable} onChange={(event) => setMaxOpen(event.currentTarget.value)} aria-label="Maximum open PR environments" />
         </Field>
         <div className="rw-form-actions">
@@ -75,8 +74,7 @@ export function PREnvironments({ project, data, mutable, reload }) {
         </div>
       </form>
       <p className="rw-rail-hint">
-        If environments do not appear, make sure your GitHub App is subscribed to the <strong>Pull request</strong> event and can read
-        pull requests (GitHub App settings → Permissions &amp; events).
+        Needs the GitHub App subscribed to the <strong>Pull request</strong> event.
       </p>
 
       <h3 className="rw-settings-subtitle">Open pull requests</h3>
@@ -107,7 +105,7 @@ export function PREnvironments({ project, data, mutable, reload }) {
 
       <Modal opened={Boolean(closing)} onClose={() => { if (!saving) setClosing(null); }} title="Close pull request environment?" centered>
         <Text size="sm" mb="md">
-          This deletes the <strong>{closing?.environment}</strong> environment and everything running in it. The pull request itself is not changed.
+          This deletes the <strong>{closing?.environment}</strong> environment and everything running in it.
         </Text>
         <Group justify="flex-end" gap="sm">
           <Button variant="outline" disabled={saving} onClick={() => setClosing(null)}>Cancel</Button>

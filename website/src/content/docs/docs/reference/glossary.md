@@ -132,6 +132,8 @@ the term; the dashboard sometimes uses a friendlier word for the same thing.
 
 **MCP server.** The `geass mcp` command, a Model Context Protocol server that lets an AI agent see and run services with the tools its token allows. See [MCP server](/docs/guides/mcp-server/) and [MCP tools](/docs/reference/mcp-tools/).
 
+**Mesh.** What joins nodes at different sites, some behind a NAT, into one cluster network: K3s's WireGuard backend, or a Tailscale or Headscale network (`spec.network.mesh`). See [Mesh networking](/docs/operations/mesh-networking/).
+
 **Multi-provider cluster.** A cluster whose servers are at different providers, joined over an encrypted WireGuard network; experimental. See [Multi-provider clusters](/docs/operations/multi-provider/).
 
 ## N

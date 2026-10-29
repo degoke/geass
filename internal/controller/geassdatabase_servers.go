@@ -355,6 +355,10 @@ func (r *GeassDatabaseReconciler) serverNotReadyMessage(ctx context.Context, wsN
 			return platform.ImagePullMessage(podContainerImage(pod, status), waiting.Reason)
 		}
 	}
+	// A pod that waits for a volume that no disk has room for is ContainerCreating, like one that is pulling.
+	if message := volumeNotPlacedMessage(ctx, r.Client, wsNS, claimsOfServer(ctx, r.Client, wsNS, srv)...); message != "" {
+		return message
+	}
 	return messageServiceStarting
 }
 
@@ -429,6 +433,7 @@ func (r *GeassDatabaseReconciler) ensureServerStatefulSet(ctx context.Context, d
 			TerminationGracePeriodSeconds: utilptr.To(srv.stopGrace),
 		}
 		placement.ApplyToPodSpec(&sts.Spec.Template.Spec)
+		applyServerRuntimeClass(db, &sts.Spec.Template.Spec)
 		return setSameNamespaceOwner(db, sts, r.Scheme)
 	})
 	if err != nil {

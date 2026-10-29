@@ -113,6 +113,9 @@ func (s *Server) handlePlatformGitHubTest(w http.ResponseWriter, r *http.Request
 	if !requireMutation(w, r, "/settings/github") {
 		return
 	}
+	if s.refuseInExternalMode(w, r, "/settings/github") {
+		return
+	}
 	readiness, err := s.platformReadiness(r.Context())
 	if err != nil {
 		redirectProbe(w, r, "/settings/github", dashboardLiteralError, "could not load GitHub settings")

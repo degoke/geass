@@ -52,6 +52,10 @@ func (s *Server) handleGitHubManifestCallback(w http.ResponseWriter, r *http.Req
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
+	// A cluster whose GitHub App a provider runs registers none of its own, and holds no App's private key.
+	if s.refuseInExternalMode(w, r, "/settings/github") {
+		return
+	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	if code == "" {

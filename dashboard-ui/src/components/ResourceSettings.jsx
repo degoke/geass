@@ -9,8 +9,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
-import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { canMutate, databaseVersion } from "@/lib/dashboard";
+import { alertUser, alertError } from "@/lib/notify";
 import { availableConnections } from "@/lib/project-resources";
 import { ceilingOf, databaseHasVolume, defaultSizeForKind, defaultStorageForEngine, storageSizeOptions } from "@/lib/capacity";
 import { supportsBackups } from "@/lib/backups";
@@ -41,13 +41,9 @@ import {
   SettingsPanel,
 } from "@/layout/SettingsShell";
 function storageDescription(deployed, expandable, locked) {
-  if (locked) return "This database's storage can't be resized, so its size is fixed.";
-  if (!expandable && !deployed) {
-    return "Disk for each instance. This cluster's storage can't be resized, so choose carefully: the size can't be changed after deploying.";
-  }
-  return deployed
-    ? "Disk for each instance. Once deployed it can be increased but not decreased."
-    : "Disk for each instance. You can increase it after deploying, but not decrease it.";
+  if (locked) return "This storage can't be resized.";
+  if (!expandable && !deployed) return "Can't be changed after deploying, so choose carefully.";
+  return deployed ? "Can be increased, not decreased." : "Can be increased after deploying, not decreased.";
 }
 
 export function ResourceSettings({ item, kind, name, data, project, reload, navigate, onClose }) {
@@ -170,7 +166,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   if (!canMutate(data)) {
     return (
       <div className="rw-resource-settings-shell rw-rail-settings">
-        <Muted size="sm">Your viewer role can inspect this resource but cannot change it.</Muted>
+        <Muted size="sm">Your viewer role cannot change this resource.</Muted>
       </div>
     );
   }
@@ -178,7 +174,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
   const save = (event) => {
     event.preventDefault();
     const values = { project: item.spec?.project, environment: item.spec?.environment };
-    if (kind === "databases") values.version = version;
+    if (kind === "databases" && item.spec?.engine === "Postgres") values.version = version;
     if (kind === "apps") {
       Object.assign(values, {
         cpu,
@@ -214,7 +210,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
         reload();
         alertUser(settingsSavedMessage(result));
       })
-      .catch((error) => alertUser(error.message));
+      .catch((error) => alertError(error.message));
   };
 
   const copyResourceId = () => {
@@ -237,10 +233,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
           <>
             {show("general") && (
               <ResourceSettingsSection id="general" icon={Settings} title="General">
-                <ResourceSettingsBlock
-                  title="Resource"
-                  description="Where this resource lives in your project. IDs are used in APIs and delete confirmation."
-                >
+                <ResourceSettingsBlock title="Resource">
                   <SettingsPanel>
                     <div className="rw-settings-usage-lines">
                       <div className="rw-settings-usage-line">
@@ -269,10 +262,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
             {show("source") && (
               <ResourceSettingsSection id="source" icon={GitBranch} title="Source">
                 <FormStack className="rw-rail-form" onSubmit={save}>
-                  <ResourceSettingsBlock
-                    title={isGitSource ? "GitHub repository" : "Container image"}
-                    description="Set how this service is built and run. Save here, then deploy from the Deployments tab."
-                  >
+                  <ResourceSettingsBlock title={isGitSource ? "GitHub repository" : "Container image"}>
                     <SettingsPanel>
                       {isGitSource ? (
                         <>
@@ -309,10 +299,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
 
             {show("logical") && (
               <ResourceSettingsSection id="logical" icon={Database} title="Logical database">
-                <ResourceSettingsBlock
-                  title="Placement"
-                  description="This database is created inside an existing database server."
-                >
+                <ResourceSettingsBlock title="Placement">
                   <SettingsPanel>
                     <div className="rw-settings-usage-lines">
                       <div className="rw-settings-usage-line">
@@ -332,10 +319,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
             {show("bucket") && (
               <ResourceSettingsSection id="bucket" icon={HardDrive} title="Bucket">
                 <FormStack className="rw-rail-form" onSubmit={save}>
-                  <ResourceSettingsBlock
-                    title="Bucket name"
-                    description="The object store name used when this bucket is deployed."
-                  >
+                  <ResourceSettingsBlock title="Bucket name">
                     <SettingsPanel>
                       <Field label="Name">
                         <Input
@@ -348,10 +332,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                     </SettingsPanel>
                   </ResourceSettingsBlock>
                   {isExternalBucket && awsConnections.length > 0 && (
-                    <ResourceSettingsBlock
-                      title="AWS connection"
-                      description="Credentials used to manage this bucket in your cloud account."
-                    >
+                    <ResourceSettingsBlock title="AWS connection">
                       <SettingsPanel>
                         <Field label="Connection">
                           <Select
@@ -369,10 +350,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                     </ResourceSettingsBlock>
                   )}
                   {isExternalBucket && (
-                    <ResourceSettingsBlock
-                      title="Create bucket"
-                      description="When enabled, Geass creates the S3 bucket in the connected account on deploy."
-                    >
+                    <ResourceSettingsBlock title="Create bucket">
                       <SettingsPanel className="rw-resource-settings-toggle-row">
                         <Switch
                           label="Create bucket in AWS"
@@ -392,18 +370,23 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
             {show("database") && (
               <ResourceSettingsSection id="database" icon={Database} title="Database">
                 <FormStack className="rw-rail-form" onSubmit={save}>
-                  <ResourceSettingsBlock
-                    title="Version"
-                    description="Database engine version applied on the next deploy."
-                  >
-                    <SettingsPanel>
-                      <Field label="Version">
-                        <Input value={version} onChange={(event) => setVersion(event.target.value)} />
-                      </Field>
-                    </SettingsPanel>
-                  </ResourceSettingsBlock>
+                  {item.spec?.engine === "Postgres" ? (
+                    <ResourceSettingsBlock title="Version" description="Applied on the next deploy.">
+                      <SettingsPanel>
+                        <Field label="Version">
+                          <Input value={version} onChange={(event) => setVersion(event.target.value)} />
+                        </Field>
+                      </SettingsPanel>
+                    </ResourceSettingsBlock>
+                  ) : databaseVersion(data, item) ? (
+                    <ResourceSettingsBlock title="Version" description="Changes only when Geass is updated.">
+                      <SettingsPanel>
+                        <Muted size="sm">{item.spec?.engine} {databaseVersion(data, item)}</Muted>
+                      </SettingsPanel>
+                    </ResourceSettingsBlock>
+                  ) : null}
                   {inCluster && (
-                    <ResourceSettingsBlock title="Resources" description="CPU and memory for the database workload.">
+                    <ResourceSettingsBlock title="Resources">
                       <SettingsPanel>
                         <SizeFields
                           cpu={cpu}
@@ -453,10 +436,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
             {show("scale") && (
               <ResourceSettingsSection id="scale" icon={Gauge} title="Scale">
                 <FormStack className="rw-rail-form" onSubmit={save}>
-                  <ResourceSettingsBlock
-                    title="Resources"
-                    description="Sizing for this workload. Changes apply after you deploy."
-                  >
+                  <ResourceSettingsBlock title="Resources" description="Applies after you deploy.">
                     <SettingsPanel>
                       <SizeFields
                         bursts={kind === "apps"}
@@ -482,13 +462,13 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                       onChange={setRunOn}
                       disabled={Boolean(item.spec?.deploy?.enabled)}
                       note={item.spec?.deploy?.enabled
-                        ? "A database keeps its data on the nodes it was first deployed to, so this can no longer change."
-                        : "Chosen before the first deploy. After that the database stays on its nodes."}
+                        ? "Fixed, since the data is on those nodes."
+                        : "Cannot be changed after the first deploy."}
                     />
                   )}
                   {kind === "apps" && (
                     <>
-                      <ResourceSettingsBlock title="Replicas" description="How many instances run for this service.">
+                      <ResourceSettingsBlock title="Replicas">
                         <SettingsPanel>
                           <Field label="Replicas">
                             <Input
@@ -500,10 +480,7 @@ export function ResourceSettings({ item, kind, name, data, project, reload, navi
                           </Field>
                         </SettingsPanel>
                       </ResourceSettingsBlock>
-                      <ResourceSettingsBlock
-                        title="Autoscaling"
-                        description="Scale out when average CPU crosses your target."
-                      >
+                      <ResourceSettingsBlock title="Autoscaling">
                         <SettingsPanel className="rw-resource-settings-toggle-row">
                           <Switch
                             label="Enable autoscaling"

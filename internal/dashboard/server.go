@@ -40,7 +40,10 @@ import (
 
 // Server serves the Geass dashboard API and embedded React application.
 type Server struct {
-	Client     client.Client
+	Client client.Client
+	// APIReader reads from the API server what the cache leaves out: the usage meter's hours. It is not limited to a
+	// tenant, so only routes that are the platform's use it. Nil reads through Client.
+	APIReader  client.Reader
 	Cache      cache.Cache
 	Addr       string
 	Metrics    MetricsClient
@@ -115,6 +118,8 @@ type Server struct {
 	// v1Mux serves the reads that exist only in the v1 API; it is built on first use.
 	v1Once sync.Once
 	v1Mux  *http.ServeMux
+	// forwarded remembers the GitHub events a provider forwarded, so that a copy of one is not done twice.
+	forwarded forwardReplays
 }
 
 // Start implements manager.Runnable.
@@ -249,6 +254,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	inner.HandleFunc(platform.GeassDashboardProbePath, s.handleGeassProbe)
 	inner.HandleFunc("/settings/github/manifest/callback", s.handleGitHubManifestCallback)
 	inner.HandleFunc("/webhooks/github", s.handleGitHubWebhook)
+	inner.HandleFunc(githubForwardedPrefix, s.handleForwardedGitHubWebhook)
 	inner.HandleFunc(deployHookPrefix, s.handleDeployHook)
 	inner.HandleFunc(oidcLoginPath, s.handleOIDCLogin)
 	inner.HandleFunc(oidcCallbackPath, s.handleOIDCCallback)
@@ -462,6 +468,8 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectDeployPending(w, r, name)
 		case len(parts) == 2 && parts[1] == "assign":
 			s.handleProjectAssign(w, r, name)
+		case len(parts) == 2 && parts[1] == "export":
+			s.handleProjectExport(w, r, name)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1298,10 +1306,12 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 	if app.Spec.Source.Function != nil {
 		changeTitle = "Deploy function (" + app.Spec.Source.Function.Runtime + ")"
 	}
-	source := "Dashboard"
+	source, actor := deployOriginOf(ctx)
 	if app.Spec.Source.Git != nil {
 		changeTitle = "Deploy " + app.Spec.Source.Git.Repository + "@" + app.Spec.Source.Git.Branch
-		source = "GitHub"
+		if source == deployOriginDashboard {
+			source = "GitHub"
+		}
 	}
 	deployment := &geassv1alpha1.GeassDeployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1318,7 +1328,7 @@ func (s *Server) recordDeployment(ctx context.Context, app *geassv1alpha1.GeassA
 			App: app.Name, Project: app.Spec.Project,
 			Environment: app.Spec.Environment,
 			Image:       image, ImageDigest: app.Status.ResolvedImage, Replicas: app.Spec.Replicas,
-			ChangeTitle: changeTitle, Source: source, Actor: "Dashboard",
+			ChangeTitle: changeTitle, Source: source, Actor: actor,
 		},
 	}
 	if err := s.Client.Create(ctx, deployment); err != nil {
@@ -2728,6 +2738,9 @@ func (s *Server) handleDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 	if db.Spec.HighAvailability {
 		instances := int32(3)
 		db.Spec.Instances = &instances
+	}
+	if s.refuseUnsandboxableDatabase(w, r, fallback, db) {
+		return
 	}
 	db.Spec.Backup = defaultBackups(db)
 	db.Spec.Deploy.Enabled = false

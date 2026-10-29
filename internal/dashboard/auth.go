@@ -129,18 +129,29 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 		if presented, ok := bearerToken(r); ok {
-			record, err := s.authenticateAPIToken(r.Context(), presented)
-			if err != nil {
-				if errors.Is(err, errInvalidToken) {
-					writeJSON(w, http.StatusUnauthorized, map[string]string{dashboardLiteralError: errInvalidToken.Error()})
-				} else {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not verify the API token"})
+			if isOIDCBearerCandidate(presented) {
+				// Not one of Geass's own tokens: the identity provider's access token, when that is turned on. The person it
+				// stands for is the session of this request, which is what the handlers below read.
+				session, bearer, err := s.authenticateOIDCAccessToken(r, presented)
+				if err != nil {
+					writeOIDCBearerError(w, err)
+					return
 				}
-				return
-			}
-			r = r.WithContext(context.WithValue(r.Context(), apiTokenContextKey{}, record))
-			if record.Scope == apitokens.ScopeProject && !s.allowProjectToken(w, r, record) {
-				return
+				r = r.WithContext(context.WithValue(context.WithValue(r.Context(), oidcBearerKey{}, bearer), sessionContextKey{}, session))
+			} else {
+				record, err := s.authenticateAPIToken(r.Context(), presented)
+				if err != nil {
+					if errors.Is(err, errInvalidToken) {
+						writeJSON(w, http.StatusUnauthorized, map[string]string{dashboardLiteralError: errInvalidToken.Error()})
+					} else {
+						writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not verify the API token"})
+					}
+					return
+				}
+				r = r.WithContext(context.WithValue(r.Context(), apiTokenContextKey{}, record))
+				if record.Scope == apitokens.ScopeProject && !s.allowProjectToken(w, r, record) {
+					return
+				}
 			}
 		}
 		session := s.currentSession(r)
@@ -216,6 +227,10 @@ func dashboardPublicPath(r *http.Request) bool {
 	path := r.URL.Path
 	switch {
 	case path == platform.GeassDashboardProbePath, path == "/webhooks/github":
+		return true
+	// The provider of an external GitHub App forwards GitHub's events: its signature with the secret it shares with the
+	// cluster is the credential.
+	case strings.HasPrefix(path, githubForwardedPrefix):
 		return true
 	case path == "/api/login", path == "/api/logout", path == "/api/session":
 		return true

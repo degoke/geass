@@ -222,7 +222,9 @@ func (r *GeassPlatformConfigReconciler) cloudflareIngressRules(ctx context.Conte
 	dnsHosts := []string{}
 
 	rootDomain := platform.RootDomainFromConfig(*config)
-	if rootDomain != "" {
+	// The dashboard's own route needs a dashboard Service that has pods behind it, which it does not when the dashboard
+	// runs elsewhere. The services' routes below are unaffected.
+	if rootDomain != "" && !r.DashboardElsewhere {
 		dashboardHost := platform.DashboardHostFromRoot(rootDomain)
 		serviceName, err := r.dashboardServiceName(ctx)
 		if err != nil {

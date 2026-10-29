@@ -267,7 +267,7 @@ func TestMySQLHARunsAClusterMakesTheLoginAndIsReady(t *testing.T) {
 	cluster := e.mocoCluster()
 	require.EqualValues(t, 3, cluster.Spec.Replicas)
 	require.Equal(t, "geass-single", *cluster.Spec.VolumeClaimTemplates[0].Spec.StorageClassName)
-	require.Equal(t, "orders-password", string(e.secret("orders-bootstrap").Data["password"]), "the login MOCO does not make")
+	requireGeneratedPassword(t, "orders", string(e.secret("orders-bootstrap").Data["password"]), "the login MOCO does not make")
 
 	// Available: the application's login and database are made next, by a job that runs as the writing login.
 	e.clusterIs(mocov1.ConditionAvailable)

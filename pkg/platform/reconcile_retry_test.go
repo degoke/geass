@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -239,4 +240,34 @@ func TestWhichImageCouldNotBePulledIsKeptInTheAttemptHistory(t *testing.T) {
 	if got := SanitizeProvisionMessage(message); got != message {
 		t.Fatalf("the image has to reach the person reading the history, got %q", got)
 	}
+}
+
+// A service that is given up on because its copy cannot start used to say "Provisioning failed after repeated errors.
+// Update settings or platform configuration", which sends a person looking for a fault of the platform when the image
+// name has a typo in it.
+func TestAServiceGivenUpOnSaysWhyItCannotStart(t *testing.T) {
+	// An image that cannot be pulled is given longer than the other failures, because the kubelet retries on its own schedule.
+	started := metav1.NewTime(time.Now().Add(-ImagePullFailureMaxDuration).Add(-time.Minute))
+	for _, message := range []string{
+		"The service cannot start: app is ImagePullBackOff (image nginx:nope)",
+		MessageCouldNotPullImage + " redis:7 (ImagePullBackOff)",
+	} {
+		out := ApplyNotReady(nil, ReconcileRetryState{Failures: 2, FailureStarted: &started}, 2, message)
+
+		require.True(t, out.Terminal, message)
+		require.Equal(t, ConditionReasonProvisionFailed, ReadyConditionReason(out.Conditions), message)
+		require.Equal(t, message, readyMessage(out.Conditions), "it is given up on, and still says what is wrong")
+	}
+
+	out := ApplyNotReady(nil, ReconcileRetryState{Failures: 2, FailureStarted: &started}, 2, "connection refused")
+	require.Equal(t, ProvisionFailedUserMessage, readyMessage(out.Conditions), "any other failure is still the general one: the cause may be the platform's")
+}
+
+func readyMessage(conditions []metav1.Condition) string {
+	for _, condition := range conditions {
+		if condition.Type == ConditionReady {
+			return condition.Message
+		}
+	}
+	return ""
 }

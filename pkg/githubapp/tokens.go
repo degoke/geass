@@ -71,6 +71,10 @@ func (r *TokenResolver) ConnectionToken(ctx context.Context, connectionSecret *c
 	}
 	installationID := InstallationIDFromSecret(connectionSecret)
 	if installationID > 0 {
+		// An installation of an App a provider outside the cluster runs has the token the provider gave, and no other.
+		if token, handled, err := r.externalToken(ctx, connectionSecret, installationID); handled {
+			return token, err
+		}
 		// Every report asks for a token. Minting one is a request to GitHub and a write of the Secret, so the one
 		// that was minted a short while ago is used again.
 		if token := TokenFromSecret(connectionSecret); token != "" && tokenIsFresh(connectionSecret, time.Now()) {

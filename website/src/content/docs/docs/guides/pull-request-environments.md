@@ -32,9 +32,9 @@ sends to the dashboard.
 3. Under **Copy this environment**, choose the environment to copy. It is the one whose services build your repository. The
    list leaves out environments that are themselves pull request environments.
 4. Set **Open at once** to the most pull request environments that may exist together, from 1 to 25. The default is 5.
-5. Choose **Save**. A toast says "PR environments are on".
+5. Choose **Save**. A toast says "Saved".
 
-If the project is not linked to GitHub, the block tells you to link it first under **Integrations**.
+If the project is not linked to GitHub, the block tells you to link it first under **GitHub**.
 
 Turning the switch off stops new environments. Environments that already exist are still cleaned up when their pull
 requests close.

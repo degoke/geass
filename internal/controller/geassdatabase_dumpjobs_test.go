@@ -1,8 +1,14 @@
 package controller
 
 import (
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -204,4 +210,111 @@ func TestTheScratchSpaceOfABackupOrRestorePodIsBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A pod's network rules are programmed a moment after it starts, and the first connection from it is refused until they
+// are. Every Job that talks to a database server holds until it answers, or its one retry, which starts at once too,
+// fails the same way: seen on a real K3s, where every MySQL backup Job (and the final copy when a database is deleted)
+// failed with "Can't connect (111)" while the same Job with a delay in front of the dump completed.
+func TestEveryJobThatTalksToADatabaseWaitsForTheServerFirst(t *testing.T) {
+	for _, engine := range []geassv1alpha1.GeassDatabaseEngine{geassv1alpha1.DatabaseEngineMySQL, geassv1alpha1.DatabaseEngineMariaDB} {
+		for name, key := range map[string]string{"backup": "", "restore": testDumpPrefix + "20261011T020000Z.sql.gz"} {
+			t.Run(string(engine)+" "+name, func(t *testing.T) {
+				pod := dumpPodSpec(dumpInput(engine, func(in *dumpJobInput) { in.restoreKey = key }))
+				container := pod.InitContainers[0]
+				if key != "" {
+					container = pod.Containers[0]
+				}
+				script := strings.Join(container.Command, " ")
+				wait := strings.Index(script, `/dev/tcp/$DB_HOST/`)
+				require.GreaterOrEqual(t, wait, 0, "the first connection of a new pod is refused")
+				first := "dump"
+				if key != "" {
+					first = "gunzip"
+				}
+				require.Less(t, wait, strings.Index(script, first), "the wait comes before the client is run")
+			})
+		}
+	}
+	for name, key := range map[string]string{"backup": "", "restore": testDumpPrefix + "20261011T020000Z.sql.gz"} {
+		t.Run("sqlite "+name, func(t *testing.T) {
+			pod := dumpPodSpec(dumpInput(geassv1alpha1.DatabaseEngineSQLite, func(in *dumpJobInput) { in.restoreKey = key }))
+			container := pod.InitContainers[0]
+			if key != "" {
+				container = pod.Containers[0]
+			}
+			script := strings.Join(container.Command, " ")
+			require.Contains(t, script, `/readyz`)
+			require.Less(t, strings.Index(script, "/readyz"), strings.Index(script, "/db/"), "it asks if the server is ready before it uses it")
+		})
+	}
+	for name, script := range map[string]string{
+		"postgres create": postgresCreateScript, "postgres drop": postgresDropScript,
+		"mysql create": mysqlCreateScript, "mysql drop": mysqlDropScript,
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Contains(t, script, "until ")
+			require.Contains(t, script, "did not answer")
+		})
+	}
+}
+
+// What is waited for is a server that is up in a moment, not a refused connection that is never retried: run the real
+// scripts against a server that starts listening a second after they do.
+func TestTheWaitForAServerReturnsWhenItStartsAnswering(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().(*net.TCPAddr)
+	require.NoError(t, listener.Close())
+
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		late, lerr := net.Listen("tcp", address.String())
+		if lerr != nil {
+			return
+		}
+		defer func() { _ = late.Close() }()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if tcp, ok := late.(*net.TCPListener); ok {
+				_ = tcp.SetDeadline(time.Now().Add(200 * time.Millisecond))
+			}
+			if conn, aerr := late.Accept(); aerr == nil {
+				_ = conn.Close()
+			}
+		}
+	}()
+
+	command := exec.Command(bash, "-c", waitForServerScript(strconv.Itoa(address.Port))+"\necho reached")
+	command.Env = append(os.Environ(), "DB_HOST=127.0.0.1")
+	started := time.Now()
+	out, err := command.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), "reached")
+	require.GreaterOrEqual(t, time.Since(started), time.Second, "it waited for the server instead of trying once")
+	require.Less(t, time.Since(started), 8*time.Second)
+}
+
+func TestTheWaitForRqliteRetriesUntilTheServerIsReady(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not installed")
+	}
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "calls")
+	// A wget that is refused twice, then answers, the way a new pod's first connections are.
+	stub := "#!/bin/sh\nn=$(cat " + counter + " 2>/dev/null || echo 0)\nn=$((n + 1))\necho $n > " + counter + "\n[ \"$n\" -ge 3 ]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "wget"), []byte(stub), 0o755)) //nolint:gosec // a test stub that has to be executable
+	command := exec.Command(sh, "-c", "set -eu\n"+waitForRqliteScript("4001")+"\necho reached")
+	command.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DB_HOST=rqlite")
+	out, err := command.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), "reached")
+	calls, err := os.ReadFile(counter)
+	require.NoError(t, err)
+	require.Equal(t, "3", strings.TrimSpace(string(calls)), "it asked again after each refusal")
 }

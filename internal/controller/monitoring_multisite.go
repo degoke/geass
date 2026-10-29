@@ -6,6 +6,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
+	"github.com/degoke/geass/pkg/mesh"
 )
 
 // kubeletExternalAddresses has the monitoring operator list each node's kubelet at its external address.
@@ -21,7 +22,7 @@ func monitoringChartValues(cluster *geassv1alpha1.GeassCluster) (string, error) 
 	if cluster.Spec.Addons.Monitoring.Profile == "full" {
 		values = monitoringPrometheusValues
 	}
-	if !cluster.Spec.Network.MultiSite {
+	if !mesh.From(cluster.Spec.Network).Enabled {
 		return values, nil
 	}
 	// Merged as data: the base values already configure the operator, and a second top-level

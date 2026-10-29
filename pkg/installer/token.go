@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/degoke/geass/pkg/mesh"
 )
 
 const (
@@ -69,6 +71,45 @@ func joinTokenManifest(token string) (string, error) {
 	})
 	if err != nil {
 		return "", fmt.Errorf("render join token secret: %w", err)
+	}
+	return string(raw), nil
+}
+
+// MeshAuthSecret stores the auth key of a Tailscale mesh where the operator looks for it, which is the Secret the cluster
+// object names (spec.network.mesh.tailscale.authKeySecretRef). The operator copies the key to each worker it joins. It
+// does nothing for a cluster that has no Tailscale mesh.
+type MeshAuthSecret struct {
+	Network Network
+}
+
+func (s *MeshAuthSecret) Name() string { return "store mesh auth key" }
+
+func (s *MeshAuthSecret) Run() error {
+	if !s.Network.IsTailscale() {
+		return nil
+	}
+	manifest, err := meshAuthSecretManifest(s.Network.Tailscale.AuthKey)
+	if err != nil {
+		return err
+	}
+	// The key goes in on stdin, which the installer's log does not record.
+	return runCommandWithOptions(s.Name(), commandOptions{
+		env:    append(os.Environ(), k3sKubeconfigEnv),
+		envLog: []string{k3sKubeconfigEnv},
+		stdin:  strings.NewReader(manifest),
+	}, "k3s", "kubectl", "apply", "-f", "-")
+}
+
+// meshAuthSecretManifest is the Secret, as JSON so that no character of the key can be read as YAML.
+func meshAuthSecretManifest(key string) (string, error) {
+	raw, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": meshAuthSecretName, "namespace": "geass-system"},
+		"data":       map[string]string{mesh.AuthKeySecretKey: base64.StdEncoding.EncodeToString([]byte(key))},
+	})
+	if err != nil {
+		return "", fmt.Errorf("render mesh auth secret: %w", err)
 	}
 	return string(raw), nil
 }

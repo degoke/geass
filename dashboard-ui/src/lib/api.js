@@ -1,3 +1,5 @@
+import { apiFetch } from "@/lib/transport";
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -9,17 +11,10 @@ function apiErrorMessage(path, status, payload) {
   if (status === 404 && path.startsWith("/api/")) {
     const body = typeof payload === "string" ? payload : "";
     if (!payload?.error && (body.includes("page not found") || body.includes("Not Found"))) {
-      return (
-        "Geass API not found. The Vite dev server proxies /api to the Go dashboard — start it with " +
-        "make dashboard-backend (API on :8085) or run make run for both UI and API."
-      );
+      return "Geass API not found. Start it with make dashboard-backend, or run make run.";
     }
     if (payload?.error === "not found" && path.includes("/cloudflare")) {
-      return (
-        "This dashboard API does not include Cloudflare connector routes. Restart the Geass manager " +
-        "from this repo (make dashboard-backend or make run), or rebuild and rollout the controller image " +
-        "if you are using a cluster install."
-      );
+      return "This dashboard API has no Cloudflare routes. Restart the Geass manager, or roll out a new controller image.";
     }
   }
   if (payload?.error) return payload.error;
@@ -28,7 +23,7 @@ function apiErrorMessage(path, status, payload) {
 }
 
 export async function api(path, options = {}) {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
+  const response = await apiFetch(path, options);
   const type = response.headers.get("content-type") || "";
   const payload = type.includes("json") ? await response.json() : await response.text();
   if (!response.ok) {
@@ -63,6 +58,11 @@ export function resourceDisplayName(item) {
   const label = item?.metadata?.annotations?.[resourceDisplayNameAnnotation];
   if (typeof label === "string" && label.trim()) return label.trim();
   return resourceName(item);
+}
+/** A project's name as people know it: it is kept in its spec, not in an annotation like the other resources'. */
+export function projectDisplayName(item) {
+  const name = item?.spec?.displayName;
+  return typeof name === "string" && name.trim() ? name.trim() : resourceName(item);
 }
 export const condition = (item) => item?.status?.conditions?.find((entry) => entry.type === "Ready")?.status || item?.status?.phase || "Pending";
 export const isReady = (item) => condition(item) === "True" || condition(item) === "Ready";

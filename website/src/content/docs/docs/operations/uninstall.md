@@ -71,7 +71,7 @@ In **Settings → Connectors**:
 - **Cloudflare → Disconnect.** Type `remove-cloudflare`. This stops the `cloudflared` deployment and automatic DNS updates. Your Cloudflare account, the tunnel named `geass` and every DNS record Geass created stay. Delete them in Cloudflare: the proxied `A` record for the dashboard host (`geass.<your domain>` by default), the `CNAME` records pointing at the tunnel (dashboard and service hostnames, in Tunnel mode), and the tunnel.
 - **GitHub → Remove GitHub App.** Type `remove-github`. This removes Geass's copy of the app's credentials. The GitHub App itself and its installations stay: delete them in your GitHub settings.
 - **AWS and PlanetScale.** Connections are removed with their project (see above). Revoke the access keys and tokens at the provider.
-- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before: a connection that pools or machines still use cannot be removed from the dashboard, because without it the machines could no longer be deleted. **Remove** on each connection under **Cloud connections** (or `geass connections remove NAME`) deletes the connection and its Secret, and the credentials stay valid at the cloud until you revoke them there.
+- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before: a connection that pools or machines still use cannot be removed from the dashboard, because without it the machines could no longer be deleted. **Remove** on each connection under **Server clouds** (or `geass connections remove NAME`) deletes the connection and its Secret, and the credentials stay valid at the cloud until you revoke them there.
 
 ## Step 3: remove workers
 
@@ -108,6 +108,7 @@ Remove what the installer and K3s left on each server, if you want it gone:
 
 - **Longhorn data.** `sudo rm -rf /var/lib/longhorn`. This deletes the only copies of database volumes on that node. Run it when you are sure you no longer need them.
 - **Firewall rules.** With `ufw` or `firewalld` active, the installer opened 6443/tcp, 10250/tcp and 8472/udp (51820/udp for a multi-site cluster). Delete them in your firewall, for example `sudo ufw delete allow 6443/tcp`, or in your provider's security group. Rules you added yourself, such as 80/tcp and 443/tcp, are yours to remove.
+- **A Tailscale mesh.** Tailscale stays installed and each server stays on the tailnet (K3s did not install it). Remove the servers in the Tailscale or Headscale admin console, or run `sudo tailscale logout` on each, and revoke the auth key you gave Geass. K3s's script deletes `/etc/rancher/k3s`, and with it the file that held the key (`vpn-auth`); the Secret `geass-mesh-auth` goes with the cluster.
 - **iSCSI.** The `iscsid` service and the `open-iscsi` or `iscsi-initiator-utils` package are still installed.
 - **Installer files.** `geass-install-*.log` in the directory you ran the installer from, and the downloaded installer in your temporary directory.
 

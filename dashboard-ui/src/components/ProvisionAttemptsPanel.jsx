@@ -17,7 +17,7 @@ export function ProvisionAttemptsPanel({ item, alwaysShow = false }) {
       {!attempts.length ? (
         <Muted size="sm">
           {alwaysShow
-            ? "No deploys recorded yet. Use Deploy changes in the top bar, or Retry after a failure, to start history."
+            ? "No deploys recorded yet."
             : "No deploy history yet."}
         </Muted>
       ) : null}

@@ -16,7 +16,6 @@ import {
   Layers,
   Lock,
   Network,
-  Plug,
   Settings,
   ShieldCheck,
   Variable,
@@ -25,12 +24,13 @@ import {
 import { action, resourceDisplayName, resourceName } from "@/lib/api";
 import { canMutate, sessionScopes } from "@/lib/dashboard";
 import { ProjectOrganization } from "@/components/ProjectOrganization";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { normalizeProjectName } from "@/lib/project-names";
 import { projectResources } from "@/lib/project-resources";
 import { defaultRegion, platformRegions } from "@/lib/placement";
 import { RailCopyField } from "@/components/rail-controls";
 import { ApiTokens } from "@/components/ApiTokens";
+import { useHidden } from "@/lib/options";
 import { PREnvironments } from "@/components/PREnvironments";
 import { ProjectBackups } from "@/components/ProjectBackups";
 import { ProjectCompliance } from "@/components/ProjectCompliance";
@@ -60,7 +60,7 @@ const SECTIONS = [
   { id: "limits", label: "Limits", icon: Gauge },
   { id: "compliance", label: "Compliance", icon: Lock },
   { id: "tokens", label: "Tokens", icon: KeyRound },
-  { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "integrations", label: "GitHub", icon: GitBranch },
   { id: "danger", label: "Danger", icon: AlertTriangle, danger: true },
 ];
 
@@ -69,6 +69,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [section, setSection] = useState("general");
+  const hideTokens = useHidden("tokens");
   const [displayName, setDisplayName] = useState(project.spec?.displayName || name);
   const [region, setRegion] = useState(project.spec?.region || "");
   const [newEnvironment, setNewEnvironment] = useState("");
@@ -104,7 +105,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
         alertUser("Project deleted");
         navigate({ to: "/projects" });
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setDeleting(false));
   };
 
@@ -125,7 +126,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
     setBusy(true);
     return promise
       .then(() => { reload(); if (message) alertUser(message); return true; })
-      .catch((error) => { alertUser(error.message); return false; })
+      .catch((error) => { alertError(error.message); return false; })
       .finally(() => setBusy(false));
   };
 
@@ -187,7 +188,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
       .then((ok) => { if (ok) setRemoveTarget(null); });
   };
 
-  const nav = SECTIONS.map((item) => ({
+  const nav = SECTIONS.filter((item) => !(hideTokens && item.id === "tokens")).map((item) => ({
     ...item,
     active: section === item.id,
     onClick: () => setSection(item.id),
@@ -219,7 +220,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
                 if (regions.length) values.region = region;
                 action(`/projects/${name}/settings/save`, values)
                   .then(() => { reload(); alertUser("Project settings saved"); })
-                  .catch((error) => alertUser(error.message));
+                  .catch((error) => alertError(error.message));
               }}
             >
               <Field label="Name">
@@ -231,9 +232,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               {regions.length ? (
                 <Field
                   label="Region"
-                  description={hasDatabases
-                    ? "Fixed, because this project has databases and their data stays on the nodes of the region they were created in."
-                    : "This project only runs on nodes in its region. Services restart in the new region when it changes."}
+                  description={hasDatabases ? "Fixed: this project has databases." : "Services restart when the region changes."}
                 >
                   <Select value={region} onChange={(event) => setRegion(event.target.value)} disabled={!mutable || hasDatabases} aria-label="Project region">
                     <option value="">{defaultRegion(data) ? `Cluster default (${defaultRegion(data)})` : "Any region"}</option>
@@ -329,7 +328,6 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
 
       {section === "environments" && (
         <SettingsSection title="Environments" flat>
-          <p className="rw-rail-body">Each environment is an isolated namespace for resources and variables.</p>
           <div className="rw-rail-stack">
             {(project.spec?.environments || []).map((env) => (
               <div className="rw-rail-list-row" key={env}>
@@ -352,7 +350,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               event.preventDefault();
               action(`/projects/${name}/environments/create`, { environment: newEnvironment })
                 .then(() => { reload(); setNewEnvironment(""); alertUser("Environment created"); })
-                .catch((error) => alertUser(error.message));
+                .catch((error) => alertError(error.message));
             }}
           >
             <Input
@@ -370,7 +368,6 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
 
       {section === "variables" && (
         <SettingsSection title="Shared Variables" flat>
-          <p className="rw-rail-body">Variables that can be referenced by multiple services within an environment.</p>
           <SettingsPanel className="rw-rail-var-box">
             <button type="button" className="rw-rail-var-head">
               <span>{variable.environment}</span>
@@ -394,7 +391,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
                   event.preventDefault();
                   action(`/projects/${name}/variables/save`, { ...variable, secret: variable.secret ? "on" : "" })
                     .then(() => { reload(); setVariable({ ...variable, name: "", value: "" }); alertUser("Shared variable saved"); })
-                    .catch((error) => alertUser(error.message));
+                    .catch((error) => alertError(error.message));
                 }}
               >
                 <Input
@@ -476,26 +473,19 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
         </SettingsSection>
       )}
 
-      {section === "tokens" && (
+      {section === "tokens" && !hideTokens && (
         <SettingsSection title="Tokens" flat>
           <ApiTokens scope="project" project={project} projects={[project]} mutable={mutable} />
         </SettingsSection>
       )}
 
       {section === "integrations" && (
-        <SettingsSection title="Integrations" flat>
-          <p className="rw-rail-body">Connect this project to the tools that build and expose your services.</p>
+        <SettingsSection title="GitHub" flat>
           <SettingsPanel className="rw-integration-card">
             <GitBranch size={20} aria-hidden="true" />
             <div className="rw-integration-copy">
               <strong>GitHub</strong>
-              <span>
-                {githubLinked
-                  ? "Connected. Repositories can be deployed as services, and pushes build automatically."
-                  : githubReady
-                    ? "Link a GitHub account to deploy repositories from the canvas."
-                    : "GitHub is not set up for this cluster yet."}
-              </span>
+              <span>{githubLinked ? "Connected." : githubReady ? "Not connected." : "The cluster has no GitHub App yet."}</span>
             </div>
             {githubLinked ? (
               <Button variant="outline" disabled={!mutable || busy} onClick={disconnectGitHub}>Disconnect</Button>
@@ -510,11 +500,7 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               <GitBranch size={20} aria-hidden="true" />
               <div className="rw-integration-copy">
                 <strong>Report to GitHub</strong>
-                <span>
-                  Show each build as a commit status, each deploy as a GitHub Deployment, and keep one comment on every pull
-                  request that has an environment. The GitHub App needs the Commit statuses, Deployments and Pull requests
-                  write permissions; Test GitHub App under Connectors checks them.
-                </span>
+                <span>Commit statuses, deployments and a pull request comment.</span>
               </div>
               <Switch
                 checked={githubReporting}
@@ -524,14 +510,6 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
               />
             </SettingsPanel>
           ) : null}
-          <SettingsPanel className="rw-integration-card">
-            <Plug size={20} aria-hidden="true" />
-            <div className="rw-integration-copy">
-              <strong>Cloud connectors</strong>
-              <span>Cloudflare domains, AWS, and PlanetScale are configured once for the whole cluster.</span>
-            </div>
-            <Button variant="outline" component={Link} to="/settings/connectors">Open connectors</Button>
-          </SettingsPanel>
         </SettingsSection>
       )}
 
@@ -564,14 +542,13 @@ export function ProjectSettingsPage({ project, data, reload, environment: worksp
         <SettingsDivider />
         <SettingsSection title="Delete Project" flat>
           <SettingsAlert tone="danger">
-            Deleting the project removes its services, databases, buckets, and environment namespaces. This can&apos;t be undone.
+            Deletes the project, its services, databases and buckets. This can&apos;t be undone.
           </SettingsAlert>
           <p className="rw-rail-body">
-            This project has {resourceTotal} {resourceTotal === 1 ? "resource" : "resources"} across its environments.
+            {resourceTotal} {resourceTotal === 1 ? "resource" : "resources"} will be deleted.
           </p>
           <Field
             label={`Type ${deleteConfirmLabel} to delete`}
-            description="Use the project name shown in the sidebar (spacing and capitalization are ignored)."
           >
             <Input
               value={confirmDelete}

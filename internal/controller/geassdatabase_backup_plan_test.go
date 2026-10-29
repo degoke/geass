@@ -335,7 +335,10 @@ func TestPlanRecoveryReadsTheSourceArchiveAndCopiesItsCredentials(t *testing.T) 
 	require.Equal(t, "legacy", plan.bootstrap.Database, "the restored data lives in the source's database name, not the new resource name")
 	require.Equal(t, appContainerName, plan.bootstrap.Owner)
 	require.Equal(t, "orders-bootstrap", plan.bootstrap.Secret.Name)
-	require.Nil(t, plan.bootstrap.RecoveryTarget, "no choice means the latest recoverable moment")
+	require.NotNil(t, plan.bootstrap.RecoveryTarget)
+	require.Equal(t, "20260301T020000", plan.bootstrap.RecoveryTarget.BackupID, "no choice means the newest restore point the archive lists, which is one that can be restored")
+	require.Empty(t, plan.bootstrap.RecoveryTarget.TargetTime, "and then everything after it: the latest recoverable moment")
+	require.Nil(t, plan.bootstrap.RecoveryTarget.TargetImmediate)
 
 	store := plan.external.BarmanObjectStore
 	require.Equal(t, "s3://"+testBackupBucket+"/"+testProjectName, store.DestinationPath)
@@ -366,7 +369,7 @@ func TestPlanRecoveryTargets(t *testing.T) {
 			check: func(t *testing.T, target *cnpgv1.RecoveryTarget) {
 				require.Equal(t, platform.RestoreTargetTime(stoppedAt.Time), target.TargetTime)
 				require.Nil(t, target.TargetImmediate)
-				require.Empty(t, target.BackupID)
+				require.Equal(t, "20260301T020000", target.BackupID, "it starts from the newest restore point before the moment, so a copy that cannot be restored is never picked")
 			},
 		},
 	}
@@ -675,4 +678,21 @@ func TestPlanRecoveryRefusesBackupsThatHaveNothingToRestoreFrom(t *testing.T) {
 
 	_, err := env.r.planRecovery(context.Background(), env.db, env.wsNS)
 	require.ErrorContains(t, err, "no restore points yet", "a recovery without a base backup would never finish and never report why")
+}
+
+func TestARestoreStartsFromTheNewestRestorePointThatFinishedBeforeTheMoment(t *testing.T) {
+	at := func(h int) metav1.Time { return metav1.NewTime(time.Date(2026, 3, 10, h, 0, 0, 0, time.UTC)) }
+	archive := &geassv1alpha1.GeassBackupArchive{Status: geassv1alpha1.GeassBackupArchiveStatus{RestorePoints: []geassv1alpha1.GeassRestorePoint{
+		{ID: "20260310T200000", Time: at(20)}, {ID: "20260310T120000", Time: at(12)}, {ID: "20260310T040000", Time: at(4)},
+	}}}
+	pick := func(restore *geassv1alpha1.GeassDatabaseRestoreSpec) *cnpgv1.RecoveryTarget {
+		return recoveryTarget(restore, archive)
+	}
+
+	require.Equal(t, "20260310T200000", pick(&geassv1alpha1.GeassDatabaseRestoreSpec{}).BackupID)
+	target := pick(&geassv1alpha1.GeassDatabaseRestoreSpec{Time: timePtr(at(15))})
+	require.Equal(t, "20260310T120000", target.BackupID)
+	require.NotEmpty(t, target.TargetTime)
+	require.Empty(t, pick(&geassv1alpha1.GeassDatabaseRestoreSpec{Time: timePtr(at(2))}).BackupID, "before every restore point there is no copy to pin: the restore picks as it always did")
+	require.Nil(t, recoveryTarget(&geassv1alpha1.GeassDatabaseRestoreSpec{}, &geassv1alpha1.GeassBackupArchive{}), "an archive that lists none has nothing to pin")
 }

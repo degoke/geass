@@ -6,10 +6,9 @@ import { RefreshCw, Trash2 } from "lucide-react";
 import { action, api, condition, resourceName } from "@/lib/api";
 import { resourceHref } from "@/lib/resource-links";
 import { canMutate } from "@/lib/dashboard";
-import { alertUser } from "@/lib/notify";
+import { alertUser, alertError } from "@/lib/notify";
 import { capacityFits, cpuMillis, memoryBytes, sizeLabel, storageSizeOptions } from "@/lib/capacity";
 import {
-  CLUSTER_SERVER_ENGINES,
   clusterObjectStoreServer,
   clusterProjectBuckets,
   defaultServerStorage,
@@ -35,11 +34,6 @@ import {
 import { SettingsAlert, SettingsFormActions, SettingsPanel } from "@/layout/SettingsShell";
 
 const REMOVE_CONFIRM_TEXT = "remove";
-
-/** The server people would switch to: there are two, so it is the one that is not in use. */
-function otherEngine(engine) {
-  return CLUSTER_SERVER_ENGINES.find((entry) => entry !== engine) || "";
-}
 
 function engineLabel(data, engine) {
   return objectStorageServer(data, engine)?.label || engine || "Object storage";
@@ -118,7 +112,6 @@ function ObjectStorageRemoveSection({
   data,
   serverName,
   provider,
-  nextEngine,
   projectBuckets,
   bucketsBlockRemoval,
   reload,
@@ -137,7 +130,7 @@ function ObjectStorageRemoveSection({
         reload();
         alertUser("Object storage removed");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setRemoving(false));
   };
 
@@ -168,20 +161,16 @@ function ObjectStorageRemoveSection({
     </ul>
   );
 
-  const switchNote = `To switch to ${nextEngine}, delete every in-cluster bucket, remove ${provider}, then set up ${nextEngine}. Data is not copied from one to the other.`;
-
   return (
     <SettingsPanel className="rw-cf-disconnect rw-storage-remove">
       <h3 className="rw-settings-subtitle">Remove object storage</h3>
       <p className="rw-rail-body">
-        Removes {provider} from the cluster and deletes <strong>all</strong> data on the server&apos;s volume. You must
-        delete every in-cluster project bucket first; Geass will not remove them for you.
+        Removes {provider} and deletes <strong>all</strong> data on its volume.
       </p>
-      <p className="rw-rail-body">{switchNote}</p>
       {bucketsBlockRemoval && (
         <SettingsAlert tone="danger">
           {projectBuckets.length} project bucket{projectBuckets.length === 1 ? "" : "s"} still use this server. Delete
-          them from each project before removing {provider}.
+          them first.
         </SettingsAlert>
       )}
       <DangerZone>
@@ -203,18 +192,14 @@ function ObjectStorageRemoveSection({
       >
         <Text size="sm" component="div" className="rw-storage-remove-modal">
           <p>
-            This removes the shared {provider} server from your cluster and deletes <strong>all</strong> data on its
-            volume. It cannot be undone.
+            This removes the shared {provider} server and deletes <strong>all</strong> data on its volume. It cannot be
+            undone.
           </p>
           <ul>
-            <li>
-              Delete <strong>all</strong> in-cluster project buckets that use this server before you can remove it.
-              Geass does not delete project buckets automatically.
-            </li>
-            <li>Projects will not be able to add new in-cluster buckets until you set up object storage again.</li>
-            <li>External S3 buckets and connections are not changed.</li>
+            <li>Delete every in-cluster project bucket first.</li>
+            <li>Projects cannot add in-cluster buckets until you set up object storage again.</li>
+            <li>External S3 buckets are not changed.</li>
           </ul>
-          <p>{switchNote}</p>
         </Text>
         {bucketsBlockRemoval && (
           <>
@@ -325,9 +310,9 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
     action(`/object-stores/${serverName}/update`, { project: "", environment: "", cpu, memory })
       .then(() => {
         reload();
-        alertUser(`Size updated. ${provider} will restart with the new limits.`);
+        alertUser("Size updated");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSaving(false));
   };
 
@@ -339,16 +324,16 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
   const saveStorage = (event) => {
     event.preventDefault();
     if (storageShrinks) {
-      alertUser(`storage can be increased but not decreased (currently ${currentStorage})`);
+      alertUser(`Storage cannot be decreased (currently ${currentStorage})`);
       return;
     }
     setSavingStorage(true);
     action(`/object-stores/${serverName}/update`, { project: "", environment: "", storageSize: storage })
       .then(() => {
         reload();
-        alertUser(`Storage will be increased to ${storageText(storage)}.`);
+        alertUser("Storage updated");
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setSavingStorage(false));
   };
 
@@ -384,8 +369,7 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
             {storageBlocked && (
               <div className="rw-storage-capacity-alert">
                 <SettingsAlert tone="danger">
-                  The server&apos;s storage is unavailable, so {provider} can&apos;t start. Check that your cluster&apos;s
-                  nodes are healthy.
+                  The server&apos;s storage is unavailable, so {provider} can&apos;t start.
                 </SettingsAlert>
               </div>
             )}
@@ -394,11 +378,7 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
         )}
         {view === "manage" && (
           <div className="rw-storage-manage-stack">
-            <PageSection
-              plain
-              title="Size"
-              description={`Change CPU and memory for the ${provider} server. Geass applies the new size and restarts the server when needed.`}
-            >
+            <PageSection plain title="Size">
               <FormStack className="rw-storage-form" onSubmit={saveSize}>
                 <SizeFields
                   cpu={cpu}
@@ -411,8 +391,8 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
                 />
                 {!fits && (
                   <Muted size="sm">
-                    The cluster does not have enough capacity for this size.{" "}
-                    <AppLink href="/cluster">Open cluster capacity</AppLink> before saving.
+                    Not enough cluster capacity for this size.{" "}
+                    <AppLink href="/cluster">Open cluster capacity</AppLink>
                   </Muted>
                 )}
                 {canMutate(data) && (
@@ -429,7 +409,7 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
               title="Storage"
               description={
                 resizable
-                  ? `The disk that holds the ${provider} server's data. You can make it bigger, but not smaller.`
+                  ? "Can be made bigger, not smaller."
                   : "This cluster's storage can't be resized."
               }
             >
@@ -462,7 +442,6 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
               data={data}
               serverName={serverName}
               provider={provider}
-              nextEngine={otherEngine(engine)}
               projectBuckets={projectBuckets}
               bucketsBlockRemoval={bucketsBlockRemoval}
               reload={reload}
@@ -500,7 +479,6 @@ function ObjectStorageManagePanel({ server, serverName, ready, data, reload }) {
 function ObjectStorageSetupPanel({ engine, data, reload }) {
   const startsAt = objectStorageServer(data, engine) || {};
   const provider = engineLabel(data, engine);
-  const nextEngine = otherEngine(engine);
   const capacity = data?.platform?.capacity || {};
   const [cpu, setCpu] = useState(startsAt.cpu || "");
   const [memory, setMemory] = useState(startsAt.memory || "");
@@ -534,18 +512,14 @@ function ObjectStorageSetupPanel({ engine, data, reload }) {
         reload();
         alertUser(`${provider} server created`);
       })
-      .catch((error) => alertUser(error.message))
+      .catch((error) => alertError(error.message))
       .finally(() => setCreating(false));
   };
 
   return (
     <SettingsPanel>
       <FormStack className="rw-storage-form">
-        <p className="rw-rail-body">In-cluster buckets stay disabled until this server exists.</p>
-        <p className="rw-rail-body">
-          You choose once for the whole cluster. To switch to {nextEngine} later, delete every in-cluster bucket, remove{" "}
-          {provider}, then set up {nextEngine}. Data is not copied from one to the other.
-        </p>
+        <p className="rw-rail-body">Switching later means deleting every bucket and its data first.</p>
         <SizeFields
           cpu={cpu}
           memory={memory}
@@ -559,8 +533,8 @@ function ObjectStorageSetupPanel({ engine, data, reload }) {
           label="Storage"
           description={
             expandable
-              ? "The disk that holds the server's data. You can make it bigger later, but not smaller."
-              : "This cluster's storage can't be resized later, so choose the size you need now."
+              ? "Can be made bigger later, not smaller."
+              : "Cannot be resized later."
           }
         >
           <Select value={storage} onChange={(event) => setStorage(event.target.value)} aria-label="Storage">
@@ -570,8 +544,7 @@ function ObjectStorageSetupPanel({ engine, data, reload }) {
         {storageProblem && <Muted size="sm">{storageProblem}</Muted>}
         {!fits && (
           <Muted size="sm">
-            The cluster does not have enough capacity. <AppLink href="/cluster">Open cluster capacity</AppLink> before
-            setting up {provider}.
+            Not enough cluster capacity. <AppLink href="/cluster">Open cluster capacity</AppLink>
           </Muted>
         )}
         <SettingsFormActions>

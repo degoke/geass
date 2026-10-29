@@ -244,6 +244,12 @@ JSON, so send those as `application/x-www-form-urlencoded`, which `curl --data-u
 content type to a dashboard route gets `415`; for any other caller a JSON body is not read and the fields arrive empty. See
 [REST API](/docs/reference/rest-api/).
 
+### Use the identity provider's access token
+
+With [sign-in through an identity provider](/docs/guides/external-sign-in/) and `spec.auth.oidc.accessTokens` turned on, a program that is signed in at the provider can send **the access token the provider issued to the person** in place of a Geass token, `Authorization: Bearer <jwt>`, to everything an API token can reach (the REST API, the stream of events and the log streams, and a terminal's WebSocket as the subprotocol `geass.bearer.<jwt>`). Nothing is created in **Settings** → **Tokens**, and nothing long-lived is kept: the person is who acts, with the role and organizations their claims map to, and the actor Geass records is their address (or their subject). The token has to be a JWT access token whose audience is this cluster's, which the provider's documentation and the [setup guide](/docs/guides/external-sign-in/#access-tokens-as-a-bearer-credential) describe; the call is refused with `401` for any that is not (an ID token among them) and with `403` for a person whose claims map to no access.
+
+Like an API token it cannot manage sign-in, make tokens or approve a device code (those need a signed-in admin's session), and a stream or terminal it opened ends when the token expires. It is off by default.
+
 ### What a workspace token can do
 
 - An `admin` workspace token can call every endpoint a signed-in admin can, except the ones that manage tokens or approve device
