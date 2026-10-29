@@ -125,7 +125,7 @@ func newOverlayWorld(t *testing.T, spec *geassv1alpha1.GeassClusterMeshSpec, wor
 		objects = append(objects, workerNode(fmt.Sprintf("w%d", i), i))
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&geassv1alpha1.GeassCluster{}).Build()
-	w := &overlayWorld{cluster: cluster, c: c, prober: newFakeOverlayProber(), now: time.Now().Add(time.Hour)}
+	w := &overlayWorld{cluster: cluster, c: c, prober: newFakeOverlayProber(), now: time.Now().Add(time.Hour).Truncate(time.Second)}
 	w.r = &GeassClusterReconciler{
 		Client: c, Scheme: scheme,
 		overlayProber: w.prober,
@@ -153,6 +153,14 @@ func (w *overlayWorld) condition(t *testing.T) *metav1.Condition {
 }
 
 func (w *overlayWorld) advance(d time.Duration) { w.now = w.now.Add(d) }
+
+// addNode adds a node that has been Ready for the given time as of the world's clock.
+func (w *overlayWorld) addNode(t *testing.T, name string, index int, readyFor time.Duration) {
+	t.Helper()
+	node := workerNode(name, index)
+	node.Status.Conditions[0].LastTransitionTime = metav1.NewTime(w.now.Add(-readyFor))
+	require.NoError(t, w.c.Create(context.Background(), node))
+}
 
 func TestTheOverlayCheckProbesEachOtherNodesBridgeAndReportsWhatAnswered(t *testing.T) {
 	w := newOverlayWorld(t, wireGuardMesh(), 2)
@@ -325,6 +333,58 @@ func TestANodeThatHasOnlyJustJoinedIsNotProbedYet(t *testing.T) {
 	condition := w.condition(t)
 	require.Equal(t, metav1.ConditionTrue, condition.Status)
 	require.Contains(t, condition.Message, "not probed: fresh")
+}
+
+// The EC2 run: seven of seven first probes came 5:00 or 6:00 after the node was Ready, because nothing asked for the cluster
+// to be looked at when the two minutes ended, and the five-minute look decided.
+func TestTheFirstProbeOfANodeIsMadeWhenItsSettlingEndsAndNotAtTheNextRoutineLook(t *testing.T) {
+	w := newOverlayWorld(t, wireGuardMesh(), 0)
+	w.addNode(t, "fresh", 1, 30*time.Second)
+
+	require.Equal(t, 90*time.Second, w.reconcile(t), "the two minutes end in 90 seconds: look then, not in five minutes")
+	require.Zero(t, w.prober.total(), "its bridge may not exist yet")
+
+	w.advance(90 * time.Second)
+	require.Equal(t, meshOverlayEvery, w.reconcile(t), "probed, and the five-minute cadence of an answer is as it was")
+
+	require.Equal(t, 1, w.prober.calls["fresh"])
+	condition := w.condition(t)
+	require.Contains(t, condition.Message, "got an answer from the pod network of 1 of 1 other nodes")
+	require.NotContains(t, condition.Message, "not probed")
+}
+
+func TestTheWaitForANodeToSettleIsNotLongerThanTheNodeThatIsDueFirst(t *testing.T) {
+	w := newOverlayWorld(t, wireGuardMesh(), 1)
+	w.addNode(t, "fresh", 5, time.Minute)
+
+	require.Equal(t, time.Minute, w.reconcile(t), "w1 is next due in five minutes, fresh settles in one")
+	require.Equal(t, map[string]int{"w1": 1}, w.prober.calls)
+
+	w.advance(time.Minute)
+	require.Equal(t, 4*time.Minute, w.reconcile(t), "then w1, which was probed a minute ago, is the next due")
+	require.Equal(t, map[string]int{"w1": 1, "fresh": 1}, w.prober.calls, "fresh is probed when it settles, w1 is not probed again")
+}
+
+// What is waited for is bounded: not a loop, and not longer than the routine look.
+func TestTheWaitForANodeToSettleIsNeitherATightLoopNorLongerThanTheRoutineLook(t *testing.T) {
+	w := newOverlayWorld(t, wireGuardMesh(), 0)
+	w.addNode(t, "nearly", 1, meshOverlaySettle-time.Second)
+	require.Equal(t, meshOverlayFloor, w.reconcile(t), "a second left is not a reason to look again in a second")
+
+	// A node whose Ready time is ahead of the operator's clock (the clocks of two machines disagree) is not waited for for ever.
+	w = newOverlayWorld(t, wireGuardMesh(), 0)
+	w.addNode(t, "skewed", 1, -10*time.Minute)
+	require.Equal(t, meshRecheck, w.reconcile(t))
+}
+
+// A node that is not Ready has no time at which it will be, so it is not waited for: it is looked at with the rest.
+func TestANodeThatIsNotReadyIsNotWaitedFor(t *testing.T) {
+	w := newOverlayWorld(t, wireGuardMesh(), 0)
+	down := workerNode("down", 1)
+	down.Status.Conditions[0].Status = corev1.ConditionFalse
+	require.NoError(t, w.c.Create(context.Background(), down))
+
+	require.Equal(t, meshRecheck, w.reconcile(t))
 }
 
 func TestTheOverlayCheckCanBeTurnedOffOnACluster(t *testing.T) {

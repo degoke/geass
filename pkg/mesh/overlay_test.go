@@ -109,6 +109,27 @@ func TestNodesThatCannotBeProbedYetAreLeftOutAndNamed(t *testing.T) {
 	require.Empty(t, plan.NotRun)
 }
 
+// The first probe is made when the node has been Ready for the settle time, which nothing tells the operator: the plan says
+// when that is, so that it can look again then.
+func TestThePlanSaysWhenTheFirstNodeThatIsStillSettlingWillHaveSettled(t *testing.T) {
+	settle := 2 * time.Minute
+	nodes := []corev1.Node{
+		longReady("cp", "10.42.0.0/24"),
+		longReady("old", "10.42.1.0/24"),
+		overlayNode("later", []string{"10.42.2.0/24"}, corev1.ConditionTrue, overlayNow.Add(-30*time.Second)),
+		overlayNode("sooner", []string{"10.42.3.0/24"}, corev1.ConditionTrue, overlayNow.Add(-90*time.Second)),
+		overlayNode("down", []string{"10.42.4.0/24"}, corev1.ConditionFalse, overlayNow.Add(-time.Second)),
+	}
+
+	plan := PlanOverlayProbe(nodes, addrs("10.42.0.9"), overlayNow, settle)
+
+	require.Equal(t, overlayNow.Add(30*time.Second), plan.SettledAt, "the earliest of the nodes that were left out for being Ready only a short while")
+	require.Equal(t, []string{"old"}, targetNames(plan))
+
+	settled := PlanOverlayProbe(nodes[:2], addrs("10.42.0.9"), overlayNow, settle)
+	require.True(t, settled.SettledAt.IsZero(), "nothing is waiting to settle: a node that is not Ready is not waited for, nothing says when it will be")
+}
+
 func TestNothingIsProbedFromAPointThatIsNotOnThePodNetwork(t *testing.T) {
 	nodes := []corev1.Node{longReady("cp", "10.42.0.0/24"), longReady("w1", "10.42.1.0/24")}
 

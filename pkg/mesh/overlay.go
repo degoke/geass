@@ -84,6 +84,9 @@ type OverlayPlan struct {
 	Targets []OverlayTarget
 	// Skipped are the nodes left out: not Ready, Ready only a moment ago, or with no IPv4 pod range.
 	Skipped []string
+	// SettledAt is the moment the first node that was left out for having been Ready only a short time has been Ready for
+	// the settle time: the earliest time the plan can have a target it has not got now. Zero when no node is waiting for that.
+	SettledAt time.Time
 	// NotRun is why there is nothing to probe, in words for a condition. Empty when there is.
 	NotRun string
 }
@@ -110,6 +113,9 @@ func PlanOverlayProbe(nodes []corev1.Node, local []netip.Addr, now time.Time, se
 		address, hasRange := podBridgeAddress(node)
 		if !hasRange || !readyFor(node, now, settle) {
 			plan.Skipped = append(plan.Skipped, node.Name)
+			if at, waiting := settlesAt(node, now, settle); waiting && hasRange && (plan.SettledAt.IsZero() || at.Before(plan.SettledAt)) {
+				plan.SettledAt = at
+			}
 			continue
 		}
 		plan.Targets = append(plan.Targets, OverlayTarget{Node: node.Name, Address: address})
@@ -183,6 +189,18 @@ func readyFor(node *corev1.Node, now time.Time, d time.Duration) bool {
 		}
 	}
 	return false
+}
+
+// settlesAt is when a node that is Ready, but has been for less than d, will have been for d. A node that is not Ready is not
+// waited for: nothing says when it will be.
+func settlesAt(node *corev1.Node, now time.Time, d time.Duration) (time.Time, bool) {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			at := condition.LastTransitionTime.Add(d)
+			return at, condition.Status == corev1.ConditionTrue && at.After(now)
+		}
+	}
+	return time.Time{}, false
 }
 
 // OverlayFinding is what the probes have found about the nodes of a plan so far.

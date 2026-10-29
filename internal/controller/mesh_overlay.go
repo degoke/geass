@@ -33,7 +33,9 @@ import (
 //     over several passes and a cluster whose nodes all hang cannot hold the reconciliation for longer;
 //   - a node is probed again only when it is due, however often the cluster is reconciled: meshOverlayEvery after an
 //     answer, and after a silence at 30 seconds, then a minute, doubling up to meshOverlayEvery;
-//   - a node is reported only after meshOverlayConfirm probes in a row got no answer.
+//   - a node is reported only after meshOverlayConfirm probes in a row got no answer;
+//   - a node that has only just become Ready is looked at again the moment it has been for meshOverlaySettle, which no node
+//     event says.
 
 const (
 	// meshOverlayEvery is how often a node that answers is probed, and the longest the wait between probes of one that
@@ -120,6 +122,10 @@ type overlayCluster struct {
 	nodes map[string]*overlayState
 	// backlog is whether nodes were due that the last pass did not reach.
 	backlog bool
+	// look is when to look at the cluster again for the sake of nodes that were left out of the last plan for having been Ready
+	// only a short while: when the first has been for long enough. Zero when there are none. Nothing else says: a node's Ready
+	// is not an event the controller watches.
+	look time.Time
 }
 
 // overlayMemory is what the check remembers between reconciliations, for each cluster. Its zero value is ready.
@@ -143,6 +149,17 @@ func (m *overlayMemory) forget(key client.ObjectKey) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.clusters, key)
+}
+
+// lookAt remembers when the cluster is next to be looked at for the sake of the nodes the last plan left out. A zero time
+// says there are none.
+func (m *overlayMemory) lookAt(key client.ObjectKey, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at.IsZero() && m.clusters[key] == nil {
+		return
+	}
+	m.cluster(key).look = at
 }
 
 // due forgets the nodes that are no longer targets and returns the targets that are due to be probed, never probed
@@ -237,23 +254,26 @@ func (m *overlayMemory) finding(key client.ObjectKey, plan mesh.OverlayPlan) mes
 	return finding
 }
 
-// wake is how long until the check wants the cluster looked at again: when the first node is due, or soon if some were
-// not reached. Zero when the check has nothing to wait for.
+// wake is how long until the check wants the cluster looked at again: when the first node is due, when a node that was left
+// out of the plan can be in it, or soon if some were not reached. Zero when the check has nothing to wait for.
 func (m *overlayMemory) wake(key client.ObjectKey, now time.Time) time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cluster := m.clusters[key]
-	if cluster == nil || len(cluster.nodes) == 0 && !cluster.backlog {
+	if cluster == nil {
 		return 0
 	}
 	if cluster.backlog {
 		return meshOverlayFloor
 	}
-	var earliest time.Time
+	earliest := cluster.look
 	for _, state := range cluster.nodes {
 		if earliest.IsZero() || state.next.Before(earliest) {
 			earliest = state.next
 		}
+	}
+	if earliest.IsZero() {
+		return 0
 	}
 	return max(earliest.Sub(now), meshOverlayFloor)
 }
@@ -299,9 +319,12 @@ func (r *GeassClusterReconciler) overlayFinding(ctx context.Context, cluster *ge
 	plan := mesh.PlanOverlayProbe(nodes, r.overlayAddresses(), now, meshOverlaySettle)
 	if plan.NotRun != "" {
 		r.overlay.forget(key)
+		r.overlay.lookAt(key, plan.SettledAt)
 		return mesh.OverlayFinding{Plan: plan}
 	}
-	if due := r.overlay.due(key, plan.Targets, now, meshOverlayBatch); len(due) > 0 {
+	due := r.overlay.due(key, plan.Targets, now, meshOverlayBatch)
+	r.overlay.lookAt(key, plan.SettledAt)
+	if len(due) > 0 {
 		prober := r.overlayProber
 		if prober == nil {
 			prober = newTCPOverlayProber()
