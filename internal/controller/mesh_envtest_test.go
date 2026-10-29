@@ -187,6 +187,17 @@ var _ = Describe("The mesh of a cluster", func() {
 			withRange("mesh-env-probe-cp", "10.42.0.0/24", true, map[string]string{mesh.AnnotationFlannelBackendType: "wireguard"}, "203.0.113.10")
 			withRange("mesh-env-probe-w1", "10.42.1.0/24", false, nil, "198.51.100.7")
 			withRange("mesh-env-probe-w2", "10.42.2.0/24", false, nil, "198.51.100.8")
+			// A node has the address the probe connects to once a pod with a network of its own runs on it.
+			for _, worker := range []string{"mesh-env-probe-w1", "mesh-env-probe-w2"} {
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: worker + "-pod", Namespace: "default"},
+					Spec:       corev1.PodSpec{NodeName: worker, Containers: []corev1.Container{{Name: "c", Image: "registry.invalid/c"}}},
+				}
+				Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+				DeferCleanup(func() { _ = k8sClient.Delete(ctx, pod) })
+				pod.Status.Phase = corev1.PodRunning
+				Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+			}
 
 			Expect(k8sClient.Create(ctx, cluster("mesh-env-probe", map[string]any{"mesh": map[string]any{}}))).To(Succeed())
 			DeferCleanup(func() { remove("mesh-env-probe") })

@@ -71,10 +71,18 @@ The first public release, open source under the Apache License 2.0.
   a node that answers and 30 seconds doubling to five minutes after a silence. It does not test two workers against each other,
   large packets (MTU), DNS or a service, and it can be wrong (a node with no pod yet has no bridge address, a firewall on the node
   can drop the connection while pods reach each other). A cluster that does not set the field is not probed and gets no new
-  condition (tested). No API change. **Tested with unit tests and a fake connection only** (answers, silence, no route, hang;
-  schedule, bounds, nothing written for a cluster without a mesh) and one test against a real API server for the condition; one
-  connection is made, to this machine's own loopback address. **Not run on any real machine:** not against a real WireGuard tunnel,
-  Tailscale or Headscale, a dropped UDP 51820, a NAT, a host firewall, or from the operator's pod on a node. See
+  condition (tested). No API change. Tested with unit tests and a fake connection (answers, silence, no route, hang; schedule,
+  bounds, nothing written for a cluster without a mesh), one test against a real API server for the condition, and one connection
+  to this machine's own loopback address. **Run once on EC2 (2026-10-29), in one region:** the operator's pod can open the
+  connection; with WireGuard (a public worker and one behind a Linux NAT) and with Tailscale against Headscale, every dropped
+  UDP 51820 and every Headscale rule that stopped allowing the pod range was named, 4:35 to 5:22 after the block (5:35 after
+  `Ready` for a worker joined with UDP already dropped; about 5:40 is the worst case by the schedule) and cleared in 9 seconds
+  to 4:56 after the fix; there was no false alarm over a 35 minute soak of a healthy WireGuard mesh with two workers. It also
+  gave two false reports and was late: a default-deny `ufw` on a worker dropped the probe while pods reached each other, a
+  worker with no pod on the pod network had no bridge address to answer, and the first probe of a node came 5:00 to 5:13 after
+  `Ready`, not about two minutes (see Fixed). **Not run:** many nodes, a path between two workers, large packets, a wide-area
+  path, a worker whose `ufw` was already active when Geass joined it, a `NotReady` WireGuard worker, a network policy around
+  the operator's pod, a soak longer than 35 minutes, Tailscale's own service. See
   [Mesh networking](website/src/content/docs/docs/operations/mesh-networking.md#the-overlay-check).
 - **Move a project between clusters: export and import.** `POST /api/v1/projects/{p}/export` gives a project's definition as a
   bundle (a gzip tar of YAML with a JSON manifest): its services, databases and buckets, their configuration, hostnames and
@@ -529,6 +537,28 @@ The first public release, open source under the Apache License 2.0.
 
 ### Fixed
 
+- **What the first run of the mesh overlay check on EC2 found.** (1) The first probe of a node waited for the five-minute look
+  of the cluster (5:00 to 5:13 after `Ready` in seven of seven cases, 6:00 for a worker with no pod): nothing remembered nodes
+  that were still in their two minutes, so nothing asked for the cluster to be looked at when the two minutes ended. The check
+  now looks at the cluster again at the moment the first such node has been `Ready` for two minutes (never sooner than 5
+  seconds, never later than the five-minute look), so the first probe is meant to come about two minutes after `Ready`; the
+  five-minute cadence after an answer, the two silent probes and the back-off are as they were. (2) A worker with no pod on the
+  pod network (a `storage: None` taint keeping `svclb` off it, or only host-network pods) has no `cni0` bridge address, and was
+  named `OverlayUnreachable` with a healthy tunnel and a message that sent the reader to UDP 51820. The operator now reads the
+  pods it already caches (no new permission: `pods` was already `get`, `list` and `watch`, and `config/rbac/role.yaml` is
+  unchanged), and probes only a node that runs a `Running` pod that is not on the host network. Any other node is left out
+  and named in the message with the reason, and the cluster is looked at again every two minutes while a node is in that state.
+  The rule is one-sided: a pod that runs proves the bridge exists, so a node with one is probed as before, and a node that
+  once had pods and has none now (its bridge may still exist) is left out as well, so a real block there is not reported
+  until a pod runs. (3) With no node to probe, the message said "none is Ready for more than 2m0s", which did not say a node
+  was not `Ready` (a stopped `tailscaled` turns a node `NotReady`); it now lists the nodes left out and why ("not Ready",
+  "Ready for less than 2m0s", "no pod is running on the pod network yet", "no IPv4 pod range"). (4) The message for an
+  unreachable node now says that a firewall that denies incoming traffic by default, as `ufw` does, drops the probe while pods
+  reach each other, and names `ufw allow from 10.42.0.0/16` (K3s's default pod range), which made the node answer on EC2.
+  The docs give the measured numbers (named in about five to six minutes, cleared in 9 seconds to 4:56) and say what the run
+  found and what it did not cover. **Tested with fakes only** (a fake clock and connection, fake pods, one test against a real
+  API server); **not run on any real machine.** A real run has to show the first probe about two minutes after `Ready`, no
+  report for a worker with no pod, and the `ufw` text.
 - **The first deploy of a service that carried a secret could fail with `Secret "<service>-secrets" not found`.** A secret set on a
   service that is still a draft (`POST /api/apps/{name}/secrets/set`) is written to the Secret `<service>-secrets` in the system
   namespace, and `spec.secretRef` points at it. The operator's pass over a service that is waiting to be deployed cleared what it
