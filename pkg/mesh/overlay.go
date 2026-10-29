@@ -41,6 +41,9 @@ const (
 	// made before the node's bridge exists, is not a finding.
 	OverlayConfirm = 2
 
+	// DefaultPodRange is the range K3s hands out pod ranges from, unless it is told another.
+	DefaultPodRange = "10.42.0.0/16"
+
 	// maxOverlayRangeBits is the longest prefix of a pod range that has an address for the bridge besides the network
 	// address and the broadcast one.
 	maxOverlayRangeBits = 29
@@ -76,19 +79,49 @@ type OverlayTarget struct {
 	Address netip.Addr
 }
 
+// SkipReason is why a node is left out of the probe.
+type SkipReason int
+
+const (
+	// SkipNotReady is a node that is not Ready: its kubelet says it is not, or has said nothing. It is the one a stopped
+	// tunnel or Tailscale client turns a node into, and the probe has nothing to say about a node that is down.
+	SkipNotReady SkipReason = iota
+	// SkipSettling is a node that has been Ready for less than the settle time.
+	SkipSettling
+	// SkipNoPod is a node that runs no pod on the pod network. The address the probe connects to is the node's bridge on
+	// the pod network, which the node makes when the first pod that is not on the host network starts. Until then a probe is
+	// silent, or has no route, though the tunnel works.
+	SkipNoPod
+	// SkipNoRange is a node with no IPv4 pod range the probe could use.
+	SkipNoRange
+)
+
+// SkippedNode is a node left out of the probe, and why.
+type SkippedNode struct {
+	Node   string
+	Reason SkipReason
+}
+
 // OverlayPlan is what to probe this time, or why nothing is probed.
 type OverlayPlan struct {
 	// From is the node the operator's pod is on, which is where every probe is made from.
 	From string
 	// Targets are the other nodes to probe, in name order.
 	Targets []OverlayTarget
-	// Skipped are the nodes left out: not Ready, Ready only a moment ago, or with no IPv4 pod range.
-	Skipped []string
+	// Skipped are the nodes left out, in name order, each with the reason.
+	Skipped []SkippedNode
+	// Settle is how long a node must have been Ready to be probed.
+	Settle time.Duration
 	// SettledAt is the moment the first node that was left out for having been Ready only a short time has been Ready for
-	// the settle time: the earliest time the plan can have a target it has not got now. Zero when no node is waiting for that.
+	// Settle: the earliest time the plan can have a target it has not got now. Zero when no node is waiting for that.
 	SettledAt time.Time
 	// NotRun is why there is nothing to probe, in words for a condition. Empty when there is.
 	NotRun string
+}
+
+// Has is whether a node was left out for this reason.
+func (p OverlayPlan) Has(reason SkipReason) bool {
+	return slices.ContainsFunc(p.Skipped, func(s SkippedNode) bool { return s.Reason == reason })
 }
 
 // PlanOverlayProbe chooses the nodes to probe and says which node the probe runs on. local is the addresses of the
@@ -97,35 +130,132 @@ type OverlayPlan struct {
 // find nothing wrong and prove nothing, so then nothing is probed.
 //
 // A node is left out until it has been Ready for settle: its bridge is made when its first pod starts, so a node that
-// has only just joined may not have the address yet.
+// has only just joined may not have the address yet. What the nodes run is not known here: WithPodNetwork leaves out the
+// nodes that have no pod on the pod network, which is what says the bridge exists.
 func PlanOverlayProbe(nodes []corev1.Node, local []netip.Addr, now time.Time, settle time.Duration) OverlayPlan {
 	from, ok := probeNode(nodes, local)
 	if !ok {
 		return OverlayPlan{NotRun: "the operator has an address in no node's pod range, so it is not on the cluster's pod network " +
 			"(it runs outside the cluster, or on a node's host network), and a probe from it would say nothing about the overlay"}
 	}
-	plan := OverlayPlan{From: from}
+	plan := OverlayPlan{From: from, Settle: settle}
 	for i := range nodes {
 		node := &nodes[i]
 		if node.Name == from {
 			continue
 		}
 		address, hasRange := podBridgeAddress(node)
-		if !hasRange || !readyFor(node, now, settle) {
-			plan.Skipped = append(plan.Skipped, node.Name)
-			if at, waiting := settlesAt(node, now, settle); waiting && hasRange && (plan.SettledAt.IsZero() || at.Before(plan.SettledAt)) {
-				plan.SettledAt = at
+		ready, since := readySince(node)
+		switch {
+		case !ready:
+			plan.Skipped = append(plan.Skipped, SkippedNode{node.Name, SkipNotReady})
+		case !hasRange:
+			plan.Skipped = append(plan.Skipped, SkippedNode{node.Name, SkipNoRange})
+		case now.Sub(since) < settle:
+			plan.Skipped = append(plan.Skipped, SkippedNode{node.Name, SkipSettling})
+			if settled := since.Add(settle); plan.SettledAt.IsZero() || settled.Before(plan.SettledAt) {
+				plan.SettledAt = settled
 			}
-			continue
+		default:
+			plan.Targets = append(plan.Targets, OverlayTarget{Node: node.Name, Address: address})
 		}
-		plan.Targets = append(plan.Targets, OverlayTarget{Node: node.Name, Address: address})
 	}
 	slices.SortFunc(plan.Targets, func(a, b OverlayTarget) int { return strings.Compare(a.Node, b.Node) })
-	slices.Sort(plan.Skipped)
+	sortSkipped(plan.Skipped)
 	if len(plan.Targets) == 0 {
-		plan.NotRun = fmt.Sprintf("there is no other node to probe from %s: none is Ready for more than %s with an IPv4 pod range", from, settle)
+		plan.NotRun = plan.noTargetsMessage()
 	}
 	return plan
+}
+
+func sortSkipped(skipped []SkippedNode) {
+	slices.SortFunc(skipped, func(a, b SkippedNode) int { return strings.Compare(a.Node, b.Node) })
+}
+
+// WithPodNetwork leaves out of the plan the nodes that have no pod on the pod network, and names them as such. podNetwork
+// is the nodes that run one (see PodNetworkNodes).
+//
+// The probe connects to the node's bridge address. K3s makes the bridge, cni0, when the first pod that has a network of
+// its own starts on a node, so a node that runs only pods on the host network, or none, has no such address: the
+// probe is silent, or says there is no route, with a tunnel that is up. A node that runs such a pod has the bridge, and
+// keeps it for as long as the machine runs, so the probe is made of it as before. What is left out is a node whose bridge
+// may or may not exist, which is not evidence of anything.
+func (p OverlayPlan) WithPodNetwork(podNetwork map[string]bool) OverlayPlan {
+	if p.NotRun != "" {
+		return p
+	}
+	targets := make([]OverlayTarget, 0, len(p.Targets))
+	skipped := slices.Clone(p.Skipped)
+	for _, target := range p.Targets {
+		if podNetwork[target.Node] {
+			targets = append(targets, target)
+		} else {
+			skipped = append(skipped, SkippedNode{target.Node, SkipNoPod})
+		}
+	}
+	sortSkipped(skipped)
+	p.Targets, p.Skipped = targets, skipped
+	if len(targets) == 0 {
+		p.NotRun = p.noTargetsMessage()
+	}
+	return p
+}
+
+// PodNetworkNodes is the nodes that run at least one pod on the pod network: a pod that is Running and does not use its
+// node's host network. Such a pod was given its address by the CNI, which is what makes the node's bridge. A pod that is
+// still Pending has not got one yet, and one that has finished no longer counts.
+func PodNetworkNodes(pods []corev1.Pod) map[string]bool {
+	nodes := map[string]bool{}
+	for i := range pods {
+		pod := &pods[i]
+		if pod.Spec.NodeName != "" && !pod.Spec.HostNetwork && pod.Status.Phase == corev1.PodRunning {
+			nodes[pod.Spec.NodeName] = true
+		}
+	}
+	return nodes
+}
+
+// noTargetsMessage says why there is no other node to probe, and which nodes were left out and for what, so that a node that
+// is not Ready is said to be.
+func (p OverlayPlan) noTargetsMessage() string {
+	message := fmt.Sprintf("there is no other node to probe from %s", p.From)
+	if len(p.Skipped) == 0 {
+		return message + ": it is the only node of the cluster"
+	}
+	return message + ". Left out: " + p.skippedText()
+}
+
+// skippedText says which nodes were left out and why, one reason after another.
+func (p OverlayPlan) skippedText() string {
+	var parts []string
+	for _, reason := range []SkipReason{SkipNotReady, SkipSettling, SkipNoPod, SkipNoRange} {
+		var names []string
+		for _, skipped := range p.Skipped {
+			if skipped.Reason == reason {
+				names = append(names, skipped.Node)
+			}
+		}
+		if len(names) > 0 {
+			parts = append(parts, fmt.Sprintf("%s (%s)", named(names), p.reasonText(reason)))
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (p OverlayPlan) reasonText(reason SkipReason) string {
+	switch reason {
+	case SkipNotReady:
+		return "not Ready"
+	case SkipSettling:
+		if p.Settle > 0 {
+			return fmt.Sprintf("Ready for less than %s", p.Settle)
+		}
+		return "Ready only a moment ago"
+	case SkipNoPod:
+		return "no pod is running on the pod network yet, so there is no bridge address to probe; it is probed once one runs"
+	default:
+		return "no IPv4 pod range"
+	}
 }
 
 // probeNode is the node whose pod range holds one of the addresses of the machine the probe runs on.
@@ -181,26 +311,14 @@ func probeable(address netip.Addr) bool {
 	return !address.IsLoopback() && !address.IsUnspecified() && !address.IsLinkLocalUnicast() && !address.IsMulticast()
 }
 
-// readyFor is whether the node is Ready and has been for at least d. A node with no recorded time counts as settled.
-func readyFor(node *corev1.Node, now time.Time, d time.Duration) bool {
+// readySince is whether the node is Ready and, if it is, since when. A node with no recorded time has been Ready for ever.
+func readySince(node *corev1.Node) (bool, time.Time) {
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady {
-			return condition.Status == corev1.ConditionTrue && now.Sub(condition.LastTransitionTime.Time) >= d
+			return condition.Status == corev1.ConditionTrue, condition.LastTransitionTime.Time
 		}
 	}
-	return false
-}
-
-// settlesAt is when a node that is Ready, but has been for less than d, will have been for d. A node that is not Ready is not
-// waited for: nothing says when it will be.
-func settlesAt(node *corev1.Node, now time.Time, d time.Duration) (time.Time, bool) {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			at := condition.LastTransitionTime.Add(d)
-			return at, condition.Status == corev1.ConditionTrue && at.After(now)
-		}
-	}
-	return time.Time{}, false
+	return false, time.Time{}
 }
 
 // OverlayFinding is what the probes have found about the nodes of a plan so far.
@@ -234,7 +352,7 @@ func (f OverlayFinding) ReadyMessage(provider geassv1alpha1.MeshProvider) string
 	message += fmt.Sprintf(". That is one path from one point, a TCP connection to port %d on the first address of each node's pod range: it does not "+
 		"test traffic between two other nodes, large packets or a service (see the documentation)", OverlayProbePort)
 	if len(f.Plan.Skipped) > 0 {
-		message += "; not probed: " + named(f.Plan.Skipped) + " (not Ready, Ready only a moment ago, or no IPv4 pod range)"
+		message += "; not probed: " + f.Plan.skippedText()
 	}
 	return message
 }
@@ -248,8 +366,10 @@ func (f OverlayFinding) UnreachableMessage(provider geassv1alpha1.MeshProvider) 
 	}
 	return fmt.Sprintf("A probe from the operator's pod on node %s got no answer from the pod network of: %s. It makes a TCP connection to port %d "+
 		"on the first address of each node's pod range, and nothing came back on %d probes in a row. Nodes show Ready all the same, because a node's "+
-		"connection to the API server does not use the pod network. Check %s; and that no firewall on the node drops traffic from the pod range. "+
+		"connection to the API server does not use the pod network. Check %s; and that no firewall on the node drops traffic from the pod range "+
+		"to the node itself: a firewall that denies incoming traffic by default, as ufw does, drops the probe while pods still reach each other, "+
+		"and on that node `ufw allow from %s` (K3s's default pod range; use yours) lets it through. "+
 		"This is one probe from one point, so it can be wrong; confirm between two pods as the documentation's Verify the mesh says. "+
 		"Nothing is held back because of it: no join is refused and the cluster's Ready is not changed",
-		f.Plan.From, named(f.Unreachable), OverlayProbePort, OverlayConfirm, check)
+		f.Plan.From, named(f.Unreachable), OverlayProbePort, OverlayConfirm, check, DefaultPodRange)
 }

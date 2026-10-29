@@ -34,8 +34,9 @@ import (
 //   - a node is probed again only when it is due, however often the cluster is reconciled: meshOverlayEvery after an
 //     answer, and after a silence at 30 seconds, then a minute, doubling up to meshOverlayEvery;
 //   - a node is reported only after meshOverlayConfirm probes in a row got no answer;
-//   - a node that has only just become Ready is looked at again the moment it has been for meshOverlaySettle, which no node
-//     event says.
+//   - a node that runs no pod on the pod network has no bridge address to probe, so it is not probed until it does (see
+//     mesh.OverlayPlan.WithPodNetwork), and a node that has only just become Ready is looked at again the moment it has been
+//     for meshOverlaySettle, which no node event says.
 
 const (
 	// meshOverlayEvery is how often a node that answers is probed, and the longest the wait between probes of one that
@@ -54,6 +55,9 @@ const (
 	meshOverlaySettle = 2 * time.Minute
 	// meshOverlayFloor is the shortest wait before the cluster is looked at again for the check's sake.
 	meshOverlayFloor = 5 * time.Second
+	// meshOverlayPodRecheck is how often the cluster is looked at again while a node runs no pod on the pod network: nothing
+	// says when one starts, and until it does the node is not probed.
+	meshOverlayPodRecheck = 2 * time.Minute
 )
 
 // OverlayProber makes one probe of one node. The real one opens a TCP connection; tests replace it.
@@ -122,9 +126,9 @@ type overlayCluster struct {
 	nodes map[string]*overlayState
 	// backlog is whether nodes were due that the last pass did not reach.
 	backlog bool
-	// look is when to look at the cluster again for the sake of nodes that were left out of the last plan for having been Ready
-	// only a short while: when the first has been for long enough. Zero when there are none. Nothing else says: a node's Ready
-	// is not an event the controller watches.
+	// look is when to look at the cluster again for the sake of nodes that were left out of the last plan and may be in the
+	// next one: when the first of those that have only just become Ready has been for long enough, or soon, for a node that
+	// runs no pod yet. Zero when there are none. Nothing else says: a node's Ready is not an event the controller watches.
 	look time.Time
 }
 
@@ -308,22 +312,25 @@ func probeOverlay(ctx context.Context, prober OverlayProber, targets []mesh.Over
 }
 
 // overlayFinding runs what is due of the check for a cluster and says what is known. It is what MeshReady's True and
-// OverlayUnreachable messages are made from.
-func (r *GeassClusterReconciler) overlayFinding(ctx context.Context, cluster *geassv1alpha1.GeassCluster, nodes []corev1.Node) mesh.OverlayFinding {
+// OverlayUnreachable messages are made from. It fails only when what it needs to read cannot be read.
+func (r *GeassClusterReconciler) overlayFinding(ctx context.Context, cluster *geassv1alpha1.GeassCluster, nodes []corev1.Node) (mesh.OverlayFinding, error) {
 	key := client.ObjectKeyFromObject(cluster)
 	if cluster.Annotations[mesh.AnnotationOverlayCheck] == mesh.OverlayCheckOff {
 		r.overlay.forget(key)
-		return mesh.OverlayFinding{Plan: mesh.OverlayPlan{NotRun: "it is turned off by the " + mesh.AnnotationOverlayCheck + " annotation on the cluster"}}
+		return mesh.OverlayFinding{Plan: mesh.OverlayPlan{NotRun: "it is turned off by the " + mesh.AnnotationOverlayCheck + " annotation on the cluster"}}, nil
 	}
 	now := r.overlayClock()
-	plan := mesh.PlanOverlayProbe(nodes, r.overlayAddresses(), now, meshOverlaySettle)
+	plan, err := r.overlayPlan(ctx, nodes, now)
+	if err != nil {
+		return mesh.OverlayFinding{}, err
+	}
 	if plan.NotRun != "" {
 		r.overlay.forget(key)
-		r.overlay.lookAt(key, plan.SettledAt)
-		return mesh.OverlayFinding{Plan: plan}
+		r.overlay.lookAt(key, overlayLookAt(plan, now))
+		return mesh.OverlayFinding{Plan: plan}, nil
 	}
 	due := r.overlay.due(key, plan.Targets, now, meshOverlayBatch)
-	r.overlay.lookAt(key, plan.SettledAt)
+	r.overlay.lookAt(key, overlayLookAt(plan, now))
 	if len(due) > 0 {
 		prober := r.overlayProber
 		if prober == nil {
@@ -334,9 +341,37 @@ func (r *GeassClusterReconciler) overlayFinding(ctx context.Context, cluster *ge
 		finding := r.overlay.finding(key, plan)
 		logf.FromContext(ctx).V(1).Info("Probed the pod networks of nodes", "cluster", key.Name, "from", plan.From, "probed", len(due),
 			"unreachable", strings.Join(finding.Unreachable, ", "))
-		return finding
+		return finding, nil
 	}
-	return r.overlay.finding(key, plan)
+	return r.overlay.finding(key, plan), nil
+}
+
+// overlayPlan chooses the nodes to probe: the ones that are Ready and have been for a while, and run a pod on the pod network.
+// What runs where is read from the pods the operator already watches, and only when there is a node that could be probed.
+func (r *GeassClusterReconciler) overlayPlan(ctx context.Context, nodes []corev1.Node, now time.Time) (mesh.OverlayPlan, error) {
+	plan := mesh.PlanOverlayProbe(nodes, r.overlayAddresses(), now, meshOverlaySettle)
+	if len(plan.Targets) == 0 {
+		return plan, nil
+	}
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods); err != nil {
+		return mesh.OverlayPlan{}, err
+	}
+	return plan.WithPodNetwork(mesh.PodNetworkNodes(pods.Items)), nil
+}
+
+// overlayLookAt is when the cluster should be looked at again for the sake of the nodes a plan left out, or zero when it
+// left out none that can be in the next one. A node that has only just become Ready is waited for to the moment it has been
+// for long enough, so its first probe is not left to the next time the cluster happens to be looked at. A node that runs no
+// pod is looked at again after meshOverlayPodRecheck, which is not often: nothing says when a pod starts.
+func overlayLookAt(plan mesh.OverlayPlan, now time.Time) time.Time {
+	at := plan.SettledAt
+	if plan.Has(mesh.SkipNoPod) {
+		if again := now.Add(meshOverlayPodRecheck); at.IsZero() || again.Before(at) {
+			at = again
+		}
+	}
+	return at
 }
 
 // overlayClock is the time the check works by.

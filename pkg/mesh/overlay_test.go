@@ -105,7 +105,9 @@ func TestNodesThatCannotBeProbedYetAreLeftOutAndNamed(t *testing.T) {
 	plan := PlanOverlayProbe(nodes, addrs("10.42.0.9"), overlayNow, settle)
 
 	require.Equal(t, []string{"ok", "settled", "untimed"}, targetNames(plan))
-	require.Equal(t, []string{"down", "new", "nocondition", "norange", "v6only"}, plan.Skipped)
+	require.Equal(t, []SkippedNode{
+		{"down", SkipNotReady}, {"new", SkipSettling}, {"nocondition", SkipNotReady}, {"norange", SkipNoRange}, {"v6only", SkipNoRange},
+	}, plan.Skipped, "each with why: a node that is not Ready is said to be, whatever else is true of it")
 	require.Empty(t, plan.NotRun)
 }
 
@@ -130,6 +132,75 @@ func TestThePlanSaysWhenTheFirstNodeThatIsStillSettlingWillHaveSettled(t *testin
 	require.True(t, settled.SettledAt.IsZero(), "nothing is waiting to settle: a node that is not Ready is not waited for, nothing says when it will be")
 }
 
+// The EC2 run: a worker with no pod on the pod network has no bridge address, and the probe of it was silent with a tunnel
+// that was up.
+func TestANodeWithNoPodOnThePodNetworkIsLeftOutAndSaidTo(t *testing.T) {
+	nodes := []corev1.Node{longReady("cp", "10.42.0.0/24"), longReady("empty", "10.42.1.0/24"), longReady("busy", "10.42.2.0/24")}
+	plan := PlanOverlayProbe(nodes, addrs("10.42.0.9"), overlayNow, 2*time.Minute)
+	require.Equal(t, []string{"busy", "empty"}, targetNames(plan), "the plan alone does not know what runs where")
+
+	plan = plan.WithPodNetwork(map[string]bool{"busy": true})
+
+	require.Equal(t, []string{"busy"}, targetNames(plan))
+	require.Equal(t, []SkippedNode{{"empty", SkipNoPod}}, plan.Skipped)
+	require.True(t, plan.Has(SkipNoPod))
+	require.False(t, plan.Has(SkipNotReady))
+	require.Empty(t, plan.NotRun)
+	message := OverlayFinding{Plan: plan, Answered: 1}.ReadyMessage(geassv1alpha1.MeshProviderWireGuard)
+	require.Contains(t, message, "1 of 1 other nodes")
+	require.Contains(t, message, "not probed: empty (no pod is running on the pod network yet, so there is no bridge address to probe; it is probed once one runs)")
+}
+
+func TestWhenNoNodeRunsAPodThereIsNothingToProbeAndTheMessageSaysSo(t *testing.T) {
+	nodes := []corev1.Node{longReady("cp", "10.42.0.0/24"), longReady("empty-1", "10.42.1.0/24"), longReady("empty-2", "10.42.2.0/24")}
+
+	plan := PlanOverlayProbe(nodes, addrs("10.42.0.9"), overlayNow, 2*time.Minute).WithPodNetwork(nil)
+
+	require.Empty(t, plan.Targets)
+	require.Contains(t, plan.NotRun, "there is no other node to probe from cp")
+	require.Contains(t, plan.NotRun, "empty-1, empty-2 (no pod is running on the pod network yet")
+	require.False(t, OverlayFinding{Plan: plan}.Probed())
+
+	// A plan that never had a probe point is left as it was: it has no targets to take anything from.
+	outside := PlanOverlayProbe(nodes, addrs("192.0.2.9"), overlayNow, time.Minute)
+	require.Equal(t, outside, outside.WithPodNetwork(map[string]bool{}))
+}
+
+func TestOnlyARunningPodThatIsNotOnTheHostNetworkMakesTheBridge(t *testing.T) {
+	pod := func(node string, phase corev1.PodPhase, hostNetwork bool) corev1.Pod {
+		return corev1.Pod{Spec: corev1.PodSpec{NodeName: node, HostNetwork: hostNetwork}, Status: corev1.PodStatus{Phase: phase}}
+	}
+
+	nodes := PodNetworkNodes([]corev1.Pod{
+		pod("running", corev1.PodRunning, false),
+		pod("host-network-only", corev1.PodRunning, true),
+		pod("pending", corev1.PodPending, false),
+		pod("failed", corev1.PodFailed, false),
+		pod("unknown", corev1.PodUnknown, false),
+		pod("", corev1.PodRunning, false),
+		pod("mixed", corev1.PodRunning, true),
+		pod("mixed", corev1.PodRunning, false),
+	})
+
+	require.Equal(t, map[string]bool{"running": true, "mixed": true}, nodes)
+}
+
+// A stopped tailscaled turned a node NotReady on EC2, and the message did not say a node was not Ready.
+func TestTheMessageOfAClusterWhoseOnlyOtherNodeIsNotReadySaysSo(t *testing.T) {
+	nodes := []corev1.Node{
+		longReady("cp", "10.42.0.0/24"),
+		overlayNode("pub-t", []string{"10.42.1.0/24"}, corev1.ConditionFalse, overlayNow.Add(-time.Hour)),
+		overlayNode("unknown", []string{"10.42.2.0/24"}, corev1.ConditionUnknown, overlayNow.Add(-time.Hour)),
+		overlayNode("new", []string{"10.42.3.0/24"}, corev1.ConditionTrue, overlayNow.Add(-time.Second)),
+	}
+
+	plan := PlanOverlayProbe(nodes, addrs("10.42.0.9"), overlayNow, 2*time.Minute)
+
+	require.Equal(t, "there is no other node to probe from cp. Left out: pub-t, unknown (not Ready); new (Ready for less than 2m0s)", plan.NotRun)
+	message := OverlayFinding{Plan: plan}.ReadyMessage(geassv1alpha1.MeshProviderTailscale)
+	require.Contains(t, message, "The overlay probe did not run: there is no other node to probe from cp. Left out: pub-t, unknown (not Ready)")
+}
+
 func TestNothingIsProbedFromAPointThatIsNotOnThePodNetwork(t *testing.T) {
 	nodes := []corev1.Node{longReady("cp", "10.42.0.0/24"), longReady("w1", "10.42.1.0/24")}
 
@@ -149,13 +220,14 @@ func TestNothingIsProbedFromAPointThatIsNotOnThePodNetwork(t *testing.T) {
 func TestNothingIsProbedWhenTheOperatorsNodeIsAlone(t *testing.T) {
 	alone := PlanOverlayProbe([]corev1.Node{longReady("cp", "10.42.0.0/24")}, addrs("10.42.0.9"), overlayNow, 2*time.Minute)
 	require.Empty(t, alone.Targets)
-	require.Contains(t, alone.NotRun, "no other node to probe from cp")
 
 	allNew := PlanOverlayProbe([]corev1.Node{longReady("cp", "10.42.0.0/24"), overlayNode("w1", []string{"10.42.1.0/24"}, corev1.ConditionTrue, overlayNow)},
 		addrs("10.42.0.9"), overlayNow, 2*time.Minute)
 	require.Empty(t, allNew.Targets)
-	require.Equal(t, []string{"w1"}, allNew.Skipped)
-	require.NotEmpty(t, allNew.NotRun)
+	require.Equal(t, []SkippedNode{{"w1", SkipSettling}}, allNew.Skipped)
+	require.Equal(t, "there is no other node to probe from cp. Left out: w1 (Ready for less than 2m0s)", allNew.NotRun)
+	require.Equal(t, overlayNow.Add(2*time.Minute), allNew.SettledAt)
+	require.Equal(t, "there is no other node to probe from cp: it is the only node of the cluster", alone.NotRun)
 }
 
 func TestAnIPv4MappedLocalAddressFindsItsNode(t *testing.T) {
@@ -192,14 +264,15 @@ func TestTheReadyMessageSaysWhatWasProbedAndNothingMore(t *testing.T) {
 
 func TestTheReadyMessageSaysWhichNodesWereNotAnsweredOrLeftOut(t *testing.T) {
 	plan := probedPlan()
-	plan.Skipped = []string{"new-1"}
+	plan.Skipped = []SkippedNode{{"new-1", SkipSettling}, {"down-1", SkipNotReady}}
+	plan.Settle = 2 * time.Minute
 	finding := OverlayFinding{Plan: plan, Answered: 1, Pending: 1}
 
 	message := finding.ReadyMessage(geassv1alpha1.MeshProviderTailscale)
 
 	require.Contains(t, message, "on the Tailscale mesh")
 	require.Contains(t, message, "1 of 2 other nodes (1 not answered yet")
-	require.Contains(t, message, "not probed: new-1")
+	require.Contains(t, message, "not probed: down-1 (not Ready); new-1 (Ready for less than 2m0s)")
 }
 
 // With no probe the message is the one the condition had before the check existed, with the reason added.
@@ -223,7 +296,8 @@ func TestTheUnreachableMessageSaysWhereFromWhatWasTestedAndWhatToCheck(t *testin
 	require.Contains(t, wireGuard, "2 probes in a row")
 	require.Contains(t, wireGuard, "UDP 51820 is open in both directions")
 	require.Contains(t, wireGuard, "a NAT keeps the tunnel's mapping")
-	require.Contains(t, wireGuard, "no firewall on the node drops traffic from the pod range")
+	require.Contains(t, wireGuard, "no firewall on the node drops traffic from the pod range to the node itself")
+	require.Contains(t, wireGuard, "ufw allow from 10.42.0.0/16", "the remedy that made a node answer on EC2, with the range K3s uses unless told another")
 	require.Contains(t, wireGuard, "one probe from one point, so it can be wrong")
 	require.Contains(t, wireGuard, "Nothing is held back because of it")
 	require.NotContains(t, wireGuard, "tailnet")
@@ -231,6 +305,7 @@ func TestTheUnreachableMessageSaysWhereFromWhatWasTestedAndWhatToCheck(t *testin
 	tailscale := finding.UnreachableMessage(geassv1alpha1.MeshProviderTailscale)
 	require.Contains(t, tailscale, "tailnet's access rules and the approved routes")
 	require.NotContains(t, tailscale, "UDP 51820", "a tailnet opens no port of the cluster's")
+	require.Contains(t, tailscale, "ufw allow from 10.42.0.0/16", "a firewall on the node is the same whichever mesh it is")
 }
 
 func TestTheUnreachableMessageCutsALongList(t *testing.T) {
