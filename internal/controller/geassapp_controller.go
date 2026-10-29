@@ -149,9 +149,7 @@ func (r *GeassAppReconciler) reconcileApp(ctx context.Context, req ctrl.Request)
 		if err := r.DeleteAllOf(ctx, &geassv1alpha1.GeassDeployment{}, client.InNamespace(app.Namespace), client.MatchingLabels{platform.LabelApp: app.Name}); err != nil {
 			log.Error(err, "Could not delete deployment history", "app", app.Name)
 		}
-		// The service's own secret values (<app>-secrets) live in the system namespace with no owner
-		// reference, so they have to be removed here or they outlive the service.
-		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-secrets", Namespace: app.Namespace}}))
+		r.deleteSecretValues(ctx, &app)
 		controllerutil.RemoveFinalizer(&app, appFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &app)
 	}
@@ -1330,8 +1328,18 @@ func (r *GeassAppReconciler) deleteTargetResources(ctx context.Context, app *gea
 	_ = r.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
 	_ = r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
 	_ = r.Delete(ctx, &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: wsNS}})
-	if app.Spec.SecretRef != nil {
-		_ = r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: app.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}})
+}
+
+// deleteSecretValues removes the values the dashboard keeps for a service's secrets: <app>-secrets, and the Secret
+// spec.secretRef names, in the system namespace. They have no owner reference, so they have to be removed when the
+// service is, or they outlive it. This is for deleting the service and for nothing else: deleteTargetResources
+// clears what a service made in a namespace, which it also does for a service that has not been deployed yet and for
+// one that left the namespace for another environment, and both of those still need the values (spec.secretRef
+// points at them, and the deploy copies them into the service's namespace).
+func (r *GeassAppReconciler) deleteSecretValues(ctx context.Context, app *geassv1alpha1.GeassApp) {
+	_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-secrets", Namespace: app.Namespace}}))
+	if app.Spec.SecretRef != nil && app.Spec.SecretRef.Name != "" {
+		_ = client.IgnoreNotFound(r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: app.Spec.SecretRef.Name, Namespace: platform.SystemNamespace}}))
 	}
 }
 
