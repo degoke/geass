@@ -141,7 +141,8 @@ func MOCOServerName(database string) string { return "moco-" + database }
 func RedisServerName(database string) string { return RedisChartReleaseName(database) + "-master" }
 
 // EngineIsSingleInstance reports whether Geass runs an engine as one instance only. Replication and failover
-// come from an operator: CloudNativePG for PostgreSQL and MOCO for MySQL. Redis has no such thing here.
+// come from an operator: CloudNativePG for PostgreSQL, MOCO for MySQL and the MariaDB operator for MariaDB. Redis has
+// no such thing here.
 func EngineIsSingleInstance(engine geassv1alpha1.GeassDatabaseEngine) bool {
 	return engine == geassv1alpha1.DatabaseEngineRedis
 }
@@ -150,7 +151,7 @@ func EngineIsSingleInstance(engine geassv1alpha1.GeassDatabaseEngine) bool {
 // instance, is told. It begins with "High availability requires" so that it is read as a wait for the user
 // and does not count toward the retries that end provisioning.
 func SingleInstanceMessage(engine geassv1alpha1.GeassDatabaseEngine) string {
-	return fmt.Sprintf("High availability requires PostgreSQL or MySQL: %s runs as a single instance. Turn it off, or choose PostgreSQL or MySQL", engine)
+	return fmt.Sprintf("High availability requires PostgreSQL, MySQL, or MariaDB: %s runs as a single instance. Turn it off, or choose PostgreSQL, MySQL, or MariaDB", engine)
 }
 
 // MessageCreatingDatabaseLogin is what a MySQL cluster says while the job that makes the application's login and

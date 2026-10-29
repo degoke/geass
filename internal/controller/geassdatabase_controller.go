@@ -183,7 +183,7 @@ func (r *GeassDatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.reconcileExternal(ctx, &db, wsNS)
 	}
 
-	// MySQL and Redis run as one instance, so there is nothing for the high availability check to wait for.
+	// Redis runs as one instance, so there is nothing for the high availability check to wait for.
 	if platform.EngineIsSingleInstance(db.Spec.Engine) && (databaseWantsHA(&db) || databaseInstances(&db) > 1) {
 		return r.setNotReady(ctx, &db, platform.SingleInstanceMessage(db.Spec.Engine))
 	}

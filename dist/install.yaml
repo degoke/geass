@@ -7887,8 +7887,8 @@ spec:
                 minItems: 1
                 type: array
               githubConnectionRef:
-                description: GitHubConnectionRef references a Secret containing GitHub
-                  credentials and webhook data.
+                description: GitHubConnectionRef names the GeassGitHubConnection,
+                  in geass-system, that the project builds and reports with.
                 properties:
                   name:
                     default: ""

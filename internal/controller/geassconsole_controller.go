@@ -50,7 +50,7 @@ func (r *GeassConsoleSessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		now := metav1.Now()
 		latest.Status.Phase = geassv1alpha1.GeassConsoleExpired
 		latest.Status.EndedAt = &now
-		latest.Status.Reason = "Session timeout"
+		latest.Status.Reason = geassv1alpha1.GeassConsoleTimeoutReason
 		return ctrl.Result{}, r.Status().Update(ctx, latest)
 	}
 	return ctrl.Result{RequeueAfter: time.Until(deadline)}, nil

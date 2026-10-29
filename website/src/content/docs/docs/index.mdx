@@ -1,17 +1,27 @@
 ---
 title: Geass documentation
-description: Everything about running your own cloud with Geass, from the first install to day-two operations.
+description: How to run your own cloud with Geass, from the first install to day-two operations.
 tableOfContents: false
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 
-Geass turns servers you already own, from a single VPS to a rack of bare metal, into a managed cloud. You ship apps
-and databases from one dashboard, a command line or an AI agent, scale across machines, back up your data, and
-connect the clouds you already use, while everything runs on hardware you control.
+Geass changes servers that you already own into a managed cloud. These servers can be one VPS or a rack of bare
+metal. With Geass, you can do these tasks:
 
-These docs describe what Geass does today: what each feature is for, how to use it, what it does under the hood,
-and what to check when something goes wrong.
+- Ship apps and databases from one dashboard, a command line, or an AI agent.
+- Scale across machines.
+- Back up your data.
+- Connect the clouds that you already use.
+
+All of these workloads run on hardware that you control.
+
+These docs describe what Geass does today:
+
+- What each feature is for.
+- How to use each feature.
+- What each feature does under the hood.
+- What to check when something goes wrong.
 
 ## Start here
 
@@ -24,7 +34,7 @@ and what to check when something goes wrong.
   <LinkCard
     title="Install Geass"
     href="/docs/getting-started/install/"
-    description="One command on a fresh server. Requirements, what the installer does, how to confirm it worked."
+    description="One command on a fresh server. The requirements, what the installer does, and how to confirm that it worked."
   />
   <LinkCard
     title="Deploy your first app"
@@ -34,14 +44,14 @@ and what to check when something goes wrong.
   <LinkCard
     title="Core concepts"
     href="/docs/overview/concepts/"
-    description="Projects, environments, resources, pending changes, nodes and connections."
+    description="Projects, environments, resources, pending changes, nodes, and connections."
   />
 </CardGrid>
 
 ## Connect your clouds
 
-Geass uses accounts you already have. Each one is a connector in **Settings** â†’ **Connectors**. See
-[Cloud connectors](/docs/guides/connectors/) for the permissions each one needs.
+Geass uses accounts that you already have. Each account is a connector in **Settings** â†’ **Connectors**. For the
+permissions that each connector needs, see [Cloud connectors](/docs/guides/connectors/).
 
 <CardGrid>
   <LinkCard
@@ -62,12 +72,12 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="PlanetScale"
     href="/docs/guides/connectors/planetscale/"
-    description="Managed MySQL and Postgres databases in your PlanetScale organization (experimental)."
+    description="Managed MySQL and Postgres databases in your PlanetScale organization. Experimental."
   />
   <LinkCard
     title="Clouds for machines"
     href="/docs/guides/connectors/clouds/"
-    description="Let Geass create servers at Amazon EC2, Azure, Google Cloud, Hetzner, DigitalOcean and more (experimental)."
+    description="Geass can create servers at Amazon EC2, Azure, Google Cloud, Hetzner, DigitalOcean, and more. Experimental."
   />
 </CardGrid>
 
@@ -102,7 +112,7 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="Databases"
     href="/docs/guides/databases/"
-    description="Postgres, MySQL, Redis and SQLite, with the connect string wired into your apps."
+    description="Postgres, MySQL, Redis, and SQLite, with the connection string wired into your apps."
   />
   <LinkCard
     title="Backups and restore"
@@ -132,22 +142,22 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="Node pools"
     href="/docs/guides/node-pools/"
-    description="Add machines when pods cannot start and remove them when idle, up to a maximum you set (experimental)."
+    description="Add machines when pods cannot start, and remove idle machines, up to a maximum that you set. Experimental."
   />
   <LinkCard
     title="Sleep when idle"
     href="/docs/guides/scale-to-zero/"
-    description="Stop a service while nobody uses it and start it on the next request."
+    description="Stop a service when nobody uses it, and start it on the next request."
   />
   <LinkCard
     title="Compliance node tags"
     href="/docs/guides/compliance-tags/"
-    description="Keep a project's work on the servers you choose, and other projects off them."
+    description="Keep the work of a project on the servers that you select, and keep other projects off them."
   />
   <LinkCard
     title="Network isolation"
     href="/docs/guides/network-isolation/"
-    description="Projects are private by default. Open exactly what you need."
+    description="Projects are private by default. Open only what you need."
   />
   <LinkCard
     title="Logs, metrics and terminal"
@@ -157,7 +167,7 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="Troubleshooting"
     href="/docs/operations/troubleshooting/"
-    description="Symptoms, causes and fixes, in the dashboard and with kubectl."
+    description="Symptoms, causes, and fixes, in the dashboard and with kubectl."
   />
 </CardGrid>
 
@@ -167,17 +177,17 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="Command line"
     href="/docs/guides/command-line/"
-    description="Install geass, sign in with a code you approve in the dashboard, then deploy, watch and scale from a terminal or CI."
+    description="Install geass and sign in with a code that you approve in the dashboard. Then deploy, watch, and scale from a terminal or CI."
   />
   <LinkCard
     title="MCP server for AI agents"
     href="/docs/guides/mcp-server/"
-    description="Let an AI agent inspect and run services as an API token, limited by that token's role."
+    description="An AI agent can inspect and run services as an API token. The role of that token limits the agent."
   />
   <LinkCard
     title="Users and API tokens"
     href="/docs/guides/users-and-tokens/"
-    description="Dashboard roles, and tokens for scripts, CI, the command line and agents."
+    description="Dashboard roles, and tokens for scripts, CI, the command line, and agents."
   />
 </CardGrid>
 
@@ -192,12 +202,12 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="CLI commands"
     href="/docs/reference/cli/"
-    description="Every geass command, flag, environment variable and exit code."
+    description="Every geass command, flag, environment variable, and exit code."
   />
   <LinkCard
     title="MCP tools"
     href="/docs/reference/mcp-tools/"
-    description="Every tool the geass MCP server offers an agent."
+    description="Every tool that the geass MCP server gives to an agent."
   />
   <LinkCard
     title="Resources"
@@ -207,11 +217,11 @@ Geass uses accounts you already have. Each one is a connector in **Settings** â†
   <LinkCard
     title="Configuration"
     href="/docs/reference/configuration/"
-    description="Installer variables, operator flags and platform settings."
+    description="Installer variables, operator flags, and platform settings."
   />
   <LinkCard
     title="Glossary"
     href="/docs/reference/glossary/"
-    description="The words Geass uses, in one place."
+    description="The words that Geass uses, in one place."
   />
 </CardGrid>

@@ -25,7 +25,7 @@ func TestHighAvailabilityIsRefusedForRedisAtCreate(t *testing.T) {
 				"draft": {"1"}, "name": {"ha-db"}, "highAvailability": {"on"},
 			})
 			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-			require.Contains(t, errorOf(t, rec), "High availability requires PostgreSQL")
+			require.Contains(t, errorOf(t, rec), "High availability requires PostgreSQL, MySQL, or MariaDB")
 			require.Contains(t, errorOf(t, rec), engine+" runs as a single instance")
 		})
 	}

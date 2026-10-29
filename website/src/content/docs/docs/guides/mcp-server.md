@@ -1,69 +1,85 @@
 ---
 title: "MCP server for AI agents"
-description: "Run geass mcp to let an AI agent inspect, deploy, scale and configure services on Geass, limited by the role of the token it acts as."
+description: "Run geass mcp so that an AI agent can inspect, deploy, scale, and configure services on Geass, within the role of the token that it uses."
 ---
 
-The Model Context Protocol (MCP) is how AI agents such as Claude Code or Claude Desktop use tools. `geass mcp` is an MCP
-server built into the [`geass` command line](/docs/guides/command-line/). It offers an agent the same operations as the
-command line: see what runs, read status and metrics, deploy and wait for the result, scale, roll back, change
-variables, schedule and call functions. The agent acts as an API token, and it is only shown the tools that token may
-use. A read-only token cannot even see a tool that deploys.
+The Model Context Protocol (MCP) is how AI agents, for example Claude Code or Claude Desktop, use tools. `geass mcp` is
+an MCP server that is part of the [`geass` command line](/docs/guides/command-line/). It gives an agent the same
+operations as the command line:
 
-There is nothing to install besides the command line, and no separate service to keep running when the agent starts the
-server itself. Every tool is listed in [MCP tools](/docs/reference/mcp-tools/).
+- See what runs.
+- Read status and metrics.
+- Deploy, and wait for the result.
+- Scale.
+- Roll back.
+- Change variables.
+- Schedule and call functions.
+
+The agent acts as an API token, and the server shows the agent only the tools that the token can use. A read-only token
+cannot even see a tool that deploys.
+
+You install nothing other than the command line. When the agent starts the server itself, there is no separate service
+to keep running. [MCP tools](/docs/reference/mcp-tools/) lists every tool.
 
 ## Before you start
 
-- The command line installed and signed in (see [Command line](/docs/guides/command-line/)), or an API token and the
+You need these things:
+
+- The command line, installed and signed in. See [Command line](/docs/guides/command-line/). Or, an API token and the
   address of your dashboard.
-- A decision about what the agent may do. Read [Choose a token for the agent](#choose-a-token-for-the-agent) first. The
-  token is the safety boundary, and the flags of `geass mcp` only narrow it further.
+- A decision about what the agent can do. First, read [Choose a token for the agent](#choose-a-token-for-the-agent).
+  The token is the safety boundary. The flags of `geass mcp` only narrow it further.
 
 ## Choose a token for the agent
 
-Give an agent its own token, not yours. Create it under **Settings** → **Tokens** (see
-[Users and API tokens](/docs/guides/users-and-tokens/)), name it after the agent, and give it the shortest expiry you can
-live with. Then you can revoke it without touching anything else, and **Last used** tells you whether the agent still uses
-it.
+Give an agent its own token, not your token. To create the token, do these steps:
+
+1. Open **Settings** → **Tokens**. See [Users and API tokens](/docs/guides/users-and-tokens/).
+2. Create a token, and name it after the agent.
+3. Give the token the shortest expiry that you can accept.
+
+Then you can revoke the token, and nothing else is affected. **Last used** tells you whether the agent still uses the
+token.
 
 | You want the agent to | Token | Tools it sees |
 | --- | --- | --- |
-| Look at what runs, read status, metrics and the list of resources | **Read only** | 12 |
-| Also read logs and the names of variables | **Read only, with logs** | 15 |
-| Deploy, scale, change variables and schedules in one environment | A project token for that environment | 19 |
-| Do all of that across every project, create services, read database connection details | **Full access** | 27 (28 with `--allow-delete`) |
+| Look at what runs, and read status, metrics, and the list of resources | **Read only** | 18 |
+| Also read logs and the names of variables | **Read only, with logs** | 21 |
+| Deploy, scale, and change variables and schedules in one environment | A project token for that environment | 19 |
+| Do all of that across every project, create services, and read database connection details | **Full access** | 38 (40 with `--allow-delete`) |
 
-**Read only, with logs** is the right choice for an agent that only watches. A project token is the right choice for an
-agent that deploys: it can reach one environment of one project and nothing else. **Full access** lets the agent do
-everything the dashboard can do that the tools cover, so reserve it for agents you supervise.
+**Read only, with logs** is the correct choice for an agent that only watches. A project token is the correct choice
+for an agent that deploys. A project token can reach one environment of one project and nothing else.
+With **Full access**, the agent can do everything that the dashboard can do and that the tools cover. Thus, use **Full access**
+only for agents that you supervise.
 
 ## Run the server
 
 ### Over standard input and output
 
-This is the mode an agent host uses. The host starts `geass mcp` as a child process and talks to it through its
-standard input and output.
+An agent host uses this mode. The host starts `geass mcp` as a child process, and it communicates with the process
+through its standard input and output.
 
 ```bash
 geass login --url https://geass.example.com
 geass mcp
 ```
 
-You do not run this by hand in a terminal: the server waits for MCP messages on standard input. It uses the same login
-as the other commands: the saved login, or `--url` and `--token`, or `GEASS_URL` and `GEASS_TOKEN`. It checks the token
-with Geass before it starts and tells you what it offers on standard error, because standard output carries the
-protocol:
+You do not run this command yourself in a terminal. The server waits for MCP messages on standard input. The server
+uses the same login as the other commands: the saved login, `--url` and `--token`, or `GEASS_URL` and `GEASS_TOKEN`.
+Before it starts, the server checks the token with Geass. It writes what it offers to standard error, because standard
+output carries the protocol:
 
 ```text
 geass MCP server ready with 38 tools: whoami, list_projects, list_apps, get_app, app_status, app_deployments, list_databases, get_database, database_connection, list_buckets, list_nodes, project_compliance, project_network, project_quota, set_project_quota, app_metrics, get_logs, list_variables, deployment_logs, deploy_app, rebuild_app, scale_app, set_sleep_when_idle, set_function_trigger, remove_function_trigger, invoke_function, rollback_app, set_variable, unset_variable, create_app, compute_providers, cloud_connections, node_pools, node_pool, cloud_sizes, create_node_pool, update_node_pool, resume_node_pool
 ```
 
-The tools are decided once, when the server starts. To give the agent a different role, start a new server with
+The server decides the tools one time, when it starts. To give the agent a different role, start a new server with
 another token.
 
 ### Over HTTP
 
-With `--listen`, one server serves many agents over Streamable HTTP, and each agent sends its own Geass token. The server
+With `--listen`, one server serves many agents over Streamable HTTP. Each agent sends its own Geass token. The server
 keeps no credentials of its own. It needs only the address of your Geass dashboard.
 
 ```bash
@@ -74,55 +90,57 @@ geass mcp --listen 127.0.0.1:8765 --url https://geass.example.com
 geass MCP server listening on http://127.0.0.1:8765 (agents send their Geass token as a Bearer token)
 ```
 
-The agent connects to that address, on any path, and sends `Authorization: Bearer <Geass token>` with every request. Write
-the word `Bearer` as shown.
+The agent connects to that address, on any path. It sends `Authorization: Bearer <Geass token>` with every request.
+Write the word `Bearer` as shown.
 
-- **Per agent.** A request without a Bearer header gets `401` with `WWW-Authenticate: Bearer realm="geass"`. A request
-  whose token Geass refuses (wrong, expired, revoked) or cannot check gets `400` with `no server available`. Each token
-  gets its own set of tools. The server remembers what a token may do for 5 minutes, and a session keeps its tools until it
-  ends, so reconnect after you change a token's role.
-- **No encryption.** The server speaks plain HTTP, and the token is in every request. A loopback address (`127.0.0.1`,
-  `[::1]`) is safe. Any other address makes the server print `warning: this address is not local. Put it behind TLS: the
-  token is sent with every request.` Put it behind a reverse proxy that terminates TLS, or reach it through an SSH tunnel.
-- **Host header.** When a connection arrives on a loopback address, the server refuses a request whose `Host` header is not
-  also loopback, with `403 Forbidden: invalid Host header`. A proxy on the same machine therefore has to send the
-  loopback `Host` (for nginx, `proxy_set_header Host 127.0.0.1:8765;`), or you listen on an address the proxy reaches
-  over the network.
-- **Sessions are in memory.** Restarting the server ends them. A client that sends an old session id gets `404 session
-  not found` and has to connect again.
-- **Stopping.** Interrupt it with Ctrl-C or send `SIGTERM`. It shuts down within 5 seconds.
+- **Per agent.** A request without a Bearer header gets `401` with `WWW-Authenticate: Bearer realm="geass"`. If Geass
+  refuses the token of a request, or cannot check the token, the request gets `400` with `no server available`. Geass
+  refuses a token that is wrong, expired, or revoked. Each token gets its own set of tools. The server remembers what a
+  token can do for 5 minutes. A session keeps its tools until it ends. Thus, reconnect after you change the role of a
+  token.
+- **No encryption.** The server uses plain HTTP, and the token is in every request. A loopback address (`127.0.0.1`,
+  `[::1]`) is safe. With any other address, the server prints `warning: this address is not local. Put it behind TLS: the
+  token is sent with every request.` Put the server behind a reverse proxy that terminates TLS, or reach the server
+  through an SSH tunnel.
+- **Host header.** When a connection arrives on a loopback address, the server refuses a request whose `Host` header is
+  not also loopback. The error is `403 Forbidden: invalid Host header`. Thus, a proxy on the same machine must send the
+  loopback `Host`. For nginx, use `proxy_set_header Host 127.0.0.1:8765;`. Or, listen on an address that the proxy
+  reaches over the network.
+- **Sessions are in memory.** If you restart the server, the sessions end. A client that sends an old session ID gets
+  `404 session not found`, and it must connect again.
+- **Stopping.** To stop the server, interrupt it with Ctrl-C or send `SIGTERM`. The server shuts down within 5 seconds.
 
 ### Flags
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token could do. A **Full access** token still gets `database_connection`, which only reads. |
+| `--read-only` | boolean | `false` | Offer only tools that change nothing, whatever the token can do. A **Full access** token still gets `database_connection`, which only reads. |
 | `--allow-delete` | boolean | `false` | Also offer `delete_resource`, which permanently deletes resources. |
-| `--listen` | string | none | Serve MCP over HTTP at this address, such as `127.0.0.1:8765`, instead of standard input and output. |
+| `--listen` | string | none | Serve MCP over HTTP at this address, for example `127.0.0.1:8765`, instead of standard input and output. |
 
-The global flags `--url`, `--token` and `--context` choose the Geass address and token in the usual way (see
-[CLI commands](/docs/reference/cli/#global-flags)). With `--listen`, the flags apply to every agent that connects, and no
-token is needed on the server's side.
+The global flags `--url`, `--token`, and `--context` select the Geass address and token in the usual way. See
+[CLI commands](/docs/reference/cli/#global-flags). With `--listen`, the flags apply to every agent that connects, and
+the server side needs no token.
 
 ## Connect an agent
 
-The commands below are the clients' own syntax. Check the client's documentation for the current form.
+The commands below use the syntax of each client. For the current form, read the documentation of the client.
 
 ### Claude Code
 
-Let Claude Code start the server with your saved login:
+To let Claude Code start the server with your saved login, run this command:
 
 ```bash
 claude mcp add geass -- geass mcp
 ```
 
-Better, give it its own token and a read-only server:
+A better method is to give Claude Code its own token and a read-only server:
 
 ```bash
 claude mcp add --env GEASS_URL=https://geass.example.com --env GEASS_TOKEN=gsw_1a2b3c4d_0123456789abcdef0123456789abcdef01234567 geass -- geass mcp --read-only
 ```
 
-Or run one server over HTTP and point Claude Code at it:
+Or, run one server over HTTP, and point Claude Code at it:
 
 ```bash
 geass mcp --listen 127.0.0.1:8765 --url https://geass.example.com
@@ -133,8 +151,12 @@ In Claude Code, `/mcp` shows whether the server connected.
 
 ### Claude Desktop
 
-Claude Desktop starts local servers from its configuration file: `~/Library/Application Support/Claude/claude_desktop_config.json`
-on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows. Add the server and restart Claude Desktop:
+Claude Desktop starts local servers from its configuration file:
+
+- On macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`.
+- On Windows: `%APPDATA%\Claude\claude_desktop_config.json`.
+
+Add the server, and then restart Claude Desktop:
 
 ```json title="claude_desktop_config.json"
 {
@@ -151,20 +173,20 @@ on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows. Add the serv
 }
 ```
 
-Use the full path to `geass` (`which geass` prints it): a desktop app often does not see the `PATH` of your shell. Drop
-`--read-only` and use a **Full access** token only for an agent that should deploy.
+Use the full path to `geass`. `which geass` prints the path. A desktop app often does not see the `PATH` of your shell.
+Remove `--read-only` and use a **Full access** token only for an agent that must deploy.
 
 ### Other MCP clients
 
-Geass supports two transports. Use the one your client offers:
+Geass supports two transports. Use the transport that your client offers:
 
 | Transport | How to configure the client |
 | --- | --- |
-| Standard input and output | Command `geass`, arguments `mcp` (and any flags). Put `GEASS_URL` and `GEASS_TOKEN` in the client's environment settings, or let the command use your saved login. |
-| Streamable HTTP | The address printed by `geass mcp --listen`, such as `http://127.0.0.1:8765`, and an `Authorization: Bearer <token>` header. |
+| Standard input and output | Command `geass`, arguments `mcp` and any flags. Put `GEASS_URL` and `GEASS_TOKEN` in the environment settings of the client, or let the command use your saved login. |
+| Streamable HTTP | The address that `geass mcp --listen` prints, for example `http://127.0.0.1:8765`, and an `Authorization: Bearer <token>` header. |
 
-The older HTTP and server-sent-events transport is not supported. Many clients read a file of this shape, but the names of the
-fields differ from client to client:
+Geass does not support the older HTTP and server-sent-events transport. Many clients read a file of this shape, but the
+names of the fields are different for each client:
 
 ```json title=".mcp.json"
 {
@@ -178,7 +200,7 @@ fields differ from client to client:
 }
 ```
 
-To check that an HTTP server is up, ask for it without a token. The `401` is the server answering:
+To check that an HTTP server is up, send a request to it without a token. The `401` shows that the server answers:
 
 ```bash
 curl -i http://127.0.0.1:8765
@@ -198,40 +220,47 @@ send your Geass API token as a Bearer token
 | Who it is | `whoami` |
 | See what runs | `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics` |
 | Read logs and variable names | `get_logs`, `deployment_logs`, `list_variables` |
-| Databases, buckets, nodes, compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
+| Databases, buckets, nodes, and compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
 | Project limits and network | `project_quota`, `project_network`, and `set_project_quota` (an admin token, not read-only) |
-| Clouds and node pools | `compute_providers`, `cloud_connections`, `node_pools`, `node_pool` (any workspace token); `cloud_sizes` (an admin token); `create_node_pool`, `update_node_pool`, `resume_node_pool` (an admin token, not read-only); `delete_node_pool` (only with `--allow-delete`) |
+| Clouds and node pools | `compute_providers`, `cloud_connections`, `node_pools`, and `node_pool` need any workspace token. `cloud_sizes` needs an admin token. `create_node_pool`, `update_node_pool`, and `resume_node_pool` need an admin token that is not read-only. `delete_node_pool` is available only with `--allow-delete` |
 | Deploy and recover | `deploy_app`, `rebuild_app`, `rollback_app` |
 | Scale and configure | `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable` |
 | Functions | `set_function_trigger`, `remove_function_trigger`, `invoke_function` |
 | Create and delete | `create_app`, `delete_resource` (only with `--allow-delete`) |
 
-A tool that deploys can wait: `deploy_app` and `rebuild_app` with `wait` set return once the service is ready or has
-failed, with the reason, so the agent does not have to poll. See [MCP tools](/docs/reference/mcp-tools/) for every argument.
+A tool that deploys can wait. With `wait` set, `deploy_app` and `rebuild_app` return when the service is ready or has
+failed, with the reason. Thus, the agent does not have to poll. For every argument, see
+[MCP tools](/docs/reference/mcp-tools/).
 
 ## What an agent cannot do
 
-The server has only the tools above. There is no tool, so an agent cannot:
+The server has only the tools above. No tool exists for these actions, so an agent cannot do them:
 
-- Create projects, environments, databases or buckets, delete projects or environments, change a project's settings
-  other than its resource limits, or restore a backup. (With `--allow-delete`, `delete_resource` can delete a service, database, bucket or logical
-  database.)
-- Change a service's image, source, size, domain or any setting other than its replicas, its sleeping when idle, its
-  variables and a function's schedules. It cannot edit a function's code or create a function.
-- Open a terminal in a pod, or read a pod's files.
-- Tag nodes, or change a project's compliance tags or who can reach its services. It can only read them. It can change a project's resource limits with `set_project_quota`, if the token is an admin's.
-- Create, list or revoke API tokens, or change users or cluster settings.
-- Make, change, verify or remove a connection to a cloud, give a cloud a credential, or add or remove a single server. It can read the connections (never their credentials), and with an admin token it can run node pools on a connection that a person made. See [below](#node-pools-and-money).
-- Make a pool of servers you own.
-- Read a secret's value, a database password or a connection string. See below.
+- Create projects, environments, databases, or buckets. Delete projects or environments. Change the settings of a
+  project other than its resource limits. Restore a backup. With `--allow-delete`, `delete_resource` can delete a
+  service, database, bucket, or logical database.
+- Change the image, source, size, domain, or any other setting of a service. The exceptions are its replicas, whether
+  it sleeps when idle, its variables, and the schedules of a function. An agent also cannot edit the code of a function
+  or create a function.
+- Open a terminal in a pod, or read the files of a pod.
+- Tag nodes, or change the compliance tags of a project or who can reach its services. An agent can only read these
+  settings. If the token is an admin token, an agent can change the resource limits of a project with
+  `set_project_quota`.
+- Create, list, or revoke API tokens, or change users or cluster settings.
+- Make, change, verify, or remove a connection to a cloud. Give a cloud a credential. Add or remove a single server. An
+  agent can read the connections, but never their credentials. With an admin token, an agent can run node pools on a
+  connection that a person made. See [Node pools and money](#node-pools-and-money).
+- Make a pool of servers that you own.
+- Read the value of a secret, a database password, or a connection string. See the section
+  The safety model, below.
 
-The server also offers no MCP resources and no prompts. It offers tools only.
+The server also offers no MCP resources and no prompts. It offers only tools.
 
 ## The safety model
 
 **The token decides.** The agent has exactly the access of its token. The server registers a tool only when the token
-may use it, and the API checks the token again on every call. A call that Geass refuses comes back to the agent as an
-error that says `(this token is not allowed to do that; do not retry)`.
+can use it. The API checks the token again on every call. If Geass refuses a call, the agent gets an error that says
+`(this token is not allowed to do that; do not retry)`.
 
 | Token | Reads | Reads logs and variable names | Changes things |
 | --- | --- | --- | --- |
@@ -240,52 +269,56 @@ error that says `(this token is not allowed to do that; do not retry)`.
 | **Full access** | Yes | Yes | Yes |
 | Project token | One environment | Yes | Yes, in that environment |
 
-**Flags narrow it.** `--read-only` removes every tool that changes anything, even for a **Full access** token. It
-keeps `database_connection` and `cloud_sizes` for that token, because reading how to reach a database, or what sizes a cloud offers, changes nothing. Deleting is off unless you pass `--allow-delete`, and `delete_resource` and `delete_node_pool` then also need the resource's name repeated in
-`confirm`, so the agent cannot delete by accident from a vague request.
+**Flags narrow it.** `--read-only` removes every tool that changes anything, even for a **Full access** token. For that
+token, `--read-only` keeps `database_connection` and `cloud_sizes`. A tool that reads how to reach a database, or what
+sizes a cloud offers, changes nothing. The delete tools are off unless you pass `--allow-delete`. With that flag,
+`delete_resource` and `delete_node_pool` also need the name of the resource repeated in `confirm`. Thus, the agent
+cannot delete by accident from a vague request.
 
-**The agent host can ask you.** Every tool says whether it is read-only, idempotent or destructive, in the standard MCP
-annotations. A host that asks before running tools that are not read-only will ask before `deploy_app`, and a host that
-asks before destructive tools will ask before `delete_resource` and `delete_node_pool`. Keep that prompt on for any agent with write access.
+**The agent host can ask you.** In the standard MCP annotations, every tool says whether it is read-only, idempotent, or
+destructive. A host that asks before it runs tools that are not read-only asks before `deploy_app`. A host that asks
+before destructive tools asks before `delete_resource` and `delete_node_pool`. Keep that prompt on for any agent with
+write access.
 
 **Secrets stay hidden, with one exception you should know.**
 
-- Secret values are never returned: `get_app` empties them, `list_variables` returns secrets by name only, and the
-  result of `set_variable` does not repeat the value you set.
-- Database passwords and connection strings are never returned. `database_connection` returns the host, port, database
-  and user, and never asks Geass for the password.
+- Geass never returns secret values. `get_app` empties them, `list_variables` returns secrets by name only, and the
+  result of `set_variable` does not repeat the value that you set.
+- Geass never returns database passwords or connection strings. `database_connection` returns the host, port,
+  database, and user. It never asks Geass for the password.
 - Plain configuration is not secret. `list_variables` returns the values of plain configuration, and `get_app` returns
   them to a **Full access** token. Put anything sensitive in a secret (`secret: true` in `set_variable`).
 
 ### Node pools and money
 
-An admin token also offers `create_node_pool`, `update_node_pool` and `resume_node_pool`. A [node pool](/docs/guides/node-pools/) creates machines at a cloud, and the cloud bills the account of the connection until they are removed, so these tools stop where a person's decisions begin:
+An admin token also offers `create_node_pool`, `update_node_pool`, and `resume_node_pool`. A [node pool](/docs/guides/node-pools/) creates machines at a cloud. The cloud bills the account of the connection until the machines are removed. Thus, these tools stop where the decisions of a person begin:
 
-- **No tool takes a credential.** There is no tool that makes, changes, verifies or removes a connection, and none that takes a token, a key or a password. A credential typed into an agent's conversation would be a secret it could leak, so a person adds connections in the dashboard or with `geass connections add`. The tools that read return the names of what a cloud takes, never a value.
-- **No tool adds a single server.** A single server is billed until someone removes it. The agent can only run a pool that a person's connection already pays for.
-- **A pool needs a most.** `create_node_pool` refuses to run without `max_nodes`, the most machines the pool can ever have, which is also the most it can cost. It also refuses to guess whether a pool that could grow autoscales: the agent must say. The instructions the server sends the agent say so.
-- **Deleting needs `--allow-delete`.** Without the flag `delete_node_pool` does not exist, and with it the agent must repeat the pool's name in `confirm`.
+- **No tool takes a credential.** No tool makes, changes, verifies, or removes a connection, and no tool takes a token, a key, or a password. A credential typed into the conversation of an agent would be a secret that the agent could leak. Thus, a person adds connections in the dashboard or with `geass connections add`. The tools that read return the names of what a cloud takes, never a value.
+- **No tool adds a single server.** A single server is billed until someone removes it. The agent can only run a pool that the connection of a person already pays for.
+- **A pool needs a most.** `create_node_pool` refuses to run without `max_nodes`. `max_nodes` is the most machines that the pool can ever have, which is also the most that the pool can cost. The tool also refuses to guess whether a pool that can grow autoscales. The agent must say. The instructions that the server sends to the agent tell it this.
+- **Deleting needs `--allow-delete`.** Without the flag, `delete_node_pool` does not exist. With the flag, the agent must repeat the name of the pool in `confirm`.
 
-What an agent can still do is spend up to the most of every pool it creates, on any connection for machines that exists, and change a pool's size or most. Give an agent an admin token only when you accept that, and set a budget alert at the cloud.
+An agent can still spend up to the most of every pool that it creates, on any connection for machines that exists. It can also change the size or the most of a pool. Give an agent an admin token only when you accept that risk, and set a budget alert at the cloud.
 
-**Changes are pending until a deploy.** `set_variable`, `unset_variable` and the schedule tools change the service's
-settings, but nothing reaches the running service until `deploy_app`, unless the agent passes `deploy` to
-`set_variable` or `unset_variable`. The instructions the server sends the agent say so.
+**Changes are pending until a deploy.** `set_variable`, `unset_variable`, and the schedule tools change the settings of
+the service. But nothing reaches the running service until `deploy_app`, unless the agent passes `deploy` to
+`set_variable` or `unset_variable`. The instructions that the server sends to the agent tell it this.
 
-**Results are bounded.** A tool result is cut at 60,000 characters, `get_logs` returns at most 500 lines, and a wait
-for a deploy ends after at most 900 seconds.
+**Results are bounded.** A tool result is cut at 60,000 characters. `get_logs` returns at most 500 lines. A wait for a
+deploy ends after at most 900 seconds.
 
-**What an agent with write access can still do.** A **Full access** or project token can deploy, scale to zero copies or
-a thousand, overwrite variables and break a service, and run a function. Limit the token, not the prompt.
+**What an agent with write access can still do.** A **Full access** or project token can deploy, scale to zero copies
+or a thousand, overwrite variables and break a service, and run a function. Limit the token, not the prompt.
 
-**Untrusted text.** Log lines, function answers and variable values can contain text written by someone else. An agent
-that reads them and can also change things may follow instructions hidden in them. For an agent that reads logs of a
-service the public can reach, prefer **Read only, with logs**.
+**Untrusted text.** Log lines, function answers, and variable values can contain text that someone else wrote. An agent
+that reads this text and can also change things might follow instructions hidden in it. For an agent that reads logs
+of a service that the public can reach, prefer **Read only, with logs**.
 
-**Audit.** The operator logs each API call with its method, path and status, but not who made it
-(`kubectl -n geass-system logs deployment/geass-controller-manager -c manager`). A deployment made by an agent shows the
-actor `Dashboard`, like any other. What tells you which agent did something is the token: **Settings** → **Tokens**
-shows when each was **Last used**. Use one token per agent, so you can tell them apart and revoke one.
+**Audit.** The operator logs each API call with its method, path, and status, but not who made it. To read this log,
+run `kubectl -n geass-system logs deployment/geass-controller-manager -c manager`. A deployment that an agent makes
+shows the actor `Dashboard`, like any other deployment. The token tells you which agent did something: **Settings** →
+**Tokens** shows when each token was **Last used**. Use one token for each agent, so that you can tell them apart and
+revoke one.
 
 ## Example sessions
 
@@ -321,7 +354,7 @@ The agent has a **Read only, with logs** token. A person asks: "Why is `web` in 
 }
 ```
 
-Two copies are wanted and none is running, and no build failed. The next place to look is the logs.
+The service wants two copies, and none is running. No build failed. The next place to look is the logs.
 
 **Step 3. Read recent errors.**
 
@@ -351,13 +384,13 @@ Two copies are wanted and none is running, and no build failed. The next place t
 { "name": "web", "window": "1h" }
 ```
 
-The agent reports that `DATABASE_HOST` points at a host that may not exist. It cannot change anything, because its token
-is read-only, and `set_variable` was never in its tool list.
+The agent reports that `DATABASE_HOST` points at a host that might not exist. The agent cannot change anything, because
+its token is read-only. `set_variable` was never in its tool list.
 
 ### Change a variable and redeploy
 
-The agent has a **Full access** token, or a project token for `proj-1a2b3c4d` / `production`. A person tells it to
-point `web` at the new database host.
+The agent has a **Full access** token, or a project token for `proj-1a2b3c4d` / `production`. A person tells the agent
+to point `web` at the new database host.
 
 ```json title="set_variable"
 { "app": "web", "key": "DATABASE_HOST", "value": "orders-db", "deploy": true }
@@ -387,15 +420,15 @@ With `deploy` set, the tool deploys and waits up to 300 seconds for the outcome:
 }
 ```
 
-Without `deploy`, the result has `"pending": true` and `"next": "call deploy_app to apply it"`, and the agent calls
-`deploy_app` with `wait` set when it has made all its changes:
+Without `deploy`, the result has `"pending": true` and `"next": "call deploy_app to apply it"`. When the agent has made
+all its changes, it calls `deploy_app` with `wait` set:
 
 ```json title="deploy_app"
 { "app": "web", "wait": true, "timeout_seconds": 300 }
 ```
 
-If the build fails, the result is not an error. It says `"failed": true` and carries the reason in `error` and in
-`status.build.failureReason`, so the agent can decide what to do next.
+If the build fails, the result is not an error. The result says `"failed": true`, and it gives the reason in `error`
+and in `status.build.failureReason`. Thus, the agent can decide what to do next.
 
 ### Roll back a bad release
 
@@ -418,7 +451,7 @@ The agent lists the history, newest first, and goes back to the previous deploym
 { "app": "web", "deployment": "web-9fq4m", "wait": true }
 ```
 
-Leave `deployment` out to go to the one before the newest. The result has the same outcome as `deploy_app`.
+To go to the deployment before the newest, leave out `deployment`. The result has the same outcome as `deploy_app`.
 
 ### Scale under load
 
@@ -440,7 +473,7 @@ The `cpu` series stays high. The agent scales out and checks the result:
 { "app": "web" }
 ```
 
-Scaling takes effect at once and needs no deploy.
+A scale change takes effect immediately, and it needs no deploy.
 
 ### Schedule a function
 
@@ -460,82 +493,91 @@ Scaling takes effect at once and needs no deploy.
 { "app": "report", "path": "/run" }
 ```
 
-The schedule starts with the deploy. `invoke_function` runs the function now, so an agent should call it only when it is
-meant to.
+The schedule starts with the deploy. `invoke_function` runs the function now. Thus, an agent should call
+`invoke_function` only when the function is meant to run.
 
 ## What happens under the hood
 
-`geass mcp` is the command line's own client of the `/api/v1` API (see [REST API](/docs/reference/rest-api/)) behind an MCP
-server built on the official MCP Go SDK. Each tool is one or two API calls, listed in [MCP tools](/docs/reference/mcp-tools/).
-There is no separate state.
+`geass mcp` is the client of the command line for the `/api/v1` API (see [REST API](/docs/reference/rest-api/)), behind
+an MCP server that uses the official MCP Go SDK. Each tool is one or two API calls.
+[MCP tools](/docs/reference/mcp-tools/) lists these calls. There is no separate state.
 
-- When a session starts, the server calls `GET /me` with the token to learn its role, and registers only the tools that role
-  may use. That is the only call it makes before the agent asks for something.
-- Over HTTP, the server builds one MCP server per token, keeps it for 5 minutes and shares it between that token's
-  sessions. Every tool call still goes to Geass with the token, so a revoked token stops working at once even though its tools
-  stay listed until the session ends.
-- A deploy that waits reads `GET /apps/{name}/status` every 3 seconds, and sends the client progress notifications as the
-  state changes when the client asked for them.
+- When a session starts, the server calls `GET /me` with the token to learn its role. Then it registers only the tools
+  that the role can use. That call is the only call that the server makes before the agent asks for something.
+- Over HTTP, the server builds one MCP server for each token. It keeps that MCP server for 5 minutes, and it shares that
+  MCP server between the sessions of that token. Every tool call still goes to Geass with the token. Thus, a revoked
+  token stops working immediately, although its tools stay listed until the session ends.
+- A deploy that waits reads `GET /apps/{name}/status` every 3 seconds. If the client asked for progress notifications,
+  the server sends them as the state changes.
 
 ## Troubleshooting
 
-**The agent host says the server failed to start.** Run the command yourself with the same environment and read standard
-error. `` Error: not signed in: run `geass login --url https://your-geass-address` `` means there is no address or token.
-`Error: could not sign in to Geass with this token: ...` means Geass refused the token: it is wrong, expired or
-revoked. Both exit with code `4`.
+**The agent host says the server failed to start.** Run the command yourself with the same environment, and read
+standard error. `` Error: not signed in: run `geass login --url https://your-geass-address` `` means that there is no
+address or token. `Error: could not sign in to Geass with this token: ...` means that Geass refused the token, because
+the token is wrong, expired, or revoked. Both errors exit with code `4`.
 
-**`geass: command not found` in the host's log.** The host does not see your `PATH`. Use the full path in the host's
-configuration.
+**`geass: command not found` in the host's log.** The host does not see your `PATH`. Use the full path in the
+configuration of the host.
 
-**The agent has fewer tools than expected.** Ask it to call `whoami`, or read the line `geass MCP server ready with N
-tools` on standard error. A **Read only** token sees 18, **Read only, with logs** 21, a project token 19 and **Full access**
-38. `--read-only` removes the tools that change anything, so **Full access** then sees the 21 of **Read only, with
-logs** and `database_connection` and `cloud_sizes` (23). `delete_resource` and `delete_node_pool` need `--allow-delete`
-(40 in all). See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
+**The agent has fewer tools than expected.** Ask the agent to call `whoami`, or read the line
+`geass MCP server ready with N tools` on standard error. The tool counts are these:
 
-**I changed the token's role and the agent did not notice.** A session keeps the tools it started with. Restart the server,
-or reconnect the agent. Over HTTP, wait 5 minutes or restart the server too.
+- A **Read only** token sees 18.
+- A **Read only, with logs** token sees 21.
+- A project token sees 19.
+- A **Full access** token sees 38.
 
-**A tool answers `... (this token is not allowed to do that; do not retry)`.** Geass refused with `403`. Use a token with
-more access, or do it yourself.
+`--read-only` removes the tools that change anything. Then **Full access** sees the 21 tools of **Read only, with
+logs**, plus `database_connection` and `cloud_sizes`, which makes 23. `delete_resource` and `delete_node_pool` need
+`--allow-delete`, which makes 40 in all. See [MCP tools](/docs/reference/mcp-tools/#which-tools-an-agent-sees).
 
-**A tool answers `... (the token is missing, wrong or expired)`.** Create a new token and update the agent's configuration.
+**I changed the token's role and the agent did not notice.** A session keeps the tools that it started with. Restart the
+server, or reconnect the agent. Over HTTP, wait 5 minutes or restart the server too.
 
-**A tool answers `... (it does not exist, or is not visible to this token)`.** The name is wrong, or the service is outside a
-project token's environment. `list_apps` shows the names the token can see.
+**A tool answers `... (this token is not allowed to do that; do not retry)`.** Geass refused with `403`. Use a token
+with more access, or do the action yourself.
+
+**A tool answers `... (the token is missing, wrong or expired)`.** Create a new token, and update the configuration of
+the agent.
+
+**A tool answers `... (it does not exist, or is not visible to this token)`.** The name is wrong, or the service is
+outside the environment of a project token. `list_apps` shows the names that the token can see.
 
 **`get_logs` says `No log lines matched.` though the service logs.** `level` and `search` look only through the newest
-lines: the dashboard reads `tail` lines from the end of each copy's log and filters them after. Raise `tail` (up to 500)
-or loosen `since`, `level` and `search`. `No log lines matched.` is also what a service with no running copy returns.
+lines. The dashboard reads `tail` lines from the end of the log of each copy, and it filters them after that. Raise
+`tail` (up to 500), or loosen `since`, `level`, and `search`. A service with no running copy also returns
+`No log lines matched.`
 
-**`deployment_logs` shows `... (N earlier lines left out)`.** Each stage is cut to its last 200 lines, which is where a
-failed build or rollout says why. Read the whole log with `geass api GET /apps/APP/deployments/ID/logs`.
+**`deployment_logs` shows `... (N earlier lines left out)`.** Each stage is cut to its last 200 lines. A failed build or
+rollout says why in those lines. To read the whole log, run `geass api GET /apps/APP/deployments/ID/logs`.
 
 **`app_metrics` returns `"available": false`.** Prometheus is not installed or not reachable. See
 [Observability](/docs/guides/observability/).
 
-**`deploy_app` with `wait` never returns, or the host gives up.** A wait lasts up to 900 seconds. Some hosts cut off a tool
-that runs long. Pass a smaller `timeout_seconds`, or call it without `wait` and poll `app_status`.
+**`deploy_app` with `wait` never returns, or the host gives up.** A wait lasts up to 900 seconds. Some hosts stop a tool
+that runs for a long time. Pass a smaller `timeout_seconds`, or call `deploy_app` without `wait` and poll `app_status`.
 
-**`create_app` says `"draft": true`.** The agent did not pass `deploy`, so the service is saved and waits: call
-`deploy_app`. With `deploy` set the result says `"draft": false` and `"deploying": true`, and `app_status` shows how it
-is going.
+**`create_app` says `"draft": true`.** The agent did not pass `deploy`. Thus, Geass saves the service, and the service
+waits. Call `deploy_app`. With `deploy` set, the result says `"draft": false` and `"deploying": true`, and `app_status`
+shows the progress.
 
-**Over HTTP: `401`.** The request has no `Authorization: Bearer ...` header, or the word `Bearer` is not spelled as shown.
+**Over HTTP: `401`.** The request has no `Authorization: Bearer ...` header, or the word `Bearer` is not spelled as
+shown.
 
-**Over HTTP: `400 no server available`.** Geass refused the token, or the server cannot reach Geass. Check the token with
-`geass whoami --token ... --url ...`, and check the address the server was started with.
+**Over HTTP: `400 no server available`.** Geass refused the token, or the server cannot reach Geass. Check the token
+with `geass whoami --token ... --url ...`. Also check the address that the server started with.
 
-**Over HTTP: `403 Forbidden: invalid Host header`.** A proxy on the same machine forwards a `Host` that is not a loopback
-address. See [Over HTTP](#over-http).
+**Over HTTP: `403 Forbidden: invalid Host header`.** A proxy on the same machine forwards a `Host` that is not a
+loopback address. See [Over HTTP](#over-http).
 
 **Over HTTP: `404 session not found`.** The server restarted. Connect again.
 
-**Over HTTP: `415` or `400` about `Content-Type` or `Accept`.** A client that is not an MCP client sent the request. An MCP
-client sends `Content-Type: application/json` and an `Accept` header that lists both `application/json` and
+**Over HTTP: `415` or `400` about `Content-Type` or `Accept`.** A client that is not an MCP client sent the request. An
+MCP client sends `Content-Type: application/json`, and an `Accept` header that lists both `application/json` and
 `text/event-stream`.
 
-**`listen tcp 127.0.0.1:8765: bind: address already in use`.** Another process has the port. Pick another address.
+**`listen tcp 127.0.0.1:8765: bind: address already in use`.** Another process uses the port. Use another address.
 
 ## Related
 

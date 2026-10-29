@@ -329,16 +329,21 @@ func (s *Server) handleAppConsoleWS(w http.ResponseWriter, r *http.Request, name
 	output.writeText(exit)
 	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(consoleWSWriteWait))
 
-	closeReason := "Terminal closed"
-	if signedOut.Load() {
+	closePhase, closeReason := geassv1alpha1.GeassConsoleClosed, "Terminal closed"
+	switch {
+	case signedOut.Load():
 		// The audit record says that access was cut off, not that someone closed the tab.
 		closeReason = "Session ended"
+	case timedOut:
+		// The operator expires the session at the same moment. Both record the same end, so the audit record does
+		// not depend on which of them writes first.
+		closePhase, closeReason = geassv1alpha1.GeassConsoleExpired, geassv1alpha1.GeassConsoleTimeoutReason
 	}
-	s.closeConsoleSession(context.WithoutCancel(r.Context()), sessionName, closeReason)
+	s.closeConsoleSession(context.WithoutCancel(r.Context()), sessionName, closePhase, closeReason)
 }
 
 // closeConsoleSession records the end of a terminal on the audited session object.
-func (s *Server) closeConsoleSession(ctx context.Context, name, reason string) {
+func (s *Server) closeConsoleSession(ctx context.Context, name string, phase geassv1alpha1.GeassConsoleSessionPhase, reason string) {
 	_ = retry.RetryOnConflict(writeRetry, func() error {
 		session := &geassv1alpha1.GeassConsoleSession{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: systemNamespace}, session); err != nil {
@@ -348,7 +353,7 @@ func (s *Server) closeConsoleSession(ctx context.Context, name, reason string) {
 			return nil
 		}
 		now := metav1.Now()
-		session.Status.Phase = geassv1alpha1.GeassConsoleClosed
+		session.Status.Phase = phase
 		session.Status.EndedAt = &now
 		session.Status.Reason = reason
 		return s.Client.Status().Update(ctx, session)
