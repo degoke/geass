@@ -184,7 +184,14 @@ kubectl -n geass-system patch geasscluster default --type merge \
 - `True`, with the reason `MeshConfigured`, when every node advertises an external address. Also, when the operator could probe, a connection from its pod must get an answer from the pod network of the other nodes. This probe is one path from one point, so it does not test that traffic flows between sites. The message tells you what the operator probed, or why no probe ran.
 - Otherwise `False`, with a message and one of these reasons: `InvalidMeshSettings`, `AuthKeyUnusable`, `ControlPlaneNotOnMesh`, `MeshNeedsAttention`, or `OverlayUnreachable`. `OverlayUnreachable` means that the [overlay check](/docs/operations/mesh-networking/#the-overlay-check) got no answer from the nodes that the message names, two times in sequence.
 
-The annotation `geass.dev/mesh-overlay-check=off` on the cluster turns off the probe. The overlay check was tested only with unit tests and a fake connection. It has not run on a real machine. `MeshReady` never changes `Ready`.
+The annotation `geass.dev/mesh-overlay-check=off` on the cluster turns off the probe. The overlay check ran one time, on EC2, with these results:
+
+- It named every blocked UDP 51820 and every tailnet rule that it was tried on.
+- It gave no false alarm during a 35-minute soak.
+- It gave two kinds of false report: for a host firewall that denies incoming traffic, and for a worker that has no pod yet.
+- Its first probe was late.
+
+The fixes since that run are tested only with fakes. For more information, see [what the run found](/docs/operations/mesh-networking/#what-the-run-on-ec2-found). `MeshReady` never changes `Ready`.
 
 `ClusterIssuerReady` tells you if HTTPS certificates can be issued. It is for information only: it never changes `Ready`, and a cluster without an issuer still runs workloads. The operator removes the condition while `spec.addons.certManager.enabled` is `false`.
 

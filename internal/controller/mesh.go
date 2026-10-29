@@ -37,7 +37,8 @@ import (
 // condition and never held against anything. It is one path from one point, and the documentation lists how to check
 // the rest by hand.
 
-// +kubebuilder:rbac:groups="",resources=nodes;secrets,verbs=get;list;watch
+// The overlay check reads the pods the operator already watches, to see which nodes run one with a network of its own.
+// +kubebuilder:rbac:groups="",resources=nodes;pods;secrets,verbs=get;list;watch
 
 const (
 	meshReasonReady    = "MeshConfigured"
@@ -222,7 +223,10 @@ func (r *GeassClusterReconciler) meshOutcome(ctx context.Context, cluster *geass
 		return meshOutcome{metav1.ConditionFalse, meshReasonAttended, report.Message()}, nil
 	}
 	// Every node advertises an address. Whether the pod network answers is what the overlay check says.
-	finding := r.overlayFinding(ctx, cluster, nodes.Items)
+	finding, err := r.overlayFinding(ctx, cluster, nodes.Items)
+	if err != nil {
+		return meshOutcome{}, err
+	}
 	if len(finding.Unreachable) > 0 {
 		return meshOutcome{metav1.ConditionFalse, meshReasonOverlay, finding.UnreachableMessage(settings.Provider)}, nil
 	}

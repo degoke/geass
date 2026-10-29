@@ -136,7 +136,8 @@ In multi-provider mode, see [Nodes at more than one provider](/docs/operations/m
 `GEASS_NODE_EXTERNAL_IP` and WireGuard. For a mesh (`spec.network.mesh`), see
 [Mesh networking](/docs/operations/mesh-networking/#troubleshooting). That page covers the messages that begin "the mesh
 cannot take", and the `MeshReady` condition. The condition includes `OverlayUnreachable`: a probe from the operator got
-no answer from the pod network of a node. `OverlayUnreachable` was tested with a fake only, not on real machines.
+no answer from the pod network of a node. The overlay check ran one time on EC2, and it also gave false reports there.
+Before you trust `OverlayUnreachable`, read what that run found.
 
 :::danger
 Reinstall only a machine that you mean to rebuild. The installer removes a K3s only when you pass `--reinstall`, after
