@@ -31,7 +31,7 @@ import (
 const (
 	// k3sUpgradeCordonAnnotation marks a node that the upgrade cordoned, so that the upgrade uncordons it and never
 	// uncordons one that an administrator cordoned for their own reasons.
-	k3sUpgradeCordonAnnotation = "geass.dev/k3s-upgrade-cordon"
+	k3sUpgradeCordonAnnotation = platform.AnnotationK3sUpgradeCordon
 	// k3sUpgradeRetryAnnotation on the cluster object asks for a failed upgrade to be tried again, as geass.dev/retry
 	// does for a node.
 	k3sUpgradeRetryAnnotation = "geass.dev/retry-k3s-upgrade"

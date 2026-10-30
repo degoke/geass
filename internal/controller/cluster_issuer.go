@@ -33,10 +33,10 @@ const (
 	issuerReasonReady        = "IssuerReady"
 	issuerReasonExternal     = "ExternallyManaged"
 	issuerReasonOtherCluster = "ManagedByAnotherCluster"
-	issuerReasonRegistering  = "IssuerRegistering"
+	issuerReasonRegistering  = platform.ClusterIssuerReasonRegistering
 	issuerReasonNotReady     = "IssuerNotReady"
 	issuerReasonEmailMissing = "ACMEEmailMissing"
-	issuerReasonCertManager  = "WaitingForCertManager"
+	issuerReasonCertManager  = platform.ClusterIssuerReasonWaitingForCertManager
 	issuerReasonApplyFailed  = "IssuerApplyFailed"
 	issuerReasonAccessDenied = "IssuerAccessDenied"
 
@@ -162,7 +162,8 @@ func (r *GeassClusterReconciler) ensureClusterIssuer(ctx context.Context, cluste
 			status: metav1.ConditionFalse,
 			reason: issuerReasonEmailMissing,
 			message: "No ACME contact email is configured, so the " + platform.ClusterIssuerName + " ClusterIssuer was not created " +
-				"and HTTPS certificates cannot be issued; set spec.addons.certManager.acmeEmail on the GeassCluster (the installer reads GEASS_ACME_EMAIL)",
+				"and HTTPS certificates cannot be issued; enter one in the dashboard under Settings > Domain > Certificate email " +
+				"(spec.addons.certManager.acmeEmail on the GeassCluster, which the installer sets from GEASS_ACME_EMAIL)",
 		}
 	case email == "":
 		// The email was taken away from an issuer Geass made. Leave it: certificates issued through it

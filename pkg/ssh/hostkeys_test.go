@@ -106,3 +106,32 @@ func TestTheKeyTypesToAskForAreThoseRecordedForTheAddress(t *testing.T) {
 	require.Nil(t, hostKeyAlgorithms(known, "203.0.113.99:22"), "an address that is not listed keeps the default, and the callback refuses it")
 	require.Nil(t, hostKeyAlgorithms(nil, "203.0.113.20:22"), "no known_hosts means no preference")
 }
+
+func TestReplacingHostKeysChangesOnlyTheLinesOfThatMachine(t *testing.T) {
+	old, renewed, other := newHostKey(t), newHostKey(t), newHostKey(t)
+	known := append([]byte("# written by ssh-keyscan\n"), knownHostsFor("203.0.113.20", old)...)
+	known = append(known, knownHostsFor("203.0.113.21", other)...)
+
+	got, err := ReplaceHostKeys(known, knownHostsFor("203.0.113.20", renewed), "203.0.113.20", 22)
+	require.NoError(t, err)
+	require.NoError(t, check(t, got, "203.0.113.20:22", renewed))
+	require.Error(t, check(t, got, "203.0.113.20:22", old), "the old key is gone")
+	require.NoError(t, check(t, got, "203.0.113.21:22", other), "the other machine's key stays")
+
+	// A file with lines for other machines gives only the machine's own.
+	both := append(knownHostsFor("203.0.113.20", renewed), knownHostsFor("203.0.113.99", old)...)
+	got, err = ReplaceHostKeys(nil, both, "203.0.113.20", 0)
+	require.NoError(t, err)
+	require.Error(t, check(t, got, "203.0.113.99:22", old))
+
+	_, err = ReplaceHostKeys(known, knownHostsFor("203.0.113.99", renewed), "203.0.113.20", 22)
+	require.ErrorContains(t, err, "lists no host key for 203.0.113.20")
+	_, err = ReplaceHostKeys(known, []byte("203.0.113.20 not-a-key"), "203.0.113.20", 22)
+	require.Error(t, err)
+	_, err = ReplaceHostKeys(known, []byte("|1|hashed|name ssh-ed25519 AAAA"), "203.0.113.20", 22)
+	require.Error(t, err, "a hashed host name cannot be honoured, so it is refused and not skipped")
+
+	got, err = ReplaceHostKeys(knownHostsFor("[203.0.113.20]:2222", old), knownHostsFor("[203.0.113.20]:2222", renewed), "203.0.113.20", 2222)
+	require.NoError(t, err)
+	require.NoError(t, check(t, got, "203.0.113.20:2222", renewed))
+}

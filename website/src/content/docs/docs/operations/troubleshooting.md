@@ -191,7 +191,7 @@ After a domain is set, check DNS and the ingress. To check the ingress, run
 [The dashboard domain stays pending](#the-dashboard-domain-stays-pending).
 
 **Signing in says "dashboard authentication is unavailable".**
-Geass could not load a login. Usually, no login exists, because the installer does not create one. Create the Secret
+Geass could not load a login. Usually, no login exists. The installer creates one on a new install only. Create the Secret
 `geass-dashboard-auth` in `geass-system` with a `users` key. Or set `GEASS_DASHBOARD_PASSWORD` on the operator. The
 sample is `config/samples/geass_dashboard_auth.yaml`. Geass refuses the placeholder password `CHANGE_ME`, so replace
 it. Geass hashes the real password at the first sign-in. See [Sign in to the dashboard](/docs/getting-started/sign-in/).

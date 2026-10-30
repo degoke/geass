@@ -13,7 +13,7 @@ page one time, then use the links to learn more. For the mechanisms behind the w
 ## The shape of it
 
 ```text
-cluster (your servers, one control plane + workers)
+cluster (your servers: one main server, and more if you add them)
  |-- platform settings (domain, connectors, tokens, object storage, shared databases)
  |-- nodes (with optional region, site, tags), singly or in pools
  `-- projects
@@ -23,9 +23,9 @@ cluster (your servers, one control plane + workers)
 
 ## Cluster
 
-The cluster is the set of servers that Geass manages. The installer creates the cluster from one server, the control
-plane. You can join more servers as workers. In Kubernetes, the cluster is a `GeassCluster` named `default`. It reports
-`Ready` when its add-ons are running. See [Install Geass](/docs/getting-started/install/).
+The cluster is the set of servers that Geass manages. The installer creates the cluster from one server. You can add
+more servers later. See [Install Geass](/docs/getting-started/install/) and
+[Add servers](/docs/getting-started/add-servers/).
 
 ## Projects
 
@@ -50,7 +50,6 @@ By default, projects are private to each other. See [Projects and environments](
 An environment is an isolated copy of the resources of a project, for example `production` or `staging`. Every
 project starts with `production`. Each environment has its own:
 
-- Kubernetes namespace, `<project-id>-<environment>`.
 - Resources.
 - List of pending changes.
 - Shared variables.
@@ -69,25 +68,21 @@ Pull request environments are temporary copies that Geass makes for each pull re
 
 ## Resources
 
-A resource is anything that you deploy into an environment. The dashboard and the Kubernetes objects use different
-names for resources:
+A resource is anything that you deploy into an environment:
 
-| In the dashboard | What it is | Kubernetes kind | Guide |
-| --- | --- | --- | --- |
-| Service | A container that runs from a Docker image, or from a GitHub repository that Geass builds | `GeassApp` | [Apps](/docs/guides/apps/) |
-| Function | A service whose source is one file of Bun (TypeScript), Node.js, or Python code. It is a server or an event handler, and it can run on schedules | `GeassApp` with a function source | [Functions](/docs/guides/functions/) |
-| Database | PostgreSQL, MySQL, Redis, or SQLite in the cluster, or a record of an external database, for example AWS RDS or PlanetScale | `GeassDatabase` | [Databases](/docs/guides/databases/) |
-| Logical database | A separate database, with its own login, on a database server that already runs | `GeassLogicalDatabase` | [Shared database servers](/docs/guides/shared-database-servers/) |
-| Bucket | S3-style storage, on the object storage server of the cluster (SeaweedFS or Garage) or in AWS S3 | `GeassObjectStore` | [Object storage](/docs/guides/object-storage/) |
+| Resource | What it is | Guide |
+| --- | --- | --- |
+| Service | A container that runs from a Docker image, or from a GitHub repository that Geass builds | [Services](/docs/guides/apps/) |
+| Function | A service whose source is one file of Bun (TypeScript), Node.js, or Python code. It can run on schedules. | [Functions](/docs/guides/functions/) |
+| Database | PostgreSQL, MySQL, MariaDB, Redis, or SQLite on your servers, or a database that you host somewhere else, such as AWS RDS or PlanetScale | [Databases](/docs/guides/databases/) |
+| Logical database | A separate database, with its own login, on a database server that already runs | [Shared database servers](/docs/guides/shared-database-servers/) |
+| Bucket | S3-style storage, on your servers or in AWS S3 | [Object storage](/docs/guides/object-storage/) |
 
 To add a resource, click **+ Add resource**, or use **Templates**. A template is a ready-made set of resources that
 Geass adds as drafts. See [Templates](/docs/guides/templates/).
 
 Every resource has an **ID** and a **display name**. Geass generates the ID when you create the resource, and the ID
-never changes. You can edit the display name. You type the ID to confirm a deletion. The ID is also what shows in
-Kubernetes names.
-
-The [Resources overview](/docs/reference/resources/overview/) describes the resource kinds.
+never changes. You can edit the display name. You type the ID to confirm a deletion.
 
 ### Event functions and schedules
 
@@ -102,8 +97,7 @@ To change the mode, use the list on the **Code** tab of the function. It switche
 
 A **schedule** calls a function on a cron expression in UTC. The API calls a schedule a trigger. Each run is an HTTP
 `POST` to the function. If the function is asleep, Geass wakes it first. A function can have a maximum of 8 schedules.
-The schedules start with the next deploy. Geass runs them as Kubernetes `CronJob` objects in the namespace of the
-project. See [Functions](/docs/guides/functions/) and
+The schedules start with the next deploy. See [Functions](/docs/guides/functions/) and
 [Command line](/docs/guides/command-line/#functions-and-schedules).
 
 ## Drafts, pending changes and Deploy changes
@@ -132,29 +126,29 @@ starts the service again. The request waits while the service starts. A sleeping
 
 Sleep when idle has these conditions:
 
-- It needs the serverless add-on (KEDA and its HTTP add-on). The add-on is off until you turn it on for the cluster.
+- An admin must turn it on for the cluster first.
 - It needs a public host.
 - A service cannot use it together with CPU autoscaling.
 
-In Kubernetes, the setting is `spec.scaleToZero` on the `GeassApp`. See [Sleep when idle](/docs/guides/scale-to-zero/).
+See [Sleep when idle](/docs/guides/scale-to-zero/).
 
 ## Nodes
 
-A node is one server in the cluster. The first node is the **control plane**. It runs the K3s server, the operator, and
-the dashboard. The other nodes are **workers**, which join over SSH with a `GeassNode` object. A worker is a server
-that you have, or a machine that Geass creates at a cloud.
+A node is one server in the cluster. The first node is the **control plane**: the main server that runs Geass and the
+dashboard. The other nodes are **workers**, which Geass adds over SSH. A worker is a server that you have, or a machine
+that Geass creates at a cloud.
 
 Geass shows nodes in the **Nodes** table on the **Usage** page, in the left rail. The table shows the role of each node,
-its pool, region, tags, CPU, memory, pressure, and status (**Ready**, **Not ready**, or **Unschedulable**). See
+its pool, region, tags, CPU, memory, pressure, and status (**Ready**, **Not ready**, or **Cordoned**). See
 [Add servers](/docs/getting-started/add-servers/).
 
 ## Node pools
 
-A **pool** (`GeassNodePool`) is a group of nodes that Geass adds and removes for you. A pool makes machines at a cloud,
+A **pool** is a group of nodes that Geass adds and removes for you. A pool makes machines at a cloud,
 or joins servers that you listed. A pool has a maximum number of nodes, which is the limit on what it can cost.
 
 - A pool that does not autoscale keeps a fixed number of nodes.
-- An autoscaling pool adds nodes when pods cannot start because there is not enough room. It empties idle nodes and
+- An autoscaling pool adds nodes when services cannot start because there is not enough room. It empties idle nodes and
   then removes them.
 
 By default, the nodes of a pool are **ephemeral**. They run services, and never databases, buckets, or volumes. Thus,
@@ -174,7 +168,7 @@ You can label nodes to control where workloads run:
   **Settings → General** of the project. You cannot change the region while the project has an in-cluster database,
   because the data is on those nodes. The **Usage** page also holds a default region for projects that do not select a
   region.
-- A **site** is the provider or location in a region, for example `hetzner-fsn1`. Kubernetes calls it the zone.
+- A **site** is the provider or location in a region, for example `hetzner-fsn1`.
 - A **tag** says what a node is for, for example `storage` or `gpu`. A tag can be **reserved**. A reserved tag keeps
   off the node every workload that does not ask for the tag.
 - A **compliance tag** is a reserved tag that a project can **require**, for example `hipaa`. To use it, do these steps:
@@ -203,15 +197,15 @@ Geass can use accounts that you already have. **Settings → Connectors** has th
 | AWS | S3 buckets, database backups | One project: each connection is saved for a single project |
 | PlanetScale | PlanetScale databases | One project |
 
-AWS and PlanetScale credentials are **cloud connections** (`GeassCloudConnection`). Each cloud connection is scoped to
-a single project, and only that project can use it.
+AWS and PlanetScale credentials are **cloud connections**. Each cloud connection belongs to one project, and only that
+project can use it.
 
-A cloud connection can also be for creating machines (its purpose is `Compute`). Such a connection belongs to the
+A cloud connection can also be for creating machines. Such a connection belongs to the
 cluster, never to a project, and only an admin can use it. Geass can create machines at Amazon EC2, Azure,
 DigitalOcean, Google Cloud, Hetzner, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud, and Vultr. Through a webhook,
 it can create machines at any other provider. Creating machines is experimental.
 
-Geass stores the credentials as Kubernetes Secrets in the cluster. See [Cloud connectors](/docs/guides/connectors/).
+Geass stores the credentials on your servers. See [Cloud connectors](/docs/guides/connectors/).
 
 ## Platform settings
 
@@ -220,7 +214,7 @@ Geass stores the credentials as Kubernetes Secrets in the cluster. See [Cloud co
 | Page | What is on it |
 | --- | --- |
 | **General** | A summary: clusters, dashboard URL, healthy nodes, and links to the other pages |
-| **Usage** | Cluster capacity, the nodes and their placement, usage for each project, cluster metrics, the health of the operator itself (**Geass health**), the default region, and high availability readiness. See [Usage and capacity](/docs/guides/usage-and-capacity/) |
+| **Usage** | Cluster capacity, the nodes and their placement, usage for each project, cluster metrics, the health of Geass itself (**Geass health**), the default region, and high availability readiness. See [Usage and capacity](/docs/guides/usage-and-capacity/) |
 | **Domain** | The public address of the dashboard. See [Connect a domain](/docs/getting-started/connect-domain/) |
 | **Connectors** | The four connectors above |
 | **Tokens** | Workspace API tokens |
@@ -234,7 +228,8 @@ People sign in to the dashboard with one of two roles:
 - An **admin** can change everything.
 - A **viewer** can only read. The dashboard does not show sensitive values to a viewer.
 
-A Kubernetes Secret defines the users.
+To invite people, or to use teams, connect an identity provider. See
+[Sign in with an identity provider](/docs/guides/external-sign-in/).
 
 Scripts, CI, the command line, and AI agents use **API tokens**. A *workspace token* acts across the platform with one
 of three roles. The dashboard calls the role of a token its **Access**:
@@ -255,8 +250,6 @@ the command line a workspace token one time. See [Sign in to the dashboard](/doc
 
 ## Other terms you will meet
 
-- **Add-on:** a platform component that Geass installs for you. The add-ons are cert-manager, metrics, Longhorn
-  storage, and log collection. Geass installs the serverless add-on for sleep when idle only when you turn it on.
 - **Command line:** `geass`, a program for your own machine. It deploys and runs services through the `/api/v1` API of
   the dashboard. `geass mcp` is the same program as an MCP server for AI agents. See
   [Command line](/docs/guides/command-line/) and [MCP server for AI agents](/docs/guides/mcp-server/).
@@ -273,6 +266,24 @@ the command line a workspace token one time. See [Sign in to the dashboard](/doc
   [Network isolation](/docs/guides/network-isolation/).
 
 The [Glossary](/docs/reference/glossary/) lists every term with a link.
+
+## Under the hood
+
+Geass runs on K3s, a small Kubernetes distribution. Each environment is a Kubernetes namespace named
+`<project-id>-<environment>`, and each resource is a Geass custom resource in the `geass-system` namespace:
+
+| Resource | Kubernetes kind |
+| --- | --- |
+| Service, function | `GeassApp` |
+| Database | `GeassDatabase` |
+| Logical database | `GeassLogicalDatabase` |
+| Bucket | `GeassObjectStore` |
+| Node, pool | `GeassNode`, `GeassNodePool` |
+| Cloud connection | `GeassCloudConnection` |
+
+The resource ID is also the name of these objects. For every field, see the
+[Resources reference](/docs/reference/resources/overview/). For how Geass works, see
+[How Geass works](/docs/overview/how-it-works/).
 
 ## Related
 

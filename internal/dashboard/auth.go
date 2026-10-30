@@ -216,7 +216,7 @@ func dashboardSensitiveRead(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/projects/") && (strings.HasSuffix(path, "/logs") || strings.HasSuffix(path, "/logs/stream") || strings.HasSuffix(path, "/logs/history")):
 		return true
-	case path == "/api/settings/github", path == "/api/settings/auth", path == "/api/settings/alerts", path == "/api/templates", path == "/api/tokens", path == "/api/planetscale/cluster-sizes":
+	case path == "/api/settings/github", path == "/api/settings/auth", path == "/api/settings/alerts", path == "/api/templates", path == "/api/tokens", path == "/api/users", path == "/api/planetscale/cluster-sizes":
 		return true
 	default:
 		return false
@@ -445,8 +445,8 @@ func (s *Server) dashboardAuth(r *http.Request) (*dashboardAuth, error) {
 	return auth, nil
 }
 
-func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, map[string]int64, *corev1.Secret, error, error) {
-	sessionKey := []byte(strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_SESSION_KEY")))
+// dashboardEnvUsers is the users the environment names. They count only while the Secret holds none.
+func dashboardEnvUsers() []dashboardUser {
 	envUsers := parseDashboardUsersEnv(os.Getenv("GEASS_DASHBOARD_USERS"))
 	if len(envUsers) == 0 {
 		if password := strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_PASSWORD")); password != "" {
@@ -457,6 +457,12 @@ func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, ma
 			envUsers = []dashboardUser{{Username: username, Password: password, Role: dashboardRoleAdmin}}
 		}
 	}
+	return envUsers
+}
+
+func (s *Server) loadDashboardAuth(r *http.Request) ([]dashboardUser, []byte, map[string]int64, *corev1.Secret, error, error) {
+	sessionKey := []byte(strings.TrimSpace(os.Getenv("GEASS_DASHBOARD_SESSION_KEY")))
+	envUsers := dashboardEnvUsers()
 	secret := &corev1.Secret{}
 	err := s.Client.Get(asSystem(r.Context()), client.ObjectKey{Name: platform.DashboardAuthSecretName, Namespace: platform.SystemNamespace}, secret)
 	epochs := map[string]int64{}

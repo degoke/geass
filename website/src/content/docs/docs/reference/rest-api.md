@@ -250,6 +250,9 @@ that route further down.
 | `GET /events` | Any | none | A server-sent event stream that says when something changed. See [Events](#events) |
 | `GET /usage` | Any | none | What each project reserves and uses. See [Usage](#usage) |
 | `GET /usage/hours` | Admin acting for the platform (a platform administrator or an install-wide admin token, not an organization's caller, a viewer, an observer, or a project token) | `?from=`, `?to=` (RFC 3339), `?org=` | What each organization reserved, hour by hour, after `spec.usage.enabled` is on. See [Usage by organization](#usage-by-organization) |
+| `GET /settings/addons` | Admin | none | The add-ons that you can turn on and off, in the order `serverless`, `longhorn`, `monitoring`, `logging`: `{"addons":[{"name","title","enabled","state","reason","message","installed","canRetry","canDisable","keptWhenOff", "profile","profiles","retentionDays"}],"retryPending"}`. `state` is `Off`, `Installing`, `Ready`, or `Failed`. See [Add-ons](#add-ons) |
+| `POST /settings/addons/{name}/save` | Admin | `enabled` (`true` or `false`), `profile` (`monitoring`: `lite` or `full`), `retentionDays` (`logging`: 1 to 90) | Turns an add-on on or off, or changes its options. A field that you do not send stays as it is. `400` for `longhorn` with `enabled` `false`, because Geass never removes replicated storage |
+| `POST /settings/addons/{name}/retry` | Admin | none | Asks the operator to start the install of an add-on over. `409` when the add-on is not `Failed` with a reason that a new job can put right, or when another retry waits |
 | `GET /mail/usage` | Admin acting for the platform, as for `/usage/hours` | `?org=` | What each organization sent through the mail relay, and was refused, since the relay started. See [Mail relay usage](#mail-relay-usage) |
 
 #### Sign-in and tokens
@@ -263,6 +266,17 @@ that route further down.
 | `GET /tokens` | Admin session | `?project=` | `{"items": [token, ...]}`, newest first |
 | `POST /tokens` | Admin session | `name`*, `scope`* (`workspace`, `project` or `service`, a deploy hook), `role` (`admin`, `observer`, or `viewer`, workspace only, default `viewer`), `project` and `environment` (project and service), `app` (service only: the service the hook deploys), `expiresInDays` (0 to 3650, and 0 or none means never) | `{"ok": true, "token": "gsw_...", "item": {...}}`. Geass shows the token one time only. A hook's token starts with `gsh_`. You put it in a [hook URL](/docs/guides/users-and-tokens/#deploy-hooks), and a service has one (`400` otherwise) |
 | `DELETE /tokens/{id}` | Admin session | none | `{"ok": true}`. `404` `token was not found` |
+| `GET /users` | Install-wide admin | none | `{"items": [{"username", "role", "current"}, ...], "identityProvider"}`. Never a password or a hash. `current` marks the caller |
+| `POST /users` | Install-wide admin | `username`* (letters, digits, and `. _ @ + -`, up to 64 characters), `role` (`admin` or `viewer`, default `viewer`), `password` (12 to 72 characters) | `{"ok": true, "username", "role"}`. When you send no password, Geass makes one and adds `"password"` to the answer. Geass shows it one time. `409` for a name in use, in any letter case |
+| `POST /users/{name}/role` | Install-wide admin | `role`* (`admin` or `viewer`) | `{"ok": true}`. `409` `this is the last admin` for the last admin. `404` `user was not found` |
+| `POST /users/{name}/password` | Install-wide admin | `password` (12 to 72 characters) | `{"ok": true}`, with a made-up `"password"` when you send none. Geass signs the user out |
+| `DELETE /users/{name}` | Install-wide admin | none | `{"ok": true}`. Geass signs the user out. `409` for the last admin |
+| `POST /users/sign-out-all` | Install-wide admin | none | `{"ok": true}`. Geass ends every session, the session of the caller included. Tokens keep working. `400` when `GEASS_DASHBOARD_SESSION_KEY` sets the key |
+
+An install-wide admin is a signed-in admin, or an admin workspace token that no organization owns. A token of an
+organization or of a project cannot call the `/users` routes, and a viewer cannot read them. A token manages viewers
+only. It cannot make an admin, make a viewer an admin, or set the password of an admin, and Geass answers `403`
+`a token can manage viewers only`. Geass does not accept a password in the query string.
 
 #### Projects
 
@@ -358,8 +372,10 @@ viewers.
 
 | Method and path | Who | Body | Returns |
 | --- | --- | --- | --- |
-| `GET /nodes` | Any (not a project token) | none | `{"items": [{"name", "ready", "schedulable", "controlPlane", "region", "zone", "tags": [{"name", "reserved", "compliance"}], "cpu", "memory", "pool", "ephemeral"}]}`. `pool` is the pool the node belongs to, and `ephemeral` is `true` for a node that keeps data off itself. Both are left out when they do not apply |
+| `GET /nodes` | Any (not a project token) | none | `{"items": [{"name", "ready", "schedulable", "controlPlane", "region", "zone", "tags": [{"name", "reserved", "compliance"}], "cpu", "memory", "pool", "ephemeral", "cordoned", "cordonedBy"}]}`. `pool` is the pool the node belongs to, and `ephemeral` is `true` for a node that keeps data off itself. Both are left out when they do not apply |
 | `POST /nodes/{name}/placement` | Admin | `region`, `zone`, `tags` (list), `reserved` (list), `compliance` (list) | `{"ok": true, "warnings": [...]}`. See [Cluster and platform](#cluster-and-platform) |
+| `POST /nodes/{name}/cordon` | Admin | none | `{"ok": true, "name": "worker-2", "cordoned": true}`. Pods that run on the node stay. `400` for the last node that can start new pods |
+| `POST /nodes/{name}/uncordon` | Admin | none | `{"ok": true, "name": "worker-2", "cordoned": false}`. `400` for a node that Geass cordoned itself, to upgrade it (`cordonedBy` is `upgrade`) or to empty it (`pool`) |
 | `GET /cluster/metrics` | Any (not a project token) | `?window=` | Series for the whole cluster |
 | `GET /operator/metrics` | Any (not a project token) | `?window=` | Series for the operator: `reconcileErrors`, `reconcileTime`, `apiLatency`, `apiRequests`, `queueDepth`, `statusWrites`, `statusSkipped` |
 
@@ -387,6 +403,9 @@ An error is a `400` with the reason.
 | `DELETE /pools/{name}` | Admin | `confirmName`* | `{"ok": true}`. Deletes the pool, its nodes and their machines |
 | `POST /pools/{name}/resume` | Admin | none | `{"ok": true}`. Ends the pause of a pool that kept failing, and forgets the failures |
 | `POST /servers` | Admin | `name` (made up for a machine at a cloud), `source` (`cloud` or `existing`, and `existing` when `address` is sent). For a cloud: `connection`*, `region`, `size`*, `image`, `settings`. For a server that you have: `address`*, `sshUser`*, `sshPort`, and `sshPrivateKey` or `sshKeySecret`*, `knownHosts`. Also `placementRegion`, `placementZone`, `tags`, `storage` (`None` or `Allow`, `Allow` by default) | `{"ok": true, "name": "server-x7k2m"}`. A machine at a cloud costs money until the server is removed |
+| `GET /servers` | Any (not a project token) | none | `{"items": [{"name", "role", "phase", "message", "address", "source", "pool", "node", "joined", "cordoned", "cordonedBy", "canRetry", "canUpdateHostKeys", "canRemove"}]}`. `phase` is `Pending`, `Creating`, `Joining`, `Ready`, `Failed`, or `Deleting`. `message` is the error of a server that failed, and only an admin or an observer gets it |
+| `POST /servers/{name}/retry` | Admin | none | `{"ok": true}`. `400` for a server whose `phase` is not `Failed` |
+| `POST /servers/{name}/host-keys` | Admin | `knownHosts`* | `{"ok": true, "failed": false}`. `failed` says that the server is still `Failed`, so a retry is next. `400` for a machine that Geass created, and for lines that list no key for the address of the server |
 | `DELETE /servers/{name}` | Admin | `confirmName`* | `{"ok": true}`. Refused for the control plane, and for a node that belongs to a pool |
 
 A pool in a response has these fields:
@@ -629,6 +648,33 @@ A program that bills as it goes asks approximately every hour, with `from` set t
 program stores each hour by its `start`, `org`, and `workspace`, and replaces what it stored for the same hour before.
 If you ask again for an hour that is closed, you get the same numbers. This is true until the hour is older than 62
 days and Geass no longer keeps it.
+
+### Add-ons
+
+`GET /api/v1/settings/addons` says which add-ons of the cluster are on, and how each is doing. It reads the state that the
+operator writes to `status.addons` of the cluster. An add-on that is on and that the operator has not reported yet is
+`Installing` with the message "Waiting for the operator to report." Only an admin can call it, because the add-ons name what
+the cluster runs.
+
+```json title="GET /api/v1/settings/addons"
+{
+  "addons": [
+    {"name": "serverless", "title": "Sleep when idle", "enabled": true, "state": "Installing",
+     "message": "KEDA HTTP add-on: Waiting to start the install.", "installed": true, "canRetry": false,
+     "canDisable": true, "keptWhenOff": true},
+    {"name": "monitoring", "title": "Metrics", "enabled": true, "state": "Failed", "reason": "InstallSuspended",
+     "message": "The install job is suspended.",
+     "installed": true, "canRetry": true, "canDisable": true, "keptWhenOff": false, "profile": "lite", "profiles": ["lite", "full"]}
+  ],
+  "retryPending": ""
+}
+```
+
+`reason` is `InstallFailed`, `InstallSuspended`, or `NoHelmController`. Only the first two set `canRetry`. `canDisable` is
+`false` for replicated storage once it is on. `retryPending` names the add-on whose retry the operator has not carried out yet.
+
+To turn on sleep when idle and wait for it, send `POST /api/v1/settings/addons/serverless/save` with `{"enabled": true}`.
+Then read `GET /api/v1/settings/addons` until its `state` is `Ready` or `Failed`.
 
 ### Mail relay usage
 
@@ -1284,6 +1330,8 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/ha-readiness/check` | none | Creates the high availability check |
 | `POST /api/settings/domain/save` | `domain`, `subdomain`, `exposure` (`ingress` or `cloudflare-tunnel`), `tunnelCNAMETarget`, `cloudflareZoneId` | Sets the dashboard domain |
 | `POST /api/settings/domain/verify` | none | `{"ok":true,"state":"success","message":"..."}`. `ok` is `false` for any other `state`. When HTTPS is not reachable, `message` can end with the cluster's `ClusterIssuerReady` message, for example when no `acmeEmail` is set |
+| `POST /api/settings/domain/acme-email` | `email` | Sets the contact address of the Let's Encrypt account, `spec.addons.certManager.acmeEmail` on the cluster. Platform administrators only |
+| `GET /api/settings/certificates` | none | `{"email":"...","state":"...","message":"..."}`. `state` is `missing`, `waiting`, `ready`, or `failing`, from the cluster's `ClusterIssuerReady` condition. Platform administrators only |
 | `POST /api/settings/github/save` | `appID`, `clientID`, `slug`, `clientSecret`, `webhookSecret`, `privateKey` | Stores the GitHub App |
 | `POST /api/settings/github/test`, `/clear` | `confirm=remove-github` for clear | Tests or removes it. The test checks the webhook URL, and then the app's permissions: it answers `{"ok":true,"warning":"..."}` when the webhook is right and permissions Geass needs are missing, with how to approve them |
 | `GET /api/settings/github` | none | Callback and webhook URLs and the state (observer, and admins also get the manifest used to register the app) |
@@ -1296,6 +1344,7 @@ curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" \
 | `POST /api/settings/alerts/smtp/test`, `/clear` | none | The test connects from the operator, encrypts and signs in without sending: `{"ok":true}` or `{"ok":false,"error":"..."}`. `clear` removes the mail server and its password |
 | `POST /api/settings/alerts/channels/save` | `id` (to edit), `name`, `type` (`slack` or `email`), `url` (Slack, and blank keeps the saved one), `recipients` (email), `event` (repeat), `project` (repeat), `environment` (repeat), `notifyResolved`, `disabled` | Makes or changes a channel. `{"ok":true,"id":"..."}`, with a `warning` when it is saved but Alertmanager could not be told yet. A channel's type cannot be changed. At most 20 channels |
 | `POST /api/settings/alerts/channels/test`, `/delete` | `id` | The test puts a test alert into Alertmanager, waits for it to have loaded the channel and to report sending, and answers `{"ok":true}` or `{"ok":false,"error":"..."}`, whatever the channel is limited to and even while paused. It can take up to a minute. `delete` removes the channel and its Slack URL, after Alertmanager's configuration no longer refers to it |
+| `GET /api/settings/addons`, `POST /api/settings/addons/{name}/save`, `.../retry` | As `GET /settings/addons` and `POST /settings/addons/{name}/save` and `/retry` in the route table above | The add-ons. Admins only. See [Add-ons](#add-ons) |
 | `POST /api/settings/registry/save` | `repository`, `username`, `password`, `keepExisting` | Sets the registry that repository builds push to. The login is optional: both `username` and `password`, or neither. It is stored as the Secret `platform-registry` in `geass-system`. `keepExisting=on` keeps the stored login when only the repository changes |
 | `POST /api/settings/registry/clear` | none | Removes the registry and its login |
 | `GET /api/settings/registry` | none | `{"repository","configured","hasLogin"}`. It never returns the login |

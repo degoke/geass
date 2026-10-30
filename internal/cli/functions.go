@@ -50,7 +50,7 @@ func (a *App) triggersListCmd() *cobra.Command {
 			for _, trigger := range fn.Triggers {
 				rows = append(rows, []string{trigger.Name, trigger.Schedule, firstSet(trigger.Path, "/")})
 			}
-			a.printTable([]string{"NAME", "SCHEDULE (UTC)", "PATH"}, rows)
+			a.printTable([]string{columnName, "SCHEDULE (UTC)", "PATH"}, rows)
 			return nil
 		},
 	}

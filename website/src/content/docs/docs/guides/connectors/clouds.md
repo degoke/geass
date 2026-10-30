@@ -6,90 +6,63 @@ sidebar:
 ---
 
 A connection for machines holds the credentials that Geass uses to create and delete servers at a cloud.
-[Node pools](/docs/guides/node-pools/) use it, and so do servers that you add one at a time. Geass creates the
-machine, installs K3s on it over SSH, and joins it to your cluster. This page tells you how such a connection works,
-which credentials to make for each cloud, and what is special about each cloud.
+[Pools](/docs/guides/node-pools/) use it, and so do servers that you add one at a time. Geass creates the machine,
+sets it up over SSH, and joins it to your cluster. This page tells you which credentials to make for each cloud, and
+what is special about each cloud.
 
-Geass can create machines at these clouds: Amazon EC2, Microsoft Azure, DigitalOcean, Google Cloud, Hetzner Cloud,
-Linode (Akamai Cloud), Oracle Cloud, OVHcloud Public Cloud, Scaleway, UpCloud, and Vultr. For any other provider,
-Geass can use a webhook: an HTTP service of your own that follows a small contract.
+Geass can create machines at Amazon EC2, Microsoft Azure, DigitalOcean, Google Cloud, Hetzner Cloud, Linode (Akamai
+Cloud), Oracle Cloud, OVHcloud Public Cloud, Scaleway, UpCloud, and Vultr. For any other provider, Geass can call a
+webhook: an HTTP service of your own.
 
 :::caution
-Before you give a connection credentials that can spend money, read [How far to trust it](#how-far-to-trust-it).
+Read [How far to trust it](#how-far-to-trust-it) before you give a connection credentials that can spend money.
 Machine creation is **experimental**. Amazon EC2 has run against a live account, in one region. The other eleven
-drivers were written from the official API documentation of the provider. They were tested only against an in-memory
-simulation of that API.
+drivers were tested only against a simulation of the API of each provider.
 :::
 
 ## How a connection for machines works
 
-- **It belongs to the cluster, never to a project.** A project must not be able to spend money on machines. So a
-  connection that creates machines cannot be scoped to a project. Geass refuses a pool or a server that names a
-  connection that is scoped to a project.
-- **Only an admin can use it.** These actions need the admin role:
-  - Make, change, and remove a connection.
-  - List the sizes of a cloud.
-  - Make a pool or a server with the connection.
-
-  A viewer or observer can see the connection's name, its cloud, whether it works, and what uses it. A viewer or
-  observer can never see its credentials, its cloud account, or what the cloud said about it. A project token cannot
-  get to connections at all.
-- **It has a purpose, `Compute`.** Every cloud on this page makes machines. So a connection to any of these clouds has
-  the purpose `Compute`, unless you list other purposes. AWS is the one cloud that also holds
-  [buckets and backups](/docs/guides/connectors/aws/). An AWS connection made before purposes existed is for `Storage`
-  and `Database` only, and **never** starts to create machines. Make a separate AWS connection for machines, with its
-  own key. See [Amazon EC2](#amazon-ec2). In practice, the two cannot be one connection: storage connections must
-  belong to a project, and machine connections must not.
-- **The credentials are stored in a Secret and never shown again.** The dashboard and the command line write the
-  credentials into the Secret `<name>-credentials` in `geass-system`. Only the operator reads this Secret. To replace a
-  credential, you must enter it again.
-- **Geass asks the cloud whether it accepts them.** Geass asks at these times:
-  - Immediately, and then every 15 minutes.
-  - When you change the connection, or when you ask with `geass connections verify`.
-  - Every 2 minutes, for a connection that does not work.
-
-  If you put a new value into the Secret yourself, Geass detects it at the next of these checks.
+- **It belongs to the cluster, never to a project.** A project must not spend money on machines. Geass refuses a pool
+  or a server that names a connection of a project.
+- **Only an admin can use it.** Only an admin can make, change, and remove a connection, list the sizes of a cloud,
+  and make a pool or a server. A viewer can see the name of the connection, its cloud, whether it works, and what uses
+  it. A viewer never sees its credentials or its cloud account.
+- **It is for servers.** An AWS connection for machines can also be for buckets and databases, but keep them separate.
+  An AWS connection for buckets must belong to a project, and a connection for machines must not. See
+  [Amazon EC2](#amazon-ec2).
+- **Geass never shows the credentials again.** To replace a credential, enter it again.
+- **Geass asks the cloud whether it accepts the credentials.** Geass asks immediately, then every 15 minutes, and
+  every 2 minutes while the connection does not work. Geass also asks when you change the connection, or click
+  **Verify now**.
 
 ### What the connection says about itself
 
-`geass connections show NAME` and the **Server clouds** list show:
+The **Server clouds** list and `geass connections show NAME` show these items:
 
-| What | Meaning |
+| Item | Meaning |
 | --- | --- |
-| Status | `accepted`, `not accepted` (with the cloud's message), or `not checked yet`. The dashboard shows **Available** or **Not available**. |
+| Status | **Available**, **Not available** with the message of the cloud, or **Checking** before the first check. |
 | Account | The account, project, or tenant that the credentials act on, as the cloud reports it. |
 | Last accepted | When the cloud last accepted the credentials. |
-| Credentials expire | When the credentials stop working, for the clouds that give this date. Geass adds a warning from 14 days before. |
+| Credentials expire | When the credentials stop working, for the clouds that give this date. Geass warns from 14 days before. |
 | Warnings | Things that work now and are likely to fail later. The section of each cloud lists its own warnings. |
-| Used by | The pools and machines that depend on the connection. |
+| Used by | The pools and machines that use the connection. |
 
-In Kubernetes, these are `status.available`, `status.account`, `status.message`, `status.verifiedAt`,
-`status.expiresAt`, and `status.warnings` of the
-[GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/). The `Ready` condition has these values:
+The check only reads from the cloud. For most clouds, the check cannot show that the credentials can **create** a
+machine. The connection tells you this in a warning. So the first machine is the real test. Only Amazon EC2 can check,
+with a dry run, that a launch is allowed.
 
-- `True` when the cloud accepted the credentials.
-- `False` with `VerificationFailed` when the cloud did not accept them.
-- `False` with `CredentialsMissing` when the Secret does not have a required key.
+## Give Geass a boundary of its own
 
-The check reads from the cloud and changes nothing. For most clouds, the check cannot show that the credentials can
-**create** a machine without creating one. The check tells you this in a warning. So the first machine is the real
-test. See [How far to trust it](#how-far-to-trust-it). Only Amazon EC2 asks the cloud, with a dry run, whether the
-cloud would allow a launch.
+Give Geass a project, a resource group, a compartment, or an account that holds nothing else. Give Geass credentials
+that reach only that boundary. Geass lists and deletes only the machines that have its labels. A boundary of its own
+also gives you these advantages:
 
-## The one rule for credentials: a boundary of their own
-
-Give Geass a project, a resource group, a compartment, or an account that holds nothing else, whatever the cloud calls
-it. Give Geass credentials that get only to that boundary. Geass lists and deletes the machines that have its labels,
-and nothing else. But a boundary of its own makes that true even if something goes wrong:
-
-- The credentials cannot touch what is outside the boundary.
+- The credentials cannot touch anything outside the boundary.
 - Everything inside the boundary is for Geass to delete.
 - You get one bill to read.
 
-The sections that follow tell you the boundary of each cloud and what the driver calls. Grant exactly that, and no
-more. Where the driver's own text names a role or a scope, this page uses that name. Where it does not, this page
-lists the calls, and the cloud's documentation gives the cloud's own action names. Do not take more than the calls
-need.
+The section of each cloud names the boundary and what the driver calls. Grant exactly that, and no more.
 
 ## The clouds
 
@@ -102,19 +75,18 @@ need.
 | [Hetzner Cloud](#hetzner-cloud) | `Hetzner` | `token` (secret) | A location: `fsn1`. Empty lets Hetzner choose | `firewallId`, `networkId` |
 | [Linode](#linode-akamai-cloud) | `Linode` | `token` (secret) | A region that supports Metadata: `eu-west`. Required | `firewallId` |
 | [Oracle Cloud](#oracle-cloud) | `OCI` | `tenancyOcid`, `userOcid`, `fingerprint`, `privateKey` (secret), `compartmentOcid` | A region: `eu-frankfurt-1` | `subnetId` (required), `availabilityDomain`, `imageId`, `nsgId`, `diskSizeGb` |
-| [OVHcloud](#ovhcloud-public-cloud) | `OVHcloud` | `clientId`, `clientSecret` (secret), `serviceName`, `endpoint` (optional) | A Public Cloud region the project has enabled: `GRA11` | `imageId`, `networkId`, `userDataBase64` |
+| [OVHcloud](#ovhcloud-public-cloud) | `OVHcloud` | `clientId`, `clientSecret` (secret), `serviceName`, `endpoint` (optional) | A Public Cloud region that the project has enabled: `GRA11` | `imageId`, `networkId`, `userDataBase64` |
 | [Scaleway](#scaleway) | `Scaleway` | `secretKey` (secret), `projectId` | A zone: `fr-par-1` | `securityGroupId`, `rootVolumeGb` |
 | [UpCloud](#upcloud) | `UpCloud` | `token` (secret), or `username` and `password` (secret) | A zone: `de-fra1` | `diskGb` |
-| [Vultr](#vultr) | `Vultr` | `apiKey` (secret) | A region id: `fra`. Required | `firewallGroupId` |
-| [Your own service](#your-own-service-webhook) | `Webhook` | `url`, `token` (secret, optional) | Whatever your service takes | Any |
+| [Vultr](#vultr) | `Vultr` | `apiKey` (secret) | A region ID: `fra`. Required | `firewallGroupId` |
+| [Your own service](#your-own-service-webhook) | `Webhook` | `url`, `token` (secret, optional) | What your service takes | Any |
 
-`geass providers` prints the same table from what the operator knows. `geass providers NAME` explains each credential
-and setting. The dashboard's form has the same lists.
+The form in the dashboard has the same lists. `geass providers NAME` explains each credential and setting.
 
-| Cloud | Spot machines | Price in `geass sizes` | Firewall Geass makes |
+| Cloud | Spot machines | Price in the size list | Firewall that Geass makes |
 | --- | --- | --- | --- |
 | Amazon EC2 | Yes | No | A security group `geass-<cluster>` |
-| Microsoft Azure | Yes | Yes, from Azure's public price list (USD) | A network security group `geass-<cluster>-<location>` |
+| Microsoft Azure | Yes | Yes, from the public price list of Azure (USD) | A network security group `geass-<cluster>-<location>` |
 | DigitalOcean | No | Yes | A Cloud Firewall `geass-<cluster>` |
 | Google Cloud | Yes | No | Two global firewall rules |
 | Hetzner Cloud | No | Yes | A firewall `geass-<cluster>` |
@@ -124,125 +96,87 @@ and setting. The dashboard's form has the same lists.
 | Scaleway | No | Yes | A security group |
 | UpCloud | No | Yes | A firewall on each server |
 | Vultr | No | Yes | A firewall group |
-| Webhook | Passed on | Whatever the service says | Whatever the service does |
+| Webhook | Passed on | What the service says | What the service does |
 
-"No" under spot means that the driver ignores `spot: true`. Where the cloud limits the length of a firewall's name,
-Geass shortens the cluster name in it.
+"No" under spot means that the driver ignores a spot request.
 
 ## Add a connection
 
 ### In the dashboard
 
-1. Open **Settings**, and then **Connectors**.
+1. Open **Settings** → **Connectors**.
 2. Under **Server clouds**, click **Connect a cloud**.
 3. Select the **Cloud**.
-4. Enter a name for the connection. Use lowercase letters, numbers, and hyphens. Pools and servers refer to the
-   connection by that name.
-5. If you want a default region, enter the **Default region**.
-6. Enter the credentials. A secret is a password box that the form never fills in again. For AWS, the form also
-   offers **Buckets** and **Databases** next to the purpose Compute (shown as **Servers**), which it always has. Leave
-   **Buckets** and **Databases** off, and make a separate connection for buckets.
-7. Click **Connect**. Geass asks the cloud whether it accepts the credentials. The card shows **Available**, or the
-   cloud's message.
+4. Enter a **Name**. Use lowercase letters, numbers, and hyphens. Pools and servers use the connection by that name.
+5. Optional: enter a **Default region**. Geass uses it when a pool or a server names no region.
+6. Enter the credentials. The form never shows a secret again after you save it.
+7. For AWS, leave **Buckets** and **Databases** under **Also use for** off. Make a separate connection for buckets.
+8. Click **Connect**. Geass asks the cloud whether it accepts the credentials. The card shows **Available**, or the
+   message of the cloud.
 
-After you connect, you can use these controls on the card:
+Each connection card has these buttons:
 
 - **Verify now** asks the cloud again.
 - **Edit** changes the default region or replaces credentials. Enter only the credentials that change.
-- **Remove** deletes the connection and its Secret.
+- **Remove** deletes the connection and its credentials.
 
-### With the command line
+### From the command line
 
 ```bash
-geass providers Hetzner                     # what it takes
+geass providers Hetzner                     # what the cloud takes
 geass connections add hetzner --provider Hetzner --credential-file token=./hetzner-token.txt
-```
-
-The command makes the connection, asks the cloud immediately, and prints what the cloud said, including its warnings.
-
-Do not put a secret on the command line. The shell's history and the process list keep it. Give the secret in one of
-these ways:
-
-- From a file, with `--credential-file KEY=PATH`. The value `-` reads standard input.
-- In the environment, as `GEASS_CREDENTIAL_` and the key in capitals, with an underscore at each capital. For
-  example, `GEASS_CREDENTIAL_TOKEN` or `GEASS_CREDENTIAL_ACCESS_KEY_ID`.
-
-A key of several lines must come from a file, for example a Google Cloud service account key or an Oracle Cloud
-private key. If a required secret is still missing and a person is at the keyboard, the command asks for it, and does
-not show it.
-
-```bash
-geass connections add aws-compute --provider AWS --region eu-north-1 \
-  --credential accessKeyId=AKIA... --credential-file secretAccessKey=./secret.txt
 geass connections list
 geass connections show hetzner
 geass connections update hetzner --credential-file token=./new-token.txt   # rotate
 geass connections verify hetzner
 ```
 
-This command makes only connections for machines. To make a connection for buckets or databases, use the dashboard.
-See [`geass connections`](/docs/reference/cli/#geass-connections).
+`geass connections add` makes the connection, asks the cloud immediately, and prints the answer and its warnings.
+This command makes only connections for machines. See [`geass connections`](/docs/reference/cli/#geass-connections).
 
-### With a manifest
+Do not put a secret on the command line. The shell history and the process list keep it. Give a secret in one of
+these ways:
 
-```yaml title="hetzner-connection.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: hetzner-credentials
-  namespace: geass-system
-type: Opaque
-stringData:
-  token: replace-with-the-api-token
----
-apiVersion: geass.geass.dev/v1alpha1
-kind: GeassCloudConnection
-metadata:
-  name: hetzner
-  namespace: geass-system
-spec:
-  provider: Hetzner
-  secretRef:
-    name: hetzner-credentials
-  purposes: [Compute]        # left out, a connection to any cloud but AWS and PlanetScale is for Compute
-  region: fsn1               # optional default region
-```
+- From a file, with `--credential-file KEY=PATH`. The value `-` reads standard input.
+- In the environment, as `GEASS_CREDENTIAL_` followed by the key in capitals, with an underscore before each capital
+  in the key. For example, `GEASS_CREDENTIAL_ACCESS_KEY_ID`.
 
-The keys of the Secret are the credential names in the table earlier on this page. Do not set `spec.project`. After
-you change a Secret by hand, ask again with `geass connections verify hetzner`.
+A key of several lines must come from a file. Examples are a Google Cloud service account key and an Oracle Cloud
+private key. If a required secret is missing and a person is at the keyboard, the command asks for it.
 
 ## Choose a region and a size
+
+In the dashboard, the pool form lists the sizes of the selected region in **Machine size**. From the command line,
+run this command:
 
 ```bash
 geass sizes --connection hetzner --region fsn1 --min-vcpus 2 --min-memory 4 --limit 10
 ```
 
-This command prints the sizes that the cloud offers in that region. The cheapest size is first. Where the cloud
-states no price, the smallest size is first. For each size, the command shows the processors, memory, disk,
-architecture, and the price for an hour in the cloud's currency.
+The list shows the cheapest size first. When the cloud gives no price, the smallest size is first. Each size shows its
+processors, memory, disk, architecture, and price for an hour in the currency of the cloud.
 
-Geass asks the cloud with the connection's credentials, so this command needs an admin. A node reserves about 250m CPU
-and 700 MiB of memory for K3s and the system pods. So a size under 2 vCPU and 4 GiB leaves little. The `ARCH` column
-shows `amd64` or `arm64`. A node of one architecture can run only images built for that architecture.
+Each server keeps about 250m CPU and 700 MiB of memory for the system. A size under 2 vCPU and 4 GiB leaves little
+for your services. A server of one architecture (`amd64` or `arm64`) runs only images built for that
+architecture.
 
 ## Amazon EC2
 
 **Boundary.** An IAM user that only Geass uses. Put the user in an AWS account that holds nothing that you cannot
-lose, or limit the user with conditions. Make this connection separate from any connection that you use for buckets,
-and keep the key separate. The key that creates buckets and IAM users must not also launch instances.
+lose, or limit the user with conditions. Keep this key separate from the key that you use for buckets. The key that
+creates buckets and IAM users must not also launch instances.
 
 **What the driver calls.** The driver makes these calls:
 
 - `sts:GetCallerIdentity`, which needs no permission.
-- The reads `DescribeInstances`, `DescribeInstanceTypes`, `DescribeImages`, `DescribeSubnets`, and
-  `DescribeSecurityGroups`.
-- `RunInstances`, and a `DryRun` of it to check that the key can launch.
+- `DescribeInstances`, `DescribeInstanceTypes`, `DescribeImages`, `DescribeSubnets`, and `DescribeSecurityGroups`.
+- `RunInstances`, and a dry run of it to check that the key can launch.
 - `CreateTags`, through the tags that it puts on a launch.
 - `TerminateInstances`.
-- For the security group that it makes: `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, and
-  `RevokeSecurityGroupIngress`.
+- `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, and `RevokeSecurityGroupIngress`, for the security group
+  that it makes.
 
-A launch tags the instance and its volume `geass-managed=true`, `geass-cluster`, `geass-pool`, and `geass-node`.
+A launch tags the instance and its volume with `geass-managed=true`, `geass-cluster`, `geass-pool`, and `geass-node`.
 
 ```json title="geass-compute-policy.json"
 {
@@ -319,12 +253,10 @@ A launch tags the instance and its volume `geass-managed=true`, `geass-cluster`,
 
 Notes on the policy:
 
-- In EC2, `Describe` calls take no resource-level conditions, so they are open (`"Resource": "*"`). So a key that can
-  launch only instances tagged `geass-managed=true` cannot list only those instances. Geass narrows the list with a
-  tag filter in each request.
-- To limit the key to the regions that you use, add one more statement. Do not add a condition on every statement.
-  The policy in this section is 1,708 bytes without spaces, and an inline user policy can hold only 2,048 bytes. So
-  conditions on all eight statements do not fit. A managed policy can hold 6,144 bytes.
+- `Describe` calls in EC2 take no resource-level conditions, so they use `"Resource": "*"`. Geass filters each list
+  by tag.
+- To limit the key to the regions that you use, add one more statement. Do not add a condition to every statement.
+  An inline user policy can hold only 2,048 bytes, and the policy is already 1,708 bytes without spaces.
 
   ```json
   {
@@ -335,10 +267,10 @@ Notes on the policy:
     "Condition": { "StringNotEquals": { "aws:RequestedRegion": "eu-north-1" } }
   }
   ```
-- Add this statement only if you use
-  [`controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) with the control plane's own
-  security group. Geass adds and removes rules on that group, and this statement lets Geass do that. The key can be
-  this key, or the key of another connection at the same account. Geass marks each rule with the description `geass`:
+
+- If Geass opens the [control plane firewall](/docs/guides/node-pools/#let-geass-open-the-control-plane) on the
+  security group of the control plane, add this statement. The key can be this key, or the key of another connection
+  to the same account. Geass marks each rule that it adds with the description `geass`.
 
   ```json
   {
@@ -348,62 +280,49 @@ Notes on the policy:
     "Resource": "arn:aws:ec2:eu-north-1:123456789012:security-group/sg-0abc123"
   }
   ```
-- With `spot`, the account also needs what AWS requires for Spot machines: the Spot service-linked role. The driver
-  makes no call for this role, so this policy does not cover it. If AWS refuses a spot launch, the error names the
-  missing action.
-- This policy has run against a live account in `eu-north-1`. It ran as an IAM user's key with exactly these
-  statements, the region guard in this section, and the control plane statement. With this key, Geass did these
-  actions:
-  - Launched, tagged, and terminated machines.
-  - Made and changed the cluster's security group.
-  - Listed sizes.
-  - Opened and closed rules on the control plane's group.
 
-  A call that the policy refuses shows as the node's message, and the message names the action. An organization's
-  service control policy can also refuse a launch, whatever the key's policy says. The message names that policy.
+- For spot machines, the account also needs the Spot service-linked role that AWS requires. This policy does not
+  cover it. If AWS refuses a spot launch, the error names the missing action.
+- This policy, with the region guard and the control plane statement, ran against a live account in `eu-north-1`.
+  A call that the policy refuses shows as the message of the machine, and names the action. A service control policy
+  of an AWS organization can also refuse a launch. The message then names that policy.
 
-**Region and sizes.** An AWS region, for example `eu-north-1`. A pool's `region` has priority, then the connection's
-default, then `us-east-1`. Sizes are the current-generation instance types that are not bare metal, with 1 to 32
-vCPUs. The EC2 API states no prices. So Geass lists the sizes smallest first, with no price.
+**Region and sizes.** An AWS region, for example `eu-north-1`. Geass uses the region of the pool, then the default of
+the connection, then `us-east-1`. Sizes are current-generation instance types with 1 to 32 vCPUs, not bare metal. EC2
+gives no prices, so the list shows the smallest size first.
 
 **Settings.** These are the settings:
 
-- `subnetId` launches into that subnet. The subnet must give instances a public address, or the pool's `addressType`
-  must be `Private`. Without `subnetId`, Geass uses a default-VPC subnet.
+- `subnetId` launches into that subnet. The subnet must give instances a public address, or the pool must use private
+  addresses. Without `subnetId`, Geass uses a subnet of the default VPC.
 - `securityGroupId` uses a group that you made, as it is, instead of the group that Geass makes.
-- `diskGb` sets the root disk (default 30, at least 8).
+- `diskGb` sets the root disk. The default is 30, and the minimum is 8.
 
 **Worth knowing.**
 
-- The security group is `geass-<cluster>`. Geass makes it one time in the VPC of the subnet. The group lets in SSH and
-  the kubelet port from the control plane's addresses. In a multi-site cluster, it also lets in the overlay's UDP port
-  from anywhere. Geass keeps those three rules equal to what the cluster needs, and does not change rules on other
-  ports.
-- Instances accept only IMDSv2 and one network hop, so pods cannot read the instance's credentials.
-- Geass launches burstable instances (the `t` families) with standard credits. The default, unlimited, can bill more
-  than the hourly price.
+- Geass makes the security group `geass-<cluster>` one time, in the VPC of the subnet. The group lets in tcp 22 and
+  10250 from the control plane. In a multi-site cluster, it also lets in udp 51820 from anywhere. Geass does not change
+  rules on other ports.
+- Instances accept only IMDSv2 with one network hop. So your services cannot read the credentials of the instance.
+- Geass launches burstable instances (the `t` families) with standard credits. The AWS default, unlimited, can bill
+  more than the hourly price.
 - The image is the newest Canonical Ubuntu 24.04 for the architecture of the instance type.
-- EC2 shows a machine a moment after you launch it. EC2 lists a terminated machine for about an hour. Geass waits, and
-  ignores the terminated machines.
-- EC2 deletes a root volume with the instance, and also the address that EC2 assigned.
+- EC2 deletes the root volume and the public address with the instance.
 
 ### Temporary credentials
 
-Instead of an IAM user's key, the connection can hold the credentials that `sts:AssumeRole` returns:
+Instead of the key of an IAM user, the connection can hold the credentials that `sts:AssumeRole` returns:
 
 - An access key ID that starts with `ASIA`.
 - A secret access key.
-- A **session token**.
+- A **session token**. Put it in the optional secret `sessionToken`.
 
-Put the token in the optional secret credential `sessionToken`. Geass then sends the token with every request to EC2
-and STS, as the header `X-Amz-Security-Token`, and signs it with the request. Without a `sessionToken`, nothing
-changes: Geass signs requests as it always did. The role needs the permissions of the policy earlier on this page.
-Only a connection for machines reads the token. A connection for
-[buckets and backups](/docs/guides/connectors/aws/) uses an IAM user's key.
+The role needs the permissions of the policy earlier on this page. Only a connection for machines takes a session
+token. A connection for [buckets and backups](/docs/guides/connectors/aws/) takes only the key of an IAM user.
 
-Temporary credentials expire after an hour, unless the role sets a different time. So the system that issues them
-must replace them before they expire. Replace the key, the secret, and the token together, in one request. If you
-want the connection to show when the credentials expire, send `expiresAt` with them:
+Temporary credentials expire, by default after an hour. The system that issues them must replace them before then.
+Replace the key, the secret, and the token together, in one request. To show when the credentials expire, also send
+`expiresAt`, an RFC 3339 time:
 
 ```bash title="Replace temporary credentials"
 curl -fsS -X PATCH https://geass.example.com/api/v1/connections/aws-compute \
@@ -414,90 +333,66 @@ curl -fsS -X PATCH https://geass.example.com/api/v1/connections/aws-compute \
 `geass connections update aws-compute --credential-file KEY=PATH` does the same. Give one `--credential-file` for each
 key.
 
-- **A new key is used immediately.** The operator builds the driver for a connection from its Secret. The operator
-  builds the driver again when the Secret changes. So the next machine that Geass makes, reads, or deletes uses the
-  new credentials. Nothing restarts. Geass refreshes the connection's own status (Available, the account,
-  Credentials expire) at the next check, within 15 minutes. To refresh it immediately, use
-  `geass connections verify aws-compute` or `POST /api/v1/connections/aws-compute/verify`.
-- **Credentials that lapse before new ones arrive** make AWS answer `ExpiredToken`. The connection shows AWS's message
-  and is not available. Geass does not treat this answer as credentials that are refused permanently, which would fail
-  the node. Instead, these things occur:
-  - A machine waits to be made or deleted, with AWS's message as the node's message. It continues when new
-    credentials arrive.
-  - Geass does not replace a running node in the meantime. Geass cannot ask AWS about the node's machine, so Geass asks
-    again a minute later.
-  - A machine that Geass cannot delete continues to bill until new credentials arrive.
-- **AWS does not say when credentials end.** `GetCallerIdentity` has no expiry. So Geass shows an expiry only if you
-  send `expiresAt`, an RFC 3339 time, for example `2026-10-22T14:30:00Z`. The expiry shows as Credentials expire
-  (`status.expiresAt`). With a session token, Geass adds no "expires in N days" warning. Credentials that are renewed
-  every hour would show that warning all the time. An `expiresAt` that is not a time gives a warning, and changes
-  nothing else. On a key with no session token, `expiresAt` works as it does for any cloud, with the warning from 14
-  days before.
-- **A key or token that was set cannot be cleared through the API**. A field that you leave out or send empty keeps
-  its value. To go back from temporary credentials to an IAM user's key, make a new connection. Alternatively, remove
-  `sessionToken` and `expiresAt` from the Secret `<name>-credentials` with `kubectl`.
+- **Geass uses new credentials immediately.** The next machine that Geass makes, reads, or deletes uses them, and
+  nothing restarts. The status of the connection refreshes at the next check, within 15 minutes. To refresh it now,
+  click **Verify now**.
+- **Credentials that expire before new ones arrive** make AWS answer `ExpiredToken`. The connection is then not
+  available. A machine waits to be made or deleted, and continues when new credentials arrive. Geass does not replace
+  a running server in the meantime. A machine that Geass cannot delete continues to bill.
+- **AWS does not say when credentials end.** Geass shows an expiry only if you send `expiresAt`. With a session token,
+  Geass gives no "expires in N days" warning, because hourly credentials would show it all the time.
+- **You cannot clear a key or a token through the API.** A field that you leave out or send empty keeps its value. To
+  go back to the key of an IAM user, make a new connection.
 
 ## Microsoft Azure
 
 **Boundary.** A resource group that only Geass uses, and a custom role scoped to that group. Azure cannot scope a role
 by tag, so the group is the boundary.
 
-**Credentials.** A Microsoft Entra app registration (service principal) with a client secret, and then the five fields
-in the table. Give the service principal a custom role on the resource group with these permissions, and no more:
+**Credentials.** A Microsoft Entra app registration (service principal) with a client secret, and the five fields in
+the table. Give the service principal a custom role on the resource group with these permissions, and no more:
 
 - Virtual machines, disks, network interfaces, public IP addresses, and network security groups, in the group.
 - The join action on the subnet that the pool uses. The subnet is in a virtual network that Geass does not manage.
 - The read of VM sizes at the subscription (`Microsoft.Compute/locations/vmSizes/read`). A role scoped to the group
   does not include this permission.
 
-Look up the exact action names in Azure's documentation. The connection warns if it cannot read the sizes.
+Find the exact action names in the documentation of Azure. The connection warns if it cannot read the sizes.
 
-**What the driver calls.** The driver does these actions:
-
-- It reads the resource group, lists the group's virtual machines, and reads the subscription's VM sizes for a
-  location.
-- It creates a machine with one PUT of the virtual machine. The PUT describes the network interface, the public
-  address, and the OS disk, and Azure makes them. Each has its delete option set to `Delete`. So when Geass deletes
-  the machine, Azure deletes them too, and nothing continues to bill.
-- It reads the interface and the public address back, and reads and writes network security groups.
-- It reads prices from Azure's public price list, and sends no credential there.
+**What the driver calls.** The driver reads the resource group, its virtual machines, and the VM sizes of a location.
+It creates a machine with one request that describes the network interface, the public address, and the OS disk.
+Each has its delete option set to `Delete`, so Azure deletes them with the machine. The driver also reads and writes
+network security groups. It reads prices from the public price list of Azure, and sends no credential there.
 
 **Region and sizes.** An Azure location name, for example `westeurope`, `northeurope`, `uksouth`, `eastus2`, or
-`swedencentral`. Sizes come from the subscription's list for the location, with prices in US dollars from the public
-price list. Azure gives no architecture in that list. So Geass takes a size whose name has a `p` in its suffix, for
-example `Standard_D4ps_v5`, to be ARM, and gives it the arm64 image.
+`swedencentral`. Prices are in US dollars. Geass treats a size whose name has a `p` in its suffix as Arm, for example
+`Standard_D4ps_v5`.
 
 **Settings.** These are the settings:
 
-- `subnetId` is required. It is the full resource ID of an existing subnet in the pool's region.
-- `nsgId` uses your own network security group. This group must let in what the cluster needs.
-- `imageVersion` pins the version of the Ubuntu image (default `latest`).
-- `diskGb` is the OS disk (default 30).
+- `subnetId` is required. It is the full resource ID of an existing subnet in the region of the pool.
+- `nsgId` uses your own network security group. That group must let in what the cluster needs.
+- `imageVersion` pins the version of the Ubuntu image. The default is `latest`.
+- `diskGb` is the OS disk. The default is 30.
 
-The pool's `image` can be `publisher:offer:sku:version`, or the resource ID of a gallery image or a custom image.
+The `image` of a pool can be `publisher:offer:sku:version`, or the resource ID of a gallery image or a custom image.
 
 **Worth knowing.**
 
-- **The client secret expires**, after 24 months or less. Azure does not tell a client secret how long it has left.
-  When the secret expires, every call fails with `AADSTS7000222`. Record the date, and renew the secret before then
-  (`geass connections update NAME --credential-file clientSecret=PATH`). The connection warns about this, but it
-  cannot count down.
-- **Azure cannot say whether the role is complete** without doing something. A role can lack the right to create, to
-  join the subnet, or to write security groups. Such a role passes the connection check, and fails when Geass makes
-  the first machine.
-- Public addresses are Standard SKU and static. They accept nothing until a network security group allows it. So every
-  machine has a network security group: yours, or the group that Geass makes, with the name
-  `geass-<cluster>-<location>`. Geass's group lets in SSH and the kubelet port from the control plane. In a multi-site
-  cluster, it also lets in the overlay port from anywhere. Then it
-  **denies everything else coming in, including the virtual network's default allow**. Other machines in the same
-  virtual network can get to the new machine only through those rules.
-- A machine of the same name that belongs to another cluster is an error. Geass never touches that machine.
-- Geass shows a machine whose provisioning fails as stopped, and deletes it like any other machine. So an allocation
-  failure that Azure reports only later shows as a machine that never runs.
+- **The client secret expires**, after 24 months or less. Azure does not tell Geass when. After it expires, every call
+  fails with `AADSTS7000222`. Record the date, and renew the secret before then.
+- **Azure cannot say whether the role is complete** without creating something. A role without the right to create,
+  join the subnet, or write security groups passes the check. It fails when Geass makes the first machine.
+- Every machine has a network security group: yours, or `geass-<cluster>-<location>`. The group of Geass lets in tcp
+  22 and 10250 from the control plane, and udp 51820 in a multi-site cluster. Then it **denies all other incoming
+  traffic, including the default allow of the virtual network**.
+- A machine with the same name that belongs to another cluster is an error. Geass never touches that machine.
+- Azure can report an allocation failure late. Such a machine shows as stopped and never runs. Geass deletes it like
+  any other machine.
 
 ## DigitalOcean
 
-**Boundary.** A Team that only Geass uses.
+**Boundary.** A team that only Geass uses.
 
 **Credentials.** A personal access token with these custom scopes:
 
@@ -506,44 +401,36 @@ The pool's `image` can be `publisher:offer:sku:version`, or the resource ID of a
 - `firewall` (create, read, update).
 - `image:read`, `vpc:read`, `sizes:read`, and `regions:read`.
 
-A full-access token also works. If you want Geass to show the Droplet limit and the account's status, add
-`account:read`. Without this scope, a warning tells you so.
+A full-access token also works. To let Geass show the Droplet limit and the status of the account, add `account:read`.
 
 **Region and sizes.** A region slug: `nyc1`, `nyc3`, `sfo3`, `tor1`, `ams3`, `lon1`, `fra1`, `sgp1`, `blr1`, or
-`syd1`. Empty lets DigitalOcean choose. Sizes are Droplet slugs, for example `s-2vcpu-4gb`, all amd64. Geass leaves
-out GPU sizes, because Geass would never use the GPU.
+`syd1`. Empty lets DigitalOcean choose. Sizes are Droplet slugs, for example `s-2vcpu-4gb`, all `amd64`. Geass leaves
+out GPU sizes.
 
-**Settings.** `firewallId` attaches each machine to your own Cloud Firewall (its UUID), and Geass changes nothing in
-it. `vpcUuid` creates the machine in that VPC instead of the region's default.
+**Settings.** `firewallId` attaches each machine to your own Cloud Firewall, by its UUID. Geass changes nothing in that
+firewall. `vpcUuid` creates the machine in that VPC instead of the default VPC of the region.
 
 **Worth knowing.**
 
-- DigitalOcean limits the number of Droplets that an account can have. The connection warns when the account is at
-  its limit. Before you set a large `maxNodes`, ask DigitalOcean to raise the limit. The limit and a token that does
-  not have a scope both give errors that look the same. Geass tells them apart by the message.
-- Droplets have tags, not labels. So Geass writes its labels as tags, for example `geass-pool:burst`. Geass makes one
-  Cloud Firewall for each cluster, `geass-<cluster>`, aimed at a tag. So the firewall covers a machine from the moment
-  that the machine exists. The firewall allows every outbound connection. A firewall with no outbound rule would
-  block all outbound traffic.
-- A Droplet's name is not unique, and DigitalOcean has no idempotency token. So Geass looks for the node's Droplet by
-  tag and name before it makes another.
-- When Geass deletes a Droplet, DigitalOcean deletes only the Droplet. Geass makes no snapshots, backups, volumes, or
-  reserved addresses, so nothing else bills.
-- The API allows 250 requests a minute. Geass waits when the API tells it to slow down.
-- The check cannot see a token's scopes. A token without `droplet:create`, `tag:create`, or `firewall:create` passes
-  the check, and fails when Geass makes the first machine.
+- DigitalOcean limits the number of Droplets in an account. The connection warns when the account is at its limit.
+  Before you set a large maximum on a pool, ask DigitalOcean to raise the limit.
+- Geass makes one Cloud Firewall for each cluster, `geass-<cluster>`, aimed at a tag. So the firewall covers a machine
+  from its first moment. The firewall allows all outgoing traffic.
+- When Geass deletes a Droplet, nothing else is left to bill.
+- The check cannot see the scopes of a token. A token without `droplet:create`, `tag:create`, or `firewall:create`
+  passes the check, and fails at the first machine.
 
 ## Google Cloud
 
 **Boundary.** A project that only Geass uses.
 
-**Credentials.** A service account JSON key from that project. To get the key, go to IAM, Service accounts, Keys, Add
-key, JSON. Paste the whole file, or give it with `--credential-file serviceAccountKey=PATH`. Give the service account
+**Credentials.** A JSON key of a service account from that project. To get the key, go to **IAM** → **Service
+accounts** → **Keys** → **Add key** → **JSON**. Paste the whole file. Give the service account
 `roles/compute.instanceAdmin.v1` and `roles/compute.securityAdmin`. The first role cannot make firewall rules.
 
-**Region and sizes.** For Google Cloud, a region is a **zone**: `europe-west4-a`, `us-central1-b`,
-`asia-southeast1-a`. Machine types and stock are different in each zone. The Compute Engine API states no prices, so
-Geass lists the sizes smallest first.
+**Region and sizes.** For Google Cloud, a region is a **zone**: `europe-west4-a`, `us-central1-b`, or
+`asia-southeast1-a`. Machine types and stock are different in each zone. The API gives no prices, so the list shows
+the smallest size first.
 
 **Settings.** These are the settings:
 
@@ -553,86 +440,72 @@ Geass lists the sizes smallest first.
   type.
 - `diskSizeGb` (default 30) and `diskType`.
 - `firewallTag` names a network tag that your own firewall rules already target. Geass then makes no rules.
-- `skipFirewall` set to `true` makes no rules and adds no tag. You must then open tcp 22 and 10250 and udp 51820
-  yourself.
+- `skipFirewall` set to `true` makes no rules and adds no tag. Then open tcp 22 and 10250, and udp 51820, yourself.
 
 **Worth knowing.**
 
-- **Organizations created since May 2024 refuse to create service account keys** (the
-  `iam.disableServiceAccountKeyCreation` policy). An administrator might have to remove this policy for the project
-  before the key can exist.
-- **`roles/compute.instanceAdmin.v1` does not grant `compute.firewalls.create` or `update`.** Without
-  `roles/compute.securityAdmin`, or the `skipFirewall` or `firewallTag` setting, machine creation fails. The error names
-  the permission. Geass does not make a machine that nothing can get to. Google cannot say whether the key can make
-  firewall rules without making one. So the connection always has that warning.
-- Geass makes two global firewall rules, aimed at the network tag `geass-<cluster>` that Geass puts on the machine:
-  - `geass-<cluster>`: SSH and the kubelet.
-  - `geass-<cluster>-overlay`: the overlay's UDP port. This rule is switched off unless the cluster is multi-site.
-
-  Rules have no labels. So Geass recognizes its rules by their description, which starts with "Managed by Geass".
-- Geass attaches no service account to the machine, so the machine cannot get to other Google APIs. Google Cloud
-  deletes the boot disk and the ephemeral external address with the machine. Geass switches off OS Login for the
-  machine. So if a project turns on OS Login, this does not stop the login that Geass makes through cloud-init.
-- Compute Engine reports a quota or a stock-out only inside the long-running operation of the insert. So Geass watches
-  that operation for a few seconds and returns the failure.
+- **Organizations created since May 2024 block service account keys** with the
+  `iam.disableServiceAccountKeyCreation` policy. An administrator might have to remove this policy for the project.
+- **`roles/compute.instanceAdmin.v1` cannot create or update firewall rules.** Without `roles/compute.securityAdmin`,
+  `skipFirewall`, or `firewallTag`, machine creation fails, and the error names the permission. The check cannot test
+  this, so the connection always has that warning.
+- Geass makes two global firewall rules, aimed at the network tag `geass-<cluster>` on the machine. One rule lets in
+  SSH and tcp 10250. The other rule, `geass-<cluster>-overlay`, lets in udp 51820, and is off unless the cluster is
+  multi-site. Geass recognizes its rules by a description that starts with "Managed by Geass".
+- The machine has no service account, so it cannot reach other Google APIs. Google Cloud deletes the boot disk and the
+  public address with the machine.
 
 ## Hetzner Cloud
 
-**Boundary.** A Hetzner Cloud Project that only Geass uses. A token belongs to one Project, so the token cannot touch
-anything outside that Project.
+**Boundary.** A Hetzner Cloud project that only Geass uses. A token belongs to one project, so it cannot touch
+anything outside that project.
 
-**Credentials.** An API token with **Read & Write** permission. To make the token, go to Project, Security, API tokens.
+**Credentials.** An API token with **Read & Write** permission. To make the token, go to **Project** → **Security** →
+**API tokens**.
 
-**Region and sizes.** A location: `fsn1`, `nbg1`, `hel1` (Europe), `ash`, `hil` (US), or `sin` (Singapore). Empty
-lets Hetzner choose. Sizes are server types, for example `cx23`, with the price for each location.
+**Region and sizes.** A location: `fsn1`, `nbg1`, `hel1` (Europe), `ash`, `hil` (US), or `sin` (Singapore). Empty lets
+Hetzner choose. Sizes are server types, for example `cx23`, with the price for each location.
 
 **Settings.** `firewallId` uses your own firewall instead of the firewall that Geass makes. `networkId` also attaches
 the machine to that private network.
 
 **Worth knowing.**
 
-- A read-only token passes the connection check, and fails when Geass makes the first machine. Hetzner cannot tell
-  the two token types apart without creating something. The connection warns about this.
-- Geass makes a firewall `geass-<cluster>` one time, and keeps its rules correct:
-  - SSH and the kubelet port from the control plane. If Geass knows no control plane address, SSH from anywhere.
-  - In a multi-site cluster, the overlay's UDP port from anywhere.
-
-  The firewall drops all other incoming traffic.
-- The machine gets a public IPv4 address and no IPv6. When Geass deletes a server, Hetzner releases its address.
-- Hetzner is one of the two clouds that
-  [`controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) works for. Geass adds one rule
-  for each protocol and port, with the description `geass-access`, to the firewall that you name. When the machine
-  goes, Geass removes the machine's address from the firewall.
+- A read-only token passes the check, and fails at the first machine. The connection warns about this.
+- Geass makes the firewall `geass-<cluster>` one time. It lets in tcp 22 and 10250 from the control plane, or SSH
+  from anywhere when Geass knows no control plane address. In a multi-site cluster, it also lets in udp 51820 from
+  anywhere. The firewall drops all other incoming traffic.
+- The machine gets a public IPv4 address and no IPv6 address. Hetzner releases the address when Geass deletes the
+  server.
+- Hetzner is one of the two clouds where Geass can open the
+  [control plane firewall](/docs/guides/node-pools/#let-geass-open-the-control-plane). Geass adds rules with the
+  description `geass-access` to the firewall that you name, and removes them when the machine goes.
 
 ## Linode (Akamai Cloud)
 
 **Boundary.** An account that only Geass uses.
 
-**Credentials.** A personal access token with read/write on Linodes, Firewalls, and IPs. To make the token, go to
-Profile, API Tokens.
+**Credentials.** A personal access token with read and write access to Linodes, Firewalls, and IPs. To make the token,
+go to **Profile** → **API Tokens**.
 
 **Region and sizes.** A region ID that supports Metadata, for example `us-east`, `us-ord`, `us-iad`, `us-lax`,
 `eu-west`, `eu-central`, `ap-south`, `ap-northeast`, or `ap-southeast`. A region is required, in the pool or in the
-connection. Sizes are Linode types, for example `g6-standard-2`. The list leaves out the types that a region does not
-sell, and GPU types.
+connection. Sizes are Linode types, for example `g6-standard-2`. The list leaves out GPU types and types that a region
+does not sell.
 
-**Settings.** `firewallId` attaches your own Cloud Firewall (its number), and Geass changes nothing in it.
+**Settings.** `firewallId` attaches your own Cloud Firewall, by its number. Geass changes nothing in that firewall.
 
 **Worth knowing.**
 
-- The machine's cloud-init document goes in the Linode's Metadata user data. Only some regions support Metadata.
-  Geass reads the capabilities of the region. If the region does not have `Metadata`, Geass fails with a plain
-  message. Geass does not make a machine that never gets its key.
-- Geass asks for legacy configuration interfaces, because it needs them to attach a firewall at creation. An account
-  whose `interfaces_for_new_linodes` setting is `linode_only` refuses this request. The create then fails with a
-  message that tells you what to change. Geass does not read that setting, so the connection always has a warning
-  about it.
-- To create from an image, Linode needs a root password. Geass sends a random password that it never stores or shows.
-  The login is the key in cloud-init, which turns password login off.
-- Labels go as tags, and Geass splits a long label over several tags. Geass cleans up the Linode's label to Linode's
-  rules.
-- Billing is hourly, rounded up. When Geass deletes a Linode, Linode releases its addresses and deletes its disks.
-- The check cannot see a token's scopes. A token that cannot write Linodes or Firewalls passes the check.
+- Geass sets up the machine through Linode Metadata, which only some regions support. In a region without Metadata,
+  Geass fails with a clear message, and makes no machine.
+- Geass asks for legacy configuration interfaces, so that it can attach a firewall when it creates the machine. An
+  account whose `interfaces_for_new_linodes` setting is `linode_only` refuses this. The message tells you what to
+  change. The connection always has a warning about this setting.
+- Linode needs a root password to create from an image. Geass sends a random password that it never stores or shows.
+  The machine turns password login off.
+- Billing is hourly, rounded up. Linode releases the addresses and deletes the disks of a deleted Linode.
+- The check cannot see the scopes of a token. A token that cannot write Linodes or Firewalls passes the check.
 
 ## Oracle Cloud
 
@@ -640,405 +513,321 @@ sell, and GPU types.
 
 **Credentials.** An API signing key. You need these values:
 
-- A user's RSA key **without a passphrase**.
-- That user's tenancy OCID and user OCID.
-- The key's fingerprint (`aa:bb:cc:...`).
-- The compartment's OCID (`ocid1.compartment...`, or `ocid1.tenancy...` for the root).
+- The RSA key of a user, **without a passphrase**.
+- The tenancy OCID and the user OCID of that user.
+- The fingerprint of the key (`aa:bb:cc:...`).
+- The OCID of the compartment (`ocid1.compartment...`, or `ocid1.tenancy...` for the root).
 
 The user must have these permissions:
 
 - Manage instance-family in that compartment.
 - Use virtual-network-family in that compartment.
-- List the tenancy's availability domains. If you give the `availabilityDomain` setting, the user does not need this
+- List the availability domains of the tenancy. If you set `availabilityDomain`, the user does not need this
   permission.
 
-The clock of the machine that the operator runs on must be within five minutes of Oracle's clock. A skewed clock makes
-every request a 401.
+The clock of the cluster must be within five minutes of the clock of Oracle. A wrong clock makes every request fail
+with 401.
 
-**Region and sizes.** A region identifier: `eu-frankfurt-1`, `us-ashburn-1`, `uk-london-1`, or `ap-sydney-1`. Geass
-supports only the commercial realm. For a fixed shape, a size is the shape's name (`VM.Standard2.2`). For a Flex shape,
-a size is `SHAPE:OCPUS:MEMORY_GB`, for example `VM.Standard.E4.Flex:2:8`. An OCPU is two vCPUs on x86 and one vCPU on
-Arm. `geass sizes` reports vCPUs. The Oracle API states no prices.
+**Region and sizes.** A region identifier, for example `eu-frankfurt-1`, `us-ashburn-1`, `uk-london-1`, or
+`ap-sydney-1`. Geass supports only the commercial realm. For a fixed shape, a size is the shape name
+(`VM.Standard2.2`). For a Flex shape, a size is `SHAPE:OCPUS:MEMORY_GB`, for example `VM.Standard.E4.Flex:2:8`. An OCPU
+is two vCPUs on x86 and one vCPU on Arm. The Oracle API gives no prices.
 
 **Settings.** These are the settings:
 
-- `subnetId` is required. It is the subnet to attach the machine to, and it must allow a public address.
-- `availabilityDomain` is a name, for example `Uocm:EU-FRANKFURT-1-AD-1`. By default, Geass tries the tenancy's first
+- `subnetId` is required. The subnet must allow a public address.
+- `availabilityDomain` is a name, for example `Uocm:EU-FRANKFURT-1-AD-1`. By default, Geass tries the first
   availability domain. When that domain has no capacity, Geass tries the others.
 - `imageId`.
 - `nsgId`: network security groups, separated by commas.
-- `diskSizeGb` (at least 50).
+- `diskSizeGb`: at least 50.
 
 **Worth knowing.**
 
-- **Geass does not touch the network.** The subnet's security list, or the network security group in `nsgId`, must let
-  in tcp 22 and 10250 from the control plane, and udp 51820 in a multi-site cluster. If not, Geass makes machines that
-  never join. The connection tells you this in a warning.
-- "Out of host capacity" is common in some regions. It is a stock-out in one availability domain. A pool with
-  fallbacks moves on after three minutes. See
+- **Geass does not change the network.** The security list of the subnet, or the group in `nsgId`, must let in tcp 22
+  and 10250 from the control plane. In a multi-site cluster, it must also let in udp 51820. If not, the machines never
+  join. The connection warns about this.
+- "Out of host capacity" is common in some regions. A pool with fallbacks moves on after three minutes. See
   [Fallback sizes and regions](/docs/guides/node-pools/#fallback-sizes-and-regions).
-- Oracle's Ubuntu images have an operating system firewall that lets in SSH and ends with a reject. The first-boot
-  script opens udp 51820 and tcp 10250 with `iptables`, before the reject, and saves the rules.
-- Oracle bills per second, with a one-minute minimum. Oracle keeps a terminated instance in its list for about twelve
-  hours. Geass sees that instance as gone.
-- Launches are idempotent through a retry token. Oracle honors the token for 24 hours.
+- Oracle bills per second, with a one-minute minimum.
 
 ## OVHcloud Public Cloud
 
-**Boundary.** A Public Cloud project that only Geass uses. This is the **Public Cloud** product, the product whose
-instances you can create and delete by the hour through the API. The VPS product cannot autoscale, and Geass does not
-use it.
+**Boundary.** A Public Cloud project that only Geass uses. Geass uses the **Public Cloud** product, not the VPS
+product.
 
 **Credentials.** You need these values:
 
 - An OAuth2 service account: `clientId` and `clientSecret`. Make it with `POST /me/api/oauth2/client`, flow
   `CLIENT_CREDENTIALS`. OVHcloud shows the secret one time only.
-- The project's ID (`serviceName`, 32 hexadecimal characters).
-- The `endpoint` where your OVHcloud account is: `eu` (the default), `ca`, or `us`.
+- The ID of the project (`serviceName`, 32 hexadecimal characters).
+- The `endpoint` of your OVHcloud account: `eu` (the default), `ca`, or `us`.
 
-The service account has no rights until an IAM policy gives it rights on the project. The service account must be able
-to list flavors, images, and networks, and to create, read, and delete instances.
+The service account has no rights until an IAM policy gives it rights on the project. It must be able to list flavors,
+images, and networks, and to create, read, and delete instances.
 
-**Region and sizes.** A Public Cloud region that the project has enabled: `GRA11`, `SBG5`, `RBX-A` (Europe), `BHS5`
-(Canada), `WAW1`, `DE1`, `UK1`, `SGP1`, or `SYD1`. **Enable the region in the project first**. Geass never enables a
-region, because that is your decision. A size is the flavor's name, for example `d2-4`, `b3-8`, or `c3-16`. Each
-region has its own flavor IDs, and Geass looks them up from the name. The calls that Geass makes return no prices.
+**Region and sizes.** A Public Cloud region that the project has enabled, for example `GRA11`, `SBG5`, `RBX-A`,
+`BHS5`, `WAW1`, `DE1`, `UK1`, `SGP1`, or `SYD1`. **Turn on the region in the project first.** Geass never turns on a
+region. A size is the flavor name, for example `d2-4`, `b3-8`, or `c3-16`. The list gives no prices.
 
 **Settings.** These are the settings:
 
-- `imageId`. Image IDs are different in each region. The default is the region's Ubuntu 24.04.
-- `networkId`. The default is the project's public network.
-- `userDataBase64`. If the machines do not run their cloud-init, set it to `true`. OVHcloud does not say whether the
-  API wants the user data encoded.
+- `imageId`. The default is Ubuntu 24.04 of the region.
+- `networkId`. The default is the public network of the project.
+- `userDataBase64`. If the machines do not set themselves up, set it to `true`.
 
 **Worth knowing.**
 
-- **Instances have no tags or metadata**. So Geass writes ownership into the machine's **name**, and reads it back
-  from the name: `geass-<c>-<p>-<a>-<node>`. In this name, `c` and `p` are short hashes of the cluster and the pool. A
-  name of another shape does not belong to Geass, and Geass never lists it. The name takes lowercase letters, digits,
-  and hyphens, and its fixed prefix is 24 characters. So **keep pool names short**. A long node name makes a name
-  longer than a 63-character host name, which OVHcloud might refuse.
-- **There is no firewall in the Public Cloud API.** Machines are behind the project's default security group. This
-  group lets everything in, and OVHcloud says not to edit it. The machines accept SSH only with the cluster's key, and
-  the kubelet and the overlay authenticate their peers. If that is not enough, restrict the project's network
-  yourself. The connection warns about this.
-- A new project is limited, and cannot create instances until you add a payment method. Both show as quota errors. The
-  connection tells you when the project's quota in the default region is used up. A project that is not `ok` also
-  cannot create instances.
-- Billing is hourly, for every hour that started. The root disk is part of the instance, and OVHcloud removes it with
-  the instance.
+- **Instances have no tags.** Geass writes ownership into the name of the machine: `geass-<c>-<p>-<a>-<node>`. Geass
+  never lists a machine whose name has another shape. The fixed part of the name is 24 characters, so
+  **keep pool names short**. OVHcloud might refuse a name longer than 63 characters.
+- **The Public Cloud API has no firewall.** Machines are behind the default security group of the project, which lets
+  everything in. The machines accept SSH only with the key of the cluster. If that is not enough, restrict the network
+  of the project yourself. The connection warns about this.
+- A new project cannot create instances until you add a payment method. This shows as a quota error.
+- Billing is hourly, for every hour that started.
 
 ## Scaleway
 
-**Boundary.** One Scaleway Project that only Geass uses.
+**Boundary.** One Scaleway project that only Geass uses.
 
-**Credentials.** An API key's **secret key**, and the Project's ID. Geass does not need the access key. Give the key an
-IAM policy with `InstancesFullAccess` and `BlockStorageFullAccess` on that Project only. Scaleway refuses a key
-without a policy for the Project with 403.
+**Credentials.** The **secret key** of an API key, and the ID of the project. Geass does not need the access key. Give
+the key an IAM policy with `InstancesFullAccess` and `BlockStorageFullAccess` on that project only. Scaleway refuses a
+key without a policy for the project with 403.
 
 **Region and sizes.** A zone: `fr-par-1`, `fr-par-2`, `fr-par-3`, `nl-ams-1`, `nl-ams-2`, `nl-ams-3`, `pl-waw-1`,
-`pl-waw-2`, or `pl-waw-3`. A zone is necessary, in the pool or in the connection. For the instance types, use
-`geass sizes`.
+`pl-waw-2`, or `pl-waw-3`. A zone is required, in the pool or in the connection.
 
 **Settings.** `securityGroupId` uses your own security group instead of the group that Geass makes. `rootVolumeGb`
-sets the root volume for sizes that boot from block storage. The default is the image's own size, about 10 GB.
+sets the root volume for sizes that boot from block storage. The default is the size of the image, about 10 GB.
 
 **Worth knowing.**
 
-- To make a machine, Geass makes three calls: create the server (which stays stopped), set its cloud-init, and power it
-  on. A repeated create finishes the step that is missing. If this call made a server and could not start it, Geass
-  deletes the server again before it returns the error. So a stock-out at power-on leaves nothing behind.
-- When Scaleway deletes a server, it removes only the server and its local disks. Scaleway only detaches a
-  block-storage root volume, and an address that is not dynamic stays. Both continue to bill. So Geass first reads
-  their IDs, then terminates the server, and then deletes them through their own APIs.
-- Some sizes boot from a local disk, and other sizes boot only from block storage. The same image label names both.
-  Geass selects the image that the size can boot.
-- An API key can have an expiry date that Geass cannot read from the secret key. Check the date in the console, and
-  renew the key before then. The connection has that warning.
-- The check cannot say whether a key can create servers. A key whose policy only reads passes the check.
+- If Geass makes a server and cannot start it, Geass deletes the server again. So a stock-out leaves nothing behind.
+- Scaleway keeps a block-storage root volume and a reserved address after a server is deleted. Both continue to bill.
+  So Geass deletes them too.
+- An API key can have an expiry date that Geass cannot read. Check the date in the console, and renew the key before
+  then. The connection has that warning.
+- The check cannot say whether a key can create servers. A read-only key passes the check.
 
 ## UpCloud
 
 **Boundary.** A sub-account that only Geass uses. A sub-account cannot touch what the main account has.
 
-**Credentials.** One of these:
+**Credentials.** Give one of these:
 
 - An API token (`ucat_...`). Make it for Geass, with the shortest life that you can renew, and a year at most.
-- The user name and password of a sub-account that has API access and can create servers and storages.
+- The user name and password of a sub-account that has API access and can create servers and storage.
 
-When you give both, the token has priority.
+When you give both, Geass uses the token.
 
 **Region and sizes.** A zone: `de-fra1`, `fi-hel1`, `fi-hel2`, `nl-ams1`, `uk-lon1`, `pl-waw1`, `es-mad1`, `se-sto1`,
-`us-nyc1`, `us-chi1`, `us-sjo1`, `sg-sin1`, or `au-syd1`. A zone is necessary, in the pool or in the connection. Sizes
-are UpCloud plans, for example `2xCPU-4GB`, with prices from UpCloud's price list in your account's currency.
+`us-nyc1`, `us-chi1`, `us-sjo1`, `sg-sin1`, or `au-syd1`. A zone is required, in the pool or in the connection. Sizes
+are UpCloud plans, for example `2xCPU-4GB`, with prices in the currency of your account.
 
-**Settings.** `diskGb` is the size of the machine's disk. The default is what the plan includes, or 25 GB for a plan
-that includes no disk.
+**Settings.** `diskGb` is the size of the disk. The default is what the plan includes, or 25 GB for a plan without a
+disk.
 
 **Worth knowing.**
 
-- Geass makes a server in one call, and the server starts by itself. Its disk is a clone of the public Ubuntu Server
-  24.04 template. The server gets a public IPv4 interface and a utility (private) IPv4 interface.
-- The firewall is for each server. Only a server that has left maintenance accepts rules, and the rules then take one
-  to two minutes to apply. Geass writes the rules as soon as the server allows it. Geass reports the machine as
-  pending until the rules are in place, so Geass never gives out the machine without them. The rules end with a drop
-  of everything else.
-- UpCloud can delete a server only when the server is stopped. Its storage stays and bills, unless the delete says to
-  remove it. So Geass stops a started server, and then deletes the stopped server together with its storage and
-  backups. This takes two passes.
-- **The token expires**, within a year, and Geass does not read the date. Record the date, and renew the token before
-  then. The connection warns when the account's limits restrict how far a pool can scale. These limits are fewer than
-  8 CPU cores, or fewer than 5 public IPv4 addresses.
-- A sub-account without the permission to create servers passes the check, and fails when Geass makes the first
-  machine.
+- The firewall is on each server. Rules take one to two minutes to apply. Geass shows the machine as pending until the
+  rules are in place. The rules end with a drop of all other traffic.
+- UpCloud deletes only a stopped server. So Geass stops the server, and then deletes it with its storage and backups.
+- **The token expires** within a year, and Geass cannot read the date. Record the date, and renew the token before
+  then.
+- The connection warns when the limits of the account restrict a pool: fewer than 8 CPU cores, or fewer than 5 public
+  IPv4 addresses.
+- A sub-account without the permission to create servers passes the check, and fails at the first machine.
 
 ## Vultr
 
-**Boundary.** An account user that only Geass uses. Vultr's API keys have no scopes. Their permissions are the account
-user's permissions.
+**Boundary.** An account user that only Geass uses. Vultr API keys have no scopes. A key has the permissions of its
+user.
 
-**Credentials.** An API key from a user who can **provision** and manage **firewalls**. To make the key, go to Account,
-API, Enable API. The connection reads the user's permissions, and warns about a missing `provisioning` or `firewall`.
-If the key's access control lists addresses, include the address that the operator runs from. If you do not, every
-later call fails with 403.
+**Credentials.** An API key from a user who can **provision** and manage **firewalls**. To make the key, go to
+**Account** → **API** → **Enable API**. The connection warns about a missing `provisioning` or `firewall` permission.
+If the key allows only some addresses, include the outgoing address of the server that runs Geass. If you do not,
+every call fails with 403.
 
-**Region and sizes.** A region ID: `fra`, `ams`, `lhr`, `cdg`, `sto`, `waw`, `mad`, `ewr`, `atl`, `ord`, `dfw`,
-`lax`, `sjc`, `sea`, `mia`, `yto`, `sgp`, `nrt`, `icn`, `syd`, or `bom`. A region is required. Sizes are Cloud Compute
-plans (`vc2-2c-4gb`). A plan has a monthly price. An hour costs the monthly price divided by 672, because Vultr limits
-what it bills in a month.
+**Region and sizes.** A region ID, for example `fra`, `ams`, `lhr`, `cdg`, `sto`, `waw`, `mad`, `ewr`, `atl`, `ord`,
+`dfw`, `lax`, `sjc`, `sea`, `mia`, `yto`, `sgp`, `nrt`, `icn`, `syd`, or `bom`. A region is required. Sizes are Cloud
+Compute plans, for example `vc2-2c-4gb`. An hour costs the monthly price divided by 672.
 
-**Settings.** `firewallGroupId` attaches your own firewall group, and Geass changes nothing in it.
+**Settings.** `firewallGroupId` attaches your own firewall group. Geass changes nothing in that group.
 
 **Worth knowing.**
 
-- The image is `Ubuntu 24.04 LTS x64`, unless the pool names another image: a name from Vultr's list, or a numeric
-  ID.
-- A firewall group has no rule "update". After a firewall group has an inbound rule, it drops everything that is not
-  allowed. Rules are added and removed one call at a time. Geass finds its group by its description,
-  `geass-<cluster>`. Geass adds the rules that are missing, and then removes the rules that are not wanted. So a
-  machine always has SSH while the rules change.
-- Vultr's Ubuntu images might ship with `ufw` switched on and only SSH allowed. Geass switches `ufw` off at first boot,
-  because the firewall group is the filter.
+- The image is `Ubuntu 24.04 LTS x64`, unless the pool names another image by name or by numeric ID.
+- Geass finds its firewall group by the description `geass-<cluster>`. When rules change, Geass adds new rules before
+  it removes old ones. So a machine always keeps SSH.
 - Billing is hourly, with one hour at least.
 
 ## Your own service (webhook)
 
-Use a webhook for a provider that Geass has no driver for. For example, a hosting company with an API of its own, a
-hypervisor, or a script that powers on a spare server. You run an HTTP service, and Geass calls it. The service
-manages all other parts of the machine.
+Use a webhook for a provider that Geass has no driver for. For example, a hosting company with its own API, a
+hypervisor, or a script that powers on a spare server. You run an HTTP service, and Geass calls it.
 
 **Credentials.** You need these values:
 
-- `url`: an address under which Geass calls `/machines`, for example `https://machines.example.com/geass`.
-- An optional bearer token.
+- `url`: the address under which Geass calls `/machines`, for example `https://machines.example.com/geass`.
+- An optional bearer token. Geass sends it as `Authorization: Bearer <token>` with every request.
 
-Geass refuses these addresses:
-
-- An address that is not `http` or `https`.
-- A link-local address, where cloud metadata services answer.
-- A connection to such an address, however Geass gets to it: a name that resolves to one, or a redirect to one.
-
-Geass does not use a proxy for the service. Geass allows loopback and private addresses, because a service inside your
-network is a normal place for one. When there is a token, every request has `Authorization: Bearer <token>`. Every
-body is JSON.
+Geass refuses an address that is not `http` or `https`, and any link-local address, also through DNS or a redirect.
+Loopback and private addresses are allowed. Geass does not use a proxy for the service. Every body is JSON.
 
 **The contract.**
 
 | Request | What your service does |
 | --- | --- |
-| `POST /machines` | Create a machine from the request body, and answer 200, 201, or 202 with the machine. It must be idempotent on `name`. A second request with the name of a machine that exists answers with that machine, and makes no machine. |
-| `GET /machines/{id}` | The machine, or 404 when it does not exist. |
-| `GET /machines?cluster=<id>&pool=<name>` | `{"machines": [...]}`, only the machines made for that cluster (and pool, when given). So your service does not need to trust Geass to filter. |
+| `POST /machines` | Create a machine from the request body, and answer 200, 201, or 202 with the machine. It must be idempotent on `name`: a second request with the same name returns the machine that exists. |
+| `GET /machines/{id}` | Return the machine, or 404 when it does not exist. |
+| `GET /machines?cluster=<id>&pool=<name>` | Return `{"machines": [...]}`, only the machines made for that cluster, and that pool when given. |
 | `DELETE /machines/{id}` | Delete the machine and what only it used. 404 and any 2xx both mean that it is gone. |
-| `GET /sizes?region=` | Optional. `{"sizes": [{"id", "vcpus", "memoryMiB", "diskGB", "hourlyPrice", "currency", "arch"}]}`. Without it, `geass sizes` shows nothing, and Geass passes on the pool's size as it is. |
-| `GET /verify` | Optional. `{"account": "...", "warnings": [...], "expiresAt": "RFC 3339"}`. |
+| `GET /sizes?region=` | Optional. Return `{"sizes": [{"id", "vcpus", "memoryMiB", "diskGB", "hourlyPrice", "currency", "arch"}]}`. Without it, the size list is empty, and Geass passes on the size of the pool as it is. |
+| `GET /verify` | Optional. Return `{"account": "...", "warnings": [...], "expiresAt": "RFC 3339"}`. |
 
 The create request has these fields: `name`, `region`, `size`, `image`, `userData` (the cloud-init document),
-`authorizedKeys`, `labels`, `spot`, `settings` (every setting of the pool, whatever its name), `controlPlaneCIDRs`,
-`multiSite`, and `privateAddress`.
+`authorizedKeys`, `labels`, `spot`, `settings` (every setting of the pool), `controlPlaneCIDRs`, `multiSite`, and
+`privateAddress`.
 
 A machine is `{"id", "name", "state", "publicIPv4", "privateIPv4", "region", "size", "labels", "createdAt"}`. The
 `state` is one of `pending`, `running`, `stopped`, `terminating`, and `gone`.
 
-Your service must do these things:
+Your service must store `labels` and return them, because Geass finds its machines by them. Your service must also
+apply `userData`, so that the machine starts with the login of Geass.
 
-- Store `labels` and return them, because Geass finds its machines by them.
-- Apply `userData`, so that the machine starts with Geass's login.
-
-Geass takes a `401` or `403` as refused credentials, and a `429` as "slow down". There is no way to say "no capacity"
-or "over quota". Geass retries any other failure.
+Geass treats `401` and `403` as refused credentials, and `429` as a request to slow down. Geass retries any other
+failure. There is no answer for "no capacity" or "over quota".
 
 ## What Geass makes at the cloud
 
-For each machine:
+For each machine, Geass makes these things:
 
-- **A bare Ubuntu server** with a public IPv4 address, and one login. The login is the user `geass`, with passwordless
-  `sudo`, and its key is the cluster's key. Geass makes that key. Geass puts only its **public** half and the machine's
-  own host key in the machine's cloud-init. Geass never puts the join token there.
-- **Labels**, which Geass writes when it makes the machine: `geass-managed=true`, `geass-cluster` (the cluster's
-  identity), `geass-pool`, and `geass-node`. Geass lists its machines by these labels. The labels also prevent one
-  Geass installation from touching the machines of another installation in the same account.
-- **A firewall**, for every cloud that has an API for one, as the table earlier on this page shows. The firewall lets
-  in SSH and the kubelet port from the control plane's addresses, and the overlay port in a multi-site cluster. Geass
-  keeps the rules that it makes equal to what the cluster needs. Geass does not change rules that it did not make,
-  and never edits a firewall that you name yourself in `settings`.
-- Nothing else that bills. Geass makes no snapshots or backups. When Geass deletes a machine, the machine's disk and
-  address are deleted with it. The drivers for Scaleway and UpCloud make extra calls to do this, because those clouds
-  keep a disk or an address after the server goes.
+- **A bare Ubuntu server** with a public IPv4 address and one login. The login is the user `geass`, with passwordless
+  `sudo` and the key of the cluster. The machine gets only the public half of that key. Geass never puts the join
+  token in the setup of the machine.
+- **Labels**: `geass-managed=true`, `geass-cluster`, `geass-pool`, and `geass-node`. Geass finds its machines by these
+  labels. The labels also stop one Geass installation from touching the machines of another installation in the same
+  account.
+- **A firewall**, for each cloud that has an API for one. The firewall lets in tcp 22 and 10250 from the control
+  plane, and udp 51820 in a multi-site cluster. Geass never edits a firewall that you name in the settings of a pool.
+- **Nothing else that bills.** Geass makes no snapshots or backups. The disk and the address of a machine are deleted
+  with it.
 
-The control plane's own firewall is a different thing. Only AWS and Hetzner connections can change it, and only when
-you name it with [`controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane).
+The firewall of the control plane is different. Only AWS and Hetzner connections can change it, and only when you
+name it in a pool. See [Let Geass open the control plane](/docs/guides/node-pools/#let-geass-open-the-control-plane).
 
 ## Prices and billing
 
-`geass sizes` and the dashboard's size list show a price for an hour where the cloud's API gives one. There is no price
-for Amazon EC2, Google Cloud, Oracle Cloud, and OVHcloud. The price is the list price of the machine, in the cloud's
-currency, without tax. The price does not include these costs:
+The size list shows a price for an hour where the API of the cloud gives one. Amazon EC2, Google Cloud, Oracle Cloud,
+and OVHcloud give no price. The price is the list price of the machine, in the currency of the cloud, without tax.
+The price does not include public IPv4 addresses, traffic, disks billed on their own line, or other charges.
 
-- Public IPv4 addresses.
-- Traffic.
-- Disks that the cloud bills on their own line.
-- Anything else that the cloud adds.
+The estimated cost of a pool multiplies the price by the number of machines in the pool.
 
-A pool's estimated cost multiplies the price by the number of machines that the pool has.
-
-Most clouds bill each started hour at least, and the drivers for Linode, OVHcloud, and Vultr say so. So a machine
-removed after ten minutes costs a full hour. Oracle Cloud bills per second, with a one-minute minimum. For the other
-clouds, read your provider's terms. If the cloud bills a started hour, set `minNodeLifetimeMinutes` on the pool to 55.
-See [Node pools](/docs/guides/node-pools/#cost).
+Most clouds bill each started hour. Linode, OVHcloud, and Vultr do this. So a machine removed after ten minutes costs
+a full hour. Oracle Cloud bills per second, with a one-minute minimum. For the other clouds, read the terms of your
+provider. If the cloud bills each started hour, set **Keep every node at least** to 55 minutes on the pool. See
+[Node pools](/docs/guides/node-pools/#cost).
 
 ## How far to trust it
 
-**Amazon EC2 has run against a live account.** On 19 October 2026, in `eu-north-1`, with an IAM user's key under the policy earlier on this page:
+**Amazon EC2 has run against a live account,** on 19 October 2026, in `eu-north-1`, with the key of an IAM user under
+the policy on this page. These things worked:
 
-- The driver ran alone against EC2, with these results:
-  - Verify worked, and the account name came from STS.
-  - The driver listed 349 sizes.
-  - A machine made two times with the same name was one machine.
-  - The machine ran with a public address, and sshd answered through the security group that Geass made.
-  - The driver found the machine again by its labels.
-  - The driver opened and closed a rule on another group.
-  - The driver deleted the machine two times without error.
-- A real cluster ran the whole path. The control plane was an EC2 machine installed in
-  [multi-provider mode](/docs/operations/multi-provider/). These things occurred:
-  - A pool with `maxNodes: 2` made two machines when pods could not start. The pool joined the machines over SSH in
-    about 50 seconds, and the scheduler placed pods on them.
-  - A pod on a pool node got to a pod on the control plane, and to the cluster's DNS, across the WireGuard overlay.
-  - The pods that did not fit stayed pending, with the message that the pool was at its maximum.
-  - About 90 seconds after the load went, the pool removed both nodes. The machines were terminated, and the rules
-    that Geass had opened on the control plane's group were removed.
-- A pool with `minNodes: 1` made a machine with no load. These things also occurred:
-  - Geass detected a machine terminated from outside Geass within about 40 seconds, and replaced it in about 70
-    seconds.
-  - A request that exceeded the account's vCPU limit showed as a node that waited with the problem `Quota` and AWS's
-    own message.
-  - Three refused launches in a row paused the pool. The `geass.dev/resume` annotation ended the pause.
-  - When the pool was deleted, its machines were terminated.
-  - A single server added from the dashboard became a node, and was removed again, with its machine terminated.
-- The dashboard listed the real sizes in the pool form, made the pool, and showed it.
-- Temporary credentials with a session token, from a role assumed for an hour and renewed before they expired:
-  - AWS accepted them.
-  - AWS refused the same credentials with a corrupted token.
-  - AWS accepted the renewed credentials.
-  - A pool launched and terminated machines with them.
+- The connection check, the size list, and repeated create and delete calls.
+- A real cluster: a pool made two machines under load, joined them in about 50 seconds, and ran services on them.
+  About 90 seconds after the load went, the pool removed both machines, and the firewall rules that Geass had opened.
+- A pool with a minimum of one machine. Geass replaced a machine that was terminated outside Geass in about 70
+  seconds.
+- A request over the vCPU limit of the account. The machine waited with the problem `Quota` and the message of AWS.
+- Three refused launches in a row paused the pool.
+- A single server added from the dashboard, and removed again.
+- The real sizes in the pool form of the dashboard.
+- Temporary credentials with a session token, renewed before they expired.
 
-  What AWS answers for an expired token comes from AWS's documentation.
+These things did **not** run, even at Amazon:
 
-What did **not** run, even at Amazon:
+- Spot machines. A service control policy of the test organization denied the launch.
+- Private addresses, and a subnet or security group of your own.
+- Fallback sizes and regions.
+- The removal of machines that no server owns.
+- Regions other than `eu-north-1`, and Arm sizes.
+- A cluster across two clouds.
+- A run longer than a few hours.
 
-- Spot machines. The test account's organization denied the launch with a service control policy, so the spot
-  request itself is not tested.
-- Private addresses.
-- A subnet or security group of your own.
-- Fallback sizes and regions that take effect. A quota refusal waits, as designed.
-- The sweep for machines that no node owns.
-- Regions other than `eu-north-1`.
-- Arm sizes.
-- A cluster that spans two clouds.
-
-Nothing ran for longer than a few hours. The eleven other drivers have only run against the simulation.
-
-Each of the other drivers was written from the official API documentation of the provider. Each one is tested against
-an in-memory simulation of that API, which the author also wrote. **None of them has run against a live account.** In
-practice, this means:
+**None of the other eleven drivers has run against a live account.** Each was written from the official API
+documentation of the provider, and tested against a simulation of that API. In practice, this means:
 
 - A provider can answer in a way that its documentation does not describe. It can also have a quota, a permission, or
-  an image that the simulation does not know. The driver comments name the places where the documentation was not
-  clear.
-- The connection check is read-only for most clouds. The cloud cannot tell Geass, without creating something, whether
-  a token can create machines. So a connection can show **Available**, and the first machine can still fail. The
-  connection's warnings tell you which clouds this is true for. A pool stops after three failed machines in a row,
-  which limits what that costs.
-- The permissions for every cloud except Amazon EC2 come from the calls that the drivers make. They have not run
-  against a live account. A call that a role refuses shows as the node's message.
+  an image that the simulation does not know.
+- For most clouds, a connection can show **Available**, and the first machine can still fail. A pool stops after
+  three failed machines in a row, which limits the cost.
+- The permissions on this page for every cloud except Amazon EC2 come from the calls of the driver. A call that a role
+  refuses shows as the message of the machine.
 
 To try a cloud safely, do these steps:
 
-1. Use a project of its own.
-2. Make a pool with `maxNodes: 1` and `minNodes: 1`.
-3. Watch the pool with `geass pools show`.
+1. Use a cloud project or account of its own.
+2. Make a pool with a minimum and a maximum of 1 machine.
+3. Watch the pool on the **Pools** page, or with `geass pools show`.
 4. Delete the pool.
-5. In the cloud's own console, make sure that nothing is left.
+5. In the console of the cloud, make sure that nothing is left.
 6. Then increase the numbers.
 
 If something behaves differently from this page, [open an issue](https://github.com/degoke/geass/issues).
 
-## What happens under the hood
+## Troubleshooting
 
-- A connection is a `GeassCloudConnection` in `geass-system`, with `spec.purposes` that contains `Compute`, and no
-  `spec.project`. Its credentials are in the Secret `<name>-credentials`. See
-  [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/).
-- The operator builds the cloud's driver from the Secret. The operator keeps the driver until the connection or the
-  Secret changes. So a cloud that trades the credentials for a token (Azure, Google Cloud, OVHcloud) does this one
-  time, not on every pass.
-- The connection controller calls the driver's check (`Verify`) and writes `status`. The node and pool controllers
-  call `Sizes`, `Create`, `Get`, `List`, and `Delete`. Geass calls nothing else at the cloud.
+**The connection is not available.** Read its message on the card, or with `geass connections show NAME`. The message
+comes from the cloud. These are the usual causes:
+
+- A mistyped or revoked key.
+- An expired credential, for example the client secret of Azure or the token of UpCloud.
+- A token without the correct scope or permission.
+- A key limited to addresses that do not include the outgoing address of Geass (Vultr).
+- A project, compartment, or resource group that does not exist, or that the credentials cannot see.
+
+**The connection is available, and the first machine fails.** The check could not test creation. Read the message of
+the machine on the pool page, or with `geass pools show NAME`. The message has the error of the cloud. Compare the
+credentials with the section of that cloud on this page.
+
+**The connection says a credential is missing.** The message names the missing field. Click **Edit**, and enter the
+credential again.
+
+**A pool says that the connection "is not for compute".** The connection is not for servers. An AWS connection made
+for buckets never creates machines. Make a connection under **Server clouds**.
+
+**A pool says that the connection "belongs to project ...".** A connection for machines cannot belong to a project.
+Make a connection under **Server clouds**.
+
+**The cloud has no capacity, or the account is at a limit.** The machine waits, and its message names the problem.
+The pool then tries its fallback size and region. See
+[Node pools](/docs/guides/node-pools/#fallback-sizes-and-regions). For a limit, ask the cloud to raise it, or delete
+machines that you do not use.
+
+**You cannot remove the connection.** A pool or a machine uses it. Geass refuses, so that those machines can still be
+deleted at the cloud. Delete the pool or the machines first.
+
+**Machines are left at the cloud.** See [Machines no node owns](/docs/guides/node-pools/#machines-no-node-owns), and
+delete the machines in the console of the cloud. When you remove a connection, Geass does not revoke its credentials
+at the cloud. Revoke them at the cloud too.
+
+## Under the hood
+
+- A connection for machines is a `GeassCloudConnection` in `geass-system`, with `Compute` in `spec.purposes` and no
+  `spec.project`. Its credentials are in the Secret `<name>-credentials`, with the keys from
+  [the table](#the-clouds). See [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/).
+- The `Ready` condition is `True` when the cloud accepts the credentials. It is `False` with `VerificationFailed` or
+  `CredentialsMissing` otherwise.
+- After you change a Secret by hand, run `geass connections verify NAME` to check it now.
+- To go from temporary credentials back to the key of an IAM user, you can also remove `sessionToken` and `expiresAt`
+  from the Secret.
 
 ```bash title="Inspect connections"
 kubectl -n geass-system get geasscloudconnections
 kubectl -n geass-system get geasscloudconnection hetzner -o yaml
 ```
-
-## Troubleshooting
-
-**The connection says it is not accepted.** Read its message with `geass connections show NAME`. The message is the
-cloud's own. These are the usual causes:
-
-- A mistyped or revoked key.
-- An expired credential, for example Azure's client secret or UpCloud's token.
-- A token without the correct scope or permission.
-- A key limited to addresses that do not include the operator's address (Vultr).
-- A project, compartment, or resource group that does not exist, or that the credentials cannot see.
-
-**The connection is available and the first machine fails.** The check could not test creation. Read the node's
-message, which has the cloud's own error. `geass pools show NAME` lists the message of each node. Compare the
-credentials with the section for that cloud earlier on this page.
-
-**`CredentialsMissing`.** The Secret is missing, or does not have a required field. The message names the cloud's
-field labels. Replace the credential with `geass connections update NAME --credential-file KEY=PATH`.
-
-**After I replaced the Secret by hand nothing changed.** Geass checks the connection again within 15 minutes, or within
-2 minutes if the connection was failing. To ask immediately, use `geass connections verify NAME`.
-
-**A pool says the connection "is not for compute".** Its purposes do not include `Compute`. An AWS connection made for
-buckets never creates machines. Make another connection.
-
-**A pool says the connection "belongs to project ...".** A connection for machines cannot be scoped to a project. Make
-a connection that is not scoped to a project.
-
-**The cloud says it has no capacity, or the account is at a limit.** A node waits, and its message tells you which
-problem it has. The pool then tries its fallback size and region. See
-[Node pools](/docs/guides/node-pools/#fallback-sizes-and-regions). For a limit, ask the cloud to raise it, or delete
-machines that you no longer use.
-
-**I cannot remove the connection.** A pool or a machine uses the connection. Geass refuses to remove it, so that those
-machines can still be deleted at the cloud. Delete the pool or the machines first. `geass connections list` shows what
-uses each connection.
-
-**Machines are left at the cloud after I removed things.** See
-[Machines no node owns](/docs/guides/node-pools/#machines-no-node-owns), and delete the machines in the cloud's
-console. When you remove a connection, Geass does not revoke its credentials at the cloud. Revoke them at the cloud
-too.
 
 ## Related
 
@@ -1047,5 +836,4 @@ too.
 - [Cloud connectors](/docs/guides/connectors/)
 - [Connect AWS](/docs/guides/connectors/aws/) (buckets and backups)
 - [Nodes at more than one provider](/docs/operations/multi-provider/)
-- [GeassCloudConnection](/docs/reference/resources/geass-cloud-connection/)
 - [Security](/docs/operations/security/)

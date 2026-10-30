@@ -24,7 +24,7 @@ func (a *App) printResources(items []client.Resource) error {
 			item.Name, dash(item.Project), dash(item.Environment), item.State, dash(summary(item)), age(item.CreatedAt),
 		})
 	}
-	a.printTable([]string{"NAME", "PROJECT", "ENV", "STATE", "DETAIL", "AGE"}, rows)
+	a.printTable([]string{columnName, "PROJECT", "ENV", "STATE", "DETAIL", "AGE"}, rows)
 	return nil
 }
 
@@ -160,13 +160,14 @@ func (a *App) storesCmd() *cobra.Command {
 }
 
 func (a *App) nodesCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "nodes", Aliases: []string{"node"}, Short: "List the cluster's nodes and tag them"}
+	cmd := &cobra.Command{Use: "nodes", Aliases: []string{"node"}, Short: "List the cluster's nodes, tag them, and cordon them"}
 	cmd.AddCommand(&cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List nodes with their region, zone and tags, and the pool each belongs to",
 		Long: "List the cluster's nodes. POOL is the pool a node belongs to (see `geass pools`), and EPHEMERAL says the node must " +
-			"not hold data: databases and volumes stay off it, and it may be removed when the load goes.",
+			"not hold data: databases and volumes stay off it, and it may be removed when the load goes. A server that has not joined yet, " +
+			"or failed to, has no node: it is listed with its phase, and its reason is printed under the table.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			api, _, err := a.api()
@@ -177,14 +178,28 @@ func (a *App) nodesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if a.flags.json {
-				return a.printJSON(map[string]any{"items": nodes})
+			// An operator that is older than this command line has no list of servers: the nodes are still listed.
+			servers, err := api.Servers(cmd.Context())
+			if err != nil && !client.IsNotFound(err) {
+				return err
 			}
-			rows := make([][]string, 0, len(nodes))
+			var notJoined []client.Server
+			for _, server := range servers {
+				if !server.Joined {
+					notJoined = append(notJoined, server)
+				}
+			}
+			if a.flags.json {
+				return a.printJSON(map[string]any{"items": nodes, "servers": notJoined})
+			}
+			rows := make([][]string, 0, len(nodes)+len(notJoined))
 			for _, node := range nodes {
 				status := "Ready"
-				if !node.Ready {
+				switch {
+				case !node.Ready:
 					status = "NotReady"
+				case node.Cordoned:
+					status = "Ready, cordoned"
 				}
 				tags := make([]string, 0, len(node.Tags))
 				for _, tag := range node.Tags {
@@ -203,10 +218,15 @@ func (a *App) nodesCmd() *cobra.Command {
 				}
 				rows = append(rows, []string{node.Name, status, dash(node.Region), dash(node.Zone), dash(strings.Join(tags, ", ")), dash(node.CPU), dash(node.Memory), dash(node.Pool), ephemeral})
 			}
+			for _, server := range notJoined {
+				rows = append(rows, []string{server.Name, server.Phase, "-", "-", "-", "-", "-", dash(server.Pool), "-"})
+			}
 			a.printTable([]string{"NAME", "STATUS", "REGION", "ZONE", "TAGS", "CPU", "MEMORY", "POOL", "EPHEMERAL"}, rows)
+			a.printServerProblems(notJoined)
 			return nil
 		},
 	})
+	cmd.AddCommand(a.nodeCordonCmd(true), a.nodeCordonCmd(false))
 
 	var region, zone string
 	var tags, reserved, compliance []string
@@ -332,4 +352,30 @@ func (a *App) complianceCmd() *cobra.Command {
 	}
 	cmd.AddCommand(set, clearTags)
 	return cmd
+}
+
+// nodeCordonCmd cordons a node, or with cordon false uncordons it.
+func (a *App) nodeCordonCmd(cordon bool) *cobra.Command {
+	use, short, long, done := "uncordon NODE", "Let new services start on a node again", "Uncordon a node, so that new services can start on it. "+
+		"A node that Geass cordoned itself, to upgrade it or to empty it, is uncordoned by Geass when it is done, and is refused here.", "Uncordoned"
+	if cordon {
+		use, short, done = "cordon NODE", "Stop new services starting on a node", "Cordoned"
+		long = "Cordon a node: what runs on it stays, and no new service starts there. Use it before you work on a server. " +
+			"The last node that can start new services is refused, because new services would have no place to start. " +
+			"A cordoned node does not count toward high availability."
+	}
+	return &cobra.Command{
+		Use: use, Short: short, Long: long, Args: usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, _, err := a.api()
+			if err != nil {
+				return err
+			}
+			if err := api.CordonNode(cmd.Context(), args[0], cordon); err != nil {
+				return err
+			}
+			a.printf("%s the node %s.\n", done, args[0])
+			return nil
+		},
+	}
 }

@@ -704,10 +704,10 @@ func (s *Server) fillExistingServer(ctx context.Context, r *http.Request, node *
 	return nil
 }
 
-// handleServerRoutes serves /servers/{name}/delete.
+// handleServerRoutes serves /servers/{name}/{delete,retry,host-keys}.
 func (s *Server) handleServerRoutes(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/servers/"), "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] != "delete" {
+	if len(parts) != 2 || parts[0] == "" || !slices.Contains([]string{"delete", "retry", "host-keys"}, parts[1]) {
 		http.NotFound(w, r)
 		return
 	}
@@ -723,14 +723,19 @@ func (s *Server) handleServerRoutes(w http.ResponseWriter, r *http.Request) {
 		redirectFormInternalError(w, r, computeFallback)
 		return
 	}
-	switch {
-	case node.Spec.Role != geassv1alpha1.NodeRoleWorker || node.Spec.Default:
-		redirectFormError(w, r, computeFallback, "Only worker servers can be removed here, never the control plane")
+	switch parts[1] {
+	case "retry":
+		s.retryServer(w, r, &node)
 		return
-	case node.Spec.Pool != "":
-		redirectFormError(w, r, computeFallback, fmt.Sprintf("This server belongs to the pool %s: change the pool's size instead", node.Spec.Pool))
+	case "host-keys":
+		s.updateHostKeys(w, r, &node)
 		return
-	case r.FormValue("confirmName") != node.Name:
+	}
+	if refusal := removalRefusal(&node); refusal != "" {
+		redirectFormError(w, r, computeFallback, refusal)
+		return
+	}
+	if r.FormValue("confirmName") != node.Name {
 		redirectFormError(w, r, computeFallback, "Type the server's name to confirm. Removing it moves its services elsewhere, and deletes its machine")
 		return
 	}

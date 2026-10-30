@@ -494,6 +494,10 @@ type Node struct {
 	} `json:"tags,omitempty"`
 	CPU    string `json:"cpu,omitempty"`
 	Memory string `json:"memory,omitempty"`
+	// Cordoned says no new service starts on the node. CordonedBy is "upgrade" or "pool" when Geass did it, to upgrade
+	// the node or to empty it, and Geass then undoes it itself.
+	Cordoned   bool   `json:"cordoned,omitempty"`
+	CordonedBy string `json:"cordonedBy,omitempty"`
 	// Pool is the pool the node belongs to, empty for a node that was added on its own or came with the cluster.
 	Pool string `json:"pool,omitempty"`
 	// Ephemeral says the node must not hold data: databases and volumes stay off it, and it may be removed when the
@@ -508,6 +512,15 @@ func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 	}
 	err := c.Do(ctx, http.MethodGet, "/nodes", nil, nil, &out)
 	return out.Items, err
+}
+
+// CordonNode cordons a node, so that no new service starts on it, or uncordons it. What already runs on it stays.
+func (c *Client) CordonNode(ctx context.Context, node string, cordon bool) error {
+	verb := "uncordon"
+	if cordon {
+		verb = "cordon"
+	}
+	return c.Do(ctx, http.MethodPost, "/nodes/"+url.PathEscape(node)+"/"+verb, nil, nil, nil)
 }
 
 // SetNodePlacement sets a node's region, zone and tags. compliance names the tags that are compliance tags;
@@ -684,4 +697,85 @@ func (c *Client) SetProjectQuota(ctx context.Context, project string, fields map
 		return ProjectQuota{}, err
 	}
 	return c.ProjectQuota(ctx, project)
+}
+
+// Addon is one of the cluster's add-ons that can be turned on and off, and how it is doing.
+type Addon struct {
+	// Name is serverless, longhorn, monitoring or logging.
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	// Enabled says the cluster asks for it.
+	Enabled bool `json:"enabled"`
+	// State is Off, Installing, Ready or Failed. Reason and Message say why when it is not Ready.
+	State   string `json:"state"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+	// Installed says something of it is in the cluster, which can be so while it is Off.
+	Installed bool `json:"installed"`
+	// CanRetry says its install is stuck in a way that a retry puts right.
+	CanRetry bool `json:"canRetry"`
+	// CanDisable is false for an add-on that stays on once it is on.
+	CanDisable  bool `json:"canDisable"`
+	KeptWhenOff bool `json:"keptWhenOff"`
+
+	Profile       string   `json:"profile,omitempty"`
+	Profiles      []string `json:"profiles,omitempty"`
+	RetentionDays int32    `json:"retentionDays,omitempty"`
+}
+
+// Addons is the cluster's add-ons.
+type Addons struct {
+	Addons []Addon `json:"addons"`
+	// RetryPending names the add-on whose retry the operator has not carried out yet.
+	RetryPending string `json:"retryPending,omitempty"`
+}
+
+// Find is the add-on with this name.
+func (a Addons) Find(name string) (Addon, bool) {
+	for _, addon := range a.Addons {
+		if addon.Name == name {
+			return addon, true
+		}
+	}
+	return Addon{}, false
+}
+
+// AddonChange is what to change about an add-on. A field that is nil is left as it is.
+type AddonChange struct {
+	Enabled       *bool
+	Profile       *string
+	RetentionDays *int
+}
+
+// Addons reads the add-ons and how each is doing. It needs an admin's token.
+func (c *Client) Addons(ctx context.Context) (Addons, error) {
+	var out Addons
+	return out, c.Do(ctx, http.MethodGet, "/settings/addons", nil, nil, &out)
+}
+
+// SetAddon turns an add-on on or off, or changes its options, and returns the add-ons as they are now.
+func (c *Client) SetAddon(ctx context.Context, name string, change AddonChange) (Addons, error) {
+	body := map[string]any{}
+	if change.Enabled != nil {
+		body["enabled"] = *change.Enabled
+	}
+	if change.Profile != nil {
+		body["profile"] = *change.Profile
+	}
+	if change.RetentionDays != nil {
+		body["retentionDays"] = *change.RetentionDays
+	}
+	if err := c.Do(ctx, http.MethodPost, "/settings/addons/"+url.PathEscape(name)+"/save", nil, body, nil); err != nil {
+		return Addons{}, err
+	}
+	return c.Addons(ctx)
+}
+
+// RetryAddon asks the operator to start the install of an add-on over, which it can for an add-on that is Failed because its
+// install job failed or was suspended.
+func (c *Client) RetryAddon(ctx context.Context, name string) (Addons, error) {
+	if err := c.Do(ctx, http.MethodPost, "/settings/addons/"+url.PathEscape(name)+"/retry", nil, map[string]any{}, nil); err != nil {
+		return Addons{}, err
+	}
+	return c.Addons(ctx)
 }

@@ -200,7 +200,7 @@ How it works, so that a change keeps it working:
   open inside that element (a `Portal` target set on a nested theme), where the scoped styles reach them. Dark and light follow the
   `data-mantine-color-scheme` the host's Mantine puts on `<html>`.
 - **What can be left out.** `hide` takes names from `HIDEABLE` (`src/lib/options.jsx`): `upgrade`, `servers`, `signin`, `domain`, `tokens`,
-  `alerts`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
+  `alerts`, `addons`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
   says *Not available here*. `tokens` also takes away a project's Tokens section and a service's Deploy hook, which are made with tokens. `tokens`, `alerts` and `registry` are hidden because the server answers those only to a signed-in admin, never
   to a token (`requireSessionAdmin`), so with a token they would only fail. A new page that a host cannot use belongs in that list.
 - **People.** The query cache is dropped when `apiBaseUrl` or `sessionKey` changes, so pass `sessionKey` (a user id) when one host page can sign

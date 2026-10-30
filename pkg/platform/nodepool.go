@@ -44,6 +44,12 @@ const (
 	AnnotationRecheckConnection = "geass.dev/recheck"
 	// AnnotationResumePool on a pool ends a pause that repeated failures caused, before its time is up.
 	AnnotationResumePool = "geass.dev/resume"
+	// AnnotationRetryNode on a GeassNode that is Failed makes the operator start it over. The operator removes it
+	// again when it has.
+	AnnotationRetryNode = "geass.dev/retry"
+	// AnnotationK3sUpgradeCordon marks a node that a K3s upgrade cordoned, so that the upgrade uncordons it and never
+	// one that an administrator cordoned.
+	AnnotationK3sUpgradeCordon = "geass.dev/k3s-upgrade-cordon"
 
 	// NodePoolSSHSecret is the Secret in the system namespace that holds the key Geass logs in to the machines it
 	// creates with.

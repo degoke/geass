@@ -12,6 +12,7 @@ export const HIDEABLE = Object.freeze([
   "domain", // the dashboard's domain and DNS, and the banner that asks for it
   "tokens", // API tokens: a token cannot manage tokens
   "alerts", // alert settings: the server answers only a signed-in admin
+  "addons", // the cluster's add-ons (sleep when idle, replicated storage, metrics, logs): the cluster is the host's to run
   "registry", // an organization's container registry: the server answers only a signed-in admin
   "account", // the account menu (theme, sign out) and the switch between organizations and workspaces
   "brand", // the Geass logo in the top bar
@@ -52,8 +53,10 @@ const PAGE_HIDDEN_BY = {
   "settings:domain": "domain",
   "settings:tokens": "tokens",
   "settings:auth": "signin",
+  "settings:users": "signin",
   "settings:organizations": "signin",
   "settings:alerts": "alerts",
+  "settings:addons": "addons",
   "settings:registry": "registry",
   device: "signin",
 };
@@ -61,8 +64,10 @@ const SETTINGS_LINK_HIDDEN_BY = {
   domain: "domain",
   tokens: "tokens",
   auth: "signin",
+  users: "signin",
   organizations: "signin",
   alerts: "alerts",
+  addons: "addons",
   registry: "registry",
 };
 

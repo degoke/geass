@@ -45,7 +45,7 @@ import (
 
 const (
 	NodeFinalizer     = "geass.geass.dev/node"
-	nodeRetryAnnotKey = "geass.dev/retry"
+	nodeRetryAnnotKey = platform.AnnotationRetryNode
 )
 
 // GeassNodeReconciler reconciles a GeassNode object

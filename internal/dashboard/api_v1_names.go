@@ -24,6 +24,8 @@ const (
 	formProject     = "project"
 	formRegion      = "region"
 	formEnvironment = "environment"
+	formUsername    = "username"
+	formRole        = "role"
 
 	stateReady    = "ready"
 	statePending  = "pending"

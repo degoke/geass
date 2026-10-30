@@ -17,16 +17,17 @@ tasks:
 Commands print a table for a person, and most commands can print JSON for a program. Every command ends with an exit
 code that a script can act on.
 
-The command line is not the cluster installer. The installer is a separate program that you run one time with
-`install.sh` (see [Install Geass](/docs/getting-started/install/)). The command line talks to a cluster that is already
-running, through its `/api/v1` [REST API](/docs/reference/rest-api/). [CLI commands](/docs/reference/cli/) lists every
-flag and command.
+The command line is not the installer. You run the installer one time to set up Geass. See
+[Install Geass](/docs/getting-started/install/). The command line talks to a Geass that already runs, through the same
+[REST API](/docs/reference/rest-api/) as the dashboard. [CLI commands](/docs/reference/cli/) lists every command and
+flag.
 
 ## Before you start
 
-- A running Geass cluster whose dashboard you can reach. You can reach it over HTTPS on your domain, or through a
-  `kubectl port-forward` to `http://localhost:8085` (see [Sign in](/docs/getting-started/sign-in/)).
-- A dashboard login with the **admin** role, to approve the sign-in of the command line. A viewer cannot approve it.
+You need these things:
+
+- The address of your dashboard. See [Sign in](/docs/getting-started/sign-in/).
+- A dashboard login with the **admin** role, to approve the sign-in of the command line.
 - `curl` and `sh` on the machine where you install the command line.
 
 ## Install
@@ -37,10 +38,9 @@ Run the install script from the latest release:
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install-cli.sh | sh
 ```
 
-The script selects the build for your system, downloads it from the GitHub release, and installs it as `geass`. The
-script works on Linux and macOS, on `amd64` (`x86_64`) and `arm64` (`aarch64`). The script puts the file in
-`/usr/local/bin` when you can write there. Otherwise, it puts the file in `~/.local/bin`. If that folder is not on your
-`PATH`, the script tells you to add it. Check the installed version:
+The script works on Linux and macOS, on `amd64` and `arm64`. It installs `geass` in `/usr/local/bin` when you can
+write there, and otherwise in `~/.local/bin`. If that folder is not on your `PATH`, the script tells you. Check the
+installed version:
 
 ```bash
 geass version
@@ -50,8 +50,8 @@ geass version
 geass v0.2.0
 ```
 
-The script downloads the build and the `SHA256SUMS` file of the release, and it checks one against the other. It
-installs nothing that does not match. The script reads four variables:
+The script checks the download against the `SHA256SUMS` file of the release, and installs nothing that does not
+match. The script reads these variables:
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -60,17 +60,16 @@ installs nothing that does not match. The script reads four variables:
 | `GEASS_REPO` | The GitHub `owner/name` to download releases from, for a fork. | `degoke/geass` |
 | `GEASS_DOWNLOAD_BASE` | A different location to download the release files from: a mirror, or a directory as `file:///path`. It must hold `geass-cli-<os>-<arch>` and `SHA256SUMS`. | the release on GitHub |
 
-The variables belong to `sh`, not to `curl`, so set them after the pipe. To install a specific release into a folder
-that you select, run this command:
+Set the variables after the pipe, for `sh`. To install a specific release into a folder that you select, run this
+command:
 
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/download/v0.2.0/install-cli.sh | GEASS_VERSION=v0.2.0 GEASS_INSTALL_DIR="$HOME/bin" sh
 ```
 
-Use a tag whose release has the `geass-cli-*` files. To install for every user, put `sudo` before `sh`, and give the
-variables with `env`: `... | sudo env GEASS_VERSION=v0.2.0 sh`.
+To install for every user, use `... | sudo env GEASS_VERSION=v0.2.0 sh`. To update, run the install script again.
 
-**Install by hand.** Every release has one binary for each system, named `geass-cli-<os>-<arch>`:
+**Install by hand.** Every release has one binary for each system:
 
 | File | System |
 | --- | --- |
@@ -84,18 +83,11 @@ chmod +x geass
 sudo mv geass /usr/local/bin/geass
 ```
 
-On Windows, download `geass-cli-windows-amd64.exe` from the release page, and put it in a folder on your `PATH`. To run
-it as `geass`, rename it to `geass.exe`.
+On Windows, download `geass-cli-windows-amd64.exe` from the release page. Rename it to `geass.exe`, and put it in a
+folder on your `PATH`.
 
-**Build from source.** From a checkout of the repository, with Go installed, run this command:
-
-```bash
-make build-cli CLI_GOOS=linux CLI_GOARCH=arm64 CLI_VERSION=v0.2.0
-```
-
-This command writes `bin/geass-cli-linux-arm64`. Without the variables, the command builds for your own system, and it
-takes the version from `git describe`. To update or reinstall, run the install script again. The script replaces the
-file.
+**Build from source.** From a checkout of the repository, with Go installed, run
+`make build-cli CLI_GOOS=linux CLI_GOARCH=arm64`. The command writes `bin/geass-cli-linux-arm64`.
 
 ## Sign in
 
@@ -143,15 +135,13 @@ into the terminal.
 
 To refuse the request, click **Refuse**. The terminal then stops with `the sign-in was refused in the dashboard`.
 
-When you approve, Geass creates an API token for the command line and gives it to the command line one time. The token
-shows in **Settings** → **Tokens** as `CLI: geass CLI on <your machine's name>`, with the access and expiry that you
-selected. You can revoke the token there. The code is valid for 10 minutes. If you do not approve the code in that
-time, the command ends with `the sign-in expired` or `the sign-in was not approved in time` and exit code `6`. Run
-`geass login` again.
+When you approve, Geass creates an API token for the command line. The token shows in **Settings** → **Tokens** as
+`CLI: geass CLI on <your machine's name>`. You can revoke it there. The code is valid for 10 minutes. If nobody
+approves it in that time, the command ends with exit code `6`. Run `geass login` again.
 
 :::note
-Only a person who signed in to the dashboard with a password can approve a sign-in. A token cannot approve a sign-in,
-even an admin token. Thus, a leaked token cannot make another token that lives longer than it.
+Only a person signed in to the dashboard can approve a sign-in. A token cannot approve one, not even a
+**Full access** token. So a leaked token cannot make another token that lives longer than it.
 :::
 
 ### Check who you are
@@ -193,8 +183,8 @@ work.
 - On macOS: `~/Library/Application Support/geass/config.json`.
 - On Windows: `%AppData%\geass\config.json`.
 
-The file holds the token. Thus, the command line writes the file with mode `0600`, and its folder with `0700`. To use
-a different path, set `GEASS_CONFIG`. [CLI commands](/docs/reference/cli/#configuration-file) gives the file format.
+The file holds the token, so only your user can read it. To use a different path, set `GEASS_CONFIG`.
+[CLI commands](/docs/reference/cli/#configuration-file) gives the file format.
 
 ### Use several clusters
 
@@ -211,12 +201,10 @@ geass --context staging apps list
 `geass login` makes the login that it saves the current login. To use a different login for one command, use
 `--context NAME` (or `GEASS_CONTEXT`).
 
-A login belongs to its address, and the command line sends its token only to that address. If you give a different
-address with `--url` (or `GEASS_URL`), the command does not send the token of the current login to it. The command
-uses the login that you saved for that address. If there is no login for that address, or if there are several, the
-command stops with ``not signed in to ADDRESS: run `geass login --url ADDRESS` ``. If there are several, use
-`--context` to say which one. The command line never replaces a login that you selected with `--context` or
-`GEASS_CONTEXT`. It uses a token that you give with `--token` or `GEASS_TOKEN` as you gave it.
+A login belongs to its address. The command line sends a token only to the address of its login. If you give another
+address with `--url` or `GEASS_URL`, the command uses the login saved for that address. If there is none, the command
+stops with ``not signed in to ADDRESS: run `geass login --url ADDRESS` ``. If there are several, use `--context` to
+select one.
 
 ### Set a default project and environment
 
@@ -265,8 +253,8 @@ The `STATE` of a service is one of these values:
 - `draft`: the service is saved and not deployed yet.
 - `deleting`.
 
-Service names are unique across the whole install. That is why most commands take only the name. `geass status` adds
-the replicas, the latest build, and the reason that a service is not ready:
+Service names are unique across the whole installation, so most commands take only the name. `geass status` adds the
+running copies, the latest build, and the reason that a service is not ready:
 
 ```text
 NAME  STATE   READY  BUILD      URL                      MESSAGE
@@ -274,9 +262,9 @@ web   ready   2/2    Succeeded  https://web.example.com  -
 api   failed  0/1    Failed     -                        Kaniko completed without an immutable image digest
 ```
 
-`geass databases list`, `geass stores list`, and `geass nodes list` do the same for databases, buckets, and the nodes
-of the cluster. `geass apps get NAME` prints the whole resource as JSON: its `resource` summary, its `spec`, and its
-`status`. `projects get`, `databases get`, and `stores get` do the same.
+`geass databases list`, `geass stores list`, and `geass nodes list` do the same for databases, buckets, and servers.
+`geass apps get NAME` prints all the details of a service as JSON. `projects get`, `databases get`, and `stores get`
+do the same.
 
 ## Create and deploy a service
 
@@ -328,7 +316,7 @@ error:
 | Line | Meaning |
 | --- | --- |
 | `web: build running` | A repository build is in progress. The phase follows the build: `pending`, `waitingforci`, `running`. |
-| `web: pending (1 of 2 ready)` | The build is done and the copies are starting. |
+| `web: pending (1 of 2 ready)` | The build is done, and the copies are starting. |
 | `web: ready at https://web.example.com` | Done. |
 
 A service is done when all of these are true:
@@ -377,8 +365,9 @@ geass logs web -f --level error --since 15m
 09:41:09 x2k4p Error: connect ECONNREFUSED 203.0.113.10:5432
 ```
 
-Each line is the time in UTC, the end of the pod name, and the text. Without `-f`, the command prints the recent lines
-and stops. `-f` continues to follow the log, across restarts and new pods, until you press Ctrl-C. The filters are:
+Each line has the time in UTC, a short ID of the copy of the service, and the text. Without `-f`, the command prints
+the recent lines and stops. `-f` follows the log, across restarts and new copies, until you press Ctrl-C. The filters
+are:
 
 - `--tail`: the number of newest lines to show. The default is 200, and the maximum is 1000.
 - `--since`: for example `15m` or `48h`. The maximum is 7 days.
@@ -387,9 +376,8 @@ and stops. `-f` continues to follow the log, across restarts and new pods, until
 
 When nothing matches, the command prints `No log lines matched.` on standard error.
 
-The filters look through the most recent lines. First, the dashboard reads `--tail` lines from the end of the log of
-each copy. Then it filters those lines. Thus, `--level error` finds the errors in the last 200 lines of each copy. To
-look further back, increase `--tail`.
+The filters look only through the last `--tail` lines of each copy. So `--level error` finds the errors in the last
+200 lines. To look further back, increase `--tail`.
 
 To read logs, you need **Read only, with logs**, **Full access**, or a project token for its own services.
 
@@ -431,7 +419,7 @@ Only secrets are hidden. The API returns plain configuration values: `geass env 
 (with **Full access**) print them. Store all sensitive values with `--secret`.
 :::
 
-## Scale, sleep and roll back
+## Scale, sleep, and roll back
 
 ```bash
 geass scale web 3
@@ -450,12 +438,10 @@ requests, and starts it on the next request. `--always-on` turns that off. Sleep
 
 See [Scale to zero](/docs/guides/scale-to-zero/).
 
-The command saves the setting. Then it waits up to 10 seconds for the cluster to say whether the service can sleep.
-The command prints `web sleeps after ...` only when the service can sleep. When the service cannot sleep, the service
-stays running, and the command exits with `1` and the reason. For example:
+The command saves the setting, and prints `web sleeps after ...` when the service can sleep. When it cannot, the
+service stays running, and the command exits with `1` and the reason. For example:
 `saved, but web cannot sleep when idle and stays running: The serverless add-on is not installed`. The setting stays
-saved, so it has an effect after the add-on is on. `geass apps get web` shows `resource.details.scaleToZero`. Its
-`active` field says whether sleep is in effect.
+saved, and takes effect after the add-on is on.
 
 To go back to an earlier deployment, run these commands:
 
@@ -528,7 +514,7 @@ requests   4.2 (1.1 - 9.7)
 The windows are `15m`, `1h` (the default), `6h`, and `24h`. Metrics need Prometheus. Without Prometheus, the command
 exits with `no metrics yet: ...`. See [Observability](/docs/guides/observability/).
 
-## Databases, nodes and compliance
+## Databases, servers, and compliance
 
 ```bash
 geass databases connection orders
@@ -538,13 +524,13 @@ geass compliance show proj-1a2b3c4d
 ```
 
 `geass databases connection` needs **Full access**. It shows the host, port, database, and user. The password and the
-connection string stay hidden unless you add `--reveal`. The operator log records each reveal.
+connection string stay hidden unless you add `--reveal`. Geass logs each reveal.
 
-`geass nodes tag` replaces the region, zone, and tags of a node. Thus, give every tag that the node must keep. The
-command prints each warning that the change causes on standard error as `warning: ...`. For example, work that is
-already on the node and does not belong there. See [Compliance tags](/docs/guides/compliance-tags/).
+`geass nodes tag` replaces the region, zone, and tags of a server. So give every tag that the server must keep. The
+command prints each warning as `warning: ...`, for example for work on the server that does not belong there. See
+[Compliance tags](/docs/guides/compliance-tags/).
 
-## Clouds, pools and servers
+## Clouds, pools, and servers
 
 With an admin token, `geass` can connect a cloud, set the size of a pool, and add servers.
 
@@ -587,7 +573,7 @@ There is a command to delete a service. The command asks first, and a script mus
 geass apps delete web --yes
 ```
 
-## Output, JSON and exit codes
+## Output, JSON, and exit codes
 
 **Two streams.** Results go to standard output. Progress and notes go to standard error. A program that reads standard
 output sees only results.
@@ -693,42 +679,14 @@ In CI, nobody can answer a question. Thus, `geass apps delete` needs `--yes`. If
 directory, for example a bare container, set `GEASS_CONFIG` to any path, for example `GEASS_CONFIG=/tmp/geass.json`.
 Without a configuration directory, every command stops with `could not find a configuration directory`.
 
-## What happens under the hood
-
-Every command makes one or two HTTPS calls to `<address>/api/v1`, with `Authorization: Bearer <token>` and the user
-agent `geass-cli/<version>`. A call times out after 60 seconds. Following logs has no timeout. The API changes each
-call into the operation of the dashboard, so the same rules apply as in the dashboard. The API returns each error as
-`{"error": "...", "code": "..."}`. `geass api GET /openapi.json` (or `geass openapi`) describes every endpoint.
-
-- **Sign-in.** `geass login` calls `POST /api/v1/auth/device`. The API returns a device code, an 8-letter user code
-  (shown as `BCDF-GHJK`), and the approval address.
-  - The operator keeps pending requests in memory for 10 minutes. Thus, a restart of the operator cancels them.
-  - The command asks `POST /api/v1/auth/token` every 5 seconds.
-  - One address can start 10 sign-ins a minute, and a maximum of 100 can wait at the same time.
-  - When an admin approves, the operator creates a workspace API token named `CLI: <client name>`, and gives it one
-    time.
-  - Like every API token, the operator stores only a hash, in the Secret `geass-api-tokens` in the `geass-system`
-    namespace.
-
-  The operator log records the sign-in:
-
-  ```bash
-  kubectl -n geass-system logs deployment/geass-controller-manager -c manager | grep "command-line sign-in"
-  ```
-
-- **Services.** A service that you create is a `GeassApp` in `geass-system` (`kubectl -n geass-system get geassapps`).
-  A deploy is the **Deploy changes** of the dashboard. See [Projects and environments](/docs/guides/projects-and-environments/).
-- **Audit.** The operator logs each API call as `Dashboard request completed` with the method, path, and status, but
-  not the caller. **Settings** → **Tokens** shows the last use of a token. Use one token for each script or person.
-  Then you can tell them apart, and revoke one without the others.
-
 ## Troubleshooting
 
 **`` Error: not signed in: run `geass login --url https://your-geass-address` ``** (exit 4). There is no saved login,
 and no `GEASS_URL`. Run `geass login --url ...`, or set `GEASS_URL` and `GEASS_TOKEN`.
 
-**`` Error: not signed in to https://geass.example.com: run `geass login` ``** (exit 4). The address is known, but
-there is no token. You ran `geass logout`, or only `GEASS_URL` is set.
+**`` Error: not signed in to https://geass.example.com: run `geass login` ``** (exit 4). There is no token for the
+address. You ran `geass logout`, or only `GEASS_URL` is set. This error also shows when you give `--url` for an
+address that you have no login for.
 
 **`Error: invalid or expired API token`, then ``Run `geass login` to sign in again.``** (exit 4). The token expired,
 or someone revoked it. Run `geass login` again.
@@ -751,22 +709,20 @@ there was nobody to ask. Add `--yes`.
 **`Get "geass.example.com/api/v1/me": unsupported protocol scheme ""`.** The address has no `https://`. Write the full
 address.
 
-**`the API answered something that is not JSON`.** The address does not point at the Geass dashboard, or something
-in front of the dashboard returns a web page. Open the address in a browser, and see
-[Sign in](/docs/getting-started/sign-in/).
+**`the API answered something that is not JSON`.** The address is not the Geass dashboard, or something in front of
+the dashboard returns a web page. Open the address in a browser. See [Sign in](/docs/getting-started/sign-in/).
 
 **`the API answered in a shape this client does not know (...): is Geass a different version?`** The address is a
 Geass dashboard, but this command line does not expect its answer. Usually, the dashboard is older than the command
 line. Update the one that is older.
 
-**A certificate error, for example `x509: certificate signed by unknown authority`.** The command line checks the
-certificate of the server, and it has no option to skip the check. Fix the certificate (see
-[Domains and TLS](/docs/guides/domains-and-tls/)), or trust your certificate authority on this machine. For a first
-session without a domain, reach the dashboard through `kubectl port-forward`, and use `--url http://localhost:8085`.
-Standard proxy variables, for example `HTTPS_PROXY`, apply.
+**A certificate error, for example `x509: certificate signed by unknown authority`.** The command line always checks
+the certificate of the server. Fix the certificate (see [Domains and TLS](/docs/guides/domains-and-tls/)), or trust
+your certificate authority on this machine. Before you have a domain, use the `localhost` address from
+[Sign in](/docs/getting-started/sign-in/).
 
 **The approval page shows `No sign-in request has that code. It may have expired: start again from the command line.`**
-The code is wrong, the code expired after 10 minutes, or the operator restarted. Run `geass login` again.
+The code is wrong, the code expired after 10 minutes, or Geass restarted. Run `geass login` again.
 
 **The page says `Only an admin can approve this`.** You signed in to the dashboard as a viewer. Sign in as an admin.
 
@@ -776,9 +732,9 @@ the code in 10 minutes. Run the command again, and approve sooner.
 **`could not start the sign-in: too many sign-in requests, try again in a minute`.** One address started 10 sign-ins in
 a minute, or 100 sign-ins are waiting. Wait a minute. Behind a proxy, every user shares the address of the proxy.
 
-**The address printed by `geass login` starts with `http://` but the dashboard is on HTTPS.** The operator builds the
-address from the request. If a proxy does not send `X-Forwarded-Proto: https`, the command prints `http://`. Change the
-address to `https://` in the browser. The code still works.
+**The address printed by `geass login` starts with `http://`, but the dashboard is on HTTPS.** A proxy in front of the
+dashboard does not send `X-Forwarded-Proto: https`. Change the address to `https://` in the browser. The code still
+works.
 
 **`gave up waiting for web after 10m0s (it is pending): context deadline exceeded`** (exit 6). The service did not
 become ready in time. Do one of these:
@@ -795,15 +751,11 @@ the service. For a repository build, read the build logs. Run `geass apps deploy
 looked through, the service wrote nothing that matches. Remove `--level` and `--search`, or increase `--tail` and
 `--since`. See [Read logs](#read-logs).
 
-**``not signed in to https://...: run `geass login --url https://...` ``** (exit 4). You gave `--url` or `GEASS_URL`
-for an address that you have no login for. The command line does not send the token of the current login there. Run
-`geass login --url` for that address, or give a token for it with `--token`.
-
 **`no metrics yet: ...`.** Prometheus is not installed, or the command line cannot reach it. See
 [Observability](/docs/guides/observability/).
 
-**`--sleep-after must be between 30s and 24h`** (exit 2). The value is out of range. The command refuses a value with
-no unit, for example `600`, earlier, with `invalid argument "600" for "--sleep-after" flag`. Write `600s` or `10m`.
+**`--sleep-after must be between 30s and 24h`** (exit 2). The value is out of range. Write a value with a unit, for
+example `600s` or `10m`.
 
 **`Scale to zero decides how many copies run, so turn CPU autoscaling off to use it`** (exit 1). The service has CPU
 autoscaling on. Turn it off in the **Settings** of the service, then run the command again.
@@ -818,6 +770,14 @@ configuration file or its folder. Fix the permissions, or set `GEASS_CONFIG`.
 
 **`geass: command not found`.** The install folder is not on your `PATH`. The install script prints the folder that it
 used.
+
+## Under the hood
+
+- Every command calls `<address>/api/v1` over HTTPS, with `Authorization: Bearer <token>`. The same rules apply as in
+  the dashboard. A call times out after 60 seconds, except for a log that you follow.
+- Geass keeps pending sign-ins in memory for 10 minutes. A restart of Geass cancels them.
+- The Geass log records each API call with its method, path, and status, but not the caller. **Last used** in
+  **Settings** → **Tokens** shows when a token was used. Use one token for each script or person.
 
 ## Related
 

@@ -132,3 +132,60 @@ func parseKnownHosts(data []byte) ([]knownHostEntry, error) {
 	}
 	return entries, nil
 }
+
+// ReplaceHostKeys gives the host keys of a Secret after the keys of one machine are replaced. The lines of known that
+// are for the machine at host and port are dropped, the lines of given that are for it are added, and every other line
+// stays, because one Secret can hold the keys of several machines. given must list at least one key for the machine:
+// lines for other machines are left out, and a line that is not valid is refused.
+func ReplaceHostKeys(known, given []byte, host string, port int) ([]byte, error) {
+	if port == 0 {
+		port = 22
+	}
+	want := knownhosts.Normalize(net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), fmt.Sprint(port)))
+	covers := func(line string) (bool, error) {
+		entries, err := parseKnownHosts([]byte(line))
+		if err != nil {
+			return false, err
+		}
+		return slices.ContainsFunc(entries, func(entry knownHostEntry) bool { return entry.covers(want) }), nil
+	}
+	var out []string
+	for _, line := range knownHostLines(known) {
+		forHost, err := covers(line)
+		if err != nil {
+			// A line that cannot be read may be the old key of this machine: keeping it would leave that key trusted.
+			return nil, fmt.Errorf("%s has a line that Geass cannot read, so it cannot replace the keys: %w", KnownHostsSecretKey, err)
+		}
+		if forHost {
+			continue
+		}
+		out = append(out, line)
+	}
+	added := 0
+	for _, line := range knownHostLines(given) {
+		forHost, err := covers(line)
+		if err != nil {
+			return nil, err
+		}
+		if forHost {
+			out = append(out, line)
+			added++
+		}
+	}
+	if added == 0 {
+		return nil, fmt.Errorf("%s lists no host key for %s. Give the lines that `ssh-keyscan %s` prints", KnownHostsSecretKey, want, want)
+	}
+	return []byte(strings.Join(out, "\n") + "\n"), nil
+}
+
+// knownHostLines are the lines of a known_hosts file that hold a key: no blank lines and no comments.
+func knownHostLines(data []byte) []string {
+	var lines []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}

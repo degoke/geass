@@ -57,7 +57,7 @@ func (s *ClusterCRApply) Run() error {
 
 	if s.ACMEEmail == "" {
 		Warnf(s.Name(), "%s is not set, so no certificate issuer is created and HTTPS certificates will not be issued; "+
-			"set spec.addons.certManager.acmeEmail on the GeassCluster to enable them", acmeEmailEnv)
+			"enter an email address in the dashboard under Settings > Domain to enable them", acmeEmailEnv)
 	}
 	manifest := geassClusterManifest(name, version, serverURL, s.Network, s.ACMEEmail)
 

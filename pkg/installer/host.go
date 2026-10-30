@@ -29,6 +29,7 @@ func (execHost) run(step string, opts commandOptions, name string, args ...strin
 	var stdoutBuf, stderrBuf bytes.Buffer
 	stdout := newStreamWriter(step, "stdout", &stdoutBuf)
 	stderr := newStreamWriter(step, "stderr", &stderrBuf)
+	stdout.unlogged = opts.unloggedStdout
 	if opts.echoStdout {
 		stdout.echo = os.Stdout
 	}

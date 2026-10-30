@@ -348,7 +348,7 @@ func (a *App) configCmd() *cobra.Command {
 					}
 					rows = append(rows, []string{current, name, saved.URL, dash(saved.User), dash(saved.Project), dash(saved.Environment), expires})
 				}
-				a.printTable([]string{"", "NAME", "URL", "USER", "PROJECT", "ENVIRONMENT", "EXPIRES"}, rows)
+				a.printTable([]string{"", columnName, "URL", "USER", "PROJECT", "ENVIRONMENT", "EXPIRES"}, rows)
 				return nil
 			},
 		},

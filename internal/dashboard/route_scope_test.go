@@ -119,9 +119,15 @@ func TestEveryRouteTheV1APIDocumentsIsClassified(t *testing.T) {
 		switch path {
 		case "/api/v1/nodes", "/api/v1/cluster/metrics", "/api/v1/operator/metrics":
 			continue
+		case "/api/v1/settings/addons":
+			// What the cluster runs and how it is doing: the platform's administrators' (addons_test.go).
+			continue
 		case "/api/v1/usage/hours", "/api/v1/mail/usage":
 			// What every organization reserved, for billing, and what it sent through the mail relay: the platform's
 			// (usage_hours_test.go, mail_usage_test.go).
+			continue
+		case "/api/v1/users":
+			// The people who sign in with a password are the platform's (TestDashboardUsersAreThePlatformsAlone).
 			continue
 		}
 		if op.Tag == tagCompute || op.Tag == tagGitHub || op.Tag == tagAbuse {
@@ -181,4 +187,27 @@ func TestTheGitHubAppOfAProviderIsThePlatformsAlone(t *testing.T) {
 		require.Equal(t, scopePlatform, routeScopeOf(op.Method, path), "%s %s", op.Method, path)
 	}
 	require.Equal(t, 8, seen)
+}
+
+// The users who sign in with a password are the install's, not an organization's: an organization's people come from its
+// identity provider. Every route that lists or changes them is the platform's, and an organization's token is refused.
+func TestDashboardUsersAreThePlatformsAlone(t *testing.T) {
+	seen := 0
+	for _, op := range v1Operations {
+		if !strings.HasPrefix(op.Path, "/users") {
+			continue
+		}
+		seen++
+		path := "/api/v1" + op.Path
+		if op.Method == http.MethodGet {
+			path = "/api" + op.Path
+		} else if legacy, _, ok := v1LegacyPath(op.Method, strings.Split(strings.Trim(op.Path, "/"), "/")); ok {
+			path = legacy
+		}
+		require.Equal(t, scopePlatform, routeScopeOf(op.Method, path), "%s %s", op.Method, path)
+	}
+	require.Equal(t, 6, seen)
+	for _, path := range []string{"/api/users", "/api/users/create", "/api/users/role", "/api/users/password", "/api/users/remove", "/api/users/sign-out-all"} {
+		require.Equal(t, scopePlatform, routeScopeOf(http.MethodPost, path), path)
+	}
 }

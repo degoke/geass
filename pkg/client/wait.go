@@ -118,3 +118,59 @@ func failureReason(status AppStatus) string {
 		return "no reason was given"
 	}
 }
+
+// AddonWaitOptions control WaitForAddon.
+type AddonWaitOptions struct {
+	// Timeout ends the wait; zero means fifteen minutes. An add-on that pulls images can take a while on a small cluster.
+	Timeout time.Duration
+	// Interval is how often the add-ons are read; zero means three seconds.
+	Interval time.Duration
+	// OnStatus is called with the add-on each time it is read, so a caller can show progress.
+	OnStatus func(Addon)
+}
+
+// ErrAddonFailed says an add-on is Failed. The add-on, with its reason, comes with it.
+var ErrAddonFailed = errors.New("the add-on failed")
+
+// WaitForAddon reads an add-on until it is Ready or Failed, or the wait runs out. An add-on that is Failed has been failing for
+// several tries, but K3s goes on trying: the failure is reported, and it can still come up later.
+func (c *Client) WaitForAddon(ctx context.Context, name string, options AddonWaitOptions) (Addon, error) {
+	timeout, interval := options.Timeout, options.Interval
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	if interval <= 0 {
+		interval = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var last Addon
+	for {
+		addons, err := c.Addons(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return last, fmt.Errorf("gave up waiting for %s after %s: %w", name, timeout, ctx.Err())
+			}
+			return last, err
+		}
+		addon, found := addons.Find(name)
+		if !found {
+			return last, fmt.Errorf("the cluster has no add-on %q", name)
+		}
+		last = addon
+		if options.OnStatus != nil {
+			options.OnStatus(addon)
+		}
+		switch addon.State {
+		case "Ready":
+			return addon, nil
+		case "Failed":
+			return addon, fmt.Errorf("%w: %s", ErrAddonFailed, addon.Message)
+		}
+		select {
+		case <-ctx.Done():
+			return last, fmt.Errorf("gave up waiting for %s after %s (it is %s): %w", name, timeout, addon.State, ctx.Err())
+		case <-time.After(interval):
+		}
+	}
+}

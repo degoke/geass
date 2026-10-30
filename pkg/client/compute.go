@@ -599,3 +599,51 @@ func (c *Client) AddServer(ctx context.Context, server ServerRequest) (string, e
 func (c *Client) RemoveServer(ctx context.Context, name string) error {
 	return c.Do(ctx, http.MethodDelete, "/servers/"+url.PathEscape(name), url.Values{"confirmName": {name}}, nil, nil)
 }
+
+// Server is a server that Geass joins to the cluster, as the operator knows it: also one that has not joined yet, or
+// failed to, which Nodes does not list because the cluster has no node for it.
+type Server struct {
+	Name string `json:"name"`
+	// Role is worker or control-plane.
+	Role string `json:"role"`
+	// Phase is Pending, Creating, Joining, Ready, Failed or Deleting.
+	Phase string `json:"phase"`
+	// Message says why a server is not ready. An observer's token reads none.
+	Message string `json:"message,omitempty"`
+	Address string `json:"address,omitempty"`
+	// Source is cloud for a machine that Geass creates, and existing for one you have.
+	Source string `json:"source"`
+	Pool   string `json:"pool,omitempty"`
+	// Node is the name of the cluster's node, once the server has joined.
+	Node              string `json:"node,omitempty"`
+	Joined            bool   `json:"joined"`
+	Cordoned          bool   `json:"cordoned"`
+	CordonedBy        string `json:"cordonedBy,omitempty"`
+	CanRetry          bool   `json:"canRetry"`
+	CanUpdateHostKeys bool   `json:"canUpdateHostKeys"`
+	CanRemove         bool   `json:"canRemove"`
+}
+
+// Servers lists the servers Geass joins to the cluster, with the phase of each.
+func (c *Client) Servers(ctx context.Context) ([]Server, error) {
+	var out struct {
+		Items []Server `json:"items"`
+	}
+	err := c.Do(ctx, http.MethodGet, "/servers", nil, nil, &out)
+	return out.Items, err
+}
+
+// RetryServer starts a server that failed to join over.
+func (c *Client) RetryServer(ctx context.Context, name string) error {
+	return c.Do(ctx, http.MethodPost, "/servers/"+url.PathEscape(name)+"/retry", nil, nil, nil)
+}
+
+// UpdateServerHostKeys replaces the host keys Geass accepts from a server you have. It says whether the server is
+// still failed, so that the caller can offer a retry.
+func (c *Client) UpdateServerHostKeys(ctx context.Context, name, knownHosts string) (failed bool, err error) {
+	var out struct {
+		Failed bool `json:"failed"`
+	}
+	err = c.Do(ctx, http.MethodPost, "/servers/"+url.PathEscape(name)+"/host-keys", nil, map[string]any{"knownHosts": knownHosts}, &out)
+	return out.Failed, err
+}

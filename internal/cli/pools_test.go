@@ -590,6 +590,10 @@ func TestRemovingAServerThatBelongsToAPoolSaysWhy(t *testing.T) {
 
 func TestNodesShowTheirPoolAndWhetherTheyMayHoldData(t *testing.T) {
 	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/servers") {
+			reply(w, 200, map[string]any{"items": []map[string]any{}})
+			return
+		}
 		reply(w, 200, map[string]any{"items": []map[string]any{
 			{"name": "main", "ready": true, "cpu": "4", "memory": "8Gi"},
 			{"name": "burst-1", "ready": true, "cpu": "2", "memory": "4Gi", "pool": "burst", "ephemeral": true},
@@ -609,4 +613,95 @@ func TestNodesShowTheirPoolAndWhetherTheyMayHoldData(t *testing.T) {
 	require.Equal(t, ExitOK, code)
 	require.Contains(t, stdout, `"pool": "burst"`)
 	require.Contains(t, stdout, `"ephemeral": true`)
+}
+
+func TestNodesListShowsAServerThatDidNotJoinAndWhy(t *testing.T) {
+	h := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/servers") {
+			reply(w, 200, map[string]any{"items": []map[string]any{
+				{"name": "main", "role": "control-plane", "phase": "Ready", "joined": true, "source": "existing"},
+				{"name": "edge-1", "role": "worker", "phase": "Failed", "joined": false, "source": "existing", "canRetry": true, "message": "ssh dial 198.51.100.7:22: connection refused"},
+			}})
+			return
+		}
+		reply(w, 200, map[string]any{"items": []map[string]any{
+			{"name": "main", "ready": true, "cpu": "4", "memory": "8Gi"},
+			{"name": "worker-2", "ready": true, "cordoned": true},
+		}})
+	})
+	h.signedIn(t, "", "")
+
+	code, stdout, stderr := h.run("nodes", "list")
+
+	require.Equal(t, ExitOK, code, stderr)
+	require.Regexp(t, `worker-2\s+Ready, cordoned`, stdout)
+	require.Regexp(t, `edge-1\s+Failed`, stdout, "a server with no node is still listed")
+	require.Equal(t, 1, strings.Count(stdout, "main "), "a server that joined is listed once, as its node")
+	require.Contains(t, stdout, "edge-1: ssh dial 198.51.100.7:22: connection refused")
+	require.Contains(t, stdout, "geass servers retry edge-1")
+
+	code, stdout, _ = h.run("--json", "nodes", "list")
+	require.Equal(t, ExitOK, code)
+	require.Contains(t, stdout, `"servers"`)
+	require.Contains(t, stdout, `"edge-1"`)
+}
+
+func TestServersListSaysWhyOneFailed(t *testing.T) {
+	stub := newComputeStub()
+	stub.reply("GET /servers", 200, map[string]any{"items": []map[string]any{
+		{"name": "edge-1", "role": "worker", "phase": "Failed", "source": "existing", "address": "198.51.100.7", "canRetry": true, "message": "the SSH host key of 198.51.100.7 is not listed"},
+		{"name": "edge-2", "role": "worker", "phase": "Ready", "joined": true, "source": "cloud", "address": "198.51.100.8", "cordoned": true},
+	}})
+	h := newHarness(t, stub.handler(t))
+	h.signedIn(t, "", "")
+
+	code, stdout, stderr := h.run("servers", "list")
+
+	require.Equal(t, ExitOK, code, stderr)
+	require.Regexp(t, `edge-1\s+worker\s+Failed\s+198.51.100.7\s+existing`, stdout)
+	require.Regexp(t, `edge-2\s+worker\s+Ready, cordoned`, stdout)
+	require.Contains(t, stdout, "edge-1: the SSH host key of 198.51.100.7 is not listed")
+}
+
+func TestRetryingAServerAndUpdatingItsHostKeys(t *testing.T) {
+	stub := newComputeStub()
+	stub.reply("POST /servers/edge-1/retry", 200, map[string]any{"ok": true})
+	stub.reply("POST /servers/edge-1/host-keys", 200, map[string]any{"ok": true, "failed": true})
+	h := newHarness(t, stub.handler(t))
+	h.signedIn(t, "", "")
+	hosts := filepath.Join(t.TempDir(), "known_hosts")
+	require.NoError(t, os.WriteFile(hosts, []byte("198.51.100.7 ssh-ed25519 AAAA\n"), 0o600))
+
+	code, stdout, stderr := h.run("servers", "update", "edge-1", "--known-hosts-file", hosts)
+	require.Equal(t, ExitOK, code, stderr)
+	require.Equal(t, map[string]any{"knownHosts": "198.51.100.7 ssh-ed25519 AAAA"}, stub.sent(http.MethodPost, "/servers/edge-1/host-keys")[0].body)
+	require.Contains(t, stdout, "geass servers retry edge-1", "a server that failed is offered a retry")
+
+	code, _, stderr = h.run("servers", "update", "edge-1")
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "--known-hosts-file")
+
+	code, stdout, stderr = h.run("servers", "retry", "edge-1")
+	require.Equal(t, ExitOK, code, stderr)
+	require.Len(t, stub.sent(http.MethodPost, "/servers/edge-1/retry"), 1)
+	require.Contains(t, stdout, "Retrying the server edge-1")
+}
+
+func TestCordoningANode(t *testing.T) {
+	stub := newComputeStub()
+	stub.reply("POST /nodes/worker-2/cordon", 200, map[string]any{"ok": true, "cordoned": true})
+	stub.reply("POST /nodes/worker-2/uncordon", 200, map[string]any{"ok": true, "cordoned": false})
+	stub.reply("POST /nodes/main/cordon", 400, map[string]string{"error": "main is the only server that can start new services", "code": "invalid_request"})
+	h := newHarness(t, stub.handler(t))
+	h.signedIn(t, "", "")
+
+	code, stdout, stderr := h.run("nodes", "cordon", "worker-2")
+	require.Equal(t, ExitOK, code, stderr)
+	require.Contains(t, stdout, "Cordoned the node worker-2")
+	code, stdout, stderr = h.run("nodes", "uncordon", "worker-2")
+	require.Equal(t, ExitOK, code, stderr)
+	require.Contains(t, stdout, "Uncordoned the node worker-2")
+	code, _, stderr = h.run("nodes", "cordon", "main")
+	require.Equal(t, ExitError, code)
+	require.Contains(t, stderr, "only server that can start new services")
 }

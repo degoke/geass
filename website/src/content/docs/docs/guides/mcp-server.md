@@ -18,8 +18,7 @@ operations as the command line:
 The agent acts as an API token, and the server shows the agent only the tools that the token can use. A read-only token
 cannot even see a tool that deploys.
 
-You install nothing other than the command line. When the agent starts the server itself, there is no separate service
-to keep running. [MCP tools](/docs/reference/mcp-tools/) lists every tool.
+You install nothing other than the command line. [MCP tools](/docs/reference/mcp-tools/) lists every tool.
 
 ## Before you start
 
@@ -220,9 +219,9 @@ send your Geass API token as a Bearer token
 | Who it is | `whoami` |
 | See what runs | `list_projects`, `list_apps`, `get_app`, `app_status`, `app_deployments`, `app_metrics` |
 | Read logs and variable names | `get_logs`, `deployment_logs`, `list_variables` |
-| Databases, buckets, nodes, and compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
+| Databases, buckets, servers, and compliance | `list_databases`, `get_database`, `database_connection`, `list_buckets`, `list_nodes`, `project_compliance` |
 | Project limits and network | `project_quota`, `project_network`, and `set_project_quota` (an admin token, not read-only) |
-| Clouds and node pools | `compute_providers`, `cloud_connections`, `node_pools`, and `node_pool` need any workspace token. `cloud_sizes` needs an admin token. `create_node_pool`, `update_node_pool`, and `resume_node_pool` need an admin token that is not read-only. `delete_node_pool` is available only with `--allow-delete` |
+| Clouds and pools | `compute_providers`, `cloud_connections`, `node_pools`, and `node_pool` need any workspace token. `cloud_sizes` needs an admin token. `create_node_pool`, `update_node_pool`, and `resume_node_pool` need an admin token that is not read-only. `delete_node_pool` is available only with `--allow-delete` |
 | Deploy and recover | `deploy_app`, `rebuild_app`, `rollback_app` |
 | Scale and configure | `scale_app`, `set_sleep_when_idle`, `set_variable`, `unset_variable` |
 | Functions | `set_function_trigger`, `remove_function_trigger`, `invoke_function` |
@@ -242,13 +241,12 @@ The server has only the tools above. No tool exists for these actions, so an age
 - Change the image, source, size, domain, or any other setting of a service. The exceptions are its replicas, whether
   it sleeps when idle, its variables, and the schedules of a function. An agent also cannot edit the code of a function
   or create a function.
-- Open a terminal in a pod, or read the files of a pod.
-- Tag nodes, or change the compliance tags of a project or who can reach its services. An agent can only read these
-  settings. If the token is an admin token, an agent can change the resource limits of a project with
-  `set_project_quota`.
-- Create, list, or revoke API tokens, or change users or cluster settings.
+- Open a terminal in a service, or read its files.
+- Tag servers, or change the compliance tags of a project or who can reach its services. An agent can only read these
+  settings. With an admin token, an agent can change the resource limits of a project with `set_project_quota`.
+- Create, list, or revoke API tokens, or change users or platform settings.
 - Make, change, verify, or remove a connection to a cloud. Give a cloud a credential. Add or remove a single server. An
-  agent can read the connections, but never their credentials. With an admin token, an agent can run node pools on a
+  agent can read the connections, but never their credentials. With an admin token, an agent can run pools on a
   connection that a person made. See [Node pools and money](#node-pools-and-money).
 - Make a pool of servers that you own.
 - Read the value of a secret, a database password, or a connection string. See the section
@@ -291,7 +289,7 @@ write access.
 
 ### Node pools and money
 
-An admin token also offers `create_node_pool`, `update_node_pool`, and `resume_node_pool`. A [node pool](/docs/guides/node-pools/) creates machines at a cloud. The cloud bills the account of the connection until the machines are removed. Thus, these tools stop where the decisions of a person begin:
+An admin token also offers `create_node_pool`, `update_node_pool`, and `resume_node_pool`. A [pool](/docs/guides/node-pools/) creates machines at a cloud. The cloud bills the account of the connection until the machines are removed. Thus, these tools stop where the decisions of a person begin:
 
 - **No tool takes a credential.** No tool makes, changes, verifies, or removes a connection, and no tool takes a token, a key, or a password. A credential typed into the conversation of an agent would be a secret that the agent could leak. Thus, a person adds connections in the dashboard or with `geass connections add`. The tools that read return the names of what a cloud takes, never a value.
 - **No tool adds a single server.** A single server is billed until someone removes it. The agent can only run a pool that the connection of a person already pays for.
@@ -314,201 +312,55 @@ or a thousand, overwrite variables and break a service, and run a function. Limi
 that reads this text and can also change things might follow instructions hidden in it. For an agent that reads logs
 of a service that the public can reach, prefer **Read only, with logs**.
 
-**Audit.** The operator logs each API call with its method, path, and status, but not who made it. To read this log,
-run `kubectl -n geass-system logs deployment/geass-controller-manager -c manager`. A deployment that an agent makes
-shows the actor `Dashboard`, like any other deployment. The token tells you which agent did something: **Settings** →
+**Audit.** A deployment that an agent makes shows the actor `Dashboard`, like any other deployment. **Settings** →
 **Tokens** shows when each token was **Last used**. Use one token for each agent, so that you can tell them apart and
 revoke one.
 
 ## Example sessions
 
-The calls below are what the agent sends. The results are shortened.
+The calls below are what the agent sends.
 
 ### Find out why a service is not ready
 
-The agent has a **Read only, with logs** token. A person asks: "Why is `web` in production not ready?"
+The agent has a **Read only, with logs** token. A person asks: "Why is `web` in production not ready?" The agent
+makes these calls:
 
-**Step 1. List the services.**
+1. `list_apps` with `{ "project": "proj-1a2b3c4d", "environment": "production" }`. The service `web` is `pending`.
+2. `app_status` with `{ "app": "web" }`. The service wants two copies, and none runs. No build failed.
+3. `get_logs` with `{ "app": "web", "level": "error", "tail": 50 }`. The logs show
+   `Error: connect ECONNREFUSED 203.0.113.10:5432`.
+4. `list_variables` with `{ "app": "web" }`. The plain variable `DATABASE_HOST` is `orders-db-old`.
 
-```json title="list_apps"
-{ "project": "proj-1a2b3c4d", "environment": "production" }
-```
-
-`web` has `"state": "pending"`.
-
-**Step 2. Read its status.**
-
-```json title="app_status"
-{ "app": "web" }
-```
-
-```json
-{
-  "name": "web",
-  "project": "proj-1a2b3c4d",
-  "environment": "production",
-  "state": "pending",
-  "ready": false,
-  "pendingChanges": 0,
-  "replicas": { "desired": 2, "ready": 0, "available": 0 }
-}
-```
-
-The service wants two copies, and none is running. No build failed. The next place to look is the logs.
-
-**Step 3. Read recent errors.**
-
-```json title="get_logs"
-{ "app": "web", "level": "error", "tail": 50 }
-```
-
-```text
-2026-10-12T09:41:07Z web-6d9c7b8f5-x2k4p Error: connect ECONNREFUSED 203.0.113.10:5432
-```
-
-**Step 4. Read the variables, and the memory and CPU the service uses.**
-
-```json title="list_variables"
-{ "app": "web" }
-```
-
-```json
-{
-  "secrets": ["STRIPE_KEY"],
-  "env": [],
-  "config": { "DATABASE_HOST": "orders-db-old" }
-}
-```
-
-```json title="app_metrics"
-{ "name": "web", "window": "1h" }
-```
-
-The agent reports that `DATABASE_HOST` points at a host that might not exist. The agent cannot change anything, because
-its token is read-only. `set_variable` was never in its tool list.
+The agent reports that `DATABASE_HOST` points at a host that might not exist. The agent cannot change anything,
+because `set_variable` was never in its tool list.
 
 ### Change a variable and redeploy
 
-The agent has a **Full access** token, or a project token for `proj-1a2b3c4d` / `production`. A person tells the agent
-to point `web` at the new database host.
+The agent has a **Full access** token, or a project token for the environment. A person tells the agent to point
+`web` at the new database host:
 
 ```json title="set_variable"
 { "app": "web", "key": "DATABASE_HOST", "value": "orders-db", "deploy": true }
 ```
 
-With `deploy` set, the tool deploys and waits up to 300 seconds for the outcome:
-
-```json
-{
-  "app": "web",
-  "change": "set",
-  "deploy": {
-    "app": "web",
-    "ready": true,
-    "status": {
-      "name": "web",
-      "project": "proj-1a2b3c4d",
-      "environment": "production",
-      "state": "ready",
-      "url": "https://web.example.com",
-      "ready": true,
-      "pendingChanges": 0,
-      "replicas": { "desired": 2, "ready": 2, "available": 2 }
-    }
-  },
-  "key": "DATABASE_HOST"
-}
-```
-
-Without `deploy`, the result has `"pending": true` and `"next": "call deploy_app to apply it"`. When the agent has made
-all its changes, it calls `deploy_app` with `wait` set:
+With `deploy` set, the tool deploys and waits up to 300 seconds for the result. Without `deploy`, the result has
+`"pending": true` and `"next": "call deploy_app to apply it"`. After the agent makes all its changes, it calls
+`deploy_app`:
 
 ```json title="deploy_app"
 { "app": "web", "wait": true, "timeout_seconds": 300 }
 ```
 
-If the build fails, the result is not an error. The result says `"failed": true`, and it gives the reason in `error`
-and in `status.build.failureReason`. Thus, the agent can decide what to do next.
-
-### Roll back a bad release
-
-The agent lists the history, newest first, and goes back to the previous deployment.
-
-```json title="app_deployments"
-{ "app": "web" }
-```
-
-```json
-{
-  "items": [
-    { "id": "web-k7x2p", "phase": "Recorded", "image": "ghcr.io/acme/storefront:2f9c1d4", "actor": "Dashboard", "changeTitle": "Deploy ghcr.io/acme/storefront:2f9c1d4", "createdAt": "2026-10-12T09:38:12Z" },
-    { "id": "web-9fq4m", "phase": "Recorded", "image": "ghcr.io/acme/storefront:b71e0aa", "actor": "Dashboard", "changeTitle": "Deploy ghcr.io/acme/storefront:b71e0aa", "createdAt": "2026-10-11T15:02:40Z" }
-  ]
-}
-```
-
-```json title="rollback_app"
-{ "app": "web", "deployment": "web-9fq4m", "wait": true }
-```
-
-To go to the deployment before the newest, leave out `deployment`. The result has the same outcome as `deploy_app`.
-
-### Scale under load
-
-```json title="app_metrics"
-{ "name": "web", "window": "1h" }
-```
-
-The `cpu` series stays high. The agent scales out and checks the result:
-
-```json title="scale_app"
-{ "app": "web", "replicas": 4 }
-```
-
-```json
-{ "app": "web", "replicas": 4 }
-```
-
-```json title="app_status"
-{ "app": "web" }
-```
-
-A scale change takes effect immediately, and it needs no deploy.
+If the build fails, the result is not an error. The result has `"failed": true`, and the reason in `error`. So the
+agent can decide what to do next.
 
 ### Schedule a function
 
-```json title="set_function_trigger"
-{ "app": "report", "name": "nightly", "schedule": "0 3 * * *", "path": "/run" }
-```
+1. `set_function_trigger` with `{ "app": "report", "name": "nightly", "schedule": "0 3 * * *", "path": "/run" }`. The
+   result has `"pending": true`.
+2. `deploy_app` with `{ "app": "report", "wait": true }`. The schedule starts with the deploy.
 
-```json
-{ "app": "report", "next": "call deploy_app to start the schedule", "pending": true, "trigger": "nightly" }
-```
-
-```json title="deploy_app"
-{ "app": "report", "wait": true }
-```
-
-```json title="invoke_function"
-{ "app": "report", "path": "/run" }
-```
-
-The schedule starts with the deploy. `invoke_function` runs the function now. Thus, an agent should call
-`invoke_function` only when the function is meant to run.
-
-## What happens under the hood
-
-`geass mcp` is the client of the command line for the `/api/v1` API (see [REST API](/docs/reference/rest-api/)), behind
-an MCP server that uses the official MCP Go SDK. Each tool is one or two API calls.
-[MCP tools](/docs/reference/mcp-tools/) lists these calls. There is no separate state.
-
-- When a session starts, the server calls `GET /me` with the token to learn its role. Then it registers only the tools
-  that the role can use. That call is the only call that the server makes before the agent asks for something.
-- Over HTTP, the server builds one MCP server for each token. It keeps that MCP server for 5 minutes, and it shares that
-  MCP server between the sessions of that token. Every tool call still goes to Geass with the token. Thus, a revoked
-  token stops working immediately, although its tools stay listed until the session ends.
-- A deploy that waits reads `GET /apps/{name}/status` every 3 seconds. If the client asked for progress notifications,
-  the server sends them as the state changes.
+`invoke_function` runs the function immediately. An agent calls it only when the function must run now.
 
 ## Troubleshooting
 
@@ -544,10 +396,9 @@ the agent.
 **A tool answers `... (it does not exist, or is not visible to this token)`.** The name is wrong, or the service is
 outside the environment of a project token. `list_apps` shows the names that the token can see.
 
-**`get_logs` says `No log lines matched.` though the service logs.** `level` and `search` look only through the newest
-lines. The dashboard reads `tail` lines from the end of the log of each copy, and it filters them after that. Raise
-`tail` (up to 500), or loosen `since`, `level`, and `search`. A service with no running copy also returns
-`No log lines matched.`
+**`get_logs` says `No log lines matched.` though the service logs.** `level` and `search` look only through the last
+`tail` lines of each copy. Raise `tail`, up to 500, or loosen `since`, `level`, and `search`. A service with no running
+copy also returns `No log lines matched.`
 
 **`deployment_logs` shows `... (N earlier lines left out)`.** Each stage is cut to its last 200 lines. A failed build or
 rollout says why in those lines. To read the whole log, run `geass api GET /apps/APP/deployments/ID/logs`.
@@ -578,6 +429,21 @@ MCP client sends `Content-Type: application/json`, and an `Accept` header that l
 `text/event-stream`.
 
 **`listen tcp 127.0.0.1:8765: bind: address already in use`.** Another process uses the port. Use another address.
+
+## Under the hood
+
+- `geass mcp` calls the same `/api/v1` API as the command line. Each tool is one or two API calls. There is no
+  separate state.
+- When a session starts, the server calls `GET /me` with the token, and registers only the tools that its role can
+  use. Each tool call still goes to Geass with the token. So a revoked token stops working immediately, although its
+  tools stay listed until the session ends.
+- A deploy that waits reads the status of the service every 3 seconds, and sends progress notifications when the
+  client asks for them.
+- The Geass log records each API call with its method, path, and status, but not the caller:
+
+  ```bash
+  kubectl -n geass-system logs deployment/geass-controller-manager -c manager
+  ```
 
 ## Related
 

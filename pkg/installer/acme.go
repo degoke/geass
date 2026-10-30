@@ -4,19 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
 // acmeEmailEnv names the contact address for the cluster's Let's Encrypt account.
 const acmeEmailEnv = "GEASS_ACME_EMAIL"
-
-// acmeEmailMaxLength and acmeEmailPattern are what the GeassCluster CRD accepts for
-// spec.addons.certManager.acmeEmail. Checking here fails a bad value at the first step, instead of the
-// last one rejecting the cluster after k3s and the operator are already installed.
-const acmeEmailMaxLength = 254
-
-var acmeEmailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // ACMEEmailFromEnv reads the contact address from the environment, as the installer's other switches are.
 // It may be empty: the cluster then installs without a certificate issuer, and says so.
@@ -30,7 +24,8 @@ func ValidateACMEEmail(email string) error {
 	if email == "" {
 		return nil
 	}
-	if len(email) > acmeEmailMaxLength || !acmeEmailPattern.MatchString(email) {
+	// Checked here, so that a bad value fails the first step instead of the cluster object after K3s is installed.
+	if !platform.ValidACMEEmail(email) {
 		return fmt.Errorf("%s %q is not an email address", acmeEmailEnv, email)
 	}
 	return nil

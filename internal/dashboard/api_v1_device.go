@@ -209,7 +209,7 @@ func (s *Server) handleDeviceToken(w http.ResponseWriter, r *http.Request) {
 	switch flow.status {
 	case "approved":
 		delete(s.devices.byDevice, deviceCode)
-		out := map[string]any{"token": flow.token, "tokenType": "Bearer", "role": flow.role, "approvedBy": flow.username}
+		out := map[string]any{"token": flow.token, "tokenType": "Bearer", formRole: flow.role, "approvedBy": flow.username}
 		if flow.expiry != nil {
 			out["expiresAt"] = flow.expiry
 		}

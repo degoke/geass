@@ -54,6 +54,8 @@ func run(args []string) int {
 	fmt.Printf("%s: %s\n", release.Describe(release.Version), mode)
 
 	var steps []installer.Step
+	// summary is what a new cluster ends with: the first sign-in and how to open the dashboard. Only an install has one.
+	var summary func() installer.NextSteps
 	switch mode {
 	case installer.ModeUpgrade:
 		steps = upgradeSteps(opts)
@@ -64,12 +66,14 @@ func run(args []string) int {
 	case installer.ModeEtcdSnapshots:
 		steps = installer.EtcdSnapshotsSteps(opts)
 	case installer.ModeReinstall:
+		var install []installer.Step
+		install, summary = installSteps(opts)
 		steps = append([]installer.Step{
 			&installer.ConfirmReinstall{Yes: opts.Yes, SkipSnapshot: opts.Upgrade.SkipSnapshot},
 			installer.ReinstallSnapshot(installer.NewUpgradePlan(opts.Upgrade)),
-		}, installSteps(opts)...)
+		}, install...)
 	default:
-		steps = installSteps(opts)
+		steps, summary = installSteps(opts)
 	}
 
 	installer.Logf("installer", "Starting %s with %d steps", mode, len(steps))
@@ -91,6 +95,10 @@ func run(args []string) int {
 		duration := time.Since(start).Round(time.Millisecond)
 		installer.Logf(step.Name(), "Step completed successfully in %s", duration)
 		fmt.Printf("✓ %s\n", step.Name())
+	}
+	if summary != nil {
+		// Printed, not logged: it can hold the first user's password.
+		fmt.Print(summary().String())
 	}
 	return 0
 }
@@ -119,8 +127,9 @@ func upgradeSteps(opts installer.Options) []installer.Step {
 	return installer.UpgradeSteps(installer.NewUpgradePlan(opts.Upgrade))
 }
 
-// installSteps builds a cluster. It is also what a reinstall does after it has removed the old one.
-func installSteps(opts installer.Options) []installer.Step {
+// installSteps builds a cluster. It is also what a reinstall does after it has removed the old one. The summary is read
+// after the steps have run, since it says what they did.
+func installSteps(opts installer.Options) ([]installer.Step, func() installer.NextSteps) {
 	// GEASS_MULTI_SITE=1 GEASS_NODE_EXTERNAL_IP=<public ip> builds a cluster whose nodes are at
 	// different providers: an encrypted WireGuard overlay instead of VXLAN, and the public IP advertised.
 	// GEASS_MESH=wireguard is the same and also records spec.network.mesh; GEASS_MESH=tailscale joins a tailnet.
@@ -136,6 +145,10 @@ func installSteps(opts installer.Options) []installer.Step {
 	// Whether K3s sends copies of the cluster's state to an S3 bucket of the person's own. It is never on unless it was
 	// asked for or the person at the terminal says yes, and it is decided before K3s starts, which reads it at start.
 	snapshots := &installer.EtcdSnapshotsChoice{}
+	access := &installer.DashboardAccess{}
+	ready := &installer.WaitForGeass{}
+	admin := &installer.DashboardAdmin{}
+	summary := func() installer.NextSteps { return installer.NextStepsFor(admin, access, ready, network, acmeEmail) }
 
 	return []installer.Step{
 		// OS, memory, disk, arch, the ACME email, and WireGuard for multi-site.
@@ -173,5 +186,11 @@ func installSteps(opts installer.Options) []installer.Step {
 		&installer.SetEtcdSnapshotsDestination{Destination: opts.EtcdSnapshots.Destination, Choice: snapshots},
 		// And take the first copy at once, so that it is known whether they arrive before noon.
 		&installer.TakeFirstEtcdSnapshot{Destination: opts.EtcdSnapshots.Destination, Choice: snapshots},
-	}
+		// Keep the dashboard on this machine's loopback address, where an SSH port forward reaches it.
+		access,
+		// The first dashboard user, before the long wait, so that an install stopped during it still has one.
+		admin,
+		// Wait for the add-ons, so that the install ends when Geass can run what is deployed to it. It never fails.
+		ready,
+	}, summary
 }

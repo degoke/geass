@@ -130,6 +130,99 @@ describe("GeassDashboard", () => {
     expect(screen.queryByText("K3s (control plane)")).toBeNull();
   });
 
+  it("lists a server that did not join with its error, and retries it from the table", async () => {
+    const capacity = {
+      known: true,
+      nodes: [
+        { name: "main", role: "control-plane", ready: true, schedulable: true, cpuAllocatable: "4", memoryAllocatable: "8Gi" },
+        { name: "worker-2", role: "worker", ready: true, schedulable: false, cpuAllocatable: "2", memoryAllocatable: "4Gi" },
+        { name: "upgrading", role: "worker", ready: true, schedulable: false, cordonedBy: "upgrade", cpuAllocatable: "2", memoryAllocatable: "4Gi" },
+      ],
+    };
+    const failure = "ssh dial 198.51.100.7:22: connection refused";
+    let retried = 0;
+    let cordoned = 0;
+    const { fetchStub, requests } = geassApi({
+      "/api/bootstrap": () => json(bootstrap({ platform: { session: { username: "t", role: "admin", canMutate: true, platformAdmin: true }, capacity } })),
+      "/api/v1/servers": () => json({
+        items: [
+          { name: "main", role: "control-plane", phase: "Ready", joined: true, node: "main", canRemove: false },
+          { name: "edge-1", role: "worker", phase: "Failed", message: failure, joined: false, canRetry: true, canUpdateHostKeys: true, canRemove: true, address: "198.51.100.7" },
+        ],
+      }),
+      "/api/servers/edge-1/retry": () => { retried += 1; return json({ ok: true }); },
+      "/api/nodes/worker-2/uncordon": () => { cordoned += 1; return json({ ok: true, cordoned: false }); },
+    });
+    mount({ fetchStub, path: "/acme/clusters/c1/cluster" });
+
+    await screen.findByText(failure);
+    const row = screen.getByText("edge-1").closest("tr");
+    expect(within(row).getByText("Failed")).toBeTruthy();
+    // What is next for a failed server is in the row. The rest is in its menu.
+    expect(screen.getByRole("button", { name: "Retry edge-1" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for edge-1" }));
+    const menuOf = async (name) => {
+      fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+      const items = await screen.findAllByRole("menuitem");
+      const labels = items.map((item) => item.textContent);
+      const disabled = items.filter((item) => item.hasAttribute("data-disabled") || item.disabled).map((item) => item.textContent);
+      fireEvent.keyDown(items[0], { key: "Escape" });
+      await waitFor(() => expect(screen.queryAllByRole("menuitem")).toHaveLength(0));
+      return { labels, disabled };
+    };
+    expect((await menuOf("edge-1")).labels).toEqual(["Update host keys", "Remove"]);
+    // The control plane has no Remove.
+    expect((await menuOf("main")).labels).toEqual(["Edit", "Cordon"]);
+    // A node that Geass cordoned cannot be uncordoned by hand.
+    expect(await menuOf("upgrading")).toEqual({ labels: ["Edit", "Uncordon", "Remove"], disabled: ["Uncordon"] });
+    expect(screen.getByText("Cordoned by Geass to upgrade it")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry edge-1" }));
+    await waitFor(() => expect(retried).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "Actions for worker-2" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Uncordon" }));
+    await waitFor(() => expect(cordoned).toBe(1));
+    expect(requests.filter((request) => request.method === "POST").every((request) => request.authorization === "Bearer gsw_test")).toBe(true);
+  });
+
+  it("sends new host keys for a server from the table", async () => {
+    let sent = "";
+    const { fetchStub } = geassApi({
+      "/api/bootstrap": () => json(bootstrap({ platform: { session: { username: "t", role: "admin", canMutate: true, platformAdmin: true }, capacity: { known: true, nodes: [] } } })),
+      "/api/v1/servers": () => json({ items: [{ name: "edge-1", role: "worker", phase: "Failed", message: "host key", joined: false, canRetry: true, canUpdateHostKeys: true, canRemove: true, address: "198.51.100.7" }] }),
+      "/api/servers/edge-1/host-keys": (_url, init) => { sent = new URLSearchParams(init.body).get("knownHosts"); return json({ ok: true, failed: true }); },
+    });
+    mount({ fetchStub, path: "/acme/clusters/c1/cluster" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for edge-1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Update host keys" }));
+    fireEvent.change(await screen.findByLabelText("Host keys"), { target: { value: "198.51.100.7 ssh-ed25519 AAAA" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save host keys" }));
+    await waitFor(() => expect(sent).toBe("198.51.100.7 ssh-ed25519 AAAA"));
+  });
+
+  it("shows every check of the HA readiness report, and which one did not pass", async () => {
+    const conditions = [
+      { type: "NodesReady", status: "False", reason: "HealthyNodes", message: "At least three healthy schedulable nodes are required", lastTransitionTime: "2026-10-30T10:00:00Z" },
+      { type: "StorageReady", status: "True", reason: "StorageClass", message: "A usable persistent storage class is required", lastTransitionTime: "2026-10-30T10:00:00Z" },
+      { type: "Ready", status: "False", reason: "HAReadiness", message: "HA prerequisites are satisfied", lastTransitionTime: "2026-10-30T10:00:00Z" },
+    ];
+    const { fetchStub } = geassApi({
+      "/api/bootstrap": () => json(bootstrap({
+        platform: { session: { username: "t", role: "admin", canMutate: true, platformAdmin: true }, haReady: false },
+        haReadiness: { items: [{ metadata: { name: "platform" }, status: { healthyNodes: 2, conditions } }] },
+      })),
+    });
+    mount({ fetchStub, path: "/acme/clusters/c1/cluster" });
+
+    await screen.findByText("At least three healthy schedulable nodes are required. Now: 2.");
+    const nodes = screen.getByText("Healthy nodes", { selector: "td" }).closest("tr");
+    expect(within(nodes).getByText("Not passed")).toBeTruthy();
+    expect(screen.getByText("Every check above must pass.")).toBeTruthy();
+    const storage = screen.getByText("Storage for databases").closest("tr");
+    expect(within(storage).getByText("Passed")).toBeTruthy();
+  });
+
   it("leaves out a project's Tokens section when the host hides tokens, and shows it otherwise", async () => {
     const path = "/acme/clusters/c1/projects/proj-1/settings";
     const shown = mount({ fetchStub: geassApi().fetchStub, path });

@@ -176,6 +176,10 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return result, nil
 	}
 
+	// A person who asked for an add-on's install to be tried again has the stuck job deleted first, so the pass below sees
+	// the new one start.
+	r.reconcileAddonRetry(ctx, &cluster)
+
 	addonsReady, certManagerReady, err := r.reconcileAddons(ctx, &cluster)
 	if err != nil {
 		return r.updateStatus(ctx, &cluster, false, err)
@@ -219,6 +223,8 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileEtcdSnapshots(ctx, &cluster))
 	// And the databases on a node that has been gone for a long while, which Kubernetes leaves as they are.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileLostNodes(ctx, &cluster))
+	// Last, how each add-on is doing, so that it says what the passes above have just done.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileAddonStatus(ctx, &cluster))
 	return result, nil
 }
 

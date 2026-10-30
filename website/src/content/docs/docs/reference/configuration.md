@@ -348,12 +348,10 @@ The installer creates one, named `default`. See [GeassCluster](/docs/reference/r
 | `spec.serverURL` | The address of the control plane itself on its default route, for a single-site install | The address that workers join. The installer fills it in with the address that its default route uses, which is a private address on most cloud servers. A multi-site install writes the public address. A loopback address is never used: workers join on the address of the control plane node itself instead. Set it only to use a different address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join) |
 | `spec.tokenSecretRef`, `spec.version` | `geass-token` in `geass-system`, and `v1` | The Secret with the join token, and a label that is not a K3s version |
 
-The dashboard has no switch for the serverless add-on. Turn it on with `kubectl`:
-
-```bash title="Turn on the scale-to-zero add-on"
-kubectl -n geass-system patch geasscluster default --type merge \
-  -p '{"spec":{"addons":{"serverless":{"enabled":true}}}}'
-```
+To turn the add-ons on or off, open **Settings** and select **Add-ons**, or run `geass addons`. See
+[Observability](/docs/guides/observability/#change-the-add-ons), [Storage](/docs/guides/storage/#turn-on-replicated-storage),
+and [Sleep when idle](/docs/guides/scale-to-zero/#turn-on-the-add-on). The page sets the fields in the table above. To set them with
+`kubectl`, see [Set the add-ons with kubectl](/docs/guides/observability/#the-add-on-settings).
 
 The add-on takes a few minutes to come up. Until it is up, a service that asks to sleep continues to run, and its `ScaleToZero` condition
 says why.
@@ -491,13 +489,13 @@ restarted (`rollout status`).
 **Metrics are empty.** Check `spec.prometheusURL` on the platform configuration and `GEASS_PROMETHEUS_URL`. Then make sure that the monitoring add-on is turned on, and that
 Prometheus answers at that address. See [Observability](/docs/guides/observability/).
 
-**Log history says "not set up".** The logging add-on is off in `spec.addons.logging.enabled`. The installer turns it on for the clusters that it builds.
+**Log history says "not set up".** The logging add-on is off. Turn on **Logs** in **Settings** → **Add-ons**. The installer turns it on for the clusters that it builds.
 
 **A multi-site install stops with "needs this node's public address".** Set `GEASS_NODE_EXTERNAL_IP` to the public IP of the node.
 
 **A service never sleeps after you turn on sleep when idle.** The `ScaleToZero` condition on the service says why. The usual causes are these:
 
-- `spec.addons.serverless.enabled` is not `true` on the `GeassCluster`.
+- The Sleep when idle add-on is off. Turn it on in **Settings** → **Add-ons**.
 - The add-on in `keda` is still coming up.
 - The service has no public host, or it still has CPU autoscaling on.
 
