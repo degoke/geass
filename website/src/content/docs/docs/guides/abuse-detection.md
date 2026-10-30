@@ -1,45 +1,45 @@
 ---
 title: "Abuse detection"
-description: "Find organizations' services that may be mining or abusing a shared cluster: what Geass can see and cannot, how suspects are reviewed, and how to plug in Falco."
+description: "Find organizations' services that might mine or abuse a shared cluster: what Geass can and cannot see, how to review suspects, and how to connect Falco."
 ---
 
-On a cluster that several [organizations](/docs/guides/organizations-and-workspaces/) share, the classic abuse is free compute: a stranger's service that mines a cryptocurrency on the platform's machines, or does some other work nobody pays for. **Abuse detection** looks for the services of organizations' projects that may be doing it, says so to the platform's administrators, and, if you ask it to, scales a suspect to zero until somebody has looked.
+On a cluster that several [organizations](/docs/guides/organizations-and-workspaces/) share, the classic abuse is free compute. For example, a stranger's service mines a cryptocurrency on the platform's machines, or does other work that nobody pays for. **Abuse detection** looks for the services of organizations' projects that might do this. It tells the platform's administrators about them. If you tell it to, it also scales a suspect to zero until a person has examined it.
 
-It is off until the platform sets it. A Geass whose platform sets none is unchanged: nothing is sampled, nothing is written, and no service is touched.
+Abuse detection is off until the platform sets it. If the platform sets nothing, Geass does not change: it samples nothing, writes nothing, and touches no service.
 
-**What it finds is a signal, never proof.** Geass sees a container from the outside: how much CPU it uses, how many requests reach it, and what a detector you run tells it. A miner uses all the CPU it is allowed, for hours, while nobody calls it. So do a batch job, a render, the training of a model, a load test and a queue worker that is behind. That is why every suspect is reviewed by a person, why the default action changes nothing, and why there are exemptions.
+**What it finds is a signal, never proof.** Geass sees a container from the outside. It sees how much CPU the container uses, how many requests reach it, and what a detector that you run tells Geass. A miner uses all the CPU that it is allowed, for hours, while nobody calls it. A batch job, a render, the training of a model, a load test, and a queue worker that is behind do the same. For these reasons, a person reviews every suspect, the default action changes nothing, and there are exemptions.
 
 ## What it can see, and what it cannot
 
 | Input | What it says | From | Firm? |
 | --- | --- | --- | --- |
-| **Sustained CPU** | A service whose copies use nearly all the CPU they are allowed (90% by default), without a break, for a window (30 minutes by default). | The cluster's metrics server (`metrics.k8s.io`), which K3s runs, and which a service's CPU autoscaler already needs. Nothing to install. | **A signal.** Legitimate heavy work looks the same. See [False positives](#false-positives). |
-| **Few requests** (optional) | That the busy service is not being called, which a miner never is and a busy web service always is. | The requests the ingress (Traefik) passes to the service, from the cluster's Prometheus. Only while the [monitoring add-on](/docs/guides/observability/) is on. | **A signal**, and a partial one: only requests through the ingress are seen. See [Quiet services](#quiet-services). |
-| **A report from a detector outside Geass** | Whatever that detector saw: a process called `xmrig`, a connection to a pool, a stratum handshake. | Falco (through falcosidekick), Tetragon, or the provider's own tooling, sent to the API. Geass installs none of them. | As good as the detector and its rule. See [Outside detectors](#outside-detectors). |
-| **Mining pools' ports** | Nothing: they are closed, not watched. | The [outbound limits](/docs/guides/outbound-limits/#mining) (`miningPools: Blocked`). | **A heuristic** that a miner on port 443 walks past. It detects nothing. |
+| **Sustained CPU** | A service whose copies use nearly all the CPU that they are allowed (90% by default), without a break, for a window (30 minutes by default). | The cluster's metrics server (`metrics.k8s.io`). K3s runs it, and a service's CPU autoscaler already needs it. You install nothing. | **A signal.** Legitimate heavy work looks the same. See [False positives](#false-positives). |
+| **Few requests** (optional) | That nobody calls the busy service. Nobody calls a miner, but somebody always calls a busy web service. | The requests that the ingress (Traefik) passes to the service, from the cluster's Prometheus. Only while the [monitoring add-on](/docs/guides/observability/) is on. | **A signal**, and a partial one: Geass sees only the requests that go through the ingress. See [Quiet services](#quiet-services). |
+| **A report from a detector outside Geass** | What that detector saw. For example, a process called `xmrig`, a connection to a pool, or a stratum handshake. | Falco (through falcosidekick), Tetragon, or the provider's own tooling sends it to the API. Geass installs none of these tools. | As good as the detector and its rule. See [Outside detectors](#outside-detectors). |
+| **Mining pools' ports** | Nothing. The ports are closed, not watched. | The [outbound limits](/docs/guides/outbound-limits/#mining) (`miningPools: Blocked`). | **A heuristic** that a miner on port 443 goes around. It detects nothing. |
 
-What it does **not** detect:
+Abuse detection does **not** detect these things:
 
-- **A miner that keeps below the threshold.** One that is throttled to 80% of its limit, or that runs "low and slow", is never suspected: the threshold is the line, and a careful miner stays under it.
-- **A miner that pauses**, for one sample a window, or that restarts itself more often than the window. Every break starts the count again; that is what keeps restarts and rollouts from being counted, and it is also a way around it.
-- **A miner that sleeps**, or that only mines at night: each run is judged on its own.
-- **Mining on a GPU.** Geass sees the CPU. A service that is given a GPU and uses it all says nothing here.
+- **A miner that keeps below the threshold.** Geass never suspects a miner that is throttled to 80% of its limit, or that runs "low and slow". The threshold is the line, and a careful miner stays under it.
+- **A miner that pauses** for one sample in each window, or that restarts itself more often than the window. Every break starts the count again. This rule keeps restarts and rollouts out of the count, and it is also a way around the signal.
+- **A miner that sleeps**, or that mines only at night. Geass judges each run separately.
+- **Mining on a GPU.** Geass sees the CPU. A service that has a GPU and uses all of it shows nothing here.
 - **What a program is, or where it connects.** Geass does not look inside containers. A miner that connects to a pool on port 443, or through a proxy, looks like any other client.
-- **Builds.** A build is not a service. It runs the organization's Dockerfile, and a build that mines for its whole length is not looked at (builds are limited by their own [limits](/docs/guides/tenant-limits/) and [sandbox](/docs/operations/sandboxed-runtime/)).
-- **Databases, buckets and the platform's own services**, and the projects of no organization. Only the services (and functions) of organizations' projects are looked at.
-- **What one organization costs in total.** The [usage meter](/docs/guides/usage-and-capacity/) bills what is reserved; this looks for patterns of use.
+- **Builds.** A build is not a service. A build runs the organization's Dockerfile, and Geass does not examine a build, even one that mines for its whole length. Builds have their own [limits](/docs/guides/tenant-limits/) and [sandbox](/docs/operations/sandboxed-runtime/).
+- **Databases, buckets, and the platform's own services**, and the projects that belong to no organization. Geass examines only the services and functions of organizations' projects.
+- **What one organization costs in total.** The [usage meter](/docs/guides/usage-and-capacity/) bills what is reserved. Abuse detection looks for patterns of use.
 
 ## Before you start
 
-- Organizations are set up, and projects are given to them (`spec.org`).
-- **The metrics server answers.** K3s runs one unless it was started with `--disable=metrics-server`. Check with `kubectl top pods -A`. Without it the signal measures nothing, and the API says so (`cpu.metricsServer.available: false`).
-- **Containers have a CPU limit, or at least a request.** The share is what a service uses over what it is allowed. A container with neither has no share to take, and its service is never measured. The [noisy-neighbour limits](/docs/guides/tenant-limits/) give every container of an organization a default limit; set them first.
-- Only a platform administrator can turn it on, with `kubectl` (or anything that writes the resources), and only the platform's administrators see the suspects: no page of the dashboard shows them yet. The [API](#review-a-suspect) is how you read and review them.
-- **What it does to running services.** With the default action, `None`, nothing: a suspect is said to be one, and runs on. With `Suspend`, a suspect is scaled to zero the moment it is suspected. Start with `None`, watch what is found for a while, and switch to `Suspend` once you trust the settings on your cluster. **Switching does not reach a service that is already a suspect**: see [Suspend](#suspend).
+- You have set up organizations, and you have given projects to them (`spec.org`).
+- **The metrics server answers.** K3s runs one, unless someone started K3s with `--disable=metrics-server`. To check, run `kubectl top pods -A`. Without a metrics server, the signal measures nothing, and the API says so (`cpu.metricsServer.available: false`).
+- **Containers have a CPU limit, or at least a request.** The share is what a service uses, divided by what it is allowed. A container with neither has no share to take, and Geass never measures its service. The [noisy-neighbour limits](/docs/guides/tenant-limits/) give every container of an organization a default limit. Set them first.
+- Only a platform administrator can turn abuse detection on. To turn it on, use `kubectl` or any other tool that writes the resources. Only the platform's administrators see the suspects. No page of the dashboard shows them yet. Use the [API](#review-a-suspect) to read and review them.
+- **What it does to running services.** With the default action, `None`, it does nothing: Geass marks a suspect as a suspect, and the suspect continues to run. With `Suspend`, Geass scales a suspect to zero immediately when it suspects it. Start with `None`, and watch what Geass finds for some time. Switch to `Suspend` after you trust the settings on your cluster. **Switching does not reach a service that is already a suspect**: see [Suspend](#suspend).
 
 ## Turn it on
 
-The settings are in the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/), under `spec.tenancy.abuse`. Setting the section at all turns it on with its defaults; everything inside is optional:
+The settings are in the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/), under `spec.tenancy.abuse`. If you set the section at all, abuse detection turns on with its defaults. Every field in the section is optional:
 
 ```yaml title="platform-abuse.yaml"
 apiVersion: geass.geass.dev/v1alpha1
@@ -62,30 +62,30 @@ spec:
             windowMinutes: 60
 ```
 
-Patch it in rather than applying the fragment alone:
+Patch the section into the existing resource. Do not apply the fragment alone:
 
 ```bash
 kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"tenancy":{"abuse":{}}}}'
 ```
 
-That is the defaults: 90% for 30 minutes, action `None`. To turn it off: `kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"tenancy":{"abuse":null}}}'`. See [Turn it off](#turn-it-off) for what that does to suspects.
+This command sets the defaults: 90% for 30 minutes, and the action `None`. To turn abuse detection off, run `kubectl -n geass-system patch geassplatformconfig platform --type merge -p '{"spec":{"tenancy":{"abuse":null}}}'`. For what that does to suspects, see [Turn it off](#turn-it-off).
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `action` | `None` | What is done to a suspect: `None` says so and changes nothing; `Suspend` also scales it to zero until a platform administrator releases or clears it. It is read when a suspicion is raised: a service that is a suspect already is not suspended when the action is switched to `Suspend` later. |
+| `action` | `None` | What Geass does to a suspect. `None` marks the suspect and changes nothing. `Suspend` also scales it to zero until a platform administrator releases or clears it. Geass reads the action when it raises a suspicion. If you switch the action to `Suspend` later, Geass does not suspend a service that is already a suspect. |
 | `reviewExemptionDays` | 30 | 1 to 365. How long the CPU signal leaves a service alone after a platform administrator has cleared it. |
-| `cpu.thresholdPercent` | 90 | 50 to 100. The share of what its copies are allowed that a service has to use in every sample. |
-| `cpu.windowMinutes` | 30 | 10 to 1440. How long it has to last without a break. |
-| `cpu.quietTraffic.maxRequestsPerMinute` | none (requests not considered) | 0 or more. When set, a sample counts only while the ingress passes the service at most this many requests a minute, averaged over five minutes. |
-| `cpu.quietTraffic.withoutTrafficData.thresholdPercent` | the larger of 95 and `thresholdPercent` | 50 to 100. Replaces the threshold while the requests cannot be read. |
-| `cpu.quietTraffic.withoutTrafficData.windowMinutes` | twice `windowMinutes`, at most 1440 | 10 to 1440. Replaces the window while the requests cannot be read. |
+| `cpu.thresholdPercent` | 90 | 50 to 100. The share of what its copies are allowed that a service must use in every sample. |
+| `cpu.windowMinutes` | 30 | 10 to 1440. How long the use must last without a break. |
+| `cpu.quietTraffic.maxRequestsPerMinute` | none (requests not considered) | 0 or more. When you set it, a sample counts only while the ingress passes the service at most this many requests a minute, averaged over five minutes. |
+| `cpu.quietTraffic.withoutTrafficData.thresholdPercent` | the larger of 95 and `thresholdPercent` | 50 to 100. Replaces the threshold while Geass cannot read the requests. |
+| `cpu.quietTraffic.withoutTrafficData.windowMinutes` | twice `windowMinutes`, at most 1440 | 10 to 1440. Replaces the window while Geass cannot read the requests. |
 
-An organization is treated by the platform's settings, with what its own `spec.abuse` on the [GeassOrganization](/docs/reference/resources/geass-organization/) says in their place:
+Geass applies the platform's settings to an organization. Where the organization's own `spec.abuse` on the [GeassOrganization](/docs/reference/resources/geass-organization/) sets a field, that field replaces the platform's setting:
 
 | Field | Meaning |
 | --- | --- |
 | `spec.abuse.exempt` | `true` leaves every service of the organization out of the CPU signal. A report from an outside detector still applies. |
-| `spec.abuse.exemptProjects` | The organization's projects whose services are left out of the CPU signal. A report still applies. |
+| `spec.abuse.exemptProjects` | The organization's projects whose services the CPU signal leaves out. A report still applies. |
 | `spec.abuse.action` | `None` or `Suspend`, in place of the platform's action, for the organization's suspects. |
 
 ```bash
@@ -93,62 +93,101 @@ An organization is treated by the platform's settings, with what its own `spec.a
 kubectl -n geass-system patch geassorganization org-1a2b3c4d --type merge -p '{"spec":{"abuse":{"exemptProjects":["proj-render"]}}}'
 ```
 
-Like the rest of an organization's spec, `spec.abuse` is the platform's to write. No route of the dashboard changes it, and an organization's people cannot exempt themselves.
+Like the rest of an organization's spec, only the platform writes `spec.abuse`. No route of the dashboard changes it, and an organization's people cannot exempt themselves.
 
 ## How the CPU signal works
 
-Once a minute the operator that holds the leader lease looks at every deployed service of every organization's project, less those that are exempt, already suspected or cleared, and takes a **sample**: what all the service's copies use, from the metrics server (each copy's use is the metrics server's average over its own short window, 15 seconds on K3s), over what they are allowed together (each container's CPU limit, or its request when it has none). A container that runs beside the service for the pod's life, such as a sidecar, counts in both.
+Every minute, the operator that holds the leader lease examines every deployed service of every organization's project. It skips the services that are exempt, already suspected, or cleared. For each other service, it takes a **sample**. A sample is what all the service's copies use, divided by what they are allowed together:
 
-A service is only measured when it is **settled**: every copy its Deployment asks for is there, up to date and ready, and each has been running, with each of its containers since it last started, for **three minutes**. A sample of a service that is not settled is not taken, and ends its count. That is what keeps these from ever adding up to a suspicion:
+- The use comes from the metrics server. Each copy's use is the metrics server's average over its own short window, which is 15 seconds on K3s.
+- The allowance is each container's CPU limit, or its request when it has no limit.
 
-- **A rollout.** New copies start busy (a runtime warming up, a migration, a cache filling), next to the old ones. The count starts again three minutes after the rollout ends, from zero.
-- **A restart.** A copy whose container restarted is a new count, even when the restart is quick.
-- **A change in the number of copies**, by a person, by the CPU autoscaler, or by scale to zero waking the service. An autoscaled service is suspected only once it has stayed at one number of copies for the whole window.
+A container that runs beside the service for the pod's life, such as a sidecar, counts in both values.
+
+Geass measures a service only when the service is **settled**. A settled service meets these conditions:
+
+- Every copy that its Deployment asks for is there, up to date, and ready.
+- Each copy has been running for **three minutes**, and each of its containers has been running for three minutes since it last started.
+
+Geass does not take a sample of a service that is not settled, and that missing sample ends the service's count. For this reason, these events never add up to a suspicion:
+
+- **A rollout.** New copies start busy, next to the old ones. For example, a runtime warms up, a migration runs, or a cache fills. The count starts again from zero, three minutes after the rollout ends.
+- **A restart.** A copy whose container restarted starts a new count, even when the restart is quick.
+- **A change in the number of copies**, by a person, by the CPU autoscaler, or by scale to zero when it wakes the service. Geass suspects an autoscaled service only after the service has stayed at one number of copies for the whole window.
 - **No copies at all**, because the service is stopped, asleep under [scale to zero](/docs/guides/scale-to-zero/), or suspended.
 
-A **run** is an unbroken string of samples at or above the threshold. A sample below it, one that was not taken, one of other copies, and a gap of more than three minutes (the operator restarting for long, the metrics server not answering) end the run. A run that has lasted the window (its first and its latest sample are the window apart: with the defaults, the 31st sample) makes the service a **suspect**, with its evidence: the run's average and least share, the threshold and window, and how many samples it had.
+A **run** is an unbroken string of samples at or above the threshold. These events end a run:
 
-The runs are kept in the ConfigMap `geass-abuse-signal` in `geass-system`, written once a minute. An operator that restarts, or a new leader, reads it and carries on where the last sample stopped, as long as that was no more than three minutes before. A service at rest has no run, so the ConfigMap holds only the services that are busy right now, and never more than 2,000 of them (those that have been busy longest). It was kept out of the services' own status on purpose: a write a minute to every busy service would wake their controller every minute.
+- A sample below the threshold.
+- A sample that Geass did not take.
+- A sample of other copies.
+- A gap of more than three minutes. For example, the operator restarts for a long time, or the metrics server does not answer.
+
+A run that has lasted the window makes the service a **suspect**. A run has lasted the window when its first and its latest sample are the window apart. With the defaults, this is the 31st sample. Geass records the evidence with the suspect: the run's average and least share, the threshold and window, and the number of samples in the run.
+
+Geass keeps the runs in the ConfigMap `geass-abuse-signal` in `geass-system`, and writes the ConfigMap every minute. An operator that restarts, or a new leader, reads the ConfigMap. It continues from the last sample, if that sample was no more than three minutes earlier. A service at rest has no run. So the ConfigMap holds only the services that are busy now, and never more than 2,000 of them: those that have been busy longest. Geass keeps the runs out of the services' own status on purpose. A write every minute to every busy service would wake their controller every minute.
 
 ## Quiet services
 
-A busy service that is being called is doing its job. With `quietTraffic`, a sample counts only while the ingress passes the service at most `maxRequestsPerMinute` requests a minute (averaged over the last five minutes), so a web service at its limit under load is never suspected, and a miner, which nobody calls, is.
+A busy service that receives calls is doing its job. With `quietTraffic`, a sample counts only while the ingress passes the service at most `maxRequestsPerMinute` requests a minute, averaged over the last five minutes. So Geass never suspects a web service at its limit under load, but it does suspect a miner, which nobody calls.
 
-The requests are what Traefik counts for the service (`traefik_service_requests_total`), which only the cluster's Prometheus has, and only while the [monitoring add-on](/docs/guides/observability/) is on and scrapes the ingress. **When they cannot be read** (the add-on is off, Prometheus does not answer, or it has no request metrics at all, which would otherwise make every service look quiet), a busy service cannot be told from a quiet one, so the stricter `withoutTrafficData` applies in its place: by default 95% for twice the window. A run with one sample taken without the requests is held to the longer window as a whole. The API says whether Prometheus answered at the last sample.
+The requests are what Traefik counts for the service (`traefik_service_requests_total`). Only the cluster's Prometheus has that count, and only while the [monitoring add-on](/docs/guides/observability/) is on and scrapes the ingress. **When they cannot be read**, Geass cannot tell a busy service from a quiet one. This happens in these cases:
 
-What it does not see: requests that reach the service from inside the cluster, not through the ingress. A worker fed by a queue, or a service that only other services call, always looks quiet, and is judged on its CPU alone. A store of metrics outside the cluster (`spec.observability.external`) is not read.
+- The add-on is off.
+- Prometheus does not answer.
+- Prometheus has no request metrics at all. Without this case, missing request metrics would make every service look quiet.
+
+In these cases, the stricter `withoutTrafficData` settings apply instead: by default, 95% for twice the window. If Geass took one sample of a run without the requests, the whole run must last the longer window. The API says whether Prometheus answered at the last sample.
+
+The request count does not include requests that reach the service from inside the cluster, not through the ingress. A worker that a queue feeds, or a service that only other services call, always looks quiet. Geass judges such a service on its CPU alone. Geass does not read a store of metrics outside the cluster (`spec.observability.external`).
 
 ## What a suspect gets
 
 | Where | What |
 | --- | --- |
-| **The service**: condition `AbuseSuspected` | `True`, reason `SustainedCPU` (the CPU signal), `Reported` (an outside detector) or `Suspended` (either, and scaled to zero). The message gives the evidence and says it is a signal. `False`, reason `Reviewed`, while a cleared service is left alone. A service that has never been suspected has no such condition. |
-| **The project**: condition `AbuseSuspected` | `True`, reason `ServicesSuspected`, naming the suspected services (and which are suspended), while any is. None otherwise. |
-| **An event on the service** | `Warning` `AbuseSuspected` when it becomes a suspect, once; `Normal` `AbuseReleased` when a suspension is released, and `AbuseReviewed` when it is cleared. |
-| **An alert** | **Abuse suspected** (`abuse.suspected`), to the platform's [alert channels](/docs/guides/alerts/): warning, or critical for a suspended service. It carries no project, so no organization's channel hears it, and a channel of the platform's that is limited to some projects does not either. |
-| **The API** | [`GET /api/v1/abuse/suspects`](#review-a-suspect), with the evidence, for the platform's administrators alone. |
+| **The service**: condition `AbuseSuspected` | `True`, reason `SustainedCPU` (the CPU signal), `Reported` (an outside detector), or `Suspended` (either one, and scaled to zero). The message gives the evidence and says that it is a signal. `False`, reason `Reviewed`, while Geass leaves a cleared service alone. A service that Geass has never suspected has no such condition. |
+| **The project**: condition `AbuseSuspected` | `True`, reason `ServicesSuspected`, while any service is suspected. The condition names the suspected services, and which of them are suspended. No condition otherwise. |
+| **An event on the service** | `Warning` `AbuseSuspected` one time, when the service becomes a suspect. `Normal` `AbuseReleased` when a platform administrator releases a suspension, and `AbuseReviewed` when one clears the service. |
+| **An alert** | **Abuse suspected** (`abuse.suspected`), to the platform's [alert channels](/docs/guides/alerts/): warning, or critical for a suspended service. The alert carries no project. So no organization's channel receives it, and a platform channel that is limited to some projects does not receive it either. |
+| **The API** | [`GET /api/v1/abuse/suspects`](#review-a-suspect), with the evidence, for the platform's administrators only. |
 
-A suspicion stays until a platform administrator clears it. A miner that stops once it is suspected, or is scaled to zero, is not let off by that. What was decided is kept on the service, in the annotations `geass.dev/abuse-suspect` (the suspicion, its evidence and what was done) and `geass.dev/abuse-review` (a clearing, until when and by whom), which Geass and the platform's administrators write. The dashboard gives an organization's people no way to set a service's annotations.
+A suspicion stays until a platform administrator clears it. If a miner stops after Geass suspects it, or after Geass scales it to zero, the suspicion stays. Geass keeps the decisions on the service, in two annotations:
 
-**The organization sees the conditions and the event on its own service**, which is deliberate: the owner of a legitimate heavy job learns why it was stopped, and asks for an exemption. It also means a miner can learn it was seen. It never sees another organization's suspects, the services that are being counted, how close its own are to the threshold, or the alert.
+- `geass.dev/abuse-suspect`: the suspicion, its evidence, and the action that Geass took.
+- `geass.dev/abuse-review`: a clearing, its end time, and who made it.
+
+Geass and the platform's administrators write these annotations. The dashboard gives an organization's people no way to set a service's annotations.
+
+**The organization sees the conditions and the event on its own service**, on purpose. The owner of a legitimate heavy job learns why Geass stopped it, and asks for an exemption. It also means that a miner can learn that Geass saw it. The organization never sees these things:
+
+- Another organization's suspects.
+- The services that Geass is counting.
+- How close its own services are to the threshold.
+- The alert.
 
 ## Suspend
 
-With `action: Suspend` (or an organization's own), a suspect is scaled to **zero copies** the moment it is suspected, by a report as well as by the CPU signal, and stays there until a platform administrator releases or clears it:
+With `action: Suspend`, or an organization's own `Suspend` action, Geass scales a suspect to **zero copies** immediately when it suspects it. This applies to a suspicion from a report and to one from the CPU signal. The service stays at zero until a platform administrator releases or clears it:
 
-- Its Deployment is kept at zero copies. Saving or deploying the service changes its pods, not that.
-- [Scale to zero](/docs/guides/scale-to-zero/) is set aside, so that a request cannot wake it: its condition `ScaleToZero` says `Suspended`. It is put back on release.
-- A CPU autoscaler is left in place: Kubernetes does not scale a Deployment that is at zero.
-- Its `Ready` condition is `False`, reason `Suspended`, with the reason, and that is not counted as a failed deploy: no **Deploy failed** or **Service down** alert follows, and no success is reported to GitHub or to webhooks.
-- **Nothing is deleted**: the service, its settings, its Service and ingress, its volumes and its databases stay as they were. Its copies come back on release, as many as it asks for.
+- Geass keeps its Deployment at zero copies. When someone saves or deploys the service, its pods change, but the Deployment stays at zero copies.
+- Geass sets [scale to zero](/docs/guides/scale-to-zero/) aside, so that a request cannot wake the service. Its condition `ScaleToZero` says `Suspended`. Geass puts scale to zero back on release.
+- Geass leaves a CPU autoscaler in place, because Kubernetes does not scale a Deployment that is at zero.
+- Its `Ready` condition is `False`, reason `Suspended`, with the reason. Geass does not count this as a failed deploy. No **Deploy failed** or **Service down** alert follows, and Geass reports no success to GitHub or to webhooks.
+- **Nothing is deleted**: the service, its settings, its Service and ingress, its volumes, and its databases stay as they were. On release, its copies come back, as many as it asks for.
 
-**The action is decided when the suspicion is raised, and written into it** (`suspended` in the annotation `geass.dev/abuse-suspect`). Switching the platform's action from `None` to `Suspend` later does not suspend a service that is a suspect already: on K3s v1.36.4+k3s1 the one that had been found under `None` kept running (`suspended: false` in `GET /api/v1/abuse/suspects`) for the 2.5 minutes it was watched after the switch, and `release` of it answered `409 the service is not suspended`. A report about a service that is a suspect already leaves it as it is (`alreadySuspected: true`), and the CPU signal does not raise a second suspicion while one stands. To suspend such a service, clear it and then report it: a clearing does not hold a report back, and on that cluster a report about a cleared service made it a suspect again and suspended it. Services found after the switch were suspended when they were found.
+**The action is decided when the suspicion is raised, and written into it**. The field `suspended` in the annotation `geass.dev/abuse-suspect` records it. If you switch the platform's action from `None` to `Suspend` later, Geass does not suspend a service that is already a suspect. A test on K3s v1.36.4+k3s1 showed this:
 
-An organization can still delete a suspended service and make it again under the same name. The new one starts without a suspicion, and the CPU signal finds it again after a window. An organization that does that is for you to deal with: [suspend the organization](/docs/guides/organizations-and-workspaces/) (`spec.suspended`), lower its [limits](/docs/guides/tenant-limits/), or remove it.
+- The service that Geass found under `None` continued to run for the 2.5 minutes that it was watched after the switch.
+- `GET /api/v1/abuse/suspects` showed `suspended: false` for the service.
+- `release` of the service answered `409 the service is not suspended`.
+
+A report about a service that is already a suspect leaves the service as it is (`alreadySuspected: true`). The CPU signal does not raise a second suspicion while one stands. To suspend such a service, clear it, and then report it. A clearing does not hold a report back. On that cluster, a report about a cleared service made it a suspect again and suspended it. Geass suspended the services that it found after the switch when it found them.
+
+An organization can still delete a suspended service and create it again with the same name. The new service starts without a suspicion, and the CPU signal finds it again after a window. You must deal with an organization that does this. You can [suspend the organization](/docs/guides/organizations-and-workspaces/) (`spec.suspended`), lower its [limits](/docs/guides/tenant-limits/), or remove it.
 
 ## Review a suspect
 
-The API is the platform's administrators' alone, signed in or with an install-wide admin token. An organization's administrator, a viewer of the platform, an observer and a project token are refused with `403`, and are told nothing.
+The API is for the platform's administrators only, signed in or with an install-wide admin token. Geass refuses an organization's administrator, a viewer of the platform, an observer, and a project token with `403`, and tells them nothing.
 
 ```bash
 curl -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/abuse/suspects
@@ -182,16 +221,19 @@ curl -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/ab
 }
 ```
 
-`?org=` keeps one organization's. `counting` is the services the CPU signal is counting now, which are not suspects yet. A report has `reporter`, `detail`, `pod` and `priority` in place of the CPU evidence; `traffic` says `quiet` (few requests in every sample) or `unknown` (counted without them, at the stricter threshold and window).
+- `?org=` keeps only one organization's entries.
+- `counting` is the services that the CPU signal counts now, which are not suspects yet.
+- A report has `reporter`, `detail`, `pod`, and `priority` in place of the CPU evidence.
+- `traffic` says `quiet` (few requests in every sample) or `unknown` (counted without them, at the stricter threshold and window).
 
-Then, for each suspect, look at what it runs (its image, its logs, its metrics in the dashboard), and decide:
+Then, for each suspect, examine what it runs: its image, its logs, and its metrics in the dashboard. Then decide what to do:
 
 | Request | What it does |
 | --- | --- |
-| `POST /api/v1/abuse/suspects/{service}/clear` | It was legitimate. The suspicion goes (a suspended service runs again), and the CPU signal leaves it alone for `days` (1 to 365; default `reviewExemptionDays`), with your `note`. A report from an outside detector still applies. A service that is not suspected can be cleared too, ahead of a heavy job you know of. |
-| `POST /api/v1/abuse/suspects/{service}/release` | Let a suspended service run again while you look. It stays suspected, and is not suspended again. |
-| Nothing | Leave it suspected (and suspended, if it was). |
-| Deal with the organization | Suspend it, remove the service yourself, or remove the organization. Geass never deletes anything for a suspicion. |
+| `POST /api/v1/abuse/suspects/{service}/clear` | It was legitimate. The suspicion goes, and a suspended service runs again. The CPU signal leaves the service alone for `days` (1 to 365, default `reviewExemptionDays`), with your `note`. A report from an outside detector still applies. You can also clear a service that is not suspected, before a heavy job that you know of. |
+| `POST /api/v1/abuse/suspects/{service}/release` | Let a suspended service run again while you examine it. It stays suspected, and Geass does not suspend it again. |
+| Nothing | Leave it suspected, and suspended if it was. |
+| Deal with the organization | Suspend the organization, remove the service yourself, or remove the organization. Geass never deletes anything because of a suspicion. |
 
 ```bash
 curl -X POST -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: application/json" \
@@ -199,21 +241,21 @@ curl -X POST -H "Authorization: Bearer $GEASS_TOKEN" -H "Content-Type: applicati
 # {"service":"worker","wasSuspected":true,"reviewedUntil":"2026-11-10T12:00:00Z","message":"Cleared. ..."}
 ```
 
-All of them answer `409` while abuse detection is off.
+All these routes answer `409` while abuse detection is off.
 
 ## Outside detectors
 
-A tool that watches what programs do on the nodes sees what Geass cannot: the name and arguments of a process, the connections it opens, a stratum handshake. Geass does not bundle or install one. If you run one, it can report a workload to `POST /api/v1/abuse/reports` with a platform administrator's token, and the workload gets the same suspicion, condition, event and action as from the CPU signal (exemptions and reviews are for the CPU signal, and do not hold a report back; a report replaces a review the service had).
+A tool that watches what programs do on the nodes sees what Geass cannot see: the name and arguments of a process, the connections that it opens, and a stratum handshake. Geass does not bundle or install such a tool. If you run one, it can report a workload to `POST /api/v1/abuse/reports` with a platform administrator's token. The workload then gets the same suspicion, condition, event, and action as from the CPU signal. Exemptions and reviews are for the CPU signal only, and do not hold a report back. A report replaces a review that the service had.
 
 The body names the service, or a pod that is one of its copies:
 
 | Field | Meaning |
 | --- | --- |
 | `service` | The service, by name. Or: |
-| `namespace`, `pod` | The pod and its namespace. A pod that is already gone is found by its name (`<service>-<hash>-<suffix>`). |
-| `reporter`, `reason`, `priority`, `time` | Who reports it, what was seen (a rule's name: it is shown to the organization on its service), how urgent, and when (RFC 3339). |
+| `namespace`, `pod` | The pod and its namespace. Geass finds a pod that is already gone by its name (`<service>-<hash>-<suffix>`). |
+| `reporter`, `reason`, `priority`, `time` | Who reports it, what was seen, how urgent it is, and when (RFC 3339). What was seen is a rule's name, and Geass shows it to the organization on its service. |
 
-**Falco**, through [falcosidekick](https://github.com/falcosecurity/falcosidekick)'s webhook output, can send its events as they are: Geass reads the rule, the priority, the time, and the namespace and pod from `output_fields` (`k8s.ns.name`, `k8s.pod.name`), and keeps nothing else (Falco's `output` and the command line may hold secrets, and the organization reads the detail). Send only the rules you mean as reports, such as Falco's mining rules:
+**Falco** can send its events unchanged, through the webhook output of [falcosidekick](https://github.com/falcosecurity/falcosidekick). Geass reads the rule, the priority, the time, and the namespace and pod from `output_fields` (`k8s.ns.name`, `k8s.pod.name`). Geass keeps nothing else, because Falco's `output` and the command line might hold secrets, and the organization reads the detail. Send only the rules that you mean as reports, such as Falco's mining rules:
 
 ```yaml title="falcosidekick values (Helm)"
 config:
@@ -223,39 +265,70 @@ config:
     minimumpriority: critical
 ```
 
-How `customHeaders` is written depends on where falcosidekick is configured (a map in its own configuration file, `key:value` pairs in the Helm chart's values): check its documentation for your version. This was not run against a real falcosidekick: the body Geass reads is Falco's documented JSON output.
+The format of `customHeaders` depends on where you configure falcosidekick. In its own configuration file, it is a map. In the Helm chart's values, it is `key:value` pairs. Check the falcosidekick documentation for your version. This configuration was not run against a real falcosidekick. The body that Geass reads is Falco's documented JSON output.
 
-A report about a pod that is not a copy of a service (a build, a database, a schedule's job) is refused with `422`, as is one about a service of a project of no organization. A service that is suspected already is left as it is (`alreadySuspected: true`).
+If a report is about a pod that is not a copy of a service, Geass refuses it with `422`. Examples are a build, a database, and a schedule's job. Geass also refuses with `422` a report about a service of a project that belongs to no organization. Geass leaves a service that is already suspected as it is (`alreadySuspected: true`).
 
-**A tool that watches system calls does not see inside a pod that runs under gVisor.** With the [sandboxed runtime](/docs/operations/sandboxed-runtime/), an organization's system calls are handled by gVisor's own kernel and never reach the node's, so Falco or Tetragon on the node sees gVisor, not the miner. CPU accounting still works there: the metrics server measures a sandboxed pod like any other, so the CPU signal does (on K3s v1.36.4+k3s1 with gVisor `release-20261019.0`, a busy loop in a gVisor pod was measured at its 100m limit and suspected 13 minutes and 42 seconds after it started). Kata Containers runs a pod in a virtual machine, which a tool on the node does not see into either.
+**A tool that watches system calls does not see inside a pod that runs under gVisor.** With the [sandboxed runtime](/docs/operations/sandboxed-runtime/), gVisor's own kernel handles an organization's system calls, and they never reach the node's kernel. So Falco or Tetragon on the node sees gVisor, not the miner. CPU accounting still works there. The metrics server measures a sandboxed pod like any other pod, so the CPU signal works too. On K3s v1.36.4+k3s1 with gVisor `release-20261019.0`, Geass measured a busy loop in a gVisor pod at its 100m limit. Geass suspected the busy loop 13 minutes and 42 seconds after it started. Kata Containers runs a pod in a virtual machine, and a tool on the node does not see into that machine either.
 
 ## Mining pools' ports
 
-The [outbound limits](/docs/guides/outbound-limits/#mining) can close the ports public mining pools listen on by default: `miningPools: Blocked` closes a curated list (TCP 3333 to 3336, 4444, 5555, 7777, 14433, 14444 and 45700). That stops a miner run with a pool's example configuration, and nothing else: a miner that connects to port 443, which many pools offer, or through a proxy, is not stopped, and nothing is detected or reported. Use it beside the CPU signal, not instead of it.
+The [outbound limits](/docs/guides/outbound-limits/#mining) can close the ports that public mining pools listen on by default. `miningPools: Blocked` closes a curated list: TCP 3333 to 3336, 4444, 5555, 7777, 14433, 14444, and 45700. This setting stops a miner that runs with a pool's example configuration, and nothing else. It does not stop a miner that connects to port 443, which many pools offer, or through a proxy. It detects and reports nothing. Use it with the CPU signal, not instead of it.
 
 ## False positives
 
-Legitimate work that uses all its CPU for a long time, and how to keep it from being suspected:
+Some legitimate work uses all its CPU for a long time. This list gives that work, and how to keep Geass from suspecting it:
 
 - **Batch jobs, renders, encoding, scientific computing, training a model.** Exempt the project (`exemptProjects`) or the organization (`exempt`), or raise `windowMinutes` above the length of the jobs.
-- **A load test**, or a busy period of a real service. With `quietTraffic`, a service that is being called through the ingress is not counted. Without it, clear it ahead of the test.
-- **A queue worker that is behind**, or a service that only other services call: it is sent nothing through the ingress, so `quietTraffic` does not help. Clear it, or exempt its project.
-- **A service whose limit is tiny.** 90% of 100 millicores is not much. The share is of what the service is allowed, so a small limit is reached by ordinary work; the [noisy-neighbour limits](/docs/guides/tenant-limits/) set the default.
-- **A service that spins** on a bug (a busy loop). It is a problem of its own, if not abuse; the suspicion tells its owner.
+- **A load test**, or a busy period of a real service. With `quietTraffic`, Geass does not count a service that receives calls through the ingress. Without `quietTraffic`, clear the service before the test.
+- **A queue worker that is behind**, or a service that only other services call. Such a service receives nothing through the ingress, so `quietTraffic` does not help. Clear it, or exempt its project.
+- **A service whose limit is tiny.** 90% of 100 millicores is not much. The share is of what the service is allowed, so ordinary work reaches a small limit. The [noisy-neighbour limits](/docs/guides/tenant-limits/) set the default.
+- **A service that spins** on a bug (a busy loop). The loop is a problem of its own, even if it is not abuse. The suspicion tells its owner.
 
-And false negatives, which it is built to accept rather than to be wrong more often: a throttled, paused or restarting miner, a GPU miner, a miner on a service that is also really called, and a miner in a build. See [What it can see, and what it cannot](#what-it-can-see-and-what-it-cannot).
+Abuse detection is built to accept these false negatives, rather than to be wrong more often:
+
+- A throttled, paused, or restarting miner.
+- A GPU miner.
+- A miner on a service that also receives real calls.
+- A miner in a build.
+
+See [What it can see, and what it cannot](#what-it-can-see-and-what-it-cannot).
 
 ## Turn it off
 
-Removing `spec.tenancy.abuse` stops the sampling and removes what it wrote: the ConfigMap of runs, the annotations of suspects and reviews, and the conditions of services and projects. **A suspended service runs again.** If you mean to keep one stopped, scale it to zero yourself, or suspend its organization, before you turn it off.
+If you remove `spec.tenancy.abuse`, Geass stops the sampling and removes what it wrote: the ConfigMap of runs, the annotations of suspects and reviews, and the conditions of services and projects. **A suspended service runs again.** To keep a service stopped, scale it to zero yourself, or suspend its organization, before you turn abuse detection off.
 
 ## What has been tested
 
-The signal is tested with a fake clock: below the threshold, exactly at it, exactly at the window and one sample short, a quiet minute, a restart, a gap and an operator that restarts (within three minutes and after ten), a rollout of busy copies, scale to zero, an autoscaler adding copies, requests known, too many, and unknown. The detector, the conditions and events, the suspension (to zero and back, nothing deleted, scale to zero and an autoscaler), the alert's routing and the API (what it says, who is refused, clearing, releasing, Falco's own body, a pod that is gone) are tested against fake clients; the CRDs against a real API server (envtest). The closed ports of `miningPools` are tested port by port with an evaluator of the network policies written apart from the code.
+The tests of the signal use a fake clock. They cover these cases:
 
-**On a real K3s (v1.36.4+k3s1, the metrics server K3s ships, thresholds of 50% for 10 minutes) it ran as follows.** The metrics server's answer was read (`cpu.metricsServer.available: true`), and busy loops of a service with a 100m limit were suspected 13 minutes 10 seconds, 13 minutes 54 seconds and 13 minutes 42 seconds after they started (the three minutes to settle, then 11 samples at 100% or just over). The busy loop of an organization with `spec.abuse.exempt: true` was never counted, and a quiet service never was. The alert `GeassAbuseSuspected` fired in the cluster's Prometheus, critical for a suspended service, with no `project` label. A service found under `action: Suspend` went to zero copies with nothing deleted; `release` brought it back and it was not suspended again; `clear` took the suspicion away and listed it under `reviewed`. A report in falcosidekick's webhook body (the rule, the priority, the time, the namespace and pod) suspended a service, and the made-up secret strings in its `output` and command line were found nowhere (service, events, API, operator log); a pod that was already gone was resolved by its name, the relay's pod was refused with `422`, a pod named in another project's namespace with `404`. Turning the setting off made the suspended service run again and removed the annotations, the conditions and the ConfigMap of runs, and the routes answered `409`.
+- Below the threshold, exactly at it, exactly at the window, and one sample short.
+- A quiet minute, a restart, and a gap.
+- An operator that restarts, within three minutes and after ten.
+- A rollout of busy copies, scale to zero, and an autoscaler that adds copies.
+- Requests known, too many, and unknown.
 
-**Not run:** a real Falco or falcosidekick, a real miner, `quietTraffic` (it needs the monitoring add-on and Traefik, which that cluster did not have), a per-organization `action`, `exemptProjects`, and the refusals for organization administrators, viewers and project tokens (only the install-wide token was used: without a token and with a bad one the answer was `401`). The parsing of the metrics server's answer was run against the real metrics server; falcosidekick's body is still Falco's documented JSON, not the real program's. Thresholds that suit your cluster are for you to find: start with `action: None`.
+Tests against fake clients cover these parts:
+
+- The detector, and the conditions and events.
+- The suspension: to zero and back, nothing deleted, scale to zero, and an autoscaler.
+- The alert's routing.
+- The API: what it says, who it refuses, clearing, releasing, Falco's own body, and a pod that is gone.
+
+Tests against a real API server (envtest) cover the CRDs. An evaluator of the network policies, written separately from the code, tests the closed ports of `miningPools` port by port.
+
+**On a real K3s (v1.36.4+k3s1, the metrics server K3s ships, thresholds of 50% for 10 minutes) it ran as follows.**
+
+- Geass read the metrics server's answer (`cpu.metricsServer.available: true`).
+- Geass suspected the busy loops of a service with a 100m limit 13 minutes 10 seconds, 13 minutes 54 seconds, and 13 minutes 42 seconds after they started. That time is the three minutes to settle, then 11 samples at 100% or a little over.
+- Geass never counted the busy loop of an organization with `spec.abuse.exempt: true`, and never counted a quiet service.
+- The alert `GeassAbuseSuspected` fired in the cluster's Prometheus, critical for a suspended service, with no `project` label.
+- A service found under `action: Suspend` went to zero copies, and nothing was deleted. `release` brought it back, and Geass did not suspend it again. `clear` removed the suspicion and listed the service under `reviewed`.
+- A report in falcosidekick's webhook body (the rule, the priority, the time, the namespace, and the pod) suspended a service. The made-up secret strings in its `output` and command line were found nowhere: not in the service, the events, the API, or the operator log.
+- Geass resolved a pod that was already gone by its name. Geass refused the relay's pod with `422`, and a pod named in another project's namespace with `404`.
+- When the setting was turned off, the suspended service ran again. Geass removed the annotations, the conditions, and the ConfigMap of runs, and the routes answered `409`.
+
+**Not run:** a real Falco or falcosidekick, a real miner, `quietTraffic`, a per-organization `action`, `exemptProjects`, and the refusals for organization administrators, viewers, and project tokens. `quietTraffic` needs the monitoring add-on and Traefik, which that cluster did not have. The test used only the install-wide token. Without a token, and with a bad one, the answer was `401`. The parsing of the metrics server's answer was run against the real metrics server. The falcosidekick body is still Falco's documented JSON, not the real program's. You must find the thresholds that suit your cluster. Start with `action: None`.
 
 ## Related
 

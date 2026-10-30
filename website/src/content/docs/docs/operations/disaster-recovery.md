@@ -1,42 +1,54 @@
 ---
 title: "Disaster recovery"
-description: "What survives losing a node, a disk or the control plane, how to keep copies of the cluster's state in your own S3 bucket, and how to rebuild from them."
+description: "What survives the loss of a node, a disk, or the control plane. Keep copies of the cluster state in your own S3 bucket, and rebuild from them."
 ---
 
-Geass protects your data in three layers, and they protect against different things. This page says which loss each one covers, how to turn on the one that is not on by default (copies of the cluster's own state, in a bucket of yours), and how to rebuild a cluster from it when its disk is gone.
+Geass protects your data in three layers, and each layer protects against different problems. This page gives this information:
+
+- The loss that each layer covers.
+- How to turn on the layer that is not on by default. That layer keeps copies of the state of the cluster in a bucket that you own.
+- How to rebuild a cluster from those copies when the disk of the cluster is gone.
 
 | Layer | Protects against | On by default? |
 | --- | --- | --- |
-| **Copies inside the cluster**: replicated volumes, highly available databases, three control plane servers | Losing a machine | Volumes are replicated when Longhorn is on. Databases and servers are [your choice](/docs/operations/high-availability/) |
-| **Database backups** in your S3 bucket | Losing a database's data, or the cluster it ran in | On for new Postgres databases. See [Backups and restore](/docs/guides/backups-and-restore/) |
-| **Copies of the cluster's own state** in your S3 bucket | Losing the disk of the control plane, which holds every project, service, secret and record of your backups | **No: you opt in.** This page |
+| **Copies inside the cluster**: replicated volumes, highly available databases, three control plane servers | The loss of a machine | Longhorn replicates volumes when Longhorn is on. Databases and servers are [your choice](/docs/operations/high-availability/) |
+| **Database backups** in your S3 bucket | The loss of the data of a database, or of the cluster that it ran in | On for new Postgres databases. See [Backups and restore](/docs/guides/backups-and-restore/) |
+| **Copies of the cluster's own state** in your S3 bucket | The loss of the disk of the control plane. That disk holds every project, service, secret, and record of your backups | **No: you opt in.** This page |
 
-Copies inside the cluster do not help against a mistake or a lost disk that every copy shares, and a backup bucket is no use if nothing knows what is in it. The third layer is what makes the second one findable again.
+Copies inside the cluster do not help against a mistake, or against a lost disk that every copy shares. Also, a backup bucket has no use if nothing knows what is in it. The third layer lets you find the contents of the second layer again.
 
 ## What a loss costs
 
 | What is lost | What happens | What brings it back |
 | --- | --- | --- |
-| A worker machine | Its services restart on other nodes after five minutes, and a highly available database fails over. A database with one instance starts on another node, and a lost instance of a highly available Postgres database is replaced, after [15 minutes](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes). See [When a node is lost](/docs/operations/high-availability/#when-a-node-is-lost) | The node returning, or a new machine added with [Add servers](/docs/getting-started/add-servers/) |
-| One of three control plane servers | Nothing stops. The operator moves in one to two minutes if it was on that server | [Take a server away](/docs/operations/high-availability/#take-a-server-away), and join a new one |
-| The only control plane server, with its disk | Running containers on workers keep running, and nothing can be changed or restarted. Everything Geass keeps (projects, services, secrets, tokens, the records of your backups) is on that disk | Copies of the cluster's state in S3: [Rebuild a cluster from a copy](#rebuild-a-cluster-from-a-copy). Without them: [Recover databases from a bucket](#recover-databases-from-a-bucket) |
-| A worker's disk, or the part of it a database's volume was on | Volumes with a copy on another node carry on. Databases on local storage lose their data | Restore from the database's [backup](/docs/guides/backups-and-restore/) into a new database |
+| A worker machine | Its services restart on other nodes after five minutes, and a highly available database fails over. After [15 minutes](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes), a database with one instance starts on another node, and Geass replaces a lost instance of a highly available Postgres database. See [When a node is lost](/docs/operations/high-availability/#when-a-node-is-lost) | The node comes back, or you add a new machine with [Add servers](/docs/getting-started/add-servers/) |
+| One of three control plane servers | Nothing stops. If the operator was on that server, the operator moves in one to two minutes | [Take a server away](/docs/operations/high-availability/#take-a-server-away), and join a new one |
+| The only control plane server, with its disk | Containers that run on workers continue to run, but you cannot change or restart anything. Everything that Geass keeps is on that disk: projects, services, secrets, tokens, and the records of your backups | Copies of the cluster's state in S3: [Rebuild a cluster from a copy](#rebuild-a-cluster-from-a-copy). Without them: [Recover databases from a bucket](#recover-databases-from-a-bucket) |
+| The disk of a worker, or the part of that disk that the volume of a database was on | Volumes with a copy on another node continue. Databases on local storage lose their data | Restore from the [backup](/docs/guides/backups-and-restore/) of the database into a new database |
 
 :::caution
-A new install is one control plane server, and its disk holds the only copy of the cluster. K3s takes snapshots of its own database, twice a day, but it keeps them on that same disk. Without the copies on this page, losing the disk loses the cluster.
+Keep the copies that this page describes. A new install is one control plane server, and its disk holds the only copy of the cluster. K3s takes snapshots of its own database twice a day, but it keeps them on that same disk. Without the copies on this page, if you lose the disk, you lose the cluster.
 :::
 
 ## Keep copies of the cluster's state
 
-K3s can send each of its snapshots to an S3 bucket as well as keeping them on disk. Geass sets that up in two parts: K3s on the control plane is told once to send copies, and the cluster says where. The first needs the installer, because it changes the machine and restarts K3s. The second is a setting you can change at any time, with no restart.
+K3s can send each of its snapshots to an S3 bucket, and also keep them on disk. Geass sets this up in two parts:
 
-**What a copy holds.** Everything the cluster stores: the custom resources, and every Secret, including your cloud keys, SSH keys and database passwords, in plain text unless the cluster encrypts its Secrets at rest. It does not hold the contents of your databases, your volumes or your buckets. Treat the bucket as holding every secret you have: even a copy of an encrypted cluster holds the keys to it, protected only by the server token.
+1. You tell K3s on the control plane one time to send copies. This part needs the installer, because it changes the machine and restarts K3s.
+2. The cluster gives the location of the bucket. This part is a setting that you can change at any time, with no restart.
 
-**What it costs.** A copy of a small cluster is a few megabytes. K3s takes one at 00:00 and 12:00 server time and keeps 14 of them, a week, on the machine and in the bucket. With three control plane servers, which each take one, the 14 in the bucket are shared between them.
+**What a copy holds.** A copy holds everything that the cluster stores:
+
+- The custom resources.
+- Every Secret, including your cloud keys, SSH keys, and database passwords. The Secrets are in plain text, unless the cluster encrypts its Secrets at rest.
+
+A copy does not hold the contents of your databases, your volumes, or your buckets. Treat the bucket as if it holds every secret that you have. Even a copy of an encrypted cluster holds the keys to that cluster, and only the server token protects them.
+
+**What it costs.** A copy of a small cluster is a few megabytes. K3s takes a copy at 00:00 and 12:00 server time. It keeps 14 copies, that is one week, on the machine and in the bucket. If you have three control plane servers, each server takes a copy, and the servers share the 14 copies in the bucket.
 
 ### 1. Make the bucket and a key for it
 
-Make a bucket for this alone, with encryption on and public access blocked, and a user whose key can use that bucket and nothing else. With the AWS CLI:
+Make a bucket for the copies only, with encryption on and public access blocked. Make a user whose key can use that bucket and nothing else. To do this with the AWS CLI, run these commands:
 
 ```bash
 aws s3api create-bucket --bucket acme-geass-cluster-state --region eu-north-1 \
@@ -50,7 +62,7 @@ aws iam put-user-policy --user-name geass-cluster-state --policy-name cluster-st
 aws iam create-access-key --user-name geass-cluster-state
 ```
 
-`policy.json` is this, with your bucket's name. The Usage page shows it with the name filled in:
+`policy.json` has this content, with the name of your bucket. The Usage page shows this policy with the name of your bucket in it:
 
 ```json
 {
@@ -70,13 +82,13 @@ aws iam create-access-key --user-name geass-cluster-state
 }
 ```
 
-The key can list the bucket and read, write and delete the copies in it. It cannot make or delete a bucket, change its settings, or touch any other. Geass tested that against a server that enforces the policy, with a copy large enough to be sent in parts.
+The key can list the bucket, and it can read, write, and delete the copies in the bucket. The key cannot make or delete a bucket, change the settings of a bucket, or touch any other bucket. Geass tested this policy against a server that enforces it, with a copy large enough that the upload used parts.
 
-A bucket on another S3-compatible server can be used too (Geass tested MinIO). Say its address in **Server**, with no `https://`, when you set it up.
+You can also use a bucket on another S3-compatible server. Geass tested MinIO. When you set up the bucket, enter its address in **Server**, with no `https://`.
 
 ### 2. Tell K3s to send copies
 
-When you [install Geass](/docs/getting-started/install/), the installer asks on the terminal whether to keep copies of the cluster in your own S3 bucket. The answer is **no** unless you say yes. To say it ahead, and to give it the bucket in the same step, so that nothing is left to do afterwards:
+When you [install Geass](/docs/getting-started/install/), the installer asks on the terminal whether to keep copies of the cluster in your own S3 bucket. The answer is **no** unless you say yes. You can give the answer and the bucket before the installer asks. Then you have nothing left to do after the install:
 
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | \
@@ -84,7 +96,7 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
   GEASS_ETCD_SNAPSHOTS_ACCESS_KEY=AKIA… GEASS_ETCD_SNAPSHOTS_SECRET_KEY=… sh -s -- --etcd-snapshots
 ```
 
-On a cluster that is already running, turn it on with the installer's `etcd-snapshots` command, on the control plane server. It restarts K3s: the API server is away for about a minute, and what is running is not stopped.
+On a cluster that is already running, run the `etcd-snapshots` command of the installer on the control plane server. The command restarts K3s. The API server is unavailable for about one minute, but the workloads that run do not stop.
 
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | \
@@ -92,23 +104,38 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
   GEASS_ETCD_SNAPSHOTS_ACCESS_KEY=AKIA… GEASS_ETCD_SNAPSHOTS_SECRET_KEY=… sh -s -- etcd-snapshots enable
 ```
 
-Without the bucket variables it only does the first part, and says where to give the bucket. The variables are `GEASS_ETCD_SNAPSHOTS_BUCKET`, `_REGION`, `_ENDPOINT` (for a server that is not AWS, with no scheme), `_FOLDER` (`geass` unless you choose), `_INSECURE` (plain HTTP, for a network closed to everyone else) and the pair `_ACCESS_KEY` and `_SECRET_KEY`. The installer checks them before it changes anything. Then it waits for the operator to write the settings and takes a first copy at once, so that you know it works instead of finding out at noon.
+Without the bucket variables, the command does only the first part, and tells you where to give the bucket. These are the variables:
 
-Two more commands: `etcd-snapshots status` says whether this server sends copies and what the bucket holds, and `etcd-snapshots disable` stops this server sending them. Copies already in the bucket stay.
+- `GEASS_ETCD_SNAPSHOTS_BUCKET`.
+- `_REGION`.
+- `_ENDPOINT`, for a server that is not AWS, with no scheme.
+- `_FOLDER`. The default is `geass`.
+- `_INSECURE`, for plain HTTP on a network that is closed to everyone else.
+- The pair `_ACCESS_KEY` and `_SECRET_KEY`.
 
-A cluster with three control plane servers needs this on each of them, because each takes snapshots: run `etcd-snapshots enable` on every server, one at a time. A server that joins can be told with `--etcd-snapshots` on `--join-server`. The installer needs K3s v1.30.3 or newer for this, and tells you if yours is older.
+The installer checks the variables before it changes anything. Then it waits for the operator to write the settings, and it takes a first copy immediately. Thus you know immediately that the copies work, and you do not find a problem at noon.
+
+The installer has two more commands:
+
+- `etcd-snapshots status` tells you whether this server sends copies, and what the bucket holds.
+- `etcd-snapshots disable` stops the copies from this server. The copies that are already in the bucket stay.
+
+In a cluster with three control plane servers, each server takes snapshots. Thus run `etcd-snapshots enable` on every server, one server at a time. For a server that joins, add `--etcd-snapshots` to `--join-server`. The installer needs K3s v1.30.3 or newer for this. If your K3s is older, the installer tells you.
 
 ### 3. Keep the server token somewhere else
 
-K3s encrypts the cluster's keys inside every copy with the cluster's **server token**. A copy cannot be restored without it, and the token is a file on the same disk that the copies are for. The installer shows it to you on the terminal when you turn copies on, and asks you to store it. Do it then, in a password manager. It is also in `/var/lib/rancher/k3s/server/token`.
+K3s encrypts the keys of the cluster inside every copy with the **server token** of the cluster. You cannot restore a copy without the token. The token is a file on the same disk that the copies protect. When you turn copies on, the installer shows the token on the terminal and asks you to keep it. Keep it at that time, in a password manager. The token is also in `/var/lib/rancher/k3s/server/token`.
 
-Write down, too, the K3s release the cluster runs (the **Usage** page shows it, and so does `k3s --version`), and the address of the control plane server.
+Also write down these items:
+
+- The K3s release that the cluster runs. The **Usage** page shows it, and `k3s --version` also shows it.
+- The address of the control plane server.
 
 ### Set or change the bucket from the dashboard
 
-Open **Usage**, and **Cluster backup**. It says whether copies are arriving, how old the newest is, and how many the bucket holds. **Set up** and **Change bucket** take the bucket and its key, and the key is stored in a Secret and never shown again. A change takes effect with no restart: K3s reads where to send copies from a Secret that Geass keeps up to date.
+Open **Usage**, and select **Cluster backup**. The section shows whether copies arrive, the age of the newest copy, and the number of copies in the bucket. **Set up** and **Change bucket** take the bucket and its key. Geass keeps the key in a Secret and never shows it again. A change takes effect with no restart. K3s reads the location for the copies from a Secret that Geass keeps up to date.
 
-On the cluster object the same is:
+On the cluster object, the same setting is:
 
 ```yaml
 spec:
@@ -123,30 +150,38 @@ spec:
 
 ### How you are told it stopped
 
-The cluster's **Cluster backup** state is one of:
+The **Cluster backup** state of the cluster is one of these:
 
 | State | Means |
 | --- | --- |
-| **Waiting for the first copy** | The bucket is set and nothing has arrived yet. K3s sends one at 00:00 and 12:00 server time. To take one now, run `sudo k3s etcd-snapshot save` on the control plane |
+| **Waiting for the first copy** | The bucket is set, and no copy has arrived yet. K3s sends a copy at 00:00 and 12:00 server time. To take a copy now, run `sudo k3s etcd-snapshot save` on the control plane |
 | **Copies are arriving** | The newest copy in the bucket is less than 25 hours old |
-| **Copies are not arriving** | No copy came within 13 hours of the bucket being set, the newest is more than 25 hours old, the bucket could not be read with the key, or the key is not in the cluster. The message says which |
+| **Copies are not arriving** | One of these: no copy came within 13 hours after you set the bucket, the newest copy is more than 25 hours old, Geass could not read the bucket with the key, or the key is not in the cluster. The message tells you which |
 
-A copy that stops arriving is a **Cluster problem** [alert](/docs/guides/alerts/) after ten minutes. The usual reason for a bucket that stays empty is that K3s was never told to send copies: run `etcd-snapshots enable` on the control plane.
+When copies stop arriving, Geass sends a **Cluster problem** [alert](/docs/guides/alerts/) after ten minutes. If a bucket stays empty, the usual reason is that nobody told K3s to send copies. Run `etcd-snapshots enable` on the control plane.
 
 ## Rebuild a cluster from a copy
 
-You need: the bucket and its key, the cluster's **server token**, the K3s release the cluster ran, and a machine that meets the [requirements](/docs/getting-started/requirements/).
+You need these items:
 
-1. **Use the same address if you can.** Workers find the control plane at the address they were given when they joined. A new machine that takes over the old one's address (an elastic IP, a DNS name, or the old private IP) lets them reconnect without changes. Otherwise point each worker's K3s agent at the new address after the restore. If the cluster was built for [nodes at more than one provider](/docs/operations/multi-provider/), or you changed `/etc/rancher/k3s/config.yaml`, put the same file on the new machine before step 2.
+- The bucket and its key.
+- The **server token** of the cluster.
+- The K3s release that the cluster ran.
+- A machine that meets the [requirements](/docs/getting-started/requirements/).
 
-2. **Install K3s, but do not start it.** Use the K3s release the cluster ran, as a server with its own etcd, as the installer does:
+1. **Use the same address if you can.** Workers find the control plane at the address that they got when they joined. The new machine can take the address of the old machine, for example an elastic IP, a DNS name, or the old private IP. Then the workers reconnect without changes. If not, after the restore, point the K3s agent of each worker to the new address. Before step 2, put the same `/etc/rancher/k3s/config.yaml` on the new machine in these cases:
+
+   - The cluster was built for [nodes at more than one provider](/docs/operations/multi-provider/).
+   - You changed `/etc/rancher/k3s/config.yaml`.
+
+2. **Install K3s, but do not start it.** Use the K3s release that the cluster ran. Install it as a server with its own etcd, as the installer does:
 
    ```bash
    curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION=v1.36.5+k3s1 INSTALL_K3S_SKIP_START=true \
      INSTALL_K3S_EXEC="server --cluster-init" sh -
    ```
 
-3. **Say where the copies are, in a file that is read once.** Not on the command line, where the process list shows the key and the token:
+3. **Say where the copies are, in a file that is read once.** Do not put these settings on the command line, because the process list shows the key and the token:
 
    ```bash
    sudo mkdir -p /etc/rancher/k3s/config.yaml.d
@@ -161,25 +196,29 @@ You need: the bucket and its key, the cluster's **server token**, the K3s releas
    EOF
    ```
 
-   For a server that is not AWS add `etcd-s3-endpoint` (and `etcd-s3-insecure: true` for plain HTTP). `token` is the cluster's **old** server token. If the old cluster had `secrets-encryption: true` in its `/etc/rancher/k3s/config.yaml`, put that line in this file too: a restore without it stops with `identity transformer tried to read encrypted data`. K3s refuses settings that differ from the cluster's, so anything else you set in that file on the old machine goes here as well.
+   For a server that is not AWS, add `etcd-s3-endpoint`. For plain HTTP, also add `etcd-s3-insecure: true`. `token` is the **old** server token of the cluster.
 
-4. **Pick the copy.** The newest one is usually right. List them in the bucket, newest last:
+   If the old cluster had `secrets-encryption: true` in its `/etc/rancher/k3s/config.yaml`, put that line in this file too. A restore without that line stops with `identity transformer tried to read encrypted data`. K3s refuses settings that are different from the settings of the cluster. Thus add here every other setting that you set in that file on the old machine.
+
+4. **Pick the copy.** Usually, the newest copy is correct. List the copies in the bucket, with the newest last:
 
    ```bash
    aws s3 ls s3://acme-geass-cluster-state/geass/
    ```
 
-   The name is what follows the folder, such as `etcd-snapshot-cp1-1792389364`. On the new machine, with the settings of step 3 in place, `sudo k3s etcd-snapshot ls` lists them from the bucket too. If you can still read the old cluster, `kubectl -n geass-system get geasscluster default -o jsonpath='{.status.etcdSnapshots.lastCopyName}'` says the newest it saw.
+   The name is the part after the folder, for example `etcd-snapshot-cp1-1792389364`. On the new machine, with the settings of step 3 in place, `sudo k3s etcd-snapshot ls` also lists the copies from the bucket. If you can still read the old cluster, `kubectl -n geass-system get geasscluster default -o jsonpath='{.status.etcdSnapshots.lastCopyName}'` gives the newest copy that the old cluster saw.
 
-5. **Restore it.** This is K3s's own restore, documented by K3s as the way to restore a snapshot onto a new machine:
+5. **Restore it.** This command is the restore of K3s itself. The K3s documentation gives it as the way to restore a snapshot onto a new machine:
 
    ```bash
    sudo k3s server --cluster-init --cluster-reset --cluster-reset-restore-path=etcd-snapshot-cp1-1792389364
    ```
 
-   It ends with a line that says `restart without --cluster-reset flag now`. That is the normal end, not an error. If it stops instead with `bootstrap data already found and encrypted with different token`, the token in step 3 is not the one the cluster had: a copy cannot be read with another, so find the right one before you try again. Do not change the machine's address between this step and the next: K3s records it as the address of the cluster's one member.
+   The command ends with a line that says `restart without --cluster-reset flag now`. That line is the usual end, not an error. If the command stops with `bootstrap data already found and encrypted with different token`, the token in step 3 is not the token that the cluster had. You cannot read a copy with a different token. Find the correct token before you try again.
 
-6. **Take the restore file away and start K3s.** The key and the token do not stay in a file:
+   Do not change the address of the machine between this step and the next step. K3s records that address as the address of the one member of the cluster.
+
+6. **Remove the restore file and start K3s.** The key and the token must not stay in a file:
 
    ```bash
    sudo rm /etc/rancher/k3s/config.yaml.d/90-geass-restore.yaml
@@ -187,24 +226,32 @@ You need: the bucket and its key, the cluster's **server token**, the K3s releas
    sudo k3s kubectl get nodes
    ```
 
-   The cluster is back as it was at the time of the copy. The old control plane server is still listed as a node, `NotReady`: remove it with `sudo k3s kubectl delete node <old name>` unless the new machine has the same name, in which case it is the same node.
+   The cluster is back as it was at the time of the copy. The list of nodes still shows the old control plane server, as `NotReady`. Remove it with `sudo k3s kubectl delete node <old name>`. If the new machine has the same name, do not remove it, because it is the same node.
 
-7. **Put the operator on the machine, and send copies again.** The operator's image is inside the installer, not in a registry, so run the installer of the release the cluster ran. On a machine that has K3s with Geass in it, it updates the operator and keeps everything:
+7. **Put the operator on the machine, and send copies again.** The image of the operator is inside the installer, not in a registry. Thus run the installer of the release that the cluster ran. On a machine that has K3s with Geass in it, the installer updates the operator and keeps everything:
 
    ```bash
    curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo env GEASS_VERSION=<the release> sh
    curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- etcd-snapshots enable
    ```
 
-   The installer checks the cluster before it changes anything, and **refuses while Longhorn volumes are missing copies**, which is what a rebuild leaves: the copies that were on the lost machine are gone. Look at what it lists, and when it is only that, run the first command again with `sh -s -- --force` in place of `sh`. The bucket and its key came back inside the copy, so the second command needs none of the variables: it only tells K3s on this machine to send copies, which is configuration of the machine and not of the cluster. It says that the cluster already has its bucket, and takes a copy at once.
+   The installer checks the cluster before it changes anything. The installer **refuses while Longhorn volumes are missing copies**. A rebuild leaves the volumes in this state, because the copies that were on the lost machine are gone. Read the list that the installer shows. If the list shows only those volumes, run the first command again with `sh -s -- --force` in place of `sh`.
 
-8. **Tell Longhorn about the new disk.** Skip this when the cluster does not run Longhorn. Longhorn remembers each node's disk by an identifier that was in the copy, and the new machine's disk has another, so Longhorn marks that disk `DiskFilesystemChanged`, puts no copies on it, and replicated volumes stay short of a copy. Look at the node:
+   The bucket and its key came back inside the copy. Thus the second command needs none of the variables. It only tells K3s on this machine to send copies. That is configuration of the machine, not of the cluster. The command says that the cluster already has its bucket, and it takes a copy immediately.
+
+8. **Tell Longhorn about the new disk.** If the cluster does not run Longhorn, skip this step. Longhorn identifies the disk of each node by an identifier that was in the copy. The disk of the new machine has a different identifier. Thus Longhorn does these things:
+
+   - It marks that disk `DiskFilesystemChanged`.
+   - It puts no copies on that disk.
+   - Replicated volumes stay one copy short.
+
+   Look at the node:
 
    ```bash
    kubectl -n longhorn-system get nodes.longhorn.io <node name> -o jsonpath='{.spec.disks}{"\n"}{.status.diskStatus}'
    ```
 
-   The disk's `Schedulable` condition is `False` with the reason `DiskNotReady`. Remove the disk and add it again. Longhorn only lets a disk go once it is disabled, and the new entry needs a name that is not the old one. Use the name that `.spec.disks` shows (such as `default-disk-7f80b132923582ce`), and the fields it shows for the new entry:
+   The `Schedulable` condition of the disk is `False` with the reason `DiskNotReady`. Remove the disk and add it again. Longhorn removes a disk only after the disk is disabled. The new entry needs a name that is different from the old name. Use the name that `.spec.disks` shows, for example `default-disk-7f80b132923582ce`. Use the fields that the next commands show for the new entry:
 
    ```bash
    kubectl -n longhorn-system patch nodes.longhorn.io <node name> --type merge -p '{"spec":{"disks":{"<disk name>":{"allowScheduling":false}}}}'
@@ -212,46 +259,62 @@ You need: the bucket and its key, the cluster's **server token**, the K3s releas
    kubectl -n longhorn-system patch nodes.longhorn.io <node name> --type merge -p '{"spec":{"disks":{"default-disk":{"allowScheduling":true,"diskType":"filesystem","path":"/var/lib/longhorn/","tags":[]}}}}'
    ```
 
-   The disk is schedulable again within a minute, and the volumes that were short of a copy build it there. An instance of a highly available Postgres database whose volume was on the lost machine has lost its data with it: Geass replaces it by itself after it has been unable to start for [15 minutes](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes), and the Postgres operator builds a new one from the primary.
+   The disk is schedulable again within one minute. The volumes that were one copy short build the missing copy on that disk.
 
-9. **Check what came back.** Open the dashboard. Projects, services, databases, domains and tokens are as they were. Workers that can reach the control plane at the address they joined, with the token they joined by, reconnect by themselves, which is how K3s agents behave; one that cannot needs its agent pointed at the new address. Whatever ran on the lost machine itself, and the volumes that were on its disk, are gone.
+   An instance of a highly available Postgres database that had its volume on the lost machine lost its data with that machine. If that instance cannot start for [15 minutes](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes), Geass replaces it automatically. Then the Postgres operator builds a new instance from the primary.
 
-What this does not bring back: anything that changed after the copy was taken (up to 12 hours), the contents of local volumes that were on the lost machine, and anything that lives outside the cluster (DNS records, S3 buckets, your cloud accounts).
+9. **Check what came back.** Open the dashboard. Projects, services, databases, domains, and tokens are as they were. Some workers can reach the control plane at the address that they joined with, with the token that they joined with. These workers reconnect automatically, because K3s agents do this. If a worker cannot reconnect, point its agent to the new address. Everything that ran on the lost machine itself is gone, and so are the volumes that were on its disk.
+
+The rebuild does not bring back these items:
+
+- Each change after Geass took the copy. That is a maximum of 12 hours.
+- The contents of local volumes that were on the lost machine.
+- Everything outside the cluster, for example DNS records, S3 buckets, and your cloud accounts.
 
 ## Recover databases from a bucket
 
-If the copies of the cluster are lost too, or you are moving to a new cluster and only have the bucket your database backups are in, the backups can still be found. Each database's backups are in a folder named for its project, and **beside them Geass keeps a small record of what they are copies of**: the engine, the version, the size, and what the database was called. It holds nothing secret, and an archive writes it a few minutes after a cluster runs this release. Backups made before that have no record until the cluster that made them has run it.
+You can still find the database backups in these cases:
 
-On the new cluster, open **Usage**, and **Recover databases from a bucket**. Give it the bucket, its region, and the AWS key that Geass used for backups (it makes a restricted user for the bucket from it, as it does for every project). It:
+- The copies of the cluster are also lost.
+- You move to a new cluster, and you have only the bucket that holds your database backups.
 
-- finds each database's record, and its restore points from what is in the bucket;
-- makes a project again, under the name the backups are filed under, for any that this cluster does not have, with a cloud connection to the bucket;
-- makes a record of each database's backups, which then appears in that project's **Settings**, **Backups**, to restore as usual.
+The backups of each database are in a folder with the name of its project. **Beside them Geass keeps a small record of what they are copies of**: the engine, the version, the size, and the name of the database. The record holds nothing secret. An archive writes the record a few minutes after a cluster runs this release. Backups from before that time have no record until the cluster that made them runs this release.
 
-It changes nothing in the bucket and starts nothing. It lists what it left out, and why. Backups that were made before records were written, or whose record is of a newer release than yours, are left out.
+To recover the databases, do these steps:
 
-The records it makes are offered for 30 days. **When they expire, only the records go: Geass never deletes the data in a bucket it found,** because the cluster that made it may be alive.
+1. On the new cluster, open **Usage**, and select **Recover databases from a bucket**.
+2. Enter the bucket, its region, and the AWS key that Geass used for backups. Geass uses that key to make a restricted user for the bucket, as it does for every project.
+
+Geass then does these things:
+
+- It finds the record of each database, and finds the restore points of the database from the contents of the bucket.
+- It makes a project again for each project that this cluster does not have. The project gets the name that the backups use, and a cloud connection to the bucket.
+- It makes a record of the backups of each database. That record then appears in **Settings**, **Backups** of that project, and you restore it as usual.
+
+Geass changes nothing in the bucket and starts nothing. It lists what it left out, and why. Geass leaves out backups from before records were written, and backups whose record is from a newer release than yours.
+
+Geass offers the records that it makes for 30 days. **When they expire, only the records go: Geass never deletes the data in a bucket it found,** because the cluster that made the data might still be alive.
 
 ## Disk failures
 
-The cluster tells you when a disk is failing, with the **Storage failing** [alert](/docs/guides/alerts/):
+When a disk fails, the cluster tells you with the **Storage failing** [alert](/docs/guides/alerts/):
 
 | Sent when | Means | After |
 | --- | --- | --- |
-| A node's disk has gone **read-only** | What the system does to a disk that is failing or a filesystem that is corrupted. Everything that writes to it fails | 2 minutes |
-| A volume has **lost a copy** and not got it back | It still works, but another loss loses the data | 30 minutes |
-| A volume has **lost every copy** | What uses it is down | 5 minutes |
+| The disk of a node has become **read-only** | The system does this to a disk that fails, or to a filesystem that is corrupted. Everything that writes to it fails | 2 minutes |
+| A volume has **lost a copy** and has not got it back | The volume still works, but one more loss loses the data | 30 minutes |
+| A volume has **lost every copy** | Everything that uses the volume is down | 5 minutes |
 
-A disk can fail quietly without any of this: a few bad sectors that nothing has read yet are not noticed by anything Geass watches. Replicated storage and backups are what protect against that, not detection.
+A disk can fail without any of these signs. For example, if nothing has read a few bad sectors yet, nothing that Geass watches sees them. Replicated storage and backups protect against this failure. Detection does not.
 
 ## Limits
 
-- A copy of the cluster holds its objects, not the contents of databases, volumes or in-cluster buckets. Databases need their own [backups](/docs/guides/backups-and-restore/).
-- Redis has no backup, and the cluster's object storage server is not backed up.
-- Geass replaces an instance of a highly available Postgres database when its node was lost, or its volume has no copy left. An instance whose volume is healthy but empty, because its data was removed from a disk that is still there, keeps crashing: Longhorn makes a new empty copy, and nothing tells that from a database that is slow to start. Replace it by hand by removing its claim and then its pod.
-- Geass does not create machines, so replacing one starts with you adding it.
-- The copies are as old as the last 00:00 or 12:00. Take one before something risky with `sudo k3s etcd-snapshot save`.
-- A cluster that was not installed by Geass, or that uses another database than K3s's own etcd, cannot send copies this way.
+- A copy of the cluster holds its objects, not the contents of databases, volumes, or in-cluster buckets. Databases need their own [backups](/docs/guides/backups-and-restore/).
+- Redis has no backup, and Geass does not back up the object storage server of the cluster.
+- Geass replaces an instance of a highly available Postgres database when its node was lost, or when its volume has no copy left. Sometimes the volume of an instance is healthy but empty, because somebody removed its data from a disk that is still there. That instance continues to crash. Longhorn makes a new empty copy, and nothing can tell that instance from a database that is slow to start. To replace that instance by hand, remove its claim, and then remove its pod.
+- Geass makes a new machine only for a worker that it created at a cloud, and only in the cases that [Node pools](/docs/guides/node-pools/#safety) lists. For a control plane server, and for a server that you joined over SSH, the replacement starts when you add the new machine.
+- The copies are as old as the last 00:00 or 12:00. Before a risky change, take a copy with `sudo k3s etcd-snapshot save`.
+- A cluster that Geass did not install cannot send copies this way. A cluster that uses a database other than the etcd of K3s also cannot.
 
 ## Related
 

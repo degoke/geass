@@ -505,7 +505,7 @@ func TestRedisRefusesHighAvailabilityAndMoreThanOneInstance(t *testing.T) {
 
 			got := e.status()
 			require.Equal(t, string(metav1.ConditionFalse), got.ready)
-			require.Contains(t, got.message, "High availability requires PostgreSQL")
+			require.Contains(t, got.message, "High availability requires PostgreSQL, MySQL, or MariaDB")
 			require.Contains(t, got.message, tc.want)
 			require.False(t, platform.ReconcileFailureShouldCount(got.message), "the reason stays on the database")
 			require.False(t, e.exists(&appsv1.StatefulSet{}, redisServerName))

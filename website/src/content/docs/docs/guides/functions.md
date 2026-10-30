@@ -1,16 +1,21 @@
 ---
 title: "Functions"
-description: "Run Bun, Node.js or Python code as a service without building an image, as a server or a handler, and call it on a schedule."
+description: "Run Bun, Node.js, or Python code as a service without an image build, as a server or a handler, and call it on a schedule."
 ---
 
-A **function** is a service whose code you write in the dashboard instead of packaging in an image. You choose a
-runtime, edit one source file, and Geass runs it on that runtime's stock container image. The file is either a server
-you write yourself or a handler that Geass serves for you, and the function can be called on a schedule. Use a function
-for a small webhook receiver, an internal API, a job that runs every night or a quick prototype. For anything that needs
-installed packages or several files, build an image and run it as an [app](/docs/guides/apps/).
+A **function** is a service whose code you write in the dashboard. You do not package the code in an image. You
+select a runtime and edit one source file. Geass runs the file on the stock container image of that runtime. The file
+is one of these:
 
-A function is an ordinary service in every other way: it has a port, a size, replicas, variables, a domain and a
-deployment history, and it can [sleep when idle](/docs/guides/scale-to-zero/).
+- A server that you write yourself.
+- A handler that Geass serves for you.
+
+Geass can call a function on a schedule. Use a function for a small webhook receiver, an internal API, a job that runs
+every night, or a quick prototype. If your code needs installed packages or several files, build an image and run it
+as an [app](/docs/guides/apps/).
+
+In every other way, a function is an ordinary service. It has a port, a size, replicas, variables, a domain, and a
+deployment history. It can also [sleep when idle](/docs/guides/scale-to-zero/).
 
 ## Before you start
 
@@ -19,25 +24,27 @@ admins can create a function or read its code.
 
 ## Create a function
 
-1. Open the project, pick the environment tab and choose **+ Add resource** → **Function**.
-2. Choose a runtime: **Bun (TypeScript)**, **Node.js** or **Python**. Geass saves a draft with starter code and opens
+1. Open the project, and select the environment tab.
+2. Click **+ Add resource** → **Function**.
+3. Select a runtime: **Bun (TypeScript)**, **Node.js**, or **Python**. Geass saves a draft with starter code and opens
    the **Code** tab.
-3. Edit the code. The editor has line numbers, inserts two spaces when you press Tab, and saves on **Cmd+S** or
-   **Ctrl+S**. Choose **Save**, or **Discard** to throw away your edits.
-4. Choose **Deploy changes** in the top bar. The status goes from **Draft** to **Setting up** to **Ready**.
+4. Edit the code. The editor has line numbers. It inserts two spaces when you press Tab, and it saves on **Cmd+S** or
+   **Ctrl+S**.
+5. Click **Save**. To remove your edits, click **Discard**.
+6. Click **Deploy changes** in the top bar. The status goes from **Draft** to **Setting up** to **Ready**.
 
-After a deploy, editing the code and choosing **Save** only stores the new code as a pending change ("Code saved. Deploy
-to apply it."). **Deploy changes** applies it and restarts the pods.
+After a deploy, when you edit the code and click **Save**, Geass only keeps the new code as a pending change ("Code
+saved. Deploy to apply it."). **Deploy changes** applies the code and restarts the pods.
 
-A function's card on the canvas shows a function icon, `function` and `Function · Bun (TypeScript)` (or the runtime you
-chose) as its source.
+On the canvas, the card of a function shows a function icon and `function`. As its source, the card shows
+`Function · Bun (TypeScript)`, or the runtime that you selected.
 
-**+ Add resource** → **Function** always creates a function in server mode, with a server as the starter code. To write a
-handler instead, change the mode as described under [Modes](#modes).
+**+ Add resource** → **Function** always creates a function in server mode, with a server as the starter code. To write
+a handler, change the mode as [Modes](#modes) tells you.
 
 ## Runtimes
 
-Geass runs your code on an unmodified public image. It does not build anything for a function.
+Geass runs your code on an unmodified public image. Geass does not build anything for a function.
 
 | Runtime | Image | Source file | Command in server mode |
 | --- | --- | --- | --- |
@@ -45,32 +52,33 @@ Geass runs your code on an unmodified public image. It does not build anything f
 | **Node.js** (`node`) | `node:22-alpine` | `index.mjs` | `node /function/index.mjs` |
 | **Python** (`python`) | `python:3.12-alpine` | `main.py` | `python -u /function/main.py` |
 
-The code is mounted read-only at `/function`. Everything else in the container is what the image ships with. The Node
+Geass mounts the code read-only at `/function`. Everything else in the container is what the image contains. The Node
 file is an ES module (`.mjs`), so use `import`, not `require`.
 
-Geass does not install packages. There is no `package.json`, `requirements.txt` or build step. A function can use the
-runtime's standard library and whatever else the image already contains.
+Geass does not install packages. There is no `package.json`, no `requirements.txt`, and no build step. A function can
+use the standard library of the runtime, and anything else that the image already contains.
 
-To change the runtime of an existing function, change **Runtime** under **Settings** → **Source**, or the runtime
-selector in the **Code** tab, and save. The code does not change, so rewrite it for the new language.
+To change the runtime of an existing function, change **Runtime** under **Settings** → **Source**, or use the runtime
+selector in the **Code** tab. Then save. Geass does not change the code, so rewrite the code for the new language.
 
 ## Modes
 
-A function runs in one of two modes. Choose the mode with the **Mode** menu in the **Code** tab, then choose **Save**.
+A function runs in one of two modes. To set the mode, select it in the **Mode** menu in the **Code** tab. Then click
+**Save**.
 
 | Mode | Menu entry | `mode` | What your file is |
 | --- | --- | --- | --- |
 | Server | **Server (serves HTTP)** | `http` (the default) | A program that listens on `PORT` and answers requests itself. |
-| Handler | **Handler (gets an event)** | `event` | A `handler(event)` function. Geass runs a small server around it that turns each request into an event and the return value into the response. |
+| Handler | **Handler (gets an event)** | `event` | A `handler(event)` function. Geass runs a small server around it. The server changes each request into an event, and the return value into the response. |
 
-Changing the mode does not rewrite your code. Replace the starter server with a handler (or the reverse) before you
-deploy. A mode change is a pending change, like a code change.
+A change of the mode does not rewrite your code. Before you deploy, replace the starter server with a handler, or
+replace the handler with a server. A mode change is a pending change, the same as a code change.
 
 ### Server mode
 
-Your code starts, listens on a port, and answers requests for as long as the pods run. The code must serve HTTP on the
-port in the `PORT` environment variable. Geass sets `PORT` to the service's **Port** setting (8080 by default). Listen
-on all interfaces. The three starters already do.
+Your code starts, listens on a port, and answers requests while the pods run. The code must serve HTTP on the port in
+the `PORT` environment variable. Geass sets `PORT` to the service's **Port** setting (8080 by default). Listen on all
+interfaces. The three starters already do this.
 
 The starter code in the editor for each runtime answers every request with a small JSON message:
 
@@ -89,9 +97,9 @@ console.log("Listening on " + port);
 
 ### Handler mode
 
-You write a function. Geass starts a server for it, calls your function once for each request and answers with what it
-returns. You never open a port or parse a request. A web request and a scheduled call reach the handler in the same
-shape, so one function can serve both.
+You write a function. Geass starts a server for it. The server calls your function one time for each request, and
+answers with the return value. You never open a port or parse a request. A web request and a scheduled call get to
+the handler in the same shape, so one function can serve both.
 
 ```ts title="index.ts (Bun handler)"
 export async function handler(event: Record<string, any>) {
@@ -114,31 +122,36 @@ def handler(event):
     return {"message": "Hello from Geass", "method": event["method"], "path": event["path"], "trigger": event["trigger"]}
 ```
 
-**Where the handler comes from.** In Bun and Node.js, export a function named `handler`. A default export that is a
-function, or a default export object that has a `handler` function, also works. The handler may be `async`. In Python,
-define a plain `def handler(event)`. Do not use `async def`: the shim calls the function and does not wait for it.
+**Where the handler comes from.** In Bun and Node.js, export a function with the name `handler`. These exports also
+work:
 
-**The event.** The handler receives one argument, an object (a dictionary in Python):
+- A default export that is a function.
+- A default export object that has a `handler` function.
+
+The handler can be `async`. In Python, define a plain `def handler(event)`. Do not use `async def`. The shim calls the
+function and does not wait for it.
+
+**The event.** The handler gets one argument, an object (a dictionary in Python):
 
 | Field | Meaning |
 | --- | --- |
-| `method` | The HTTP method, such as `GET`. |
-| `path` | The request path without the query string, such as `/sync`. |
-| `query` | The query parameters as an object. A name that appears more than once holds a list of values. |
-| `headers` | The request headers, with lowercase names. Geass removes `x-geass-trigger-token` and `x-geass-trigger-name` from it. |
-| `body` | The parsed JSON when the content type says JSON and the text parses. Otherwise the text. `null` (`None` in Python) when the body is empty. |
-| `trigger` | `cron` for a call from one of this function's [schedules](#schedules), and `http` for anything else. |
-| `triggerName` | The name of the schedule on a `cron` call, and `null` (`None`) otherwise. |
+| `method` | The HTTP method, for example `GET`. |
+| `path` | The request path without the query string, for example `/sync`. |
+| `query` | The query parameters as an object. A name that occurs more than one time holds a list of values. |
+| `headers` | The request headers, with lowercase names. Geass removes `x-geass-trigger-token` and `x-geass-trigger-name` from them. |
+| `body` | The parsed JSON when the content type says JSON and the text parses. Otherwise, the text. `null` (`None` in Python) when the body is empty. |
+| `trigger` | `cron` for a call from one of the function's [schedules](#schedules), and `http` for all other calls. |
+| `triggerName` | The name of the schedule on a `cron` call, and `null` (`None`) for other calls. |
 
-**The response.** What the handler returns becomes the HTTP response:
+**The response.** The return value of the handler becomes the HTTP response:
 
 | The handler returns | The response |
 | --- | --- |
 | Nothing (`undefined`, `null`, `None`) | `204` with no body. |
 | Text | `200` with `text/plain; charset=utf-8`. |
 | An object or a list | `200` with the value as JSON. |
-| An object with a numeric `statusCode` | That status. `headers` sets response headers and `body` is the body: text is sent as text, anything else as JSON, and nothing as an empty body. A `content-type` header you set is kept. |
-| An exception | `500` with `{"error": "<message>"}`. The error is written to the log. |
+| An object with a numeric `statusCode` | That status. `headers` sets response headers, and `body` is the body. Text goes as text, any other value as JSON, and nothing as an empty body. Geass keeps a `content-type` header that you set. |
+| An exception | `500` with `{"error": "<message>"}`. Geass writes the error to the log. |
 
 ```js title="A handler that sets the status and a header"
 export async function handler(event) {
@@ -147,79 +160,91 @@ export async function handler(event) {
 }
 ```
 
-**The shim.** The server around your handler is a short program Geass keeps for each runtime. Geass mounts it next to
-your file as `geass-shim.ts`, `geass-shim.mjs` or `geass-shim.py`, and runs it in place of your file. The shim imports
-your file, so a syntax error in your code stops the pod with the error in its log. When the file has no handler, the
-pod exits with `The function must export a handler: export function handler(event) { ... }` (Python: `The function must
-define a handler: def handler(event): ...`).
+**The shim.** The server around your handler is a short program that Geass keeps for each runtime. Geass mounts the
+shim next to your file as `geass-shim.ts`, `geass-shim.mjs`, or `geass-shim.py`, and runs it in place of your file.
+The shim imports your file. So a syntax error in your code stops the pod, and the pod's log shows the error. If the
+file has no handler, the pod exits with
+`The function must export a handler: export function handler(event) { ... }`. In Python, the message is
+`The function must define a handler: def handler(event): ...`.
 
 ## How a function runs
 
 - **Invocation.** Anything that can send an HTTP request invokes the function: a browser, a webhook, another service,
-  one of its schedules. Give it a **Custom domain** under **Settings** → **Networking** to reach it from the internet.
-  Other services in the project reach it at `<service ID>.<namespace>.svc.cluster.local:<port>`. See
-  [Domains and TLS](/docs/guides/domains-and-tls/).
-- **Always on, or asleep.** The pods run all the time unless you turn on **Sleep when idle** under **Settings** →
-  **Scale**. A function that sleeps starts again on the next request to its public host, and a schedule wakes it too. See
+  or one of its schedules. To make the function available from the internet, give it a **Custom domain** under
+  **Settings** → **Networking**. Other services in the project get to the function at
+  `<service ID>.<namespace>.svc.cluster.local:<port>`. See [Domains and TLS](/docs/guides/domains-and-tls/).
+- **Always on, or asleep.** The pods run all the time, unless you turn on **Sleep when idle** under **Settings** →
+  **Scale**. A function that sleeps starts again on the next request to its public host. A schedule also wakes it. See
   [Sleep when idle](/docs/guides/scale-to-zero/).
-- **Other triggers.** A function has no queue or event-bus trigger. The ways to call it are an HTTP request and a
-  [schedule](#schedules).
+- **Other triggers.** A function has no queue trigger or event-bus trigger. The ways to call a function are an HTTP
+  request and a [schedule](#schedules).
 - **No Kubernetes access.** Function pods do not get the Kubernetes service account credentials.
 
 ## Schedules
 
-A schedule calls the function at times you choose. Use it for a nightly report, a cleanup every 15 minutes, or a
-reminder. Each run is an HTTP request to the function, so the function needs nothing special to be scheduled.
+A schedule calls the function at the times that you select. Use a schedule for a nightly report, a cleanup every 15
+minutes, or a reminder. Each run is an HTTP request to the function, so the function needs nothing special for a
+schedule.
 
 ### Add a schedule
 
-1. Open the function and choose the **Code** tab. **Schedules** is under the editor.
-2. Choose **Add schedule**. Geass adds a row named `schedule-1` that runs at minute 0 of every hour (`0 * * * *`).
-3. Fill in the row: the name (for example `nightly`), the cron schedule in UTC (for example `0 3 * * *`) and the path to
-   call (for example `/sync`). Leave the path empty for `/`.
-4. Choose **Save schedules**. A toast says "Schedules saved". Deploy to start them.
-5. Choose **Deploy changes** in the top bar.
+1. Open the function, and select the **Code** tab. **Schedules** is under the editor.
+2. Click **Add schedule**. Geass adds a row with the name `schedule-1`. This schedule runs at minute 0 of every hour
+   (`0 * * * *`).
+3. In the row, enter these values:
+   - The name, for example `nightly`.
+   - The cron schedule in UTC, for example `0 3 * * *`.
+   - The path to call, for example `/sync`. For `/`, leave the path empty.
+4. Click **Save schedules**. A toast shows "Schedules saved". To start the schedules, deploy.
+5. Click **Deploy changes** in the top bar.
 
-A schedule is saved as a pending change and starts with the next deploy. Removing one works the same way: choose
-**Remove**, **Save schedules**, then deploy. A function can have 8 schedules. The dashboard has no field for a payload.
-A payload set another way is kept when you save.
+Geass saves a schedule as a pending change, and the schedule starts with the next deploy. To remove a schedule, do the
+same steps: click **Remove**, click **Save schedules**, and then deploy. A function can have 8 schedules. The dashboard
+has no field for a payload. If you set a payload another way, Geass keeps it when you save.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
-| `name` | Names the schedule and its CronJob. Lowercase letters, digits and dashes, 1 to 32 characters, unique in the function. | None |
-| `schedule` | A cron expression in **UTC** with five fields (minute, hour, day of the month, month, day of the week), or `@hourly`, `@daily`, `@weekly`, `@monthly` or `@yearly`. Numbers, ranges (`1-5`), steps (`*/15`) and lists (`1,15`) work. Names such as `MON` do not. | None |
-| `path` | The path that is called. It starts with `/` and is at most 256 characters. | `/` |
-| `payload` | The JSON body of the request. Valid JSON, at most 4096 characters. | `{"trigger":"cron","name":"<name>"}` |
+| `name` | The name of the schedule and its CronJob. Lowercase letters, digits, and dashes, 1 to 32 characters, unique in the function. | None |
+| `schedule` | A cron expression in **UTC** with five fields (minute, hour, day of the month, month, day of the week), or `@hourly`, `@daily`, `@weekly`, `@monthly`, or `@yearly`. Numbers, ranges (`1-5`), steps (`*/15`), and lists (`1,15`) work. Names, for example `MON`, do not work. | None |
+| `path` | The path that the schedule calls. It starts with `/` and has 256 characters or fewer. | `/` |
+| `payload` | The JSON body of the request. Valid JSON, 4096 characters or fewer. | `{"trigger":"cron","name":"<name>"}` |
 
-Some examples: `*/15 * * * *` every 15 minutes, `0 3 * * *` every day at 03:00 UTC, `30 8 * * 1-5` weekdays at 08:30
-UTC.
+These are some examples:
+
+- `*/15 * * * *`: every 15 minutes.
+- `0 3 * * *`: every day at 03:00 UTC.
+- `30 8 * * 1-5`: weekdays at 08:30 UTC.
 
 ### What a run does
 
-For each schedule Geass makes one Kubernetes CronJob in the environment's namespace. At each time it fires, a short Job
-sends `POST <path>` to the function with the payload as the JSON body.
+For each schedule, Geass makes one Kubernetes CronJob in the environment's namespace. Each time the CronJob fires, a
+short Job sends `POST <path>` to the function, with the payload as the JSON body.
 
-- A run succeeds when the function answers with a status below 400. It fails on `400` or above, or when there is no answer
-  within 120 seconds. A cold start counts toward the 120 seconds.
-- A failed run is tried once more. A run that is still going when the next one is due is not doubled, and a run that
-  could not start within 5 minutes of its time is skipped, not run late.
-- When the function sleeps when idle and can (it has a public host and the serverless add-on is on), the run goes through
-  the same proxy as a visitor and wakes it first. Otherwise the run goes straight to the service.
-- Geass keeps the last successful Job and the last three failed ones.
-- A [pull request environment](/docs/guides/pull-request-environments/) does not copy a function's schedules, so a copy
-  does not repeat the work once per open pull request.
+- A run succeeds when the function answers with a status below 400. A run fails on `400` or above, or when there is
+  no answer within 120 seconds. A cold start counts toward the 120 seconds.
+- A failed run gets one more try.
+- If a run is still in progress when the next run is due, the next run does not start in parallel.
+- If a run cannot start within 5 minutes of its time, the run is skipped. It does not run late.
+- The function can sleep when idle if it has a public host and the serverless add-on is on. In that case, the run
+  goes through the same proxy as a visitor, and the proxy wakes the function first. In other cases, the run goes
+  directly to the service.
+- Geass keeps the last successful Job and the last three failed Jobs.
+- A [pull request environment](/docs/guides/pull-request-environments/) does not copy the schedules of a function. So
+  a copy does not repeat the work one time for each open pull request.
 
 ### Tell a schedule from a visitor
 
-Every function that is in handler mode or has schedules gets a secret token. The pods read it as the environment variable
-`GEASS_TRIGGER_TOKEN`, and every run sends it in the header `x-geass-trigger-token`, with the schedule's name in
-`x-geass-trigger-name`.
+Every function that is in handler mode or has schedules gets a secret token:
 
-In handler mode the shim compares the header with the variable in constant time. A request that carries the token is
-reported as `trigger: "cron"`. A visitor who sends the header with a wrong value is an `http` call, so a handler can
+- The pods read the token as the environment variable `GEASS_TRIGGER_TOKEN`.
+- Every run sends the token in the header `x-geass-trigger-token`, with the schedule's name in `x-geass-trigger-name`.
+
+In handler mode, the shim compares the header with the variable in constant time. The shim reports a request that has
+the token as `trigger: "cron"`. A visitor who sends the header with a wrong value is an `http` call. So a handler can
 trust `event.trigger`.
 
-In server mode nothing checks the header for you. Compare it yourself when your code must tell a run from a visitor:
+In server mode, nothing checks the header for you. If your code must tell a run from a visitor, compare the header
+yourself:
 
 ```js title="Server mode: recognise a scheduled call (Node.js)"
 import crypto from "node:crypto";
@@ -232,9 +257,9 @@ export function isScheduled(req) {
 }
 ```
 
-The token is made once, kept in the Secret `<service ID>-trigger` (key `token`) in the environment's namespace, and removed
-when the function is neither in handler mode nor scheduled. It travels inside the cluster as plain HTTP, like the rest of
-the traffic between services.
+Geass makes the token one time, and keeps it in the Secret `<service ID>-trigger` (key `token`) in the environment's
+namespace. Geass removes the token when the function is not in handler mode and has no schedules. The token goes
+inside the cluster as plain HTTP, the same as the other traffic between services.
 
 ### From the command line, the API or an agent
 
@@ -246,16 +271,22 @@ geass deploy report --wait
 geass functions invoke report --path /sync --data '{"full":true}'
 ```
 
-`geass functions triggers add` replaces the schedule that has the same name, and the schedule starts at the next deploy.
-`geass functions invoke` calls the function at its public address, as a visitor would, and prints the answer. It needs the
-function to have a domain. An agent uses the
-`set_function_trigger`, `remove_function_trigger` and `invoke_function` tools. See [Command line](/docs/guides/command-line/),
-[MCP server](/docs/guides/mcp-server/), [CLI commands](/docs/reference/cli/) and [MCP tools](/docs/reference/mcp-tools/).
+`geass functions triggers add` replaces the schedule that has the same name. The schedule starts at the next deploy.
 
-Through the REST API, `POST /api/apps/{id}/update` takes `functionMode`, `functionRuntime`, `functionCode` and
-`functionTriggers`, and `POST /api/apps/create` takes `source=function` with `runtime`, `mode`, `code` and
-`functionTriggers`. `functionTriggers` is a JSON array of schedules, or one JSON object. An empty value removes every
-schedule. When you create a function with `mode=event` and no code, Geass fills in a starter handler.
+`geass functions invoke` calls the function at its public address, as a visitor does, and prints the answer. The
+function must have a domain for this command.
+
+An agent uses the `set_function_trigger`, `remove_function_trigger`, and `invoke_function` tools. See
+[Command line](/docs/guides/command-line/), [MCP server](/docs/guides/mcp-server/),
+[CLI commands](/docs/reference/cli/), and [MCP tools](/docs/reference/mcp-tools/).
+
+The REST API has these routes for functions:
+
+- `POST /api/apps/{id}/update` takes `functionMode`, `functionRuntime`, `functionCode`, and `functionTriggers`.
+- `POST /api/apps/create` takes `source=function` with `runtime`, `mode`, `code`, and `functionTriggers`.
+
+`functionTriggers` is a JSON array of schedules, or one JSON object. An empty value removes every schedule. When you
+create a function with `mode=event` and no code, Geass fills in a starter handler.
 
 ```bash title="Set the schedules of a function"
 curl -X POST https://geass.example.com/api/apps/report/update \
@@ -268,22 +299,26 @@ curl -X POST https://geass.example.com/api/apps/report/update \
 | Limit | Value |
 | --- | --- |
 | Code size | 256 KB (262,144 bytes). |
-| Size once saved with the service | The code, with quotes and line breaks escaped, must stay under 200 KB. Geass stores the whole service, code included, with every deploy, and Kubernetes limits that. |
+| Size when saved with the service | The code, with quotes and line breaks escaped, must stay under 200 KB. Geass keeps the whole service, code included, with every deploy, and Kubernetes limits that size. |
 | Files | One. The function is a single source file. |
-| Runtimes | `bun`, `node` and `python`. |
+| Runtimes | `bun`, `node`, and `python`. |
 | Modes | `http` and `event`. |
-| Schedules | 8 per function. |
-| Size | The same choices as an app: CPU 0.1, 0.25, 0.5, 1 or 2, memory 128 MB to 4 GB. Default 0.1 CPU and 128 MB. |
+| Schedules | 8 for each function. |
+| Size | The same choices as an app: CPU 0.1, 0.25, 0.5, 1, or 2, and memory 128 MB to 4 GB. The default is 0.1 CPU and 128 MB. |
 | Replicas and autoscaling | The same as an app. See [Apps](/docs/guides/apps/#scale). |
 
-Saving code that breaks a limit is refused with a message such as "function code must be under 256 KB" or "function
-code is too large to deploy: it must stay under 200 KB once saved with the service". A schedule that breaks a rule is
-refused with a message such as `trigger "nightly": the minute field must be between 0 and 59`, `trigger "nightly": the
-path must start with /` or `a function can have at most 8 triggers`.
+If code breaks a limit, Geass refuses to save it. Geass shows a message, for example "function code must be under 256
+KB" or "function code is too large to deploy: it must stay under 200 KB once saved with the service".
+
+If a schedule breaks a rule, Geass refuses it with a message, for example these messages:
+
+- `trigger "nightly": the minute field must be between 0 and 59`
+- `trigger "nightly": the path must start with /`
+- `a function can have at most 8 triggers`
 
 ## Environment variables and secrets
 
-Use the **Variables** tab, the same as for an app. Variables and secrets arrive as environment variables:
+Use the **Variables** tab, the same as for an app. Variables and secrets get to the function as environment variables:
 
 ```ts title="Read a variable in Bun or Node"
 const greeting = process.env.GREETING ?? "Hello";
@@ -294,11 +329,13 @@ import os
 greeting = os.environ.get("GREETING", "Hello")
 ```
 
-A change to a variable applies on the next deploy. A variable named `PORT` that you add on the **Variables** tab does
-not replace the `PORT` Geass sets: change the **Port** setting instead. Geass also sets `GEASS_TRIGGER_TOKEN` on a
-function in handler mode or with schedules. To give a function a database connection, use **Add Reference**; the
-**Function with Postgres** [example template](/docs/guides/templates/#examples-to-copy) does this and reads
-`DATABASE_URL` with Bun's built-in SQL client. See [Environment variables and secrets](/docs/guides/environment-variables/).
+A change to a variable applies on the next deploy. A variable with the name `PORT` that you add on the **Variables**
+tab does not replace the `PORT` that Geass sets. To change the port, change the **Port** setting. Geass also sets
+`GEASS_TRIGGER_TOKEN` on a function in handler mode or with schedules.
+
+To give a function a database connection, use **Add Reference**. The **Function with Postgres**
+[example template](/docs/guides/templates/#examples-to-copy) does this. It reads `DATABASE_URL` with the built-in SQL
+client of Bun. See [Environment variables and secrets](/docs/guides/environment-variables/).
 
 ## How functions differ from apps
 
@@ -306,16 +343,17 @@ function in handler mode or with schedules. To give a function a database connec
 | --- | --- | --- |
 | What you provide | One source file. | An image, or a repository with a Dockerfile. |
 | Build | None. Runs on a stock image. | None for an image. A Kaniko build for a repository. |
-| Packages | Only what the image has. | Whatever your image contains. |
-| Where the code is edited | **Code** tab. | In your repository or image. |
+| Packages | Only what the image has. | All that your image contains. |
+| Where you edit the code | **Code** tab. | In your repository or image. |
 | Schedules | Yes, up to 8. | No. |
 | Rollback | Not available. Restore the earlier code and deploy again. | Available through the API for image services. |
-| Port | `PORT` is always set from the **Port** setting. | Geass does not set `PORT`. |
-| Everything else | Same: size, replicas, autoscaling, sleep when idle, domain, variables, console, metrics, history. | |
+| Port | Geass always sets `PORT` from the **Port** setting. | Geass does not set `PORT`. |
+| Everything else | The same: size, replicas, autoscaling, sleep when idle, domain, variables, console, metrics, and history. | |
 
-Because the code is part of the service, every deploy records it in the deployment history as `Deploy function (bun)`.
-**Pending changes** shows `Function code updated` when the code changed, and `Source: function (bun) → function (node)`
-when the runtime changed. A change to the mode or the schedules on its own shows `Settings updated`.
+The code is part of the service. So every deploy records the code in the deployment history as
+`Deploy function (bun)`. **Pending changes** shows `Function code updated` when the code changed. It shows
+`Source: function (bun) → function (node)` when the runtime changed. A change to only the mode or the schedules shows
+`Settings updated`.
 
 ## Logs, console and metrics
 
@@ -352,7 +390,7 @@ spec:
     enabled: true
 ```
 
-`kubectl apply -f hello.yaml` creates and runs it. A handler with two schedules:
+`kubectl apply -f hello.yaml` creates and runs the function. This example is a handler with two schedules:
 
 ```yaml title="report.yaml"
 apiVersion: geass.geass.dev/v1alpha1
@@ -383,23 +421,24 @@ spec:
     enabled: true
 ```
 
-Without `mode`, a function is in server mode. See [Apps](/docs/guides/apps/#manifest-and-api) for what changes when you
-manage a service by manifest, and [GeassApp](/docs/reference/resources/geass-app/) for every field.
+Without `mode`, a function is in server mode. For what changes when you manage a service by manifest, see
+[Apps](/docs/guides/apps/#manifest-and-api). For every field, see [GeassApp](/docs/reference/resources/geass-app/).
 
 ## What happens under the hood
 
-- The code is stored in a ConfigMap named `<service ID>-function` in the environment's namespace, under the key
-  `index.ts`, `index.mjs` or `main.py`. A function in handler mode also has the shim in the same ConfigMap, as
-  `geass-shim.ts`, `geass-shim.mjs` or `geass-shim.py`.
-- The Deployment mounts that ConfigMap read-only at `/function` and runs the runtime command on it (the shim in handler
-  mode). The pod template carries a hash of the runtime, the mode and the code, so a change to any of them rolls the pods.
-- `PORT` is added to the container's environment from `spec.port`. `automountServiceAccountToken` is `false`.
-- For a function in handler mode or with schedules, Geass makes the Secret `<service ID>-trigger` and gives the container
-  `GEASS_TRIGGER_TOKEN` from it. The pod template carries a fingerprint of the token, so a token that is made again rolls
-  the pods.
-- Each schedule is a CronJob named `<service ID>-<schedule name>-<8 characters>` (at most 52 characters), labelled
-  `geass.dev/function-trigger=<name>`, with the time zone `Etc/UTC`. Its Job runs `curl` from `curlimages/curl:8.10.1`
-  on the nodes the project's builds and jobs use.
+- Geass keeps the code in a ConfigMap with the name `<service ID>-function` in the environment's namespace. The key is
+  `index.ts`, `index.mjs`, or `main.py`. For a function in handler mode, the same ConfigMap also has the shim, as
+  `geass-shim.ts`, `geass-shim.mjs`, or `geass-shim.py`.
+- The Deployment mounts that ConfigMap read-only at `/function`. The Deployment runs the runtime command on the file
+  (on the shim in handler mode).
+- The pod template has a hash of the runtime, the mode, and the code. So a change to any of them rolls the pods.
+- Geass adds `PORT` to the container's environment from `spec.port`. `automountServiceAccountToken` is `false`.
+- For a function in handler mode or with schedules, Geass makes the Secret `<service ID>-trigger`. Geass gives the
+  container `GEASS_TRIGGER_TOKEN` from that Secret. The pod template has a fingerprint of the token. So when Geass
+  makes the token again, the pods roll.
+- Each schedule is a CronJob with the name `<service ID>-<schedule name>-<8 characters>` (52 characters or fewer). The
+  CronJob has the label `geass.dev/function-trigger=<name>` and the time zone `Etc/UTC`. Its Job runs `curl` from
+  `curlimages/curl:8.10.1` on the nodes that the project's builds and jobs use.
 
 ```bash title="Inspect a function"
 kubectl -n proj-1a2b3c4d-production get configmap hello-fn-function -o yaml
@@ -418,45 +457,48 @@ kubectl -n proj-1a2b3c4d-production logs job/<job name>
 **Saving fails with "function code is too large to deploy".** The escaped code is over 200 KB. Remove large embedded
 data, or move to an [app](/docs/guides/apps/) with an image.
 
-**The pod restarts in a loop (`CrashLoopBackOff`).** The process exits. Open **Deployments** → **View logs** → **Deploy
-Logs**: a syntax error, a missing module or an uncaught exception is printed there. In handler mode, `The function must
-export a handler` means the file has no `handler` export.
+**The pod restarts in a loop (`CrashLoopBackOff`).** The process exits. Open **Deployments** → **View logs** →
+**Deploy Logs**. The log shows a syntax error, a missing module, or an uncaught exception. In handler mode,
+`The function must export a handler` means that the file has no `handler` export.
 
 **The status is Unavailable, then Failed, and the condition says "The service cannot start: app is CrashLoopBackOff".**
-Geass read the reason from the pod. Fix the code, then deploy again. See [Apps](/docs/guides/apps/#troubleshooting).
+Geass read the reason from the pod. Fix the code, and then deploy again. See [Apps](/docs/guides/apps/#troubleshooting).
 
-**The domain returns `502` or `503`.** In server mode, the code is not listening on `PORT`, or listens only on `localhost`.
-Read the port from the environment and bind all interfaces. A handler does not open a port: check the pod's log.
+**The domain returns `502` or `503`.** In server mode, the code does not listen on `PORT`, or listens only on
+`localhost`. Read the port from the environment, and bind all interfaces. A handler does not open a port. For a
+handler, check the pod's log.
 
-**`Cannot find module` or `ModuleNotFoundError`.** The package is not in the image and Geass does not install packages.
-Use the standard library, or build an image that contains the package and run it as an app.
+**`Cannot find module` or `ModuleNotFoundError`.** The package is not in the image, and Geass does not install
+packages. Use the standard library. Alternatively, build an image that contains the package, and run it as an app.
 
 **`require is not defined` on Node.js.** The file is an ES module. Use `import http from "node:http"`.
 
 **A Python handler answers `500` with a JSON error about a coroutine.** The handler is `async def`. Use a plain `def`.
 
-**My edit is not live.** Code changes wait for **Deploy changes**. The pending list shows `Function code updated` until
-you deploy.
+**My edit is not live.** Code changes wait for **Deploy changes**. The pending list shows `Function code updated`
+until you deploy.
 
-**A schedule never runs.** Schedules start with the next deploy after you save them, so check that the function is
-deployed and the pending list is empty. Then look for the CronJob with `kubectl -n <namespace> get cronjobs -l
-geass.dev/name=<service ID>`. A function that is a draft has none.
+**A schedule never runs.** Schedules start with the next deploy after you save them. Make sure that the function is
+deployed and that the pending list is empty. Then look for the CronJob with
+`kubectl -n <namespace> get cronjobs -l geass.dev/name=<service ID>`. A function that is a draft has no CronJob.
 
-**A schedule runs but the function does nothing, or the Job fails.** Read the Job: `kubectl -n <namespace> get jobs -l
-geass.dev/function-trigger=<name>` and `kubectl -n <namespace> logs job/<job name>`. `curl` fails when the function answers
-with `400` or above (`The requested URL returned error: 404` means the **Path** is wrong), or when it does not answer
-within 120 seconds.
+**A schedule runs but the function does nothing, or the Job fails.** Read the Job with
+`kubectl -n <namespace> get jobs -l geass.dev/function-trigger=<name>` and
+`kubectl -n <namespace> logs job/<job name>`. `curl` fails in these cases:
 
-**The handler sees `trigger: "http"` for a scheduled run.** The pods and the schedule disagree about the token. Deploy the
-function again so the pods restart with the current token. A request that does not carry the right
+- The function answers with `400` or above. `The requested URL returned error: 404` means that the **Path** is wrong.
+- The function does not answer within 120 seconds.
+
+**The handler sees `trigger: "http"` for a scheduled run.** The pods and the schedule do not agree about the token.
+Deploy the function again, so that the pods restart with the current token. A request that does not have the correct
 `x-geass-trigger-token` is always reported as `http`.
 
 **A schedule fires at the wrong hour.** The schedule is in UTC. Convert your local time.
 
 **"functions cannot be rolled back; restore the earlier code and deploy again".** A function has no rollback. Paste
-the earlier code into the editor, save and deploy.
+the earlier code into the editor, save, and deploy.
 
-**I cannot open the Code tab.** Read-only users cannot view function code ("Your viewer role cannot view function
+**I cannot open the Code tab.** Read-only users cannot see function code ("Your viewer role cannot view function
 code").
 
 ## Related
@@ -465,7 +507,7 @@ code").
 - [Sleep when idle](/docs/guides/scale-to-zero/)
 - [Environment variables and secrets](/docs/guides/environment-variables/)
 - [Templates](/docs/guides/templates/): ready-made **Hello function** and **Function with Postgres** examples, and
-  templates that carry a function's mode and schedules.
+  templates that keep the mode and schedules of a function.
 - [Domains and TLS](/docs/guides/domains-and-tls/)
 - [Command line](/docs/guides/command-line/) and [MCP server](/docs/guides/mcp-server/)
 - [GeassApp](/docs/reference/resources/geass-app/)

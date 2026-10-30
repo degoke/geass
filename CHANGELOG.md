@@ -473,6 +473,11 @@ The first public release, open source under the Apache License 2.0.
 
 ### Changed
 
+- **The documentation follows the Google developer documentation style guide and the ASD-STE100 writing rules.** The
+  README and every page at rungeass.com/docs use short sentences, the active voice, and one word for one meaning. The rules
+  are in `docs/writing-style.md`. A check of the pages against the code also corrected about 30 statements, for example the
+  highly available control plane, the token limits, MariaDB support, and the sign-in lockout.
+
 - The first pool whose nodes hold no data (`storage: None`, the default), or the first single server added with
   `storage: None`, makes every service roll once, so that its pods tolerate the taint `geass.dev/ephemeral`. It happens
   again when the last one is deleted. A cluster that has neither sees no change.
@@ -537,6 +542,14 @@ The first public release, open source under the Apache License 2.0.
 
 ### Fixed
 
+- **A terminal that reaches its time limit is always recorded as expired.** Before this fix, the dashboard and the operator
+  both ended the session, and the record depended on which one wrote first. The dashboard wrote `Closed` with the reason
+  `Terminal closed`, and the operator wrote `Expired` with the reason `Session timeout`. Now both write `Expired` and
+  `Session timeout`.
+- **The message that refuses high availability for Redis now names MariaDB.** The message said "requires PostgreSQL or
+  MySQL", but MariaDB also supports high availability. It now says "requires PostgreSQL, MySQL, or MariaDB".
+- **The CRD description of `githubConnectionRef` on a project is correct.** It said that the field names a Secret. The field
+  names a `GeassGitHubConnection` in `geass-system`. Only the description changed.
 - **What the first run of the mesh overlay check on EC2 found.** (1) The first probe of a node waited for the five-minute look
   of the cluster (5:00 to 5:13 after `Ready` in seven of seven cases, 6:00 for a worker with no pod): nothing remembered nodes
   that were still in their two minutes, so nothing asked for the cluster to be looked at when the two minutes ended. The check

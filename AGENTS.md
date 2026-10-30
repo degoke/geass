@@ -17,7 +17,7 @@ PROJECT                        Kubebuilder metadata Auto-generated (DO NOT EDIT)
 cmd/geass, cmd/geass-cli       The installer, and the command line with its MCP server
 pkg/compute/*                  Cloud drivers that create machines (one package each, registered by pkg/compute/all)
 website/                       User documentation (Astro/Starlight); update it with any user-visible change
-docs/                          Contributor docs: development.md, releasing.md, design.md
+docs/                          Contributor docs: development.md, releasing.md, design.md, writing-style.md (user docs style)
 CHANGELOG.md                   Keep a Changelog; user-visible changes go under Unreleased
 ```
 
@@ -69,6 +69,12 @@ Do not move files around. The CLI expects files in specific locations.
 
 ### Always Use CLI Commands
 Always use `kubebuilder create api` and `kubebuilder create webhook` to scaffold. Do NOT create files manually.
+
+### Documentation Follows Google Style and ASD-STE100
+All documentation must follow the [Google developer documentation style guide](https://developers.google.com/style) and
+the ASD-STE100 Simplified Technical English writing rules. This includes `website/` pages, `README.md`, `docs/`,
+`CHANGELOG.md` entries, and dashboard text. The rules, with the word list and the checks, are in
+`docs/writing-style.md`. Where the two standards differ, use the stricter rule.
 
 ### E2E Tests Require an Isolated Kind Cluster
 The e2e tests are designed to validate the solution in an isolated environment (similar to GitHub Actions CI).

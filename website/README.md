@@ -117,7 +117,9 @@ when it misbehaves.
 
 ### Voice
 
-Second person, present tense, active voice, short sentences. Say what a thing is for before how it works. Prefer a
+The docs follow the Google developer documentation style guide and the ASD-STE100 Simplified Technical English writing
+rules. [docs/writing-style.md](../docs/writing-style.md) has the rules: second person, present tense, active voice, one
+idea in each sentence, and sentences of 25 words or fewer. Say what a thing is for before how it works. Prefer a
 concrete example to an abstract description. Spell out a number or limit when there is one.
 
 ### Page shape

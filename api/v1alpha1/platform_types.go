@@ -88,7 +88,7 @@ type GeassProjectSpec struct {
 	// SharedVariables are environment-scoped values available to project services.
 	// +optional
 	SharedVariables []GeassSharedVariable `json:"sharedVariables,omitempty"`
-	// GitHubConnectionRef references a Secret containing GitHub credentials and webhook data.
+	// GitHubConnectionRef names the GeassGitHubConnection, in geass-system, that the project builds and reports with.
 	// +optional
 	GitHubConnectionRef *corev1.LocalObjectReference `json:"githubConnectionRef,omitempty"`
 	// Webhooks receive signed notifications about deployments in this project. The signing secret of
@@ -450,6 +450,10 @@ const (
 	GeassConsoleExpired GeassConsoleSessionPhase = "Expired"
 	GeassConsoleClosed  GeassConsoleSessionPhase = "Closed"
 )
+
+// GeassConsoleTimeoutReason is the status reason of a session that reached its time limit. The operator and the
+// dashboard both write it, so the audit record is the same whichever of them notices first.
+const GeassConsoleTimeoutReason = "Session timeout"
 
 type GeassConsoleSessionSpec struct {
 	App            string           `json:"app"`

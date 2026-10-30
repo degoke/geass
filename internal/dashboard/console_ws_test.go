@@ -179,6 +179,58 @@ func TestConsoleTerminalReportsShellExitStatusAndErrors(t *testing.T) {
 	}
 }
 
+// A terminal that reaches its time limit is recorded as expired, the same as the operator records it, so the audit
+// record does not depend on which of the two writes first. A shell that exits is recorded as closed.
+func TestConsoleTerminalRecordsHowTheSessionEnded(t *testing.T) {
+	cases := map[string]struct {
+		secondsLeft int
+		input       string
+		wantFrame   string
+		wantPhase   geassv1alpha1.GeassConsoleSessionPhase
+		wantReason  string
+	}{
+		"time limit": {
+			secondsLeft: 3, wantFrame: "Session time limit reached",
+			wantPhase: geassv1alpha1.GeassConsoleExpired, wantReason: geassv1alpha1.GeassConsoleTimeoutReason,
+		},
+		"shell exits": {
+			secondsLeft: 300, input: "exit\n",
+			wantPhase: geassv1alpha1.GeassConsoleClosed, wantReason: "Terminal closed",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			session := activeConsoleSession("web-console-end")
+			started := metav1.NewTime(time.Now().Add(time.Duration(tc.secondsLeft-300) * time.Second))
+			session.Status.StartedAt = &started
+			shell := func(ctx context.Context, _ consoleTarget, streams consoleStreams) error {
+				if tc.input != "" {
+					return nil
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			srv, httpServer := consoleWSServer(t, shell, session)
+			conn, _, err := dialConsole(t, httpServer, "session=web-console-end", httpServer.URL)
+			require.NoError(t, err)
+			defer func() { _ = conn.Close() }()
+			_, data := readFrame(t, conn)
+			var exit map[string]any
+			require.NoError(t, json.Unmarshal(data, &exit))
+			if tc.wantFrame != "" {
+				require.Equal(t, tc.wantFrame, exit["error"])
+			}
+			require.Eventually(t, func() bool {
+				got := &geassv1alpha1.GeassConsoleSession{}
+				if err := srv.Client.Get(context.Background(), client.ObjectKeyFromObject(session), got); err != nil {
+					return false
+				}
+				return got.Status.Phase == tc.wantPhase && got.Status.Reason == tc.wantReason && got.Status.EndedAt != nil
+			}, 5*time.Second, 20*time.Millisecond)
+		})
+	}
+}
+
 func TestConsoleTerminalRejectsBadRequestsBeforeUpgrading(t *testing.T) {
 	shell := &echoShell{}
 	expired := activeConsoleSession("web-console-expired")

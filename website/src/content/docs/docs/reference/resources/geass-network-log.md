@@ -1,14 +1,29 @@
 ---
 title: "GeassNetworkLog"
-description: "Reference for the GeassNetworkLog resource, a schema for one HTTP request record that nothing in Geass writes today; the operator only deletes old ones."
+description: "Reference for the GeassNetworkLog resource, a schema for one HTTP request record. Nothing in Geass writes it. The operator only deletes old ones."
 sidebar:
   order: 16
 ---
 
-A `GeassNetworkLog` is a schema for one HTTP access-log record: the project, environment and service, the host, method and path of a request, the status code and the latency. It holds request metadata only, never request or response bodies.
+A `GeassNetworkLog` is a schema for one HTTP access-log record. A record holds these values:
+
+- The project, the environment, and the service.
+- The host, the method, and the path of a request.
+- The status code and the latency.
+
+A record holds request metadata only, never request or response bodies.
 
 :::caution
-Nothing in Geass creates these objects, and nothing reads them. The operator has a controller that deletes records older than seven days, and the platform configuration has a `traefikAccessLogs` block, but no code turns Traefik's access log into `GeassNetworkLog` records, and the dashboard has no screen for them. The kind is a stub for a feature that is not built. For HTTP request data today, use the request metrics on a service's **Metrics** tab (see [Observability](/docs/guides/observability/)).
+For HTTP request data today, use the request metrics on the **Metrics** tab of a service. See
+[Observability](/docs/guides/observability/). Nothing in Geass creates `GeassNetworkLog` objects, and nothing reads
+them:
+
+- The operator has a controller that deletes records older than seven days.
+- The platform configuration has a `traefikAccessLogs` block.
+- But no code turns the Traefik access log into `GeassNetworkLog` records.
+- The dashboard has no screen for the records.
+
+The kind is a stub for a feature that is not built.
 :::
 
 ## Summary
@@ -25,7 +40,7 @@ Nothing in Geass creates these objects, and nothing reads them. The operator has
 
 ## Example
 
-This is what a record looks like if something writes one.
+This example shows a record, if something writes one.
 
 ```yaml title="storefront-request.yaml"
 apiVersion: geass.geass.dev/v1alpha1
@@ -63,27 +78,38 @@ spec:
 
 ## What happens under the hood
 
-The operator runs a controller for the kind. For each record it compares `spec.timestamp` with the retention, 7 days by default, and deletes the record when it is older. If it is not old enough, it looks at the record again after half the retention (3.5 days), so a record can outlive its retention by up to that long. A record with an empty `timestamp` is never deleted. The operator's role can create, delete, get, list and watch the kind, and it cannot update it.
+The operator runs a controller for the kind. The controller does these steps for each record:
 
-The retention is a field of the controller, and the operator does not set it from any flag, environment variable or resource, so 7 days is what you get.
+1. It compares `spec.timestamp` with the retention, which is 7 days by default.
+2. If the record is older than the retention, the controller deletes the record.
+3. If the record is not old enough, the controller looks at the record again after half the retention (3.5 days).
 
-The `traefikAccessLogs` block of the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/) (`enabled`, `format`, `networkLogEndpoint`) is in the schema and nothing reads it.
+So a record can stay up to 3.5 days longer than its retention. The controller never deletes a record with an empty
+`timestamp`. The role of the operator can create, delete, get, list, and watch the kind. The role cannot update the
+kind.
+
+The retention is a field of the controller. The operator does not set the retention from a flag, an environment
+variable, or a resource. So the retention is always 7 days.
+
+The `traefikAccessLogs` block of the [GeassPlatformConfig](/docs/reference/resources/geass-platform-config/)
+(`enabled`, `format`, `networkLogEndpoint`) is in the schema, but nothing reads it.
 
 ```bash title="Look for records"
 kubectl -n geass-system get geassnetworklogs
 ```
 
-On a cluster installed from the current code this lists nothing.
+On a cluster that you installed from the current code, this command lists nothing.
 
 ## Editing by hand
 
-You can create and delete records, but there is nothing to gain: they do not appear anywhere, and the operator removes them after seven days. Do not store personal data in them.
+You can create and delete records, but you get no benefit. The records do not appear anywhere, and the operator
+removes them after seven days. Do not store personal data in the records.
 
 ## Troubleshooting
 
-**The list is empty.** That is expected. Nothing writes these records.
+**The list is empty.** This result is expected. Nothing writes these records.
 
-**I set `traefikAccessLogs.enabled` on the platform configuration and nothing happens.** The field is not used. See the caution at the top of this page.
+**I set `traefikAccessLogs.enabled` on the platform configuration and nothing happens.** Geass does not use this field. See the caution at the top of this page.
 
 ## Related
 
