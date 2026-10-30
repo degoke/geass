@@ -52,10 +52,10 @@ Each step prints `→ <name>` when it starts and `✓ <name>` when it finishes. 
 `latest` resolves to the newest release on GitHub. To install a specific release, use the `install.sh` of that release, and set `GEASS_VERSION` to the same tag. `sudo` clears most of the environment, so pass the variable through `env`:
 
 ```bash
-curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh | sudo env GEASS_VERSION=v0.1.0 sh
+curl -sfL https://github.com/degoke/geass/releases/download/v0.0.1/install.sh | sudo env GEASS_VERSION=v0.0.1 sh
 ```
 
-Replace `v0.1.0` with a tag from the Releases page of the project. The cluster records the release that its operator runs. `sudo k3s kubectl -n geass-system get geasscluster` shows the release in the `RELEASE` column. An update refuses to go to an older release. See [Upgrade Geass](/docs/operations/upgrading/).
+Replace `v0.0.1` with a tag from the Releases page of the project. The cluster records the release that its operator runs. `sudo k3s kubectl -n geass-system get geasscluster` shows the release in the `RELEASE` column. An update refuses to go to an older release. See [Upgrade Geass](/docs/operations/upgrading/).
 
 To build the cluster on a specific K3s release instead of the current stable release, pass `GEASS_K3S_VERSION`. Use the full name, for example `v1.36.5+k3s1`:
 
@@ -68,7 +68,7 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
 Every release has a `SHA256SUMS` file. This file lists the installer, the command line, and the two install scripts, and the scripts check the files against it for you. Each file also has signed build provenance. The provenance shows which workflow run and which commit built the file. You can check a file yourself, from the release page or with the GitHub CLI:
 
 ```bash
-gh release download v0.1.0 --repo degoke/geass --pattern 'geass-linux-amd64' --pattern SHA256SUMS
+gh release download v0.0.1 --repo degoke/geass --pattern 'geass-linux-amd64' --pattern SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 gh attestation verify geass-linux-amd64 --repo degoke/geass
 ```

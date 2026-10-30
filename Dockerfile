@@ -37,6 +37,11 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldfl
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+# GitHub connects the package it publishes on ghcr.io to the repository named in "source", and the package then follows
+# that repository's access. Nodes of a cluster whose control plane is hosted elsewhere pull this image from there.
+LABEL org.opencontainers.image.source="https://github.com/degoke/geass" \
+      org.opencontainers.image.description="The Geass operator, with the dashboard" \
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532

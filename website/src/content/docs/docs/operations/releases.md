@@ -23,6 +23,8 @@ Every release on the [Releases page](https://github.com/degoke/geass/releases) h
 | `install.sh`, `install-cli.sh` | The scripts for the one-line installs. |
 | `SHA256SUMS` | The checksum of each file in this table. |
 
+Each release also has the operator image, `ghcr.io/degoke/geass:vMAJOR.MINOR.PATCH`, for `linux/amd64` and `linux/arm64`. The installer has its own copy of the image. You need the image only when the K3s server of your cluster is hosted elsewhere. See [Hosted control plane](/docs/operations/hosted-control-plane/).
+
 The installer and the operator report their release, and the cluster records the release. To see the releases, use these commands:
 
 - `sudo k3s kubectl -n geass-system get geasscluster` shows the cluster release in the `RELEASE` column.
@@ -59,7 +61,7 @@ The [changelog](https://github.com/degoke/geass/blob/main/CHANGELOG.md) lists th
 The install scripts check the installer and the command line against `SHA256SUMS`. The scripts do not run a file that does not match. You can also check a file yourself, and check where it was built. Every file has signed build provenance. The provenance is a GitHub attestation of the workflow run and the commit that made the file.
 
 ```bash
-gh release download v0.1.0 --repo degoke/geass --pattern 'geass-cli-linux-amd64' --pattern SHA256SUMS
+gh release download v0.0.1 --repo degoke/geass --pattern 'geass-cli-linux-amd64' --pattern SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 gh attestation verify geass-cli-linux-amd64 --repo degoke/geass
 ```

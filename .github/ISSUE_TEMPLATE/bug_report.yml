@@ -13,7 +13,7 @@ body:
     attributes:
       label: Geass release
       description: "`geass version`, or the RELEASE column of `sudo k3s kubectl -n geass-system get geasscluster`."
-      placeholder: v0.1.0
+      placeholder: v0.0.1
     validations:
       required: true
   - type: dropdown

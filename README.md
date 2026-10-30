@@ -115,8 +115,8 @@ To get HTTPS certificates, give the installer an email address for Let's Encrypt
 the release version:
 
 ```bash
-curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh \
-  | sudo env GEASS_VERSION=v0.1.0 GEASS_ACME_EMAIL=you@yourdomain.com sh
+curl -sfL https://github.com/degoke/geass/releases/download/v0.0.1/install.sh \
+  | sudo env GEASS_VERSION=v0.0.1 GEASS_ACME_EMAIL=you@yourdomain.com sh
 ```
 
 After you install Geass, do these steps:
