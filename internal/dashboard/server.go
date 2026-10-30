@@ -1719,9 +1719,12 @@ func (s *Server) handleAppConsoleStream(w http.ResponseWriter, r *http.Request, 
 	defer cancel()
 	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: r.Body, Stdout: w, Stderr: io.Writer(w), Tty: false})
 	now := metav1.Now()
-	session.Status.Phase = geassv1alpha1.GeassConsoleClosed
+	session.Status.Phase, session.Status.Reason = geassv1alpha1.GeassConsoleClosed, "Stream ended"
+	if ctx.Err() == context.DeadlineExceeded {
+		// The same end as the operator records, so the audit record does not depend on which of them writes first.
+		session.Status.Phase, session.Status.Reason = geassv1alpha1.GeassConsoleExpired, geassv1alpha1.GeassConsoleTimeoutReason
+	}
 	session.Status.EndedAt = &now
-	session.Status.Reason = "Stream ended"
 	_ = s.Client.Status().Update(r.Context(), session)
 	if streamErr != nil && ctx.Err() == context.DeadlineExceeded {
 		http.Error(w, "console session timed out", http.StatusGatewayTimeout)
@@ -3392,9 +3395,12 @@ func (s *Server) handleClusterObjectStoreConsoleStream(w http.ResponseWriter, r 
 	defer cancel()
 	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: r.Body, Stdout: w, Stderr: io.Writer(w), Tty: false})
 	now := metav1.Now()
-	session.Status.Phase = geassv1alpha1.GeassConsoleClosed
+	session.Status.Phase, session.Status.Reason = geassv1alpha1.GeassConsoleClosed, "Stream ended"
+	if ctx.Err() == context.DeadlineExceeded {
+		// The same end as the operator records, so the audit record does not depend on which of them writes first.
+		session.Status.Phase, session.Status.Reason = geassv1alpha1.GeassConsoleExpired, geassv1alpha1.GeassConsoleTimeoutReason
+	}
 	session.Status.EndedAt = &now
-	session.Status.Reason = "Stream ended"
 	_ = s.Client.Status().Update(r.Context(), session)
 	if streamErr != nil && ctx.Err() == context.DeadlineExceeded {
 		http.Error(w, "console session timed out", http.StatusGatewayTimeout)

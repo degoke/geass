@@ -57,12 +57,16 @@ Every file also has signed build provenance (a GitHub attestation of the workflo
 with `gh attestation verify <file> --repo degoke/geass`. The release notes are the version's section of
 [CHANGELOG.md](../CHANGELOG.md).
 
-The same run also pushes the operator image to `ghcr.io/degoke/geass:vMAJOR.MINOR.PATCH` (the version only, no `latest`)
-for `linux/amd64` and `linux/arm64`; a pre-release gets one too. The installer carries its own copy, so the image is for
-a cluster whose control plane is hosted elsewhere, which pulls it (`config/external-control-plane`). It is not a file of
-the GitHub release and is not in `SHA256SUMS`. A manual run builds it and pushes nothing, so the first real tag is the
-first time the push, and the package's visibility, are exercised: step 6 checks that it can be pulled without a login,
-and if it cannot, make the package public in its settings on GitHub.
+The release workflow also pushes the operator image to `ghcr.io/degoke/geass:vMAJOR.MINOR.PATCH` for `linux/amd64` and
+`linux/arm64`. A pre-release gets an image too. The image has the version tag only, with no `latest` tag.
+
+The installer has its own copy of the image. The image is for a cluster whose K3s server is hosted elsewhere, because the
+nodes of that cluster pull it from `ghcr.io`. The manifests are in `config/external-control-plane`. The image is not a
+file of the GitHub release, and `SHA256SUMS` does not list it.
+
+A manual run builds the image but does not push it. The first real tag is therefore the first test of the push and of the
+package visibility. Step 6 checks that anyone can pull the image without a login. If the pull fails, make the package
+public in its settings on GitHub.
 
 `dist/install.yaml` is kept current by CI for people who read or customise the manifests. It names a placeholder image
 and is not published: the supported way to install is the installer.

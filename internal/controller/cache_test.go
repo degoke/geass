@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/degoke/geass/pkg/mesh"
 	"github.com/degoke/geass/pkg/platform"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -95,6 +96,20 @@ func TestACachedPodKeepsWhatTheOperatorReads(t *testing.T) {
 	same, err := slimPod(other)
 	require.NoError(t, err)
 	require.Same(t, other, same, "anything that is not a pod passes through")
+}
+
+// The overlay check reads which nodes run a pod of their own from the pods the operator caches.
+func TestACachedPodStillSaysWhereItRunsAndWhetherItHasANetworkOfItsOwn(t *testing.T) {
+	own := &corev1.Pod{Spec: corev1.PodSpec{NodeName: "w1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	onHost := &corev1.Pod{Spec: corev1.PodSpec{NodeName: "w2", HostNetwork: true}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	slimmed := make([]corev1.Pod, 0, 2)
+	for _, pod := range []*corev1.Pod{own, onHost} {
+		out, err := slimPod(pod)
+		require.NoError(t, err)
+		slimmed = append(slimmed, *out.(*corev1.Pod))
+	}
+
+	require.Equal(t, map[string]bool{"w1": true}, mesh.PodNetworkNodes(slimmed))
 }
 
 func TestACachedPodKeepsTheVolumesThatHoldDataOnItsNodeAndNothingElseAboutThem(t *testing.T) {

@@ -1,59 +1,97 @@
 ---
 title: "Nodes at more than one provider"
-description: "Experimental: build one cluster from servers at different providers over an encrypted WireGuard overlay. Checklist, firewall rules, checks and fixes."
+description: "Experimental: build one cluster from servers at different providers over an encrypted WireGuard overlay. Checklist, firewall rules, checks, and fixes."
 ---
 
-By default, the nodes of a Geass cluster share a private network. Multi-provider mode builds a cluster whose nodes sit at different providers and reach each other over the internet, through an encrypted WireGuard overlay. Use it when you want capacity or regions at more than one provider and accept the limits below.
+By default, the nodes of a Geass cluster share a private network. Multi-provider mode builds a cluster whose nodes are
+at different providers. The nodes connect to each other over the internet, through an encrypted WireGuard overlay. Use
+this mode when you want capacity or regions at more than one provider and you accept the limits below.
 
-This page is the walk-through of that mode with a public address for every node. For nodes behind a NAT with no public address, for a Tailscale or Headscale network instead of WireGuard, and for the checks Geass makes of a mesh (`spec.network.mesh`), see [Mesh networking](/docs/operations/mesh-networking/). `GEASS_MESH=wireguard` is `GEASS_MULTI_SITE=1` with those checks turned on.
+This page shows how to use that mode when each node has a public address. For these other cases, see
+[Mesh networking](/docs/operations/mesh-networking/):
+
+- Nodes behind a NAT with no public address.
+- A Tailscale or Headscale network instead of WireGuard.
+- The checks that Geass makes of a mesh (`spec.network.mesh`).
+
+`GEASS_MESH=wireguard` is `GEASS_MULTI_SITE=1` with those checks turned on.
 
 :::caution
-Multi-provider mode is **experimental**. It has run on real servers: a four-node cluster at one provider, in several availability zones, joined over their public addresses, with traffic carried by the encrypted overlay. It has **not** been run across two different providers, and public traffic arriving from the internet has not been tested on such a cluster. Its control plane stays at one site and is a single point of failure. Do not move production workloads onto it until you have tested it on your own servers.
+Do not move production workloads onto a multi-provider cluster until you test it on your own servers. Multi-provider
+mode is **experimental**:
 
-Creating the machines of such a cluster through Geass, with [node pools](/docs/guides/node-pools/), is experimental too, and for a separate reason: only the Amazon EC2 driver has run against a live account (in one region, in this mode), and the other eleven have not. A pool at a second provider is both experiments at once.
+- The mode has run on real servers: a four-node cluster at one provider, in several availability zones. The nodes
+  joined over their public addresses, and the encrypted overlay carried the traffic.
+- The mode has **not** run across two different providers.
+- No one has tested public traffic from the internet on such a cluster.
+- The control plane stays at one site and is a single point of failure.
+
+If you use Geass to create the machines of such a cluster, with [node pools](/docs/guides/node-pools/), that is also
+experimental, for a different reason. Only the Amazon EC2 driver has run against a live account, in one region, in
+this mode. The other eleven drivers have not. A pool at a second provider is both experiments at the same time.
 :::
 
 ## What changes
 
-You choose multi-provider mode when you install the control plane. It cannot be switched on later: changing it means restarting every node, and Geass has no way to do that for you.
+You select multi-provider mode when you install the control plane. You cannot turn it on later. To change the mode,
+you must restart every node, and Geass cannot do that for you.
 
 | | Default | Multi-provider |
 | --- | --- | --- |
 | Overlay between nodes | VXLAN, UDP 8472, not encrypted | WireGuard (`wireguard-native`), UDP 51820, encrypted |
 | Address nodes advertise | Private | Public IP |
-| Address workers join on | The cluster's `spec.serverURL`. The installer writes the control plane's own address on its default route, such as `https://10.0.0.5:6443` | `https://<control plane public IP>:6443`, set by the installer |
+| Address workers join on | The cluster's `spec.serverURL`. The installer writes the control plane's own address on its default route, for example `https://10.0.0.5:6443` | `https://<control plane public IP>:6443`, set by the installer |
 | API certificate | Local names | Also valid for the control plane's public IP |
 | Container metrics | From each node | Prometheus reaches each kubelet on its public address |
 
-The installer writes this into the K3s server configuration (`/etc/rancher/k3s/config.yaml`): `flannel-backend: wireguard-native`, `node-external-ip`, `flannel-external-ip: true`, `tls-san` with the public IP, the kubelet log limits, and `secrets-encryption: true`. The cluster object records `spec.network.multiSite: true`.
+The installer writes these settings into the K3s server configuration (`/etc/rancher/k3s/config.yaml`):
+
+- `flannel-backend: wireguard-native`
+- `node-external-ip`
+- `flannel-external-ip: true`
+- `tls-san` with the public IP
+- The kubelet log limits
+- `secrets-encryption: true`
+
+The cluster object records `spec.network.multiSite: true`.
 
 ## Before you start
 
-Check each item before you begin.
+Check each item before you start.
 
-- [ ] **One control plane site.** The first server you install is the control plane. Keep it at one site.
-- [ ] **A public address for every node.** A fixed IP that the other nodes can reach, such as `203.0.113.10`.
-- [ ] **A kernel with WireGuard on every node.** Built in from Linux 5.6. Older kernels need the `wireguard` package. The installer and the worker setup both test this and stop with a clear message.
-- [ ] **The usual requirements.** At least 2 GB of memory and 10 GB free on `/`. See [Requirements](/docs/getting-started/requirements/).
-- [ ] **Firewall and security group rules** at every provider (next section).
-- [ ] **SSH from the control plane** to each future worker, as `root` or as a user with passwordless `sudo` such as `ubuntu`. Geass joins workers over SSH.
+- [ ] **One control plane site.** The first server that you install is the control plane. Keep it at one site.
+- [ ] **A public address for every node.** A fixed IP that the other nodes can reach, for example `203.0.113.10`.
+- [ ] **A kernel with WireGuard on every node.** WireGuard is built in from Linux 5.6. Older kernels need the
+  `wireguard` package. The installer and the worker setup both test for WireGuard and stop with a clear message.
+- [ ] **The usual requirements.** A server with 2 GB of memory (at least 1700 MiB of `MemTotal`) and 10 GiB free on `/`. See
+  [Requirements](/docs/getting-started/requirements/).
+- [ ] **Firewall and security group rules** at every provider. The next section lists them.
+- [ ] **SSH from the control plane** to each future worker, as `root` or as a user with passwordless `sudo`, for
+  example `ubuntu`. Geass joins workers over SSH.
 
 ### Ports to open
 
-Open these between the nodes' public addresses, and in each provider's security group:
+Open these ports between the public addresses of the nodes, and in the security group of each provider:
 
 | Port | Between | Why |
 | --- | --- | --- |
-| **TCP 6443** | Every node to the control plane, **including the control plane to itself** | In this mode the API is advertised on the control plane's public address, so the control plane reaches its own API through it. Without this the operator and most system services cannot start. |
+| **TCP 6443** | Every node to the control plane, **including the control plane to itself** | In this mode, the control plane advertises the API on its public address, so the control plane reaches its own API through that address. Without this rule, the operator and most system services cannot start. |
 | **UDP 51820** | Every pair of nodes | The WireGuard overlay. |
-| **TCP 10250** | Every pair of nodes | Container metrics are collected from every node, and live logs are read from each node's kubelet. |
+| **TCP 10250** | Every pair of nodes | Prometheus collects container metrics from every node, and Geass reads live logs from the kubelet of each node. |
 | **TCP 22** | The control plane to each new worker | Geass joins workers over SSH. |
 
-To serve visitors, also open **TCP 80 and 443** on the nodes your DNS points at. Let's Encrypt validates a domain over port 80, so certificates need it too. The installer opens 6443, 10250, the overlay port, 80 and 443 on the control plane when a host firewall (`ufw`, `firewalld` or `iptables`) is active, and warns when it finds none. It opens nothing on workers except in this mode, where the worker setup opens the overlay port and 10250 on an active `ufw` or `firewalld`. Neither can change a provider's security group.
+To serve visitors, also open **TCP 80 and 443** on the nodes that your DNS points at. Let's Encrypt validates a domain
+over port 80, so certificates also need port 80.
+
+The installer opens ports on the control plane when a host firewall (`ufw`, `firewalld`, or `iptables`) is active. It
+opens 6443, 10250, the overlay port, 80, and 443. If the installer finds no host firewall, it shows a warning. The
+installer opens nothing on workers, except in this mode. In this mode, the worker setup opens the overlay port and
+10250 on an active `ufw` or `firewalld`. Neither the installer nor the worker setup can change the security group of a
+provider.
 
 ## Install the control plane
 
-On the machine that will be the control plane, give the installer its public address:
+On the machine that becomes the control plane, give the installer its public address:
 
 ```bash
 curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | \
@@ -62,10 +100,14 @@ curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | 
 
 | Variable | Meaning |
 | --- | --- |
-| `GEASS_MULTI_SITE` | `1`, `true`, `yes` or `on` turns multi-provider mode on. |
-| `GEASS_NODE_EXTERNAL_IP` | This machine's public IP. Required in this mode, and it must be an IP address. |
+| `GEASS_MULTI_SITE` | `1`, `true`, `yes`, or `on` turns multi-provider mode on. |
+| `GEASS_NODE_EXTERNAL_IP` | The public IP of this machine. Required in this mode. The value must be an IP address. |
 
-The installer does the rest of the normal install ([Install Geass](/docs/getting-started/install/)). Add `GEASS_ACME_EMAIL` to the same `env` list if you want HTTPS certificates; see [A certificate is never issued](/docs/operations/troubleshooting/#a-certificate-is-never-issued). Check the cluster:
+The installer does the rest of the normal install ([Install Geass](/docs/getting-started/install/)). If you want HTTPS
+certificates, add `GEASS_ACME_EMAIL` to the same `env` list. See
+[A certificate is never issued](/docs/operations/troubleshooting/#a-certificate-is-never-issued).
+
+Check the cluster:
 
 ```bash
 sudo k3s kubectl get nodes -o wide
@@ -73,11 +115,23 @@ sudo cat /etc/rancher/k3s/config.yaml
 sudo k3s kubectl -n geass-system get geasscluster default -o jsonpath='{.spec.network}{"\n"}{.spec.serverURL}{"\n"}'
 ```
 
-Expect the node's `EXTERNAL-IP` to be the public address, `{"multiSite":true}` and a server URL that begins `https://203.0.113.10:6443`.
+Make sure that you see these results:
+
+- The `EXTERNAL-IP` of the node is the public address.
+- The network shows `{"multiSite":true}`.
+- The server URL starts with `https://203.0.113.10:6443`.
 
 ## Add workers
 
-For each worker you already have, add it from the dashboard or `geass servers add`, or create an SSH key Secret and a `GeassNode` as below. Declare the node's region and site so it carries them from its first moment. The full procedure is in [Add servers](/docs/getting-started/add-servers/). To have Geass create the workers at the providers instead, see [Pools at several providers](#pools-at-several-providers).
+To add a worker that you already have, do one of these:
+
+- Add it from the dashboard.
+- Run `geass servers add`.
+- Create an SSH key Secret and a `GeassNode`, as shown below.
+
+Declare the region and site of the node, so that the node has them from its first moment. For the full procedure, see
+[Add servers](/docs/getting-started/add-servers/). If you want Geass to create the workers at the providers instead,
+see [Pools at several providers](#pools-at-several-providers).
 
 ```bash
 kubectl -n geass-system create secret generic worker-ssh-key \
@@ -108,36 +162,64 @@ kubectl apply -f worker-eu-1.yaml
 kubectl -n geass-system get geassnode worker-eu-1 -w
 ```
 
-The node moves from `Pending` to `Joining` to `Ready`. Before it installs K3s, Geass checks that the worker can reach the control plane's API. In multi-provider mode it also checks that the worker's kernel can create a WireGuard interface, and it opens the overlay port on an active host firewall. Then it writes the worker's K3s configuration (its labels, taints, public address and log limits) and installs the agent at the control plane's K3s version.
+The node moves from `Pending` to `Joining` to `Ready`. Geass does these steps:
+
+1. Before Geass installs K3s, it checks that the worker can reach the API of the control plane.
+2. In multi-provider mode, Geass also checks that the kernel of the worker can create a WireGuard interface.
+3. In multi-provider mode, Geass opens the overlay port on an active host firewall.
+4. Geass writes the K3s configuration of the worker: its labels, taints, public address, and log limits.
+5. Geass installs the agent at the K3s version of the control plane.
 
 :::caution
-Geass does not verify the worker's SSH host key unless you pin it. Over the public internet, put the worker's host key in the SSH key Secret under `known_hosts` (see [Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)), so that nothing but the machine you mean can receive the join token, and restrict port 22 on the worker to the control plane's address.
+Over the public internet, pin the SSH host key of the worker. Geass does not verify the host key of the worker unless
+you pin it. Put the host key of the worker in the SSH key Secret under `known_hosts` (see
+[Add servers](/docs/getting-started/add-servers/#pin-the-servers-host-key-recommended)). Then only the machine that you
+mean can receive the join token. Also restrict port 22 on the worker to the address of the control plane.
 :::
 
 ## Pools at several providers
 
-A [node pool](/docs/guides/node-pools/) creates machines at a cloud through a [connection for machines](/docs/guides/connectors/clouds/), so a cluster can grow at more than one provider: one pool for each, each with its own region and placement. A cluster that spans providers has to be installed in multi-site mode, as above. In a default (single-network) cluster the overlay is VXLAN, on 8472/udp between nodes, and no driver opens that port. A pool there needs a firewall of yours that allows it, and suits machines on the same private network as the control plane, with `addressType: Private`.
+A [node pool](/docs/guides/node-pools/) creates machines at a cloud through a
+[connection for machines](/docs/guides/connectors/clouds/). So a cluster can grow at more than one provider, with one
+pool for each provider. Each pool has its own region and placement.
 
-What Geass does for each machine it creates, and what it leaves to you:
+You must install a cluster that spans providers in multi-site mode, as shown above. In a default (single-network)
+cluster, the overlay is VXLAN, on 8472/udp between nodes, and no driver opens that port. A pool in a default cluster
+needs a firewall of yours that allows that port. Such a pool suits machines on the same private network as the
+control plane, with `addressType: Private`.
+
+This table shows what Geass does for each machine that it creates, and what it leaves to you:
 
 | Path | Who opens it |
 | --- | --- |
-| **TCP 22** from the control plane to the machine | Geass, in the firewall it makes at the provider (a security group, a firewall, firewall rules), for the addresses Kubernetes lists for the control plane's nodes. Not at Oracle Cloud or OVHcloud, where it makes none |
-| **TCP 10250** from the control plane to the machine | The same firewall. It lets the kubelet port in from the control plane's addresses only: if Prometheus runs on another node than the control plane, add that node's address to a firewall of your own for the pool |
+| **TCP 22** from the control plane to the machine | Geass, in the firewall that it makes at the provider (a security group, a firewall, or firewall rules), for the addresses that Kubernetes lists for the nodes of the control plane. Not at Oracle Cloud or OVHcloud, where Geass makes no firewall |
+| **TCP 10250** from the control plane to the machine | The same firewall. It lets the kubelet port in from the addresses of the control plane only. If Prometheus runs on a node other than the control plane, add the address of that node to a firewall of your own for the pool |
 | **UDP 51820** between every pair of nodes | The same firewall, from anywhere, because the overlay authenticates every packet |
-| **TCP 6443** from the machine to the control plane (and UDP 51820 in multi-site mode) | **You**, unless you set [`spec.network.controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) on the cluster. Then Geass adds the machine's address to the control plane's security group or Hetzner firewall before the machine joins, and takes it out when the machine goes. For a control plane at any other provider, open the port yourself |
+| **TCP 6443** from the machine to the control plane (and UDP 51820 in multi-site mode) | **You**, unless you set [`spec.network.controlPlaneFirewall`](/docs/guides/node-pools/#let-geass-open-the-control-plane) on the cluster. With that setting, Geass adds the address of the machine to the security group or Hetzner firewall of the control plane before the machine joins. Geass removes the address when the machine goes. For a control plane at any other provider, open the port yourself |
 
-Geass never opens a port on a machine you brought, and never changes a firewall you name yourself in a pool's `settings`. Machines at different providers cost money at each, and the bill of each is the bill of its connection's account. Give each pool the region and tags of the projects that should use it: a project in the region `eu` runs only on nodes in `eu`, so a pool whose nodes carry no region does not help it. See [Node pools](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
+Geass never opens a port on a machine that you brought. Geass never changes a firewall that you name yourself in the
+`settings` of a pool.
+
+Machines at different providers cost money at each provider. The account of the connection pays for the machines of
+that connection.
+
+Give each pool the region and tags of the projects that must use it. A project in the region `eu` runs only on nodes
+in `eu`. So a pool whose nodes have no region does not help that project. See
+[Node pools](/docs/guides/node-pools/#what-runs-on-a-pools-nodes).
 
 ## Choose regions
 
-Tag nodes with a region, a site and tags on the **Usage** page: open **Usage** and select **Edit** on a node. See [Scaling and placement](/docs/guides/scaling-and-placement/). A common layout is one region per provider.
+To tag nodes with a region, a site, and tags, open the **Usage** page and click **Edit** on a node. See
+[Scaling and placement](/docs/guides/scaling-and-placement/). A common layout is one region for each provider.
 
-Give each project a region. A project without one may run on any node, and its database volumes then spread their copies across every node, which in this mode means across the internet. A project in a region keeps its workloads, its builds and its volume copies on that region's nodes. A project that also requires a [compliance tag](/docs/guides/compliance-tags/) keeps them on the nodes of that region that carry the tag.
+Give each project a region. A project without a region can run on any node. Its database volumes then spread their
+copies across every node, and in this mode, that means across the internet. A project in a region keeps its workloads,
+its builds, and its volume copies on the nodes of that region. A project that also requires a
+[compliance tag](/docs/guides/compliance-tags/) keeps them on the nodes of that region that have the tag.
 
 ## Verify the cluster
 
-Work through these after you add the first worker.
+After you add the first worker, do these checks.
 
 1. **Every node is ready, with a public address.**
 
@@ -145,9 +227,10 @@ Work through these after you add the first worker.
    kubectl get nodes -o wide
    ```
 
-   `EXTERNAL-IP` shows each node's public address, and `STATUS` is `Ready`.
+   `EXTERNAL-IP` shows the public address of each node, and `STATUS` is `Ready`.
 
-2. **Pods on different nodes can talk.** Start two pods pinned to two nodes in different places and ping one from the other:
+2. **Pods on different nodes can talk.** Start two pods pinned to two nodes in different places. Then ping one pod
+   from the other:
 
    ```bash
    kubectl run net-a --image=busybox:1.36 --restart=Never \
@@ -159,18 +242,27 @@ Work through these after you add the first worker.
    kubectl delete pod net-a net-b
    ```
 
-   Replace the node names with yours. If `wireguard-tools` is installed, `sudo wg show` on a node lists the WireGuard interface and one peer for each other node.
+   Replace the node names with your node names. If `wireguard-tools` is installed, `sudo wg show` on a node lists the
+   WireGuard interface and one peer for each other node.
 
-3. **The Usage page lists every node** with the region and site you set, none under **NetworkUnavailable**.
-4. **Container metrics come from a worker.** Deploy a service to a worker's region and open its **Metrics** tab. CPU and memory appear after a minute or two. If they do not, TCP 10250 is closed.
-5. **A project in a region runs only there.** Create a project in the new region and deploy a service. `kubectl get pods -n <project>-<environment> -o wide` shows it on a node of that region.
+3. **The Usage page lists every node** with the region and site that you set. No node shows **NetworkUnavailable**.
+4. **Container metrics come from a worker.** Deploy a service to the region of a worker and open its **Metrics** tab.
+   CPU and memory appear after one or two minutes. If they do not appear, TCP 10250 is closed.
+5. **A project in a region runs only in that region.** Create a project in the new region and deploy a service.
+   `kubectl get pods -n <project>-<environment> -o wide` shows the service on a node of that region.
 
 ## What is different in this mode
 
-- **Host charts cover one node.** **Machines busy (CPU)** and **Machines memory in use** are collected only for the node that runs monitoring, because the node exporters publish on private addresses that other sites cannot reach. Container metrics, which feed the service, project and database charts, are collected from every node. See [Logs, metrics and terminal](/docs/guides/observability/).
-- **One control plane.** It stays at one site. If that site is down, the dashboard and the operator are down. See [High availability](/docs/operations/high-availability/).
-- **Cross-site traffic crosses the internet.** Calls between pods on different providers pay the latency, and your bandwidth bills. Regions exist to keep a project's traffic in one place.
-- **No conversion.** A cluster installed without `GEASS_MULTI_SITE` cannot be converted. Reinstall to switch.
+- **Host charts cover one node.** Geass collects **Machines busy (CPU)** and **Machines memory in use** only for the
+  node that runs monitoring. The reason is that the node exporters publish on private addresses that other sites
+  cannot reach. Geass collects container metrics from every node. Container metrics feed the service, project, and
+  database charts. See [Logs, metrics and terminal](/docs/guides/observability/).
+- **One control plane.** The control plane stays at one site. If that site is down, the dashboard and the operator are
+  down. See [High availability](/docs/operations/high-availability/).
+- **Cross-site traffic crosses the internet.** Calls between pods at different providers have the latency of the
+  internet, and you pay for the bandwidth. Regions keep the traffic of a project in one place.
+- **No conversion.** You cannot convert a cluster that you installed without `GEASS_MULTI_SITE`. To change the mode,
+  install again.
 
 ## What happens under the hood
 
@@ -182,48 +274,74 @@ Work through these after you add the first worker.
 | Cluster | `GeassCluster` `default` | `spec.network.multiSite: true` and a public `serverURL`. |
 | Cluster | `HelmChart` `geass-kube-prometheus-stack` | The monitoring operator starts with `--kubelet-node-address-priority=external`. |
 
-K3s workers reject the control plane's `flannel-external-ip` setting, so Geass writes it only on the server.
+K3s workers reject the `flannel-external-ip` setting of the control plane, so Geass writes that setting only on the
+server.
 
 ## Troubleshooting
 
 **The installer stops with "a multi-site cluster needs this node's public address: set GEASS_NODE_EXTERNAL_IP".**
-Pass the variable through `sudo`: `sudo env GEASS_MULTI_SITE=1 GEASS_NODE_EXTERNAL_IP=203.0.113.10 sh`. A value that is not an IP address stops with `GEASS_NODE_EXTERNAL_IP "<value>" is not an IP address`.
+Pass the variable through `sudo`: `sudo env GEASS_MULTI_SITE=1 GEASS_NODE_EXTERNAL_IP=203.0.113.10 sh`. If the value is
+not an IP address, the installer stops with `GEASS_NODE_EXTERNAL_IP "<value>" is not an IP address`.
 
 **The installer stops with "this machine's kernel cannot create a WireGuard interface".**
-The kernel is older than 5.6 or lacks the module. Install the `wireguard` package, or use a newer kernel.
+The kernel is older than 5.6 or does not have the module. Install the `wireguard` package, or use a newer kernel.
 
 **After install, the operator and system pods never become ready.**
-The control plane cannot reach its own API on its public address. Open TCP 6443 from the control plane's own public IP in the provider's security group, and in any host firewall.
+The control plane cannot reach its own API on its public address. Open TCP 6443 from the public IP of the control
+plane in the security group of the provider, and in all host firewalls.
 
 **A `GeassNode` is `Failed` with "cannot reach the cluster API at https://203.0.113.10:6443 from this node: ...".**
-The rest of the message says why. "The connection was refused" or "the connection timed out" means the worker cannot reach the control plane on 6443/tcp, and the message adds that UDP 51820 must be open between every pair of nodes: fix the rule at both providers, in the host firewall and in the security group. "The host name does not resolve" or "something answered, but it is not a K3s API server" means `spec.serverURL` of the cluster is wrong: in this mode it is `https://<control plane public IP>:6443`.
+The rest of the message gives the cause:
+
+- "The connection was refused" or "the connection timed out" means that the worker cannot reach the control plane on
+  6443/tcp. The message also says that UDP 51820 must be open between every pair of nodes. Fix the rule at both
+  providers, in the host firewall and in the security group.
+- "The host name does not resolve" or "something answered, but it is not a K3s API server" means that
+  `spec.serverURL` of the cluster is wrong. In this mode, the value is `https://<control plane public IP>:6443`.
 
 **A `GeassNode` is `Failed` with "this node's kernel cannot create a WireGuard interface".**
-The same kernel problem on the worker.
+The worker has the same kernel problem.
 
 **A `GeassNode` is `Failed` with `ssh dial` or "no private key found in secret".**
-`ssh dial` means the SSH port on the worker (`spec.sshPort`, default 22) is not reachable from the control plane, the user or key is wrong, the address in `eip` is wrong, or the machine's host key does not match the `known_hosts` in the Secret. A missing key means the Secret does not hold the key under `ssh-privatekey`, `id_rsa`, `private-key` or `key`.
+`ssh dial` means one of these problems:
+
+- The control plane cannot reach the SSH port on the worker (`spec.sshPort`, default 22).
+- The user or the key is wrong.
+- The address in `eip` is wrong.
+- The host key of the machine does not match the `known_hosts` in the Secret.
+
+A missing key means that the Secret does not hold the key under `ssh-privatekey`, `id_rsa`, `private-key`, or `key`.
 
 **A step fails with `sudo: a password is required`.**
 A user that is not `root` needs passwordless `sudo`. Geass runs each setup step through `sudo -n`.
 
 **A node stays `Joining`.**
-K3s installed but the node did not register. On the worker, read `journalctl -u k3s-agent`. Look for connection errors to port 6443 or a blocked UDP 51820.
+K3s installed, but the node did not register. On the worker, read `journalctl -u k3s-agent`. Look for connection
+errors to port 6443 or a blocked UDP 51820.
 
 **A node is `Ready` but pods on it cannot reach pods elsewhere.**
-UDP 51820 is blocked between that node and another. Test the ping above between that pair of nodes, and check both providers' rules. The **Usage** page may show **NetworkUnavailable**.
+UDP 51820 is blocked between that node and another node. Do the ping test above between that pair of nodes, and check
+the rules at both providers. The **Usage** page might show **NetworkUnavailable**.
 
 **Charts are empty for services on a worker.**
-Prometheus cannot reach that worker's kubelet. Open TCP 10250 between the nodes.
+Prometheus cannot reach the kubelet of that worker. Open TCP 10250 between the nodes.
 
 **Node charts show only one machine.**
-Expected. See [What is different in this mode](#what-is-different-in-this-mode).
+This result is expected. See [What is different in this mode](#what-is-different-in-this-mode).
 
 **A machine made by a pool stays `Creating` or `Joining`, or fails.**
-The new machine cannot reach the control plane's 6443/tcp, or UDP 51820 is closed between it and the other nodes. Open them at the control plane's provider, or use `controlPlaneFirewall`. See [Node pools](/docs/guides/node-pools/#troubleshooting).
+The new machine cannot reach 6443/tcp on the control plane, or UDP 51820 is closed between the machine and the other
+nodes. Open these ports at the provider of the control plane, or use `controlPlaneFirewall`. See
+[Node pools](/docs/guides/node-pools/#troubleshooting).
 
 **A failed `GeassNode` does not retry after I fix the cause.**
-Fixing the cause does not restart provisioning of a node that already failed by itself. Add the retry annotation: `kubectl -n geass-system annotate geassnode <name> geass.dev/retry=true`. Geass sets the node back to `Pending` and provisions it again. You can also delete the `GeassNode` and apply it again. Deleting also removes the node from the cluster and uninstalls K3s from the machine when Geass can reach it over SSH, on `spec.sshPort`.
+When you fix the cause, Geass does not restart the provisioning of a node that already failed. Add the retry
+annotation: `kubectl -n geass-system annotate geassnode <name> geass.dev/retry=true`. Geass sets the node back to
+`Pending` and provisions it again.
+
+You can also delete the `GeassNode` and apply it again. When you delete the `GeassNode`, Geass also removes the node
+from the cluster. If Geass can reach the machine over SSH on `spec.sshPort`, Geass also uninstalls K3s from the
+machine.
 
 ## Related
 

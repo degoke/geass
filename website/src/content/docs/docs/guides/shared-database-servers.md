@@ -1,55 +1,66 @@
 ---
 title: "Shared database servers"
-description: "Run one Postgres or MySQL server for many projects, give each project a database and login of its own, and weigh the tradeoffs against dedicated databases."
+description: "Run one Postgres or MySQL server for many projects. Give each project its own database and login, and compare the tradeoffs with dedicated databases."
 ---
 
-A shared database server is one PostgreSQL or MySQL server that every project in the cluster can use. Each project takes a logical database on it, with a login that can reach that database and no other project's database. Use it when you have many small projects or environments that each need a database and you do not want to run, and pay the CPU and memory for, a separate server per resource.
+A shared database server is one PostgreSQL or MySQL server that every project in the cluster can use. Each project takes a logical database on the server. The project gets a login that can reach that database, and cannot reach the database of another project. Use a shared server when you have many small projects or environments that each need a database. With a shared server, you do not run a separate server for each resource, and you do not pay the CPU and memory for each server.
 
-A cluster admin sets up a server. You can set up more than one, for example one per engine or per region. Project members then add a database on it from the same **+ Add resource** dialog they use for any other database.
+A cluster admin sets up a server. You can set up more than one server, for example one for each engine or for each region. Project members then add a database on the server from the same **+ Add resource** dialog that they use for all other databases.
 
 ## Shared or dedicated
 
 | | Dedicated database | Shared server |
 | --- | --- | --- |
-| What a project gets | Its own server (a PostgreSQL, MySQL, Redis or SQLite resource) | A database and login on a server others use |
-| CPU and memory | Reserved per database, 0.25 CPU and 512 MB by default | One reservation for the whole server |
+| What a project gets | Its own server (a PostgreSQL, MySQL, MariaDB, Redis, or SQLite resource) | A database and login on a server that others use |
+| CPU and memory | Reserved for each database, 0.25 CPU and 512 MB by default | One reservation for the whole server |
 | Isolation | Its own pods and volume | Shared pods and volume. A login reaches only its own database |
-| Backups and restore | Yes, for PostgreSQL, MySQL and SQLite | None. Shared servers have no backups |
-| Engines | PostgreSQL, MySQL, Redis, SQLite | PostgreSQL and MySQL |
-| High availability | Through the API for PostgreSQL and MySQL | A switch when you set the server up |
+| Backups and restore | Yes, for PostgreSQL, MySQL, MariaDB, and SQLite | None. Shared servers have no backups |
+| Engines | PostgreSQL, MySQL, MariaDB, Redis, and SQLite | PostgreSQL and MySQL |
+| High availability | Through the API for PostgreSQL, MySQL, and MariaDB | A switch when you set the server up |
 | Removal | Delete the database | Blocked while any project still has a database on it |
 
-Choose a dedicated database when the data matters enough to need backups and point-in-time restore, when one project needs its own size or version, or when one project's load must not affect the others. See [Databases](/docs/guides/databases/).
+Use a dedicated database in these cases:
+
+- The data is important enough to need backups and point-in-time restore.
+- One project needs its own size or version.
+- The load of one project must not affect the other projects.
+
+See [Databases](/docs/guides/databases/).
 
 ## Before you start
 
-- You must be a dashboard admin to set up or remove a server. Project tokens cannot do it.
-- The cluster needs room for the server. The default is 0.25 CPU, 512 MB and 10 GiB of storage.
-- For a high-availability server the cluster needs at least three healthy nodes, and you must have run the readiness check. See [Instances and high availability](/docs/guides/databases/#instances-and-high-availability).
-- If your cluster uses regions, a server serves only projects in its own region. A project without a region of its own uses the cluster's default region. A server or project with no region at all can be paired with any. See [Scaling and placement](/docs/guides/scaling-and-placement/).
-- If a project requires compliance node tags, it can use a server only when the server runs on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
-- If the cluster has [organizations](/docs/guides/organizations-and-workspaces/), a server holds the databases of one organization only. While organizations are on, a project of an organization uses a server of its organization, and the platform's own servers are for the projects of no organization. See [Organizations](#organizations).
-- If the platform runs organizations' code in a [sandboxed runtime](/docs/operations/sandboxed-runtime/), an organization's server runs in it too, and so must be MySQL: a PostgreSQL server is not made for an organization then. See [The sandboxed runtime](#the-sandboxed-runtime).
+- To set up or remove a server, you must be a dashboard admin. Project tokens cannot do it.
+- The cluster needs space for the server. The default is 0.25 CPU, 512 MB, and 10 GiB of storage.
+- For a high-availability server, the cluster needs a minimum of three healthy nodes, and you must have run the readiness check. See [Instances and high availability](/docs/guides/databases/#instances-and-high-availability).
+- If your cluster uses regions, a server serves only projects in its own region. A project without its own region uses the default region of the cluster. A server or project with no region at all can pair with any server or project. See [Scaling and placement](/docs/guides/scaling-and-placement/).
+- If a project requires compliance node tags, it can use a server only when the server runs on nodes that have those tags. See [Projects that require node tags](#projects-that-require-node-tags).
+- If the cluster has [organizations](/docs/guides/organizations-and-workspaces/), a server holds the databases of one organization only. While organizations are on, a project of an organization uses a server of its organization. The servers of the platform are for the projects of no organization. See [Organizations](#organizations).
+- The platform can run the code of organizations in a [sandboxed runtime](/docs/operations/sandboxed-runtime/). In that case, the server of an organization also runs in the sandboxed runtime, and thus must be MySQL. Geass does not make a PostgreSQL server for an organization in that case. See [The sandboxed runtime](#the-sandboxed-runtime).
 
 ## Set up a shared server
 
 1. Open **Settings**, then **Databases**.
 2. Select **Set up a server**. The **Shared database server** sheet opens.
-3. Fill in the form.
-4. Select **Set up server**. The dashboard confirms with "Server created".
+3. Complete the form.
+4. Click **Set up server**. The dashboard confirms with "Server created".
 
 | Field | Meaning | Default |
 | --- | --- | --- |
 | **Engine** | **PostgreSQL** or **MySQL** | PostgreSQL |
-| **Name** | Optional resource ID that projects see when they choose a server. Lowercase letters, numbers and hyphens | `cluster-postgres` or `cluster-mysql` |
-| **Region** | Where the server runs. Shown only when the cluster has regions. Projects can only use a server in their own region | Default region |
-| **CPU**, **Memory** | Per instance. 0.1 to 2 CPU, 128 MB to 4 GB | 0.25 CPU, 512 MB |
-| **Storage** | Disk per instance, 1 to 500 GB. You can increase it later, never decrease it, although the dashboard has no control for a shared server's size after setup | 10 GB |
-| **High availability** | Three instances, so the server survives losing a node. Disabled with "Needs at least three healthy nodes." until the cluster is ready for it | Off |
+| **Name** | Optional resource ID that projects see when they select a server. Lowercase letters, numbers, and hyphens | `cluster-postgres` or `cluster-mysql` |
+| **Region** | Where the server runs. Shown only when the cluster has regions. Projects can use only a server in their own region | Default region |
+| **CPU**, **Memory** | For each instance. 0.1 to 2 CPU, 128 MB to 4 GB | 0.25 CPU, 512 MB |
+| **Storage** | Disk for each instance, 1 to 500 GB. You can increase it later, but never decrease it. The dashboard has no control for the size of a shared server after setup | 10 GB |
+| **High availability** | Three instances, so the server continues to work after the loss of a node. Disabled with "Needs at least three healthy nodes." until the cluster is ready for it | Off |
 
-The server starts at once. There is no draft or **Deploy** step, because it has no project to deploy from. The table on the page lists each server with its engine, region, usage ("Not used yet" or "2 databases · 2 projects") and status, **Starting** or **Ready**.
+The server starts immediately. There is no draft or **Deploy** step, because the server has no project to deploy from. The table on the page lists each server with these items:
 
-Set up a server with the REST API using a workspace token with the admin role:
+- Its engine.
+- Its region.
+- Its usage: "Not used yet" or "2 databases · 2 projects".
+- Its status: **Starting** or **Ready**.
+
+To set up a server with the REST API, use a workspace token with the admin role:
 
 ```bash
 curl -X POST https://geass.example.com/api/shared-databases/create \
@@ -62,7 +73,15 @@ curl -X POST https://geass.example.com/api/shared-databases/create \
   --data-urlencode storageSize=20Gi
 ```
 
-The reply is `{"database":"shared-postgres"}`. The API also accepts `region`, `highAvailability=on`, `version`, `runOnTags` and `org` (an [organization](/docs/guides/organizations-and-workspaces/#shared-things-an-organization-owns) the server is for: only its projects may use it). The server is a `GeassDatabase` with no `project`, in the `geass-system` namespace. The setup sheet has no field for `runOnTags`, which places the server on nodes that carry those tags. See [Projects that require node tags](#projects-that-require-node-tags).
+The reply is `{"database":"shared-postgres"}`. The API also accepts these fields:
+
+- `region`.
+- `highAvailability=on`.
+- `version`.
+- `runOnTags`. This field puts the server on nodes that have those tags. The setup sheet has no field for it. See [Projects that require node tags](#projects-that-require-node-tags).
+- `org`. This field is the [organization](/docs/guides/organizations-and-workspaces/#shared-things-an-organization-owns) that the server is for. Only the projects of that organization can use the server.
+
+The server is a `GeassDatabase` with no `project`, in the `geass-system` namespace.
 
 From the command line, the versioned API takes the same fields as JSON:
 
@@ -72,22 +91,24 @@ geass api POST /shared-databases/create -d '{"engine": "Postgres", "name": "shar
 
 ## Create a database on the server
 
-1. Open the project and environment. Select **+ Add resource**, then **Database**.
-2. Choose **Logical database**. The other choice, **Database server**, makes a server of its own. The row is greyed out with "No server yet" when there is no server to use.
-3. Choose the server. A shared one shows "shared" next to its engine, for example **cluster-postgres**, PostgreSQL, shared. A server of the project's own in this environment shows "this environment".
-4. Geass creates the logical database and opens its **Settings**.
+1. Open the project and environment.
+2. Select **+ Add resource**, and then select **Database**.
+3. Select **Logical database**. The other option, **Database server**, makes a separate server. When there is no server to use, the row is unavailable with "No server yet".
+4. Select the server. A shared server shows "shared" next to its engine, for example **cluster-postgres**, PostgreSQL, shared. A server of the project itself in this environment shows "this environment".
 
-A server's row is greyed out until the server is **Ready**. Shared servers in a different region from the project do not appear.
+Geass creates the logical database and opens its **Settings**.
 
-A logical database starts working at once. It has no draft or **Deploy** step.
+The row of a server is unavailable until the server is **Ready**. Shared servers in a region that is different from the region of the project do not show.
 
-On a server that belongs to the same project and environment, a dedicated PostgreSQL or MySQL database you already have, the database is created with that server's own login instead of a new one, and Geass does not drop it when you delete the logical database.
+A logical database starts to work immediately. It has no draft or **Deploy** step.
+
+You can also use a server that belongs to the same project and environment, that is, a dedicated PostgreSQL or MySQL database that you already have. In that case, Geass creates the database with the login of that server, not with a new login. Also, Geass does not drop the database when you delete the logical database.
 
 :::caution
-The dialog always names the database `app`. On a shared server the database and login are derived from the project, the environment and that name. A second logical database in the same project environment therefore maps to the same database and login. Creating it resets the login's password, so the first one's connection secret stops working, and deleting either one drops the shared database. Create one logical database per environment, or choose distinct names through the API.
+Create only one logical database for each environment in the dialog, or use different names through the API. The dialog always names the database `app`. On a shared server, Geass makes the database and login from the project, the environment, and that name. Thus a second logical database in the same project environment uses the same database and login. When you create the second one, Geass resets the password of the login. The connection secret of the first one then stops working. If you delete either one, Geass drops the shared database.
 :::
 
-Create one with the REST API. This is the only way to choose the database name and a connection limit.
+You can also create a logical database with the REST API. The API is the only way to choose the database name and a connection limit.
 
 ```bash
 curl -X POST https://geass.example.com/api/logical-databases/create \
@@ -106,49 +127,64 @@ The reply is `{"ok":true,"name":"orders","kind":"logical-databases"}`.
 | Field | Meaning | Default |
 | --- | --- | --- |
 | `server` | The resource ID of the server | Required |
-| `database` | The name in the app's own terms: letters, numbers and underscores, not starting with a digit | `app`, but only when you also leave out `name`. With a `name` and no `database` the request is refused |
-| `connectionLimit` | How many connections the database's login may hold, 1 to 1000. Shared servers only | 20 |
-| `name` | The logical database's own resource ID. Leave it out to get a generated one | Generated |
+| `database` | The name that the app uses: letters, numbers, and underscores. It must not start with a digit | `app`, but only when you also leave out `name`. If you send a `name` and no `database`, Geass refuses the request |
+| `connectionLimit` | The number of connections that the login of the database can hold, 1 to 1000. Shared servers only | 20 |
+| `name` | The resource ID of the logical database. If you leave it out, Geass generates one | Generated |
 
 ## How apps connect
 
-Geass writes a Secret named `<logical database ID>-connection` in the project environment's namespace (`<project ID>-<environment>`):
+Geass writes a Secret named `<logical database ID>-connection` in the namespace of the project environment (`<project ID>-<environment>`):
 
 | Key | Value |
 | --- | --- |
-| `host` | The server's in-cluster address, for example `shared-postgres-rw.geass-system.svc` |
+| `host` | The in-cluster address of the server, for example `shared-postgres-rw.geass-system.svc` |
 | `port` | `5432` for PostgreSQL, `3306` for MySQL |
-| `database` | The database's real name on the server |
-| `username` | The database's own login |
+| `database` | The real name of the database on the server |
+| `username` | The login of the database |
 | `password` | Its generated password |
 | `uri` | A ready connection string |
 
-On a shared server the database is called `<project>_<environment>_<name>`, lowercased with any other character replaced by an underscore. A name that would pass 60 characters is shortened and ends with eight characters of a hash, and a name that starts with a digit gets a `d` in front. The login is `u_` followed by 16 hexadecimal characters derived from the project, environment and name, so it is short enough for MySQL and cannot be guessed from the project's name. For example:
+On a shared server, the database name is `<project>_<environment>_<name>`. Geass changes the name to lowercase, and replaces all other characters with an underscore. These rules also apply:
+
+- If a name is longer than 60 characters, Geass shortens it, and ends it with eight characters of a hash.
+- If a name starts with a digit, Geass adds a `d` in front of it.
+- The login is `u_` followed by 16 hexadecimal characters that Geass makes from the project, the environment, and the name. Thus the login is short enough for MySQL, and nobody can guess it from the name of the project.
+
+For example:
 
 ```text
 postgresql://u_3f9a1c2b4d5e6f70:<password>@shared-postgres-rw.geass-system.svc:5432/proj_1a2b3c4d_production_app
 ```
 
-The password is random, 16 bytes in hexadecimal, and is created once and kept. It is stored beside the server in the `<logical database ID>-login` Secret in `geass-system`, where no project can read it.
+The password is random, 16 bytes in hexadecimal. Geass creates it one time and keeps it. Geass keeps it beside the server, in the `<logical database ID>-login` Secret in `geass-system`. No project can read that Secret.
 
 :::caution
-The dashboard's **Add reference** action, which wires a database into an app, lists only the project's own databases and buckets. It does not list logical databases. Copy the `uri` value out of the connection Secret and add it to the app as a Secret variable:
+To connect an app to a logical database, copy the `uri` value from the connection Secret, and add it to the app as a Secret variable. The **Add reference** action of the dashboard connects a database to an app, but it lists only the databases and buckets of the project. It does not list logical databases. To get the value, run this command:
 
 ```bash
 kubectl get secret orders-connection -n proj-1a2b3c4d-production \
   -o jsonpath='{.data.uri}' | base64 -d
 ```
 
-Open the app's **Variables** tab, choose **New Variable**, name it `DATABASE_URL`, paste the value, switch **Secret** on, select **Add**, and deploy the app. See [Environment variables](/docs/guides/environment-variables/).
+Then do these steps:
+
+1. Open the **Variables** tab of the app.
+2. Click **New Variable**.
+3. Name the variable `DATABASE_URL`, and paste the value.
+4. Turn on **Secret**.
+5. Click **Add**.
+6. Deploy the app.
+
+See [Environment variables](/docs/guides/environment-variables/).
 :::
 
-The dashboard shows a logical database's server and database name under **Settings**, **Logical database**. Both are read-only. Its **Console** tab does not run queries against it, because the console looks for a database resource of that name.
+The dashboard shows the server and the database name of a logical database under **Settings**, **Logical database**. Both are read-only. The **Console** tab of a logical database does not run queries against it, because the console looks for a database resource of that name.
 
 ## Projects that require node tags
 
-A project can require compliance node tags, such as `hipaa`, so that everything it runs stays on nodes you marked. See [Compliance node tags](/docs/guides/compliance-tags/). A shared server holds data for several projects, so it is not placed by one project's tags. It is placed once, with its own **Run on** tags, and a project that requires tags can use it only when the server runs on nodes with every one of them.
+A project can require compliance node tags, such as `hipaa`, so that everything it runs stays on nodes that you marked. See [Compliance node tags](/docs/guides/compliance-tags/). A shared server holds data for more than one project. Thus the tags of one project do not set where the server runs. Geass places the server one time, with its own **Run on** tags. A project that requires tags can use the server only when the server runs on nodes with all of those tags.
 
-To make a server that qualifies, send `runOnTags` when you create it, with the region the nodes are in. Geass checks that a node in that region carries each tag.
+To make a server that a project with tags can use, send `runOnTags` when you create the server. Also send the region that the nodes are in. Geass checks that a node in that region has each tag.
 
 ```bash
 curl -X POST https://geass.example.com/api/shared-databases/create \
@@ -160,48 +196,63 @@ curl -X POST https://geass.example.com/api/shared-databases/create \
   --data-urlencode runOnTags=hipaa
 ```
 
-The placement is recorded when the server is first provisioned and does not change. Read it with `kubectl get geassdatabase hipaa-postgres -n geass-system -o jsonpath='{.metadata.annotations.geass\.dev/node-placement}'`. A server installed before placement existed runs anywhere, so every project that requires tags is refused on it.
+Geass records the placement when it first provisions the server. The placement does not change. Read it with `kubectl get geassdatabase hipaa-postgres -n geass-system -o jsonpath='{.metadata.annotations.geass\.dev/node-placement}'`. A server that was installed before placement existed runs anywhere. Thus Geass refuses every project that requires tags on that server.
 
-A logical database for a project that requires tags is refused on a server that does not run on all of them. Its Ready condition reads "This database server does not run on nodes tagged hipaa, which the project requires". The dashboard does not warn you first: the **Add resource** dialog lists every server that is **Ready** and in the project's region, so the refusal comes after you create the logical database.
+Geass refuses a logical database for a project that requires tags on a server that does not run on all of those tags. Its Ready condition shows "This database server does not run on nodes tagged hipaa, which the project requires". The dashboard does not warn you before. The **Add resource** dialog lists every server that is **Ready** and in the region of the project. Thus the refusal comes after you create the logical database.
 
-The refusal counts as a failure. After five failed passes in a row (Geass tries every 30 seconds), or three minutes, the status becomes "Provisioning failed after repeated errors" and Geass stops retrying. Read the cause on the logical database's **Deployments** tab. Delete the logical database and create it on a server that qualifies, or change the project's tags and select **Retry**. Changing the project's tags makes Geass check a logical database that is still waiting again, but not one that has already failed.
+The refusal counts as a failure. Geass tries every 30 seconds. After five failed tries in sequence, or after three minutes, the status becomes "Provisioning failed after repeated errors", and Geass stops. Read the cause on the **Deployments** tab of the logical database. To fix the problem, do one of these:
 
-Two limits follow from the server having no project:
+- Delete the logical database, and create it on a server that has the tags.
+- Change the tags of the project, and click **Retry**.
 
-- A server that runs on compliance nodes is not reserved for the projects that require the tag. Geass checks only that the project's required tags are on the server, so a project that does not require them can use it too.
-- The server's volume does not use a tagged storage class. With Longhorn it uses the cluster's replicated class, and once any node is a compliance node that class keeps its copies off compliance nodes. The server's pods run on the tagged nodes, and the copies of its data may not. An HA server uses `geass-single`, which keeps its one copy on the node where the instance runs. See [Storage and volumes](/docs/guides/storage/#compliance-tags-and-storage-classes).
+When you change the tags of the project, Geass checks again a logical database that still waits. Geass does not check again a logical database that has already failed.
 
-A **Logical database** on one of the project's own dedicated servers needs none of this, because that server is placed with the project's tags.
+The server has no project, and this causes two limits:
+
+- A server that runs on compliance nodes is not reserved for the projects that require the tag. Geass checks only that the required tags of the project are on the server. Thus a project that does not require those tags can also use the server.
+- The volume of the server does not use a tagged storage class. With Longhorn, the volume uses the replicated class of the cluster. After any node is a compliance node, that class keeps its copies off compliance nodes. Thus the pods of the server run on the tagged nodes, but the copies of its data might not. An HA server uses `geass-single`, which keeps its one copy on the node where the instance runs. See [Storage and volumes](/docs/guides/storage/#compliance-tags-and-storage-classes).
+
+A **Logical database** on a dedicated server of the project itself needs none of this, because Geass places that server with the tags of the project.
 
 ## Organizations
 
-A shared server holds the data of every project that has a database on it, so with [organizations](/docs/guides/organizations-and-workspaces/) a server holds the databases of one organization only. One organization's data never sits on a server beside another organization's, or beside the platform's own projects'.
+A shared server holds the data of every project that has a database on it. Thus with [organizations](/docs/guides/organizations-and-workspaces/), a server holds the databases of one organization only. The data of one organization is never on a server with the data of another organization, or with the data of the projects of the platform.
 
-| Server | Who may take databases on it |
+| Server | Who can take databases on it |
 | --- | --- |
-| An organization's (`spec.org` set) | That organization's projects only, whether organizations are on or off |
-| The platform's (no `spec.org`) | While organizations are on, the projects of no organization only. While they are off, every project, as before |
+| A server of an organization (`spec.org` set) | The projects of that organization only, when organizations are on and when they are off |
+| A server of the platform (no `spec.org`) | While organizations are on, only the projects of no organization. While organizations are off, every project, as before |
 
-A project's own dedicated server is its project's, wherever the project goes, and none of this applies to it.
+The dedicated server of a project belongs to that project, wherever the project goes. None of these rules apply to it.
 
 ### Where it is checked
 
-- **Creating a database.** `POST /api/logical-databases/create` is refused for a project of an organization on the platform's server, with `400` and "That server is the platform's and the project is in the organization org-1a2b3c4d, but with organizations on a shared database server holds the databases of one organization only. Choose a server of org-1a2b3c4d, or set one up for it with POST /api/shared-databases/create and org=org-1a2b3c4d". Only a platform administrator sees this: an organization's people never see the platform's server, so they are told "That database server does not exist". Geass does not make a server for an organization by itself. A server costs CPU, memory and disk, and setting one up is the platform's decision.
-- **Moving a project.** `POST /api/projects/{project}/assign` is refused with `409` when the project has databases on a server of another organization, or, while organizations are on, on the platform's server when it is given to an organization: "the project has databases on the platform's database server cluster-postgres, and with organizations on a shared database server holds the databases of one organization only: move their data to a server of the organization, or delete them, first". Moving a project to another workspace of the organization it is in is never refused, and neither is taking a project out of its organization when that ends a mixing.
-- **Giving a server to an organization.** `POST /api/shared-databases/{name}/org` with `org=<organization>`, or `org=` empty for the platform, changes whose a shared server is. It is refused with `409` while the server holds a database whose project is not that organization's (for the platform while organizations are on, one that is any organization's), and the message names up to five of them, for example "orders (project shop, the organization org-1a2b3c4d)". A platform administrator only.
-- **In the operator.** However the objects were written (with `kubectl`, a script, or before this check existed), the operator does not make a logical database that breaks the rule while organizations are on. No Job runs on the server and no login is created. `Ready` is `False` with a message that names both owners, for example "The database server cluster-postgres belongs to the platform and the project shop to the organization org-1a2b3c4d, but a shared database server holds the databases of one organization only. It is not made: …". This does not count as a failure, so Geass does not give up on it: once the platform gives the server or the project to one organization, the database is made within seconds. The logical database also gets the condition `OrganizationIsolated`, `False`, with the reason `MixedOrganizations`, and a `Warning` event with the same reason, once.
+- **When you create a database.** Geass refuses `POST /api/logical-databases/create` for a project of an organization on the server of the platform. The response is `400` and "That server is the platform's and the project is in the organization org-1a2b3c4d, but with organizations on a shared database server holds the databases of one organization only. Choose a server of org-1a2b3c4d, or set one up for it with POST /api/shared-databases/create and org=org-1a2b3c4d".
+  - Only a platform administrator sees this message. The people of an organization never see the server of the platform. Thus they get "That database server does not exist".
+  - Geass does not make a server for an organization automatically. A server costs CPU, memory, and disk, and the platform decides to set one up.
+- **When you move a project.** Geass refuses `POST /api/projects/{project}/assign` with `409` in these cases:
+  - The project has databases on a server of another organization.
+  - While organizations are on, the project has databases on the server of the platform, and you give the project to an organization.
+
+  The message is "the project has databases on the platform's database server cluster-postgres, and with organizations on a shared database server holds the databases of one organization only: move their data to a server of the organization, or delete them, first". Geass never refuses these moves:
+  - A move of a project to another workspace of its organization.
+  - A move of a project out of its organization, when that move ends a mix.
+- **When you give a server to an organization.** `POST /api/shared-databases/{name}/org` with `org=<organization>` changes the owner of a shared server. Send `org=` empty to give the server to the platform. Geass refuses the request with `409` while the server holds a database whose project is not in that organization. For the platform while organizations are on, Geass refuses when the server holds a database of any organization. The message names a maximum of five of these databases, for example "orders (project shop, the organization org-1a2b3c4d)". Only a platform administrator can send this request.
+- **In the operator.** The operator checks the objects however they were written: with `kubectl`, with a script, or before this check existed. While organizations are on, the operator does not make a logical database that breaks the rule. No Job runs on the server, and the operator creates no login. `Ready` is `False` with a message that names both owners, for example "The database server cluster-postgres belongs to the platform and the project shop to the organization org-1a2b3c4d, but a shared database server holds the databases of one organization only. It is not made: …".
+  - This state does not count as a failure, so Geass does not stop. When the platform gives the server or the project to one organization, Geass makes the database within seconds.
+  - The logical database also gets the condition `OrganizationIsolated`, `False`, with the reason `MixedOrganizations`. It also gets one `Warning` event with the same reason.
 
 ### Databases that were there before
 
-A logical database that is already on its server when the rule finds it, because it was made before organizations were on or before this check, or through `kubectl`, is **kept as it is and still served**. Geass deletes, drops and moves nothing, `Ready` stays as it was, and the project's services keep connecting. It is reported instead:
+A logical database can already be on its server when the rule finds it. For example, somebody made it before organizations were on, before this check existed, or with `kubectl`. That database is **kept as it is and still served**. Geass deletes, drops, and moves nothing. `Ready` stays as it was, and the services of the project continue to connect. Geass reports the database in these places:
 
-- the condition `OrganizationIsolated` (`False`, `MixedOrganizations`), whose message names both owners and ends "It was made before this was checked, so it is kept as it is and still served, and listed for the platform's administrators to move";
-- a `Warning` event `MixedOrganizations` on the logical database, when it is first found;
-- the list below.
+- The condition `OrganizationIsolated` (`False`, `MixedOrganizations`). Its message names both owners and ends with "It was made before this was checked, so it is kept as it is and still served, and listed for the platform's administrators to move".
+- A `Warning` event `MixedOrganizations` on the logical database, when Geass first finds it.
+- The list in the next section.
 
-The condition goes when the server and the project belong to one owner again, or when organizations are turned off. "Already on its server" means it has a connection Secret (`status.connectionSecret`). One that never got that far is refused as above.
+The condition goes when the server and the project belong to one owner again, or when you turn organizations off. "Already on its server" means that the logical database has a connection Secret (`status.connectionSecret`). Geass refuses a logical database that does not have a connection Secret, as described earlier.
 
-The condition's message is seen by the people of the project's organization, like the rest of the logical database, and so names the other organization by its resource ID (`org-…`), never by its display name.
+The people of the organization of the project can see the message of the condition, like the rest of the logical database. Thus the message names the other organization by its resource ID (`org-…`), never by its display name.
 
 ### List the databases that mix
 
@@ -211,7 +262,7 @@ curl https://geass.example.com/api/shared-databases/mixed \
   -H "Accept: application/json"
 ```
 
-or `geass api GET /shared-databases/mixed`. A platform administrator only. The reply:
+You can also use `geass api GET /shared-databases/mixed`. Only a platform administrator can send this request. The reply:
 
 ```json
 {
@@ -227,9 +278,16 @@ or `geass api GET /shared-databases/mixed`. A platform administrator only. The r
 }
 ```
 
-`items` are the logical databases whose server is not their project's organization's, as it is while organizations are on. `made` says it is on the server already (kept and served) or not (refused). `servers` are the servers that hold one of them, with whose all their databases are: `""` is the projects of no organization. The list applies the rule even while organizations are off, so it shows what turning them on will report; `enforced` says whether they are on.
+The reply has these fields:
 
-From the cluster:
+- `items` are the logical databases whose server does not belong to the organization of their project, with the rule that applies while organizations are on.
+- `made` tells whether the database is on the server already (kept and served) or not (refused).
+- `servers` are the servers that hold one of these databases, with the owners of all of their databases. `""` is the projects of no organization.
+- `enforced` tells whether organizations are on.
+
+The list applies the rule even while organizations are off. Thus it shows what Geass reports when you turn organizations on.
+
+To get the same information from the cluster, run these commands:
 
 ```bash
 kubectl -n geass-system get events --field-selector reason=MixedOrganizations
@@ -239,63 +297,93 @@ kubectl -n geass-system get geasslogicaldatabases -o json \
 
 ### An install that already has a mixed server
 
-This is the case of a cluster that used the platform's server for every project and then gave projects to organizations. Do it before turning organizations on if you can: while they are off, projects are assigned as they always were.
+This case is a cluster that used the server of the platform for every project, and then gave projects to organizations. If you can, do these steps before you turn organizations on. While organizations are off, Geass assigns projects as it always did.
 
-1. List them with `GET /api/shared-databases/mixed`.
-2. For each server in `servers`:
-   - **All its databases are one organization's** (`owners` has one entry, an organization's): give the server to it with `POST /api/shared-databases/<server>/org` and `org=<organization>`. Nothing moves. The organization's people now see the server, and its administrators can delete it once no database is on it.
-   - **It holds the databases of more than one owner:** choose who keeps it. For each database of another owner, set up a server of that owner's organization (`POST /api/shared-databases/create` with `org=`), create a logical database on it, copy the data across with `pg_dump` and `psql` (or `mysqldump` and `mysql`), point the services at the new connection Secret, and delete the old logical database, which drops its data from the old server. Geass has no tool for the copy, and this sequence has not been run end to end on a real cluster.
-3. Turn organizations on, if they are not. Whatever is left is served and reported, not broken.
+1. List the databases that mix with `GET /api/shared-databases/mixed`.
+2. For each server in `servers`, do one of these:
+   - **All its databases are one organization's** (`owners` has one entry, an organization's): give the server to that organization with `POST /api/shared-databases/<server>/org` and `org=<organization>`. Nothing moves. The people of the organization now see the server. Its administrators can delete the server when no database is on it.
+   - **It holds the databases of more than one owner:** choose the owner that keeps the server. For each database of another owner, do these steps:
+     1. Set up a server of the organization of that owner (`POST /api/shared-databases/create` with `org=`).
+     2. Create a logical database on that server.
+     3. Copy the data with `pg_dump` and `psql`, or with `mysqldump` and `mysql`.
+     4. Point the services to the new connection Secret.
+     5. Delete the old logical database. This step drops its data from the old server.
 
-While organizations are on, the order matters. A project of no organization that has databases on the platform's server cannot be given to an organization, and the server cannot be given to the organization while the project is of none. Move the project's data first, or, as a platform administrator who accepts the short time in between, set the project's `spec.org` with `kubectl` and then give the server: until the server is given, the operator keeps serving the project's databases and reports them.
+     Geass has no tool for the copy. Nobody has run this sequence from start to end on a real cluster.
+3. If organizations are not on, turn them on. Geass serves and reports the databases that are left. They do not break.
+
+While organizations are on, the order is important. You cannot give a project of no organization that has databases on the server of the platform to an organization. Also, you cannot give the server to the organization while the project is in no organization. Do one of these:
+
+- Move the data of the project first.
+- As a platform administrator who accepts the short time between the two steps, set `spec.org` of the project with `kubectl`, and then give the server. Until you give the server, the operator continues to serve the databases of the project, and reports them.
 
 ### What has been run on a real cluster
 
-On K3s v1.36.4+k3s1 with organizations on and three single MySQL servers (the platform's, and one for each of two organizations), each case above gave what is written: the `400` for an organization's project on the platform's server and on another organization's, the `409`s for moving a project and for giving a server to an organization or the platform (naming the databases), the operator's refusal of a logical database written with `kubectl` (`OrganizationIsolated` `False`, one `Warning` event, no Job, nothing on the server) and its being made once the platform gave the server to the organization, and a database made while organizations were off, which with organizations on again was kept, still reached its database through its login, was reported by the condition and `GET /api/shared-databases/mixed` (`made: true`), and a second database for that project on that server was refused. **Not run:** shared PostgreSQL or MariaDB servers (the checks do not depend on the engine, but only MySQL ran), high availability, regions and node tags.
+The test cluster ran K3s v1.36.4+k3s1 with organizations on. It had three single MySQL servers: one of the platform, and one for each of two organizations. Each case on this page gave the documented result:
+
+- The `400` for a project of an organization on the server of the platform, and on the server of another organization.
+- The `409`s for the move of a project, and for a server given to an organization or to the platform. The messages named the databases.
+- The refusal by the operator of a logical database written with `kubectl`: `OrganizationIsolated` `False`, one `Warning` event, no Job, and nothing on the server. After the platform gave the server to the organization, Geass made the database.
+- A database made while organizations were off. With organizations on again, Geass kept that database. The database still reached its data through its login. The condition and `GET /api/shared-databases/mixed` reported it (`made: true`). Geass refused a second database for that project on that server.
+
+**Not run:** shared PostgreSQL or MariaDB servers, high availability, regions, and node tags. The checks do not depend on the engine, but only MySQL ran.
 
 ## The sandboxed runtime
 
-With `spec.tenancy.sandbox` set on the platform (see [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/#database-servers)), an organization's server runs under the platform's RuntimeClass, such as gVisor, like the organization's services, because a login with enough rights runs programs through its server. The platform's own servers do not: while organizations are on, they hold only the databases of projects of no organization.
+When `spec.tenancy.sandbox` is set on the platform, the server of an organization runs under the RuntimeClass of the platform, such as gVisor. The services of the organization also run there. The reason is that a login with enough rights can run programs through its server. See [Sandboxed runtime for organizations](/docs/operations/sandboxed-runtime/#database-servers). The servers of the platform do not run in the sandbox. While organizations are on, those servers hold only the databases of projects of no organization.
 
 | Server | With the sandbox on |
 | --- | --- |
-| An organization's MySQL server, one server or highly available | Made in the sandbox. One that already runs moves into it when a platform administrator approves its restart (`kubectl -n geass-system annotate geassdatabase <server> geass.dev/sandbox-restart=true`), or at once with `databaseRestarts: Immediate`, and until then says `RestartPending` on its `Sandboxed` condition |
-| An organization's PostgreSQL server | Not made: CloudNativePG, which runs it, cannot give its pods a RuntimeClass. `POST /api/shared-databases/create` with `org` refuses it with `400`, and a PostgreSQL server is not given to an organization (`409`). One made before is held: it keeps running and serving, outside the sandbox, but Geass changes nothing of it, and it says so on its `Sandboxed` condition (`EngineCannotBeSandboxed`) |
-| The platform's server, of either engine | Not sandboxed, and not affected |
+| A MySQL server of an organization, one server or highly available | Made in the sandbox. A server that already runs moves into the sandbox when a platform administrator approves its restart (`kubectl -n geass-system annotate geassdatabase <server> geass.dev/sandbox-restart=true`), or immediately with `databaseRestarts: Immediate`. Until then, its `Sandboxed` condition shows `RestartPending` |
+| A PostgreSQL server of an organization | Not made, because CloudNativePG, which runs it, cannot give its pods a RuntimeClass. `POST /api/shared-databases/create` with `org` refuses it with `400`. Geass does not give a PostgreSQL server to an organization (`409`). Geass holds a server that was made before. That server continues to run and serve, outside the sandbox, but Geass changes nothing on it. Its `Sandboxed` condition shows this (`EngineCannotBeSandboxed`) |
+| A server of the platform, of either engine | Not sandboxed, and not affected |
 
-The Jobs that make and drop the logical databases of an organization run under the RuntimeClass too, from their next run, on whichever server they are. While the RuntimeClass is missing, none is made: a new logical database waits, not ready, with `Sandboxed` `False` `RuntimeClassMissing`, and one being deleted is let go after three minutes without being dropped from its server.
+The Jobs that make and drop the logical databases of an organization also run under the RuntimeClass, from their next run, on any server. While the RuntimeClass is missing, Geass makes no Job. A new logical database waits, not ready, with `Sandboxed` `False` `RuntimeClassMissing`. Geass releases a logical database that is being deleted after three minutes, without a drop from its server.
 
-Moving a server into the sandbox restarts it. A highly available MySQL server is rolled by MOCO one server at a time, with the primary switched to a replica (not run: only single servers were); a single server is unavailable while its pod starts again (about 40 seconds for a MySQL 8.4.11 server that held data, on K3s v1.36.4+k3s1 with gVisor `release-20261019.0`).
+When a server moves into the sandbox, it restarts:
 
-On that cluster a shared MySQL server of an organization ran under gVisor, and the Job that makes a logical database on it ran with the RuntimeClass and succeeded. **Give it at least 1 GiB.** Two new servers of Geass's default 512 MiB were killed for lack of memory during their first start and left with no `app` login and no password for `root@localhost`, while saying `Ready`, and a logical database on them never finished ([What it costs](/docs/operations/sandboxed-runtime/#what-it-costs) has the symptom). A new PostgreSQL server for an organization was refused with `400` and one made before was held, as the table says; nothing of the refused one was made. Under gVisor a database runs slower than on the node's own kernel, and some of what MySQL can ask of the kernel is only partly there: see [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs), and try a copy first.
+- MOCO rolls a highly available MySQL server one server at a time, and switches the primary to a replica. This case was not run. Only single servers were run.
+- A single server is unavailable while its pod starts again. This took about 40 seconds for a MySQL 8.4.11 server that held data, on K3s v1.36.4+k3s1 with gVisor `release-20261019.0`.
+
+On that cluster, a shared MySQL server of an organization ran under gVisor. The Job that makes a logical database on that server ran with the RuntimeClass and succeeded.
+
+**Give it at least 1 GiB.** Two new servers with the Geass default of 512 MiB were killed for lack of memory during their first start. They had no `app` login and no password for `root@localhost`, but they showed `Ready`. A logical database on them never finished. [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs) has the symptom.
+
+As the table says, Geass refused a new PostgreSQL server for an organization with `400`, and held a server that was made before. Geass made nothing of the refused server. Under gVisor, a database runs slower than on the kernel of the node. Also, some of what MySQL can ask of the kernel is only partly available. See [What it costs](/docs/operations/sandboxed-runtime/#what-it-costs), and try a copy first.
 
 ## What a project can and cannot do
 
-- A login reaches only its own logical database. Geass revokes `PUBLIC` access to each logical database and grants it to that login alone. It changes nothing on the server's other databases, such as the `postgres` maintenance database, which keep the server's default access.
-- Network isolation between projects does not apply to the server. The server runs in `geass-system`, and the isolation policies cover project namespaces. Any pod in the cluster can open a connection to the server's address, so the logins are what keep projects apart. See [Network isolation](/docs/guides/network-isolation/).
-- A project cannot change how many connections its login may hold. Geass applies `connectionLimit` when it first creates the database and does not apply a later change. To change it afterwards, alter the login on the server, with `ALTER ROLE ... CONNECTION LIMIT` on PostgreSQL or `ALTER USER ... WITH MAX_USER_CONNECTIONS` on MySQL.
+- A login reaches only its own logical database. Geass revokes `PUBLIC` access to each logical database, and grants access to that login only. Geass changes nothing on the other databases of the server, such as the `postgres` maintenance database. Those databases keep the default access of the server.
+- Network isolation between projects does not apply to the server. The server runs in `geass-system`, and the isolation policies cover project namespaces. Any pod in the cluster can open a connection to the address of the server. Thus the logins keep projects apart. See [Network isolation](/docs/guides/network-isolation/).
+- A project cannot change the number of connections that its login can hold. Geass applies `connectionLimit` when it first creates the database, and does not apply a later change. To change the limit later, alter the login on the server:
+  - On PostgreSQL, use `ALTER ROLE ... CONNECTION LIMIT`.
+  - On MySQL, use `ALTER USER ... WITH MAX_USER_CONNECTIONS`.
 
 ## Delete a logical database
 
-Open the logical database's **Settings**, then **Delete logical database**, type its resource ID and confirm.
+1. Open the **Settings** of the logical database.
+2. Click **Delete logical database**.
+3. Type the resource ID of the logical database.
+4. Confirm.
 
-On a shared server, Geass runs a drop job that removes the database and its login, then deletes the connection Secret. On PostgreSQL the drop forces open connections closed. The drop is limited to three minutes. A server that is gone or not ready never keeps the logical database from being deleted, so after three minutes Geass lets go even if the drop did not finish. If the drop job fails, Geass lets go anyway, and the database can stay on the server. On a project's own server, Geass leaves the database on the server, as it always has.
+On a shared server, Geass runs a drop job that removes the database and its login. Then Geass deletes the connection Secret. On PostgreSQL, the drop closes open connections. The drop has a limit of three minutes. A server that is gone or not ready never stops the deletion of the logical database. Thus after three minutes, Geass releases the logical database, even if the drop did not finish. If the drop job fails, Geass also releases the logical database, and the database can stay on the server. On a dedicated server of the project, Geass leaves the database on the server, as it always did.
 
 :::danger
-Dropping a shared database destroys its data. There is no backup to restore from.
+Do not drop a shared database if you need its data. The drop destroys the data, and there is no backup to restore from.
 :::
 
 ## Remove a server
 
 1. Open **Settings**, then **Databases**.
-2. Select **Remove** on the server's row.
-3. Type the server's resource ID and select **Remove server**.
+2. Click **Remove** on the row of the server.
+3. Type the resource ID of the server.
+4. Click **Remove server**.
 
-The button stays disabled while any project has a database on the server. The dialog says "Projects still have databases on it, so delete those first", and the API refuses with a count, for example "2 databases in 2 projects still use this server. Delete them first, because removing the server would destroy their data". Removing the server deletes everything on it.
+The button stays disabled while any project has a database on the server. The dialog shows "Projects still have databases on it, so delete those first". The API refuses with a count, for example "2 databases in 2 projects still use this server. Delete them first, because removing the server would destroy their data". When you remove the server, Geass deletes everything on it.
 
 ## Command line and AI agents
 
-The `geass` command line and the MCP server can read servers and logical databases, but have no command or tool to set one up. Use the dashboard, or `geass api` as above.
+The `geass` command line and the MCP server can read servers and logical databases. They have no command or tool to set up a server. Use the dashboard, or `geass api` as shown earlier.
 
 | To | Command | MCP tool |
 | --- | --- | --- |
@@ -305,29 +393,34 @@ The `geass` command line and the MCP server can read servers and logical databas
 | Read how to reach one | `geass api GET /logical-databases/orders/connection` | None |
 | Delete one, or a server | `geass api DELETE /logical-databases/orders -q confirmName=orders` | `delete_resource` with `kind` set to `logical-databases` (for a server, `databases`), only with `--allow-delete` |
 
-The connection call needs a workspace token with Full access. It shows the host, port, database and login. The password and connection string appear only with `-q reveal=true`, and the operator logs each reveal. The MCP server cannot ask for them. For a project token the call is refused. See [Command line and AI agents](/docs/guides/databases/#command-line-and-ai-agents).
+`geass api` sends each path under `/api/v1`. So the create command calls `POST /api/v1/logical-databases`. This v1 route does the same as `POST /api/logical-databases/create`, the dashboard route in the REST example earlier. Both routes work.
+
+The connection call needs a workspace token with Full access. It shows the host, the port, the database, and the login. The password and the connection string show only with `-q reveal=true`, and the operator logs each reveal. The MCP server cannot ask for them. Geass refuses the call for a project token. See [Command line and AI agents](/docs/guides/databases/#command-line-and-ai-agents).
 
 ## Limits and tradeoffs
 
-- **One server, shared fate.** All projects share the server's CPU, memory, disk and connection slots. A busy project can slow the others, and Geass applies no per-project CPU or memory limit to it, because the server runs in `geass-system` and [project limits](/docs/guides/project-limits/) cap a project's own environments only. The only per-project limit is the connection limit on the login.
-- **One volume.** The server's disk is shared. One project can fill it. Increasing the size is a change to the server, not to a project, and the dashboard offers no control for it. See [Storage and volumes](/docs/guides/storage/).
-- **No backups.** Shared servers and logical databases are not backed up and cannot be restored to a point in time. Take your own dumps with `pg_dump` or `mysqldump` if you need them.
-- **Only PostgreSQL and MySQL.** Redis and SQLite cannot be shared.
-- **Version.** A shared PostgreSQL server runs version 16 unless you set `version` through the API.
+- **One server, shared fate.** All projects share the CPU, memory, disk, and connection slots of the server. A busy project can slow the other projects. Geass applies no CPU or memory limit for each project on the server. The reason is that the server runs in `geass-system`, and [project limits](/docs/guides/project-limits/) apply only to the environments of a project. The only limit for each project is the connection limit on the login.
+- **One volume.** The disk of the server is shared. One project can fill it. A size increase is a change to the server, not to a project, and the dashboard has no control for it. See [Storage and volumes](/docs/guides/storage/).
+- **No backups.** Geass does not back up shared servers and logical databases, and cannot restore them to a point in time. If you need dumps, make them yourself with `pg_dump` or `mysqldump`.
+- **Only PostgreSQL and MySQL.** You cannot share Redis and SQLite.
+- **Version.** A shared PostgreSQL server runs version 16, unless you set `version` through the API.
 - **High availability is chosen at setup.** The dashboard has a switch only when you create the server.
-- **Regions.** When a server and a project both have a region, the two must match, so no query crosses regions. A project without a region uses the cluster's default region, and a side with no region at all is not checked.
-- **No migration tool.** To move a project's data between a dedicated database and a shared one, dump and load it yourself.
-- **One organization per server, and no server made for you.** While organizations are on, an organization's project needs a server of its organization, which a platform administrator sets up. Geass never splits a server or moves data between servers. The **Add resource** dialog of a platform administrator who is not in an organization lists every shared server in the project's region, including those of other owners, which the API then refuses.
-- **The server's own login.** Like every database Geass creates, the server has an application login named `app` whose password is derived from the server's resource ID. It owns no logical database, and each logical database is closed to every login but its own. Treat the server's address as reachable from every project.
+- **Regions.** When a server and a project both have a region, the two regions must match. Thus no query crosses regions. A project without a region uses the default region of the cluster. Geass does not check a side that has no region at all.
+- **No migration tool.** To move the data of a project between a dedicated database and a shared database, dump and load the data yourself.
+- **One organization per server, and no server made for you.** While organizations are on, a project of an organization needs a server of its organization. A platform administrator sets up that server. Geass never splits a server, and never moves data between servers. Some platform administrators are not in an organization. For these administrators, the **Add resource** dialog lists every shared server in the region of the project, including the servers of other owners. The API then refuses those servers.
+- **The server's own login.** Like every database that Geass creates, the server has an application login named `app`. Geass makes its password from the resource ID of the server. That login owns no logical database. Each logical database is closed to every login except its own login. Treat the address of the server as reachable from every project.
 
 ## What happens under the hood
 
-- A shared server is a `GeassDatabase` with an empty `project`, in `geass-system`. Its pods, volume and connection Secret `<server ID>-connection` all live in `geass-system`.
-- Creating a database and a login takes an administrative login on the server: the `<server ID>-superuser` Secret for PostgreSQL, and the root password in `<server ID>-bootstrap` for MySQL. A shared server has it from the start. A project's own server gets it when its first logical database is created, and until it exists the logical database reports "Waiting for the database server's administrator login". Once turned on, the login stays, because taking it away would strand databases still being created or dropped.
-- Each logical database is a `GeassLogicalDatabase` in `geass-system`. The controller runs a Job named `<logical ID>-create` in the server's namespace, in the image `postgres:16-alpine` or `mysql:8.4`. It connects with the administrative login, creates the login and database, revokes public access and grants it to the login. It runs again safely: an existing login has its password and limit set again, and an existing database is kept.
+- A shared server is a `GeassDatabase` with an empty `project`, in `geass-system`. Its pods, its volume, and its connection Secret `<server ID>-connection` are all in `geass-system`.
+- To create a database and a login, Geass needs an administrative login on the server. For PostgreSQL, this login is the `<server ID>-superuser` Secret. For MySQL, it is the root password in `<server ID>-bootstrap`.
+  - A shared server has this login from the start.
+  - A dedicated server of a project gets this login when Geass creates its first logical database. Until the login exists, the logical database reports "Waiting for the database server's administrator login".
+  - After Geass turns the login on, the login stays. If Geass removed it, databases that Geass still creates or drops would be stranded.
+- Each logical database is a `GeassLogicalDatabase` in `geass-system`. The controller runs a Job named `<logical ID>-create` in the namespace of the server, in the image `postgres:16-alpine` or `mysql:8.4`. The Job connects with the administrative login and creates the login and the database. Then it revokes public access and grants access to the login. The Job is safe to run again. It sets the password and limit of an existing login again, and keeps an existing database.
 - On delete, a Job named `<logical ID>-drop` runs `DROP DATABASE ... WITH (FORCE)` and drops the login. A finalizer, `geass.geass.dev/logicaldatabase`, holds the object until the Job finishes or three minutes pass.
-- Jobs run in the server's region. They do not use the server's **Run on** tags, so on a shared server they run on nodes that are not reserved, and not on compliance nodes. On a project's own server they also carry the project's required tags.
-- With the platform's [sandboxed runtime](/docs/operations/sandboxed-runtime/) on, a Job of an organization's server, or of an organization's project on any server, is made with the RuntimeClass (`runtimeClassName` in its pod). A Job that is already made keeps how it runs.
+- Jobs run in the region of the server. They do not use the **Run on** tags of the server. Thus on a shared server, Jobs run on nodes that are not reserved, and not on compliance nodes. On a dedicated server of a project, Jobs also have the required tags of the project.
+- When the [sandboxed runtime](/docs/operations/sandboxed-runtime/) of the platform is on, Geass makes some Jobs with the RuntimeClass (`runtimeClassName` in its pod). These are the Jobs of the server of an organization, and the Jobs of the project of an organization on any server. A Job that already exists continues to run as before.
 
 ```bash
 kubectl get geassdatabases -n geass-system
@@ -341,55 +434,64 @@ kubectl logs job/orders-create -n geass-system
 ## Troubleshooting
 
 **The server's row is greyed out in the Add resource dialog.**
-The server is not **Ready** yet, or it runs in another region than the project. Wait for **Ready** on **Settings**, **Databases**, or check the region of each.
+The server is not **Ready** yet, or it runs in a region that is different from the region of the project. Wait for **Ready** on **Settings**, **Databases**, or check the region of each.
 
 **The High availability switch is disabled.**
-The cluster is not ready for it. Open **Settings**, **Usage**, and run the readiness check. See [Instances and high availability](/docs/guides/databases/#instances-and-high-availability).
+The cluster is not ready for high availability. Open **Settings**, **Usage**, and run the readiness check. See [Instances and high availability](/docs/guides/databases/#instances-and-high-availability).
 
 **The logical database stays at "Waiting for the database server's administrator login".**
-The server has not exposed its administrative login yet. This happens on a project's own server, which Geass turns the login on for when it sees its first logical database. Wait a few minutes and check the server's own status.
+The server has not exposed its administrative login yet. This occurs on a dedicated server of a project. Geass turns on the login for that server when it sees the first logical database. Wait a few minutes, and check the status of the server.
 
 **"database server is not ready" or "database server ... is unavailable".**
-The server is not running. Fix the server first. Neither message counts as a failure, and Geass keeps retrying.
+The server is not running. Fix the server first. Neither message counts as a failure, and Geass continues to try again.
 
 **"database creation Job failed" and the logical database shows a failed state.**
-Read the Job's output with `kubectl logs job/<logical ID>-create -n geass-system`. After fixing the cause, select **Retry** on the logical database.
+Read the output of the Job with `kubectl logs job/<logical ID>-create -n geass-system`. After you fix the cause, click **Retry** on the logical database.
 
 **"database name must contain only letters, numbers, and underscores".**
-The `database` value breaks the rule. Use letters, digits and underscores, and do not start with a digit.
+The `database` value breaks the rule. Use letters, digits, and underscores, and do not start with a digit.
 
 **"This database server runs in the X region, but the project runs in the Y region".**
-Choose a server in the project's region, or set up one there.
+Select a server in the region of the project, or set up a server there.
 
 **"This database server does not run on nodes tagged hipaa, which the project requires".**
-The project requires node tags that the server is not placed on. Set up a server with `runOnTags`, as in [Projects that require node tags](#projects-that-require-node-tags), delete the logical database and create it on that server. If the status has already become "Provisioning failed after repeated errors", the message is on the **Deployments** tab.
+The project requires node tags that the server is not placed on. Do these steps:
+
+1. Set up a server with `runOnTags`, as in [Projects that require node tags](#projects-that-require-node-tags).
+2. Delete the logical database.
+3. Create the logical database on the new server.
+
+If the status has already become "Provisioning failed after repeated errors", the message is on the **Deployments** tab.
 
 **"password authentication failed" for a logical database that worked.**
-A later logical database in the same project environment used the same name, which reset the login's password. See the caution under [Create a database on the server](#create-a-database-on-the-server). Copy the current password from the newer database's connection Secret, or delete the extra logical database.
+A later logical database in the same project environment used the same name. This reset the password of the login. See the caution under [Create a database on the server](#create-a-database-on-the-server). Copy the current password from the connection Secret of the newer database, or delete the extra logical database.
 
 **"too many connections" from the database.**
-The login reached its connection limit, 20 by default. Raise it on the server with `ALTER ROLE` or `ALTER USER`, and make the app use fewer connections or a pool.
+The login reached its connection limit, 20 by default. Raise the limit on the server with `ALTER ROLE` or `ALTER USER`. Also make the app use fewer connections, or a pool.
 
 **Removing the server is blocked.**
 Projects still have databases on it. The message gives the count. Delete those logical databases first.
 
 **"That server is the platform's and the project is in the organization …".**
-Organizations are on, and the platform's server is for the projects of no organization. Choose a server of the project's organization, or set one up for it with `org=`. See [Organizations](#organizations).
+Organizations are on, and the server of the platform is for the projects of no organization. Select a server of the organization of the project, or set up a server for that organization with `org=`. See [Organizations](#organizations).
 
 **"… but a shared database server holds the databases of one organization only. It is not made: …".**
-The logical database was written past the dashboard on a server of another owner. Nothing was made on the server. Delete it and create it on a server of the project's organization, or have a platform administrator give the server, or the project, to one organization. It is made once they have.
+Somebody wrote the logical database without the dashboard, on a server of another owner. Geass made nothing on the server. Do one of these:
+
+- Delete the logical database, and create it on a server of the organization of the project.
+- Ask a platform administrator to give the server, or the project, to one organization. After the administrator does this, Geass makes the database.
 
 **"… It was made before this was checked, so it is kept as it is and still served …".**
-The database was on the server before the rule found it. It works, and is listed by `GET /api/shared-databases/mixed`. See [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
+The database was on the server before the rule found it. The database works, and `GET /api/shared-databases/mixed` lists it. See [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
 
 **Giving a project to an organization, or a server, is refused with 409.**
-The project, or the server, has databases that would then share a server with another owner's. The message names them. Move their data or delete them first, in the order under [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
+The project, or the server, has databases that would then share a server with the databases of another owner. The message names them. First move their data or delete them, in the order under [An install that already has a mixed server](#an-install-that-already-has-a-mixed-server).
 
 **"This database cannot run in the sandbox: PostgreSQL runs on the CloudNativePG operator …".**
-The platform runs organizations' code in a sandboxed runtime, and PostgreSQL cannot run in it. Set up a MySQL server for the organization instead. A server made before is held as it is: see [The sandboxed runtime](#the-sandboxed-runtime).
+The platform runs the code of organizations in a sandboxed runtime, and PostgreSQL cannot run in it. Set up a MySQL server for the organization instead. Geass holds a server that was made before as it is. See [The sandboxed runtime](#the-sandboxed-runtime).
 
 **"Runs without the sandbox until it is restarted into RuntimeClass …".**
-The server ran before the sandbox was set, and waits for a platform administrator to approve its restart. It works meanwhile. See [Servers that already run](/docs/operations/sandboxed-runtime/#servers-that-already-run).
+The server ran before the sandbox was set. It waits for a platform administrator to approve its restart. The server works until the restart. See [Servers that already run](/docs/operations/sandboxed-runtime/#servers-that-already-run).
 
 ## Related
 
