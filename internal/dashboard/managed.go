@@ -109,7 +109,7 @@ func dashboardManagedOf(state managedState) *dashboardManaged {
 // writes are turned into before they get here (POST /api/v1/settings/auth/save is /settings/auth/save), so one list serves both.
 func managedAreaOf(path string) (string, bool) {
 	switch {
-	case underPath(path, "/settings/auth"), underPath(path, "/users"):
+	case underPath(path, "/settings/auth"), underPath(path, "/users"), path == "/setup":
 		// The people who sign in with a password are part of sign-in.
 		return managedSignIn, true
 	case underPath(path, "/settings/domain"), underPath(path, "/settings/cloudflare"):

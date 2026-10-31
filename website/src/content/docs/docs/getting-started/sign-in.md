@@ -1,63 +1,76 @@
 ---
 title: "Sign in to the dashboard"
-description: "Open the dashboard the first time with the login that the installer prints, before you have a domain, and sign in the command line."
+description: "Open the dashboard the first time with the setup link that the installer prints, create your admin, and sign in the command line."
 ---
 
-The installer creates the first dashboard user, `admin`, with a random password. It prints the username and the
-password when it creates the user, and again at the end of the install. Before you have a domain, the dashboard has no public address. You open it
-through an SSH tunnel from your computer:
+At the end of the install, the installer prints a setup link, for example:
 
-1. Open the SSH tunnel.
-2. Sign in at `http://localhost:8085`.
-3. Put the dashboard on a domain. Then you can open the dashboard from anywhere, and you no longer need the tunnel.
+```text
+Open the dashboard
+  Open this link in your browser, and create your admin user:
+    https://203.0.113.10/setup#k7Qx…
+  The link works once, for 24 hours.
+```
+
+The link opens the dashboard over HTTPS at the IP address of your server. You do not need a domain or SSH for it.
+
+## Open the dashboard
+
+1. Copy the link that the installer printed, and open it in your browser.
+2. In **Username**, keep `admin`, or enter another name.
+3. In **Password**, enter a password of at least 12 characters.
+4. Click **Create admin**.
+
+The dashboard signs you in. Save the password in your password manager. Geass keeps only a hash of it.
+
+The link works once, for 24 hours. If the link expired, or someone used it, make a new one. See
+[Lost the link or every password](#lost-the-link-or-every-password).
+
+The dashboard stays at `https://<server IP>` until you [put it on a domain](#put-the-dashboard-on-a-domain). To sign in
+again later, open that address, enter your username and password, and click **Continue**.
 
 ![The Geass sign-in page.](../../../../assets/docs/login.webp)
 *Screenshot with example data.*
-
-## Before you start
-
-- A finished [install](/docs/getting-started/install/).
-- The username, the password, and the `ssh` command that the installer printed at the end of the install.
-- SSH access to the server from your computer.
-
-Save the password in your password manager. Geass keeps only a hash of the password, so nobody can show it again. If
-you lost the password, ask another admin to reset it under **Settings** → **Users**. See
-[Users and API tokens](/docs/guides/users-and-tokens/#reset-a-password).
-
-## Open the SSH tunnel
-
-The dashboard listens on the loopback address of the server, `127.0.0.1:8085`. Only programs on the server can reach
-that address. An SSH tunnel connects port 8085 on your computer to that address.
-
-1. On your computer, run the `ssh` command that the installer printed. Replace `<server address>` with the IP address
-   or the hostname of your server:
-
-   ```bash
-   ssh -L 8085:127.0.0.1:8085 ubuntu@203.0.113.10
-   ```
-
-2. Keep this SSH session open while you use the dashboard.
-
-If port 8085 is in use on your computer, use a different local port, for example `-L 9085:127.0.0.1:8085`. Then open
-`http://localhost:9085`.
-
-If you installed Geass on the computer that you use, you do not need the tunnel. Open `http://localhost:8085` directly.
-
-## Sign in
-
-1. In your browser, open `http://localhost:8085`.
-2. In **Username**, enter `admin`. The field shows `admin` at first.
-3. In **Password**, enter the password from the installer.
-4. Click **Continue**.
-
-Use `localhost` or `127.0.0.1` in the address. On plain HTTP to any other address, the browser drops the sign-in cookie,
-and you return to the sign-in page.
 
 A session lasts 12 hours. Usernames do not depend on letter case.
 
 After five failed attempts for one username from one address in one minute, Geass locks that username for that address.
 The lock lasts one minute. The page still says `invalid username or password`. Wait one minute, and then try again. See
 [Security](/docs/operations/security/#dashboard-users) for the full lockout rules.
+
+### When the installer prints an SSH command
+
+To serve the dashboard at its IP address, Let's Encrypt must reach your server on port 80. If it cannot, the installer
+says why, and prints an SSH command and a `localhost` link instead:
+
+1. On your computer, run the `ssh` command that the installer printed. Keep this terminal open.
+2. In your browser, open the `http://localhost:8085/setup#…` link that the installer printed.
+3. Create your admin as in the steps above.
+
+The common reasons are these:
+
+- A cloud firewall, for example an AWS security group, blocks port 80 or 443. Open both ports to the internet. Then make
+  a new link. See [Lost the link or every password](#lost-the-link-or-every-password).
+- The server has no public IPv4 address. Use the SSH command, or [put the dashboard on a domain](#put-the-dashboard-on-a-domain).
+
+If you installed Geass on the computer that you use, skip step 1.
+
+## Lost the link or every password
+
+To get a new setup link, run this command on the first server:
+
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link
+```
+
+The command prints a new link, which works once, for 24 hours. An earlier link that nobody used stops working. If you
+enter the name of an existing user, the link sets a new password for that user, makes the user an admin, and signs out
+the other sessions of that user.
+
+If you lost only your own password, ask another admin to reset it under **Settings** → **Users**. See
+[Users and API tokens](/docs/guides/users-and-tokens/#reset-a-password).
+
+## Sign out and add people
 
 To sign out, open the account menu at the top right, and select **Sign out**. Sign-out ends the sessions of that user in
 every browser.
@@ -89,7 +102,8 @@ dashboard login first. To install the command line, see
    geass login --url https://geass.example.com
    ```
 
-   Before you have a domain, open the [SSH tunnel](#open-the-ssh-tunnel). Then use `--url http://localhost:8085`.
+   Before you have a domain, use the address of the dashboard at the IP address of your server, for example
+   `--url https://203.0.113.10`.
 
 2. The command prints a code, for example `BCDF-GHJK`, and opens the page `/device` of your dashboard in your browser. To
    stop the browser from opening, add `--no-browser`.
@@ -123,23 +137,28 @@ role, **Read only, with logs**. See [Users and API tokens](/docs/guides/users-an
 
 ## Troubleshooting
 
+**The setup link does not open.** Port 443 is closed to your computer, or the server has a new IP address. Open ports
+80 and 443, and then [make a new link](#lost-the-link-or-every-password).
+
+**The page says `this setup link was used or has expired`.** [Make a new link](#lost-the-link-or-every-password).
+
 **`localhost:8085` does not respond.** The SSH session closed, or the dashboard on the server stopped. Start the
 `ssh` command again. If the page still does not respond, see [Under the hood](#under-the-hood).
 
 **`invalid username or password`.** The username or the password is wrong, or the username is locked for one minute.
-Wait one minute, and then try again. Copy the password from the install output. Do not enter it by hand.
+Wait one minute, and then try again.
 
-**You sign in and return to the sign-in page.** The browser rejected the sign-in cookie. Open the dashboard at
-`http://localhost:8085` through the tunnel, or at an HTTPS address.
+**You sign in and return to the sign-in page.** The browser rejected the sign-in cookie. Open the dashboard at an
+HTTPS address, or at `http://localhost:8085` with the SSH command.
 
-**The installer printed no password.** The installer creates a user only when the server has no dashboard users. An
-update and a server that already had users print `The dashboard already has users`. Sign in with an existing user.
+**The installer printed no setup link.** The installer makes a link only when the dashboard has no users. Sign in with
+an existing user, or [make a new link](#lost-the-link-or-every-password).
 
 **`request origin could not be verified`.** A proxy or a tunnel changed the host name of the request. Forward the
-original `Host` header, or use the SSH tunnel from [Open the SSH tunnel](#open-the-ssh-tunnel).
+original `Host` header, or open the dashboard as [Open the dashboard](#open-the-dashboard) shows.
 
-**`dashboard authentication is unavailable` when you click Continue.** Geass found no valid user. See
-[Under the hood](#under-the-hood) to check the users.
+**`dashboard authentication is unavailable` when you click Continue.** Geass found no valid user.
+[Make a new link](#lost-the-link-or-every-password).
 
 **The page says `Dashboard unavailable`.** Click **Try again**. If the message stays, read the Geass log. See
 [Under the hood](#under-the-hood).
@@ -163,23 +182,39 @@ On a server that uses OpenRC, run `sudo rc-service geass-dashboard status` inste
 
 ### How the dashboard is reached
 
-The dashboard is the `ClusterIP` Service `geass-geass-dashboard` on port 8085 in the namespace `geass-system`. The
-installer adds the service `geass-dashboard` on the first server: a systemd unit, or an OpenRC script on a server that
-uses OpenRC. That service runs
-`k3s kubectl port-forward --address 127.0.0.1` to the dashboard Service, so the dashboard answers on `127.0.0.1:8085`
-and on no other address. The service manager starts the port forward again after a restart or an update of Geass. The installer
-adds this service on a new install only. On a server that you installed with an earlier release, start the same port
-forward by hand, and keep it running:
+On a new cluster, the installer sets `spec.dashboard.publicIP: true` on the GeassCluster. Until the dashboard domain is
+verified, the operator then keeps these objects:
+
+- The ClusterIssuer `geass-letsencrypt-ip`. It uses the Let's Encrypt profile `shortlived`, which IP address
+  certificates require, and it needs no email. The `letsencrypt-prod` issuer for domains does not change.
+- The Certificate `geass-dashboard-public-ip` in `geass-system`, for the public IPv4 address of the server. It lasts about
+  six days, and cert-manager renews it.
+- The Traefik `TLSStore` named `default` in `geass-system`. A browser sends no server name for an IP address, so Traefik
+  answers with this default certificate.
+- The Traefik `IngressRoute` `geass-dashboard-public-ip`. It sends HTTPS requests for the address, and no other host, to
+  the dashboard Service `geass-geass-dashboard` on port 8085.
+- The Traefik `Middleware` and `IngressRoute` `geass-dashboard-public-ip-http`. They redirect plain HTTP for the address to
+  HTTPS. Requests under `/.well-known/acme-challenge/` are not redirected, so that the certificate renews.
+
+The GeassCluster condition `DashboardPublicIP` says how this goes, and `status.dashboardPublicURL` holds the address when
+it answers. When the dashboard domain is verified, the operator deletes the four objects. If a `TLSStore` named `default`
+that Geass did not create exists in `geass-system`, Geass leaves it, and the condition says `TLSStoreInUse`.
+
+To read the condition, run this command:
 
 ```bash
-sudo k3s kubectl -n geass-system port-forward --address 127.0.0.1 svc/geass-geass-dashboard 8085:8085
+sudo k3s kubectl -n geass-system get geasscluster default -o jsonpath='{.status.conditions[?(@.type=="DashboardPublicIP")].message}'
 ```
 
-The users are in the Kubernetes Secret `geass-dashboard-auth` in the namespace `geass-system`. The installer creates
-this Secret with one `admin` user and a bcrypt hash of the generated password. The installer never replaces users that
-work, and it does not write the password to its log. If the Secret exists with no valid user, the installer adds the
-`admin` user to it. You edit only the `users` key. Geass manages the other keys:
-`session-key`, `session-epochs`, and `login-lockouts`.
+The installer also adds the service `geass-dashboard` on the first server: a systemd unit, or an OpenRC script. It runs
+`k3s kubectl port-forward --address 127.0.0.1` to the dashboard Service, so the dashboard also answers on
+`127.0.0.1:8085`. The SSH command uses this address. The installer adds this service on a new install only.
+
+The users are in the Kubernetes Secret `geass-dashboard-auth` in the namespace `geass-system`. A setup link is the key
+`setup` of that Secret: a SHA-256 hash of the token and the time when the link expires. The token follows the `#` of the
+link, and a browser never sends that part to a server. A wrong token counts as a failed sign-in for the lockout. The
+installer and `dashboard-link` write only the `setup` key, and never change users. You edit only the `users` key. Geass
+manages the other keys: `session-key`, `session-epochs`, and `login-lockouts`.
 
 To read the users, run this command. The output shows usernames, roles, and password hashes:
 
@@ -190,8 +225,8 @@ sudo k3s kubectl -n geass-system get secret geass-dashboard-auth -o jsonpath='{.
 ### Set a new password
 
 To add users, change roles, and reset passwords, use **Settings** → **Users**. See
-[Users and API tokens](/docs/guides/users-and-tokens/#manage-users). When no admin can sign in, add an admin to the
-Secret by hand. See [Users and API tokens](/docs/guides/users-and-tokens/#the-user-list).
+[Users and API tokens](/docs/guides/users-and-tokens/#manage-users). When no admin can sign in, make a new setup link.
+See [Lost the link or every password](#lost-the-link-or-every-password).
 
 ### Other details
 
@@ -205,8 +240,8 @@ The session cookie is `__Host-geass_session`, or `geass_session` over plain HTTP
 `SameSite=Lax`, and `Secure` except on a loopback address. Geass checks the `Origin` or `Referer` of each change against
 the `Host` of the request. A reverse proxy in front of the dashboard must pass the `Host` header without a change.
 
-If you run `kubectl` on your own computer against this cluster, you can run the `port-forward` command there instead of
-the SSH tunnel. K3s writes its kubeconfig to `/etc/rancher/k3s/k3s.yaml` on the server, with the address `127.0.0.1`.
+If you run `kubectl` on your own computer against this cluster, you can run a `port-forward` command there instead of
+the SSH command. K3s writes its kubeconfig to `/etc/rancher/k3s/k3s.yaml` on the server, with the address `127.0.0.1`.
 Change that address to one that your computer can reach, and open 6443/tcp to your computer.
 
 To read the Geass log, run this command on the server:

@@ -56,8 +56,8 @@ func (s *ClusterCRApply) Run() error {
 	}
 
 	if s.ACMEEmail == "" {
-		Warnf(s.Name(), "%s is not set, so no certificate issuer is created and HTTPS certificates will not be issued; "+
-			"enter an email address in the dashboard under Settings > Domain to enable them", acmeEmailEnv)
+		Warnf(s.Name(), "%s is not set. The dashboard at this server's IP address needs none, but certificates for your "+
+			"domains do: enter an email address in the dashboard under Settings > Domain before you add one", acmeEmailEnv)
 	}
 	manifest := geassClusterManifest(name, version, serverURL, s.Network, s.ACMEEmail)
 
@@ -114,8 +114,11 @@ spec:
       enabled: true
     logging:
       enabled: true
-%s%s`, geassClusterAPIVersion, name, version, serverURL, certManagerManifest(acmeEmail), networkManifest(network))
+%s%s%s`, geassClusterAPIVersion, name, version, serverURL, certManagerManifest(acmeEmail), dashboardManifestSection, networkManifest(network))
 }
+
+// dashboardManifestSection serves the dashboard of a new cluster at its public IP address until it has a domain.
+const dashboardManifestSection = "  dashboard:\n    publicIP: true\n"
 
 // meshAuthSecretName is the Secret that holds the auth key of a Tailscale mesh, which the cluster object names and the
 // operator reads whenever it adds a worker.

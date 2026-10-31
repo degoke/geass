@@ -41,6 +41,7 @@ connection, and the controllers stay on the cluster's own machines.
 | Pod usage tracker, network policy check, problem exporter, and alert routing | yes | **no** | yes |
 | The operator's own monitoring objects (its ServiceMonitor and alert rules) | yes | **no** | yes |
 | Dashboard Service, Ingress, and tunnel route for the dashboard's address | yes | not applicable | **left alone**: no Ingress or route, and the dashboard sets its own domain condition |
+| The dashboard at the public IP address (`spec.dashboard.publicIP`) | yes | not applicable | **left alone**: no certificate or route for the address |
 | Dashboard, `/api`, `/api/v1`, `/api/events`, deploy hooks, and GitHub callbacks | yes | yes, with the same sign-in and access rules | **no HTTP server on the dashboard port** |
 | Health probes (`--health-probe-bind-address`) | yes | yes | yes |
 | Metrics (`--metrics-bind-address`) | if set | if set, without the controllers' series | if set |

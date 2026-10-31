@@ -17,21 +17,34 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
-- **First sign-in with no kubectl.** A new install now creates the first dashboard user, `admin`, with a random
-  password. The installer prints the username and the password when it creates the user, and again at the end of the
-  install. It also prints how to open the dashboard and how to set a domain. The Secret `geass-dashboard-auth` holds
-  only a bcrypt hash. The installer never replaces users that work, and the password is not in the install log. An
-  update creates no user.
+- **First sign-in with a setup link.** The installer creates no user and prints no password. On a cluster whose
+  dashboard has no users, it prints a setup link, `https://<public IP>/setup#<token>`. The link opens **Create your
+  admin**, where you choose the username and a password of 12 characters or more. Then Geass signs you in. The link
+  works one time, for 24 hours. The Secret `geass-dashboard-auth` holds only a SHA-256 hash of the token, under the key
+  `setup`. The token is after the `#`, so browsers do not send it to a server. A wrong token counts toward the sign-in
+  lockout of the address. An update of a cluster whose dashboard has no users also prints a link. Managed mode refuses
+  `POST /api/setup`. See [Sign in to the dashboard](website/src/content/docs/docs/getting-started/sign-in.md).
+- **The dashboard over HTTPS at the public IP address.** A new cluster sets `spec.dashboard.publicIP: true`. The
+  operator then serves the dashboard at the public IPv4 address of the server, with a Let's Encrypt certificate for
+  that address. The certificate uses the Let's Encrypt `shortlived` profile, and cert-manager renews it. You need no
+  domain and no certificate email, but ports 80 and 443 must be open. The condition `DashboardPublicIP` and the field
+  `status.dashboardPublicURL` report the state. When a dashboard domain is verified, the operator removes the address.
+  If the server has no public IPv4 address, or the address cannot be served, the installer prints the reason, an `ssh`
+  command, and a link to `http://localhost:8085`.
+- **`dashboard-link` command.** Run
+  `curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link` on a
+  control plane server to print a new setup link. If you enter the name of an existing user, the link sets the
+  password of that user and makes the user an admin. This command replaces the `kubectl` procedure for a cluster where
+  nobody can sign in.
 - **The install ends when Geass is ready.** The installer waits up to 15 minutes for certificates, metrics, and storage
   to run, and it prints what is left while it waits. You no longer check the cluster on the server before you deploy.
   If the time ends first, the installer says that Geass is still starting. The dashboard then shows **Geass is
   starting** at the top of each page until the cluster is ready.
-- **The dashboard on the loopback address before it has a domain.** The installer adds the systemd service
-  `geass-dashboard` on the first server, as a systemd unit or an OpenRC script. The service keeps the dashboard on
-  `127.0.0.1:8085` and on no other address.
-  To open the dashboard, run `ssh -L 8085:127.0.0.1:8085` to the server, and open `http://localhost:8085`. The service
-  manager starts the forward again when the dashboard pod changes. A server that you installed with an earlier release does not
-  get this service. See [Sign in to the dashboard](website/src/content/docs/docs/getting-started/sign-in.md).
+- **The dashboard on the loopback address.** The installer adds the service `geass-dashboard` on the first server, as
+  a systemd unit or an OpenRC script. The service keeps the dashboard on `127.0.0.1:8085` and on no other address. When
+  the dashboard has no public address, run `ssh -L 8085:127.0.0.1:8085` to the server, and open `http://localhost:8085`.
+  The service manager starts the forward again when the dashboard pod changes. A server that you installed with an
+  earlier release does not get this service.
 - **Certificate email in the dashboard.** **Settings** → **Domain** has a **Certificate email** field. It sets the
   contact address of the Let's Encrypt account, `spec.addons.certManager.acmeEmail`, and it shows the state of the
   issuer. Before, you could set the address only with `GEASS_ACME_EMAIL` or `kubectl patch`.
@@ -530,6 +543,8 @@ The first public release, open source under the Apache License 2.0.
 
 ### Changed
 
+- **cert-manager v1.21.3.** The cert-manager add-on moves from v1.17.2 to v1.21.3. The certificate for the IP address of
+  the dashboard uses an ACME profile, and cert-manager added profiles in 1.18.
 - **The documentation follows the Google developer documentation style guide and the ASD-STE100 writing rules.** The
   README and every page at rungeass.com/docs use short sentences, the active voice, and one word for one meaning. The rules
   are in `docs/writing-style.md`. A check of the pages against the code also corrected about 30 statements, for example the

@@ -3,8 +3,8 @@ title: "Connect a domain"
 description: "Put the dashboard and your first app on a real domain: set the certificate email, create DNS, set the platform domain, and add a domain to an app."
 ---
 
-At the start of this walkthrough, you open the dashboard through the SSH tunnel that the installer printed. At the end, the dashboard is on
-`https://geass.example.com`, and your first app is on `https://shop.example.com`. The walkthrough uses `example.com` and
+At the start of this walkthrough, you open the dashboard at the public IP address of the server, for example
+`https://203.0.113.10`. At the end, the dashboard is on `https://geass.example.com`, and your first app is on `https://shop.example.com`. The walkthrough uses `example.com` and
 the server address `203.0.113.10`. Replace them with your values. For every option, see
 [Domains and TLS](/docs/guides/domains-and-tls/).
 
@@ -18,8 +18,8 @@ the server address `203.0.113.10`. Replace them with your values. For every opti
 - A real email address for Let's Encrypt. Do not use an `example.com` address.
 
 :::caution
-Make sure that Geass has a certificate email before you continue. Without one, Geass gets no HTTPS certificates, and the
-dashboard domain never becomes verified. The only exception is a Cloudflare Tunnel.
+Make sure that Geass has a certificate email before you continue. Without one, Geass gets no HTTPS certificates for a
+domain, and the dashboard domain never becomes verified. The only exception is a Cloudflare Tunnel.
 :::
 
 ## 1. Set the certificate email
@@ -61,7 +61,9 @@ Use the option that matches where your DNS is:
 
 Geass then checks the domain every 5 seconds. Usually, the check passes after a few minutes, when Let's Encrypt issues
 the certificate. Until then, admins see the **Dashboard domain** banner at the top of the dashboard. When the banner
-goes away, open `https://geass.example.com`, and sign in again. From then on, you do not need the tunnel.
+goes away, open `https://geass.example.com`, and sign in again.
+
+After the domain is verified, the dashboard no longer answers at the IP address of the server. Use the domain.
 
 ## 4. Put your first app on a domain
 
@@ -128,6 +130,10 @@ sudo k3s kubectl -n geass-system get geassplatformconfig platform \
 - `PendingHTTPS`: DNS is correct, but the certificate is not ready, or port 80 or 443 is closed. A problem with the
   certificate email shows at the end of the message.
 - `VerificationTimedOut`: 15 minutes passed. Geass continues to check every 5 minutes.
+
+When the domain is verified, the operator deletes the objects that serve the dashboard at the IP address. The
+`DashboardPublicIP` condition of the `GeassCluster` then has the reason `DomainVerified`. See
+[`DashboardPublicIP`](/docs/reference/resources/geass-cluster/#dashboardpublicip).
 
 The badge of **Certificate email** comes from the `ClusterIssuerReady` condition of the `GeassCluster`. For every reason
 that it can report, see [The certificate issuer](/docs/operations/installer/#the-certificate-issuer).

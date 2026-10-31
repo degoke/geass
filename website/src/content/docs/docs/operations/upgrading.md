@@ -66,10 +66,19 @@ The installer prints each step as `→ <name>` and `✓ <name>`. It stops at the
 | `set the K3s version for the workers` | Tells Geass to update K3s on the other servers. Only with `--k3s-version`. |
 | `wait for the cluster to be ready` | Waits up to 10 minutes. A cluster that is not ready by then is a warning, because an add-on update can take longer. |
 | `summary` | Says what changed and where the snapshot is. |
+| `create the dashboard setup link`, `serve the dashboard at the public IP address`, `wait for the dashboard's address` | Only when the dashboard has no users. The installer makes a setup link, serves the dashboard at the public IP address of the server, and prints the link. See [A cluster with no dashboard users](#a-cluster-with-no-dashboard-users). |
 
 The update does not reset your settings, and it does not change the join token. It ignores `GEASS_ACME_EMAIL`, `GEASS_MULTI_SITE`, and `GEASS_NODE_EXTERNAL_IP`, because these variables describe a new cluster. It does not remove things that an earlier release made and the new release no longer uses.
 
 You can run the installer again for the release that the cluster already runs. It then restarts nothing.
+
+### A cluster with no dashboard users
+
+If the dashboard has no users, the update prints a setup link at the end. Open the link, and create your admin user.
+The link works one time, for 24 hours. See [Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
+
+If the dashboard has users, the update makes no link and prints nothing new. If nobody can sign in, see
+[Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
 
 ### What is kept
 
@@ -325,6 +334,7 @@ sudo journalctl -u k3s
 - A worker that has no `GeassNode` has no SSH key that Geass can use. Geass does not update it. Update K3s on that worker as the [K3s documentation](https://docs.k3s.io/upgrades/manual) says, with the release of the control plane.
 - The installer applies the operator manifest again on each update. This resets the memory limits of the operator. See [Cluster size](/docs/operations/sizing/).
 - Geass creates the `letsencrypt-prod` issuer only when `spec.addons.certManager.acmeEmail` is set. A cluster installed before that field existed does not have it.
+- The release that added the dashboard at the public IP address moves cert-manager to `v1.21.3`. The certificate for an IP address uses an ACME profile, and cert-manager added profiles in 1.18.
 - The release that added [alerts](/docs/guides/alerts/) starts Alertmanager and lets Prometheus load the Geass rules. Prometheus restarts one time. If the metrics of Geass were never collected before, `GeassOperatorDown` can fire one time.
 - Geass does not update the engine of existing Longhorn volumes when Longhorn moves to a new version. Read the Longhorn upgrade notes for the version that a release uses.
 
@@ -332,7 +342,7 @@ The add-on versions in this release line:
 
 | Add-on | Chart version |
 | --- | --- |
-| cert-manager | `v1.17.2` |
+| cert-manager | `v1.21.3` |
 | kube-prometheus-stack | `69.8.2` |
 | Longhorn | `1.12.1` |
 | CloudNativePG (with the first PostgreSQL database) | `0.23.2` |

@@ -148,6 +148,13 @@ type GeassClusterReconciler struct {
 	overlayProber OverlayProber
 	overlayLocal  func() []netip.Addr
 	overlayNow    func() time.Time
+
+	// DashboardElsewhere is true when the dashboard does not run in this cluster, as on GeassPlatformConfigReconciler: the
+	// dashboard is then not served at the public IP address.
+	DashboardElsewhere bool
+
+	// dashboardAddress replaces the lookup of the cluster's public address, which can ask a service on the internet, in tests.
+	dashboardAddress func(ctx context.Context, nodes []corev1.Node) (string, error)
 }
 
 // +kubebuilder:rbac:groups=geass.geass.dev,resources=geassclusters,verbs=get;list;watch;create;update;patch;delete
@@ -194,6 +201,8 @@ func (r *GeassClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// HTTPS waits on it, it takes a moment, and the steps below can each spend their whole timeout on
 	// something it does not depend on.
 	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileClusterIssuer(ctx, &cluster, certManagerReady))
+	// And the dashboard at the public IP address, which a new cluster is opened at before it has a domain.
+	result.RequeueAfter = shortestRequeue(result.RequeueAfter, r.reconcileDashboardPublicIP(ctx, &cluster, certManagerReady))
 
 	// The mesh that joins nodes at different sites is looked at too, when the cluster has one (spec.network.mesh): what
 	// the nodes advertise, and whether the control plane is on it. A cluster that sets none has nothing looked at.

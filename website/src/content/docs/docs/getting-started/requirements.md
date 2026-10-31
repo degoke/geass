@@ -39,7 +39,7 @@ Open these ports in the firewall or security group of your provider:
 | Port | From | Purpose |
 | --- | --- | --- |
 | 22/tcp | You, and your first server to each server that you add | SSH. Geass adds servers over SSH. |
-| 80/tcp and 443/tcp | The internet | Web traffic to your services and the dashboard. Let's Encrypt also uses port 80 to issue certificates. |
+| 80/tcp and 443/tcp | The internet | Web traffic to your services and the dashboard. Let's Encrypt also uses port 80 to issue certificates. The dashboard at the public IP address of the server needs both ports. |
 | 6443/tcp, 10250/tcp, 8472/udp | Your other servers only | Traffic between your servers. You need these ports only when you have more than one server. |
 | 51820/udp | Your other servers only | Traffic between servers at different providers. You need this port only for a [multi-provider cluster](/docs/operations/multi-provider/). |
 
@@ -53,13 +53,14 @@ the installer adds to the host firewall accept traffic from any address.
 
 ## DNS
 
-You do not need a domain to install Geass, sign in, or run a service. You need a domain for these tasks:
+You do not need a domain to install Geass, sign in, or run a service. Before it has a domain, the dashboard uses HTTPS
+at the public IP address of the server. You need a domain for these tasks:
 
 - To give your services a public hostname.
-- To serve the dashboard over HTTPS.
+- To give the dashboard a name instead of an IP address.
 - To connect GitHub.
 
-For HTTPS, you also need a real email address for Let's Encrypt. See
+For HTTPS on a domain, you also need a real email address for Let's Encrypt. See
 [HTTPS certificates](/docs/getting-started/install/#https-certificates).
 
 To set up the domain after you install, see [Connect a domain](/docs/getting-started/connect-domain/).
@@ -73,12 +74,13 @@ To set up the domain after you install, see [Connect a domain](/docs/getting-sta
 | [AWS](/docs/guides/connectors/aws/) | S3 buckets, database backups, and AWS RDS databases | An access key |
 | [PlanetScale](/docs/guides/connectors/planetscale/) | PlanetScale databases | A service token and the organization name |
 | [A cloud that creates servers](/docs/guides/connectors/clouds/) | Servers that Geass creates and removes for you. Experimental. | Credentials that can create and delete machines |
-| Let's Encrypt (no account) | HTTPS certificates | A real contact email address |
+| Let's Encrypt (no account) | HTTPS certificates for your domains | A real contact email address |
 
 ## Your own machine
 
-To use the dashboard, you need a browser. Before you have a domain, you also need SSH access to the server, to open
-the dashboard through an SSH tunnel. See [Open the dashboard](/docs/getting-started/sign-in/).
+To use the dashboard, you need a browser. Before you have a domain, the dashboard is at the public IPv4 address of the
+server. If the server has no public IPv4 address, or port 80 is closed, you also need `ssh` on your computer. See
+[Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
 
 The `geass` command line is optional. It runs on Linux, macOS, and Windows. See
 [Command line](/docs/guides/command-line/).
@@ -103,7 +105,8 @@ larger. The check counts free space on `/`, even if you store data in a differen
 **`unsupported architecture`.** Geass runs only on `amd64` and `arm64`.
 
 **The installer finishes, but the internet cannot reach the dashboard or your services.** Ports 80 and 443 are probably
-closed in the firewall of your provider. Also, the dashboard is not public until you give it a domain.
+closed in the firewall of your provider. Open them, and run the [`dashboard-link` command](/docs/guides/users-and-tokens/#get-a-new-setup-link)
+to get a new link to the dashboard.
 
 ## Under the hood
 

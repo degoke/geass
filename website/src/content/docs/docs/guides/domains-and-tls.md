@@ -14,7 +14,7 @@ services are not affected.
 :::
 
 :::caution
-Give the cluster a contact email for Let's Encrypt. Without it, Geass gets no HTTPS certificates. The dashboard domain
+Give the cluster a contact email for Let's Encrypt. Without it, Geass gets no HTTPS certificates for your domains. The dashboard domain
 stays unverified, and the **HTTPS** switch of a service gives a certificate warning. A Cloudflare Tunnel does not need
 the email. See [HTTPS and certificates](#https-and-certificates).
 :::
@@ -114,6 +114,8 @@ After you save, Geass checks the domain every 5 seconds:
 When the request succeeds, the domain is verified, and the banner goes away. If the domain is not verified after 15
 minutes, Geass checks every 5 minutes. So a late fix still works.
 
+After the domain is verified, the dashboard no longer answers at the public IP address of the server. Use the domain.
+
 The dashboard shows only the banner, not the reason. To check now and read the reason, call the verify endpoint:
 
 ```bash
@@ -141,9 +143,8 @@ Geass gets certificates from Let's Encrypt for the dashboard and for each servic
 contact email to do this. Let's Encrypt keeps the email as the contact of your account. It refuses placeholder domains
 such as `example.com`.
 
-To give the email at install time, see [Install](/docs/getting-started/install/#https-certificates). The dashboard and
-the command line have no field for it yet. To set or change it later, see
-[Set the Let's Encrypt email](#set-the-lets-encrypt-email) under Under the hood.
+To give the email at install time, see [Install](/docs/getting-started/install/#https-certificates). To set or change it
+later, open **Settings** → **Domain**, enter the address in **Certificate email**, and click **Save email**.
 
 After the cluster has an email, Geass starts to issue certificates within seconds. You must still do these things
 yourself:

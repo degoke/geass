@@ -335,6 +335,14 @@ func (s *Server) mutateDashboardUsers(r *http.Request, mutate func(users []dashb
 	if _, err := s.dashboardAuth(r); err != nil {
 		return err
 	}
+	return s.mutateDashboardUsersData(r, func(users []dashboardUser, epochs map[string]int64, _ map[string][]byte) ([]dashboardUser, error) {
+		return mutate(users, epochs)
+	})
+}
+
+// mutateDashboardUsersData is mutateDashboardUsers that also gets the Secret's other keys, to change in the same write. It
+// works on a Secret that holds no users yet.
+func (s *Server) mutateDashboardUsersData(r *http.Request, mutate func(users []dashboardUser, epochs map[string]int64, data map[string][]byte) ([]dashboardUser, error)) error {
 	return s.mutateAuthSecret(r.Context(), func(data map[string][]byte) error {
 		users, err := parseDashboardUsersSecret(&corev1.Secret{Data: data})
 		if err != nil {
@@ -351,7 +359,7 @@ func (s *Server) mutateDashboardUsers(r *http.Request, mutate func(users []dashb
 		if err != nil {
 			return err
 		}
-		if users, err = mutate(users, epochs); err != nil {
+		if users, err = mutate(users, epochs, data); err != nil {
 			return err
 		}
 		if _, err := hashDashboardUsers(users); err != nil {

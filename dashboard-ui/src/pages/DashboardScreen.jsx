@@ -8,6 +8,7 @@ import { Empty } from "@/components/geass-ui";
 import { GeassLogo } from "@/components/GeassLogo";
 import { useDashboardOptions, pageHidden } from "@/lib/options";
 import { LoginPage } from "@/pages/LoginPage";
+import { SetupPage } from "@/pages/SetupPage";
 import { DeviceApprovePage } from "@/pages/DeviceApprovePage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { TemplatesPage } from "@/pages/TemplatesPage";
@@ -43,6 +44,7 @@ export function DashboardScreen({ mode }) {
       </Center>
     );
   }
+  if (mode === "setup" && !embedded) return <SetupPage onSuccess={() => { navigate({ to: "/projects" }); refetch(); }} />;
   if (error?.status === 401) return <LoginPage onSuccess={() => refetch()} />;
   if (error) {
     const devHint = error.status === 404 && !embedded

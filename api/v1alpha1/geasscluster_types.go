@@ -332,6 +332,18 @@ type GeassClusterSpec struct {
 	// longer than that.
 	// +optional
 	LostNodeAfter *metav1.Duration `json:"lostNodeAfter,omitempty"`
+
+	// Dashboard says how the dashboard is reached before it has a domain.
+	// +optional
+	Dashboard GeassClusterDashboardSpec `json:"dashboard,omitempty"`
+}
+
+// GeassClusterDashboardSpec says how the dashboard is reached before it has a domain.
+type GeassClusterDashboardSpec struct {
+	// PublicIP serves the dashboard over HTTPS at the control plane's public IPv4 address, with a Let's Encrypt
+	// certificate for that address, until a dashboard domain is verified. The installer turns it on for a new cluster.
+	// +optional
+	PublicIP *bool `json:"publicIP,omitempty"`
 }
 
 type ClusterPhase string
@@ -487,6 +499,10 @@ type GeassClusterStatus struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	Addons []GeassClusterAddonStatus `json:"addons,omitempty"`
+
+	// DashboardPublicURL is the HTTPS address of the dashboard at the public IP address, once its certificate is issued.
+	// +optional
+	DashboardPublicURL string `json:"dashboardPublicURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true

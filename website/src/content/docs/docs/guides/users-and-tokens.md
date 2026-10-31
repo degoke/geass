@@ -50,8 +50,32 @@ An admin manages users under **Settings** → **Users**. Only an admin sees this
 
 ### Add the first admin
 
-A new install creates the first admin for you. The installer prints the password during the install and again
-at the end. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
+The installer prints a setup link. Open the link, and create the first admin on the **Create your admin** page. See
+[Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
+
+### Get a new setup link
+
+Get a new setup link when nobody can sign in, or when the first link expired.
+
+1. Connect to a control plane server with SSH.
+2. Run this command:
+
+   ```bash
+   curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link
+   ```
+
+3. Open the link that the command prints.
+4. In **Username**, keep `admin`, or enter another name. To reset the password of a user, enter the name of that user.
+5. In **Password**, enter 12 characters or more.
+6. Click **Create admin**.
+
+Geass creates the admin and signs you in. If you entered the name of an existing user, Geass gives that user the new
+password and the admin role. Geass also signs that user out of all other sessions.
+
+The link works one time, for 24 hours. A new link replaces a link that nobody used. The command waits up to 5 minutes
+for the dashboard address. It prints the link on the dashboard domain, if it has one. Otherwise, it prints the link at
+the public IP address of the server, or an `ssh` command and a link to `http://localhost:8085`. See
+[Troubleshooting](/docs/getting-started/sign-in/#troubleshooting).
 
 ### Add a user
 
@@ -443,7 +467,8 @@ hooks. Wait, and call it again. The `Retry-After` header says how long.
 
 ### The user list
 
-Use this section only when nobody can sign in. For every other task, use **Settings** → **Users**.
+Use **Settings** → **Users** to change users. When nobody can sign in, use the
+[`dashboard-link` command](#get-a-new-setup-link).
 
 The list of users is a JSON array in the Secret `geass-dashboard-auth` in `geass-system`, under the key `users`. The
 page and the command line change this key.
@@ -463,18 +488,8 @@ Geass applies these rules to the list:
 
 You can write a plain password. Geass replaces it with a hash at the next sign-in attempt.
 
-If every admin lost the password, add an admin by hand on the server. This example needs `jq`:
-
-```bash title="Add an admin"
-sudo k3s kubectl -n geass-system get secret geass-dashboard-auth -o jsonpath='{.data.users}' | base64 -d \
-  | jq '. + [{"username":"rescue","password":"a-long-passphrase","role":"admin"}]' > users.json
-
-sudo k3s kubectl -n geass-system patch secret geass-dashboard-auth --type merge \
-  -p "$(jq -n --rawfile users users.json '{stringData: {users: $users}}')"
-rm users.json
-```
-
-Sign in as `rescue`, reset the other passwords in the dashboard, and then remove `rescue`.
+The same Secret holds the setup link under the key `setup`: a SHA-256 hash of its token, and its expiry. The first use
+of the link deletes the key. See [The setup link](/docs/operations/installer/#the-setup-link).
 
 You can also set the first users with environment variables. See [Configuration](/docs/reference/configuration/).
 

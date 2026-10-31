@@ -74,6 +74,21 @@ the record the next time that it writes the Secret. The Secret never keeps more 
 Geass checks a sign-in for a name that is not configured against a dummy password hash. Thus, the sign-in takes as long as
 a sign-in for a real user, and the time of the reply does not show which names exist.
 
+### The setup link
+
+The installer and its `dashboard-link` command print a setup link, `https://<address>/setup#<token>`. The link creates
+an admin, or sets the password of the user that you name and makes that user an admin. These rules apply:
+
+- Anyone who has the link can create an admin. Open it immediately, and do not share it.
+- The link works one time, for 24 hours. A new link replaces a link that nobody used.
+- Geass stores only a SHA-256 hash of the token, in the key `setup` of the Secret `geass-dashboard-auth`.
+- The token is after the `#`. Browsers do not send that part to a server, so proxies and access logs do not see it.
+- A wrong token counts as a failed sign-in for the client address. The address lockout below applies.
+- In [managed mode](/docs/operations/managed-mode/), Geass refuses `POST /api/setup`, as it refuses other sign-in
+  changes.
+
+See [Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
+
 Geass uses these additional limits:
 
 - Five failures for a username from one client address in a minute lock that username for that address for a minute. Thus, Geass shuts out a client
@@ -445,9 +460,16 @@ content security policy. This policy does these things:
 ### The dashboard and API
 
 The operator serves the dashboard and API over plain HTTP on port 8085 inside the cluster, behind the Service
-`geass-geass-dashboard` (type ClusterIP). Nothing outside the cluster can reach it until you publish it.
+`geass-geass-dashboard` (type ClusterIP).
 
-You publish the dashboard in **Settings** → **Domain**. Geass then does one of these things. See
+A new cluster has `spec.dashboard.publicIP: true`. Until a dashboard domain is verified, the operator publishes the
+dashboard over HTTPS at the public IPv4 address of the server. It uses a Traefik `IngressRoute` on `websecure` and a
+Let's Encrypt certificate for the address. When the domain is verified, the operator deletes these objects. See
+[The dashboard at the public IP address](/docs/operations/installer/#the-dashboard-at-the-public-ip-address). To keep
+the dashboard off the internet, set `spec.dashboard.publicIP` to `false`, and use the SSH command of the installer. The
+`dashboard-link` command sets the field to `true` again.
+
+You publish the dashboard on a domain in **Settings** → **Domain**. Geass then does one of these things. See
 [Domains and TLS](/docs/guides/domains-and-tls/).
 
 - It creates the Ingress `geass-dashboard` in `geass-system` on the `websecure` entry point of Traefik (the K3s ingress
@@ -472,6 +494,7 @@ These paths work without a login:
 | Path | Why |
 | --- | --- |
 | `/api/login`, `/api/logout`, `/api/session` | Sign in, sign out, and ask if you are signed in |
+| `POST /api/setup` | Use a [setup link](#the-setup-link). The token in the request is the credential |
 | `POST /api/v1/auth/device`, `POST /api/v1/auth/token` (also under `/api/auth/`) | Start a command-line sign-in and collect its token. A start only creates a request that a signed-in admin must approve |
 | `/geass-probe` | A small JSON answer, used to verify the public address |
 | `/webhooks/github` | GitHub cannot sign in. Every request needs a valid HMAC signature. Geass logs the delivery ID that GitHub sends and echoes it in the answer. Geass never uses it to skip a delivery |
@@ -489,7 +512,7 @@ internet after you publish the dashboard.
 | 10250/tcp | kubelet | Your other nodes |
 | 8472/udp | Overlay network (VXLAN) | Your other nodes |
 | 51820/udp | Overlay network (WireGuard, multi-provider clusters only) | Your other nodes |
-| 80/tcp, 443/tcp | Apps and the dashboard through Traefik. Let's Encrypt validates hostnames on 80 | The internet, if you publish services |
+| 80/tcp, 443/tcp | Apps and the dashboard through Traefik. Let's Encrypt validates hostnames and the IP address of the dashboard on 80 | The internet, if you publish services or the dashboard |
 | 22/tcp | SSH, used to join servers and for your own access | You, and the control plane to the workers. On a machine that Geass creates, only the addresses of the control plane |
 
 If the installer finds an active host firewall on the control plane (`ufw`, `firewalld`, or `iptables`), it opens 6443,

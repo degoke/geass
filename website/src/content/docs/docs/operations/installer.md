@@ -29,7 +29,7 @@ Two ports are important:
 
 The installer opens both ports in an active host firewall on the control plane. But the installer cannot open them in the firewall or security group of your provider. See [Ports and firewall](/docs/getting-started/requirements/#ports-and-firewall).
 
-If you do not set an address, the cluster still installs and runs. But no issuer exists, and **no HTTPS certificate is issued**. The installer prints a warning that starts with `warning: GEASS_ACME_EMAIL is not set`. The cluster object then has a `ClusterIssuerReady` condition that tells you why. The operator also adds the same message to the `PendingHTTPS` message of the `DashboardDomainReady` condition on the platform configuration. It does this while the HTTPS of the dashboard is unreachable. The dashboard does not show either condition, so read the condition with `kubectl`:
+If you do not set an address, the cluster still installs and runs. But no `letsencrypt-prod` issuer exists, and **no HTTPS certificate is issued for a hostname**. The dashboard at the public IP address does not use this issuer. See [The dashboard at the public IP address](#the-dashboard-at-the-public-ip-address). The installer prints a warning that starts with `warning: GEASS_ACME_EMAIL is not set`. The cluster object then has a `ClusterIssuerReady` condition that tells you why. The operator also adds the same message to the `PendingHTTPS` message of the `DashboardDomainReady` condition on the platform configuration. It does this while the HTTPS of the dashboard is unreachable. The dashboard does not show either condition, so read the condition with `kubectl`:
 
 ```bash
 sudo k3s kubectl -n geass-system get geasscluster default \
@@ -65,6 +65,56 @@ If you run your own cert-manager, set `spec.addons.certManager.enabled` to `fals
 
 A dashboard that you publish through a Cloudflare Tunnel gets its certificate from Cloudflare, not from cert-manager. The tunnel reaches your services over HTTP inside the cluster. Thus, the issuer is not involved there.
 
+## The dashboard at the public IP address
+
+A new cluster has `spec.dashboard.publicIP: true`. The operator then serves the dashboard over HTTPS at the public IPv4 address of the server. It needs no domain and no certificate email. When the certificate is issued, the operator writes the address to `status.dashboardPublicURL`, for example `https://203.0.113.10`.
+
+The operator creates these objects:
+
+- The ClusterIssuer `geass-letsencrypt-ip`. It uses ACME with the Let's Encrypt `shortlived` profile, no email, and HTTP-01 through the `traefik` ingress class.
+- The Certificate `geass-dashboard-public-ip` in `geass-system`, for the IP address. Its Secret is `geass-dashboard-public-ip-tls`.
+- The Traefik `TLSStore` named `default` in `geass-system`. Its default certificate is that Secret, because browsers send no server name for an IP address.
+- The Traefik `IngressRoute` `geass-dashboard-public-ip`. It matches ``Host(`<ip>`)`` on the `websecure` entry point, and it sends traffic to the dashboard Service on port 8085.
+- The Traefik `Middleware` and `IngressRoute` `geass-dashboard-public-ip-http`. They redirect plain HTTP for the address to
+  HTTPS. Requests under `/.well-known/acme-challenge/` are not redirected, so that the certificate renews.
+
+A `shortlived` certificate is valid for about 6 days. cert-manager renews it automatically. Let's Encrypt must reach the server on 80/tcp to validate the address, and browsers use 443/tcp. While the operator sets up the address, it checks again every 30 seconds. After that, it checks every 10 minutes.
+
+When a dashboard domain is verified, or when you set `spec.dashboard.publicIP` to `false`, the operator deletes these objects. The dashboard then no longer answers at the IP address. The `letsencrypt-prod` issuer for hostnames does not change, and it still needs the certificate email.
+
+The condition `DashboardPublicIP` on the cluster object reports the state. For each reason, see [`DashboardPublicIP`](/docs/reference/resources/geass-cluster/#dashboardpublicip). To read it, run this command:
+
+```bash
+sudo k3s kubectl -n geass-system get geasscluster default \
+  -o jsonpath='{.status.conditions[?(@.type=="DashboardPublicIP")].reason}{": "}{.status.conditions[?(@.type=="DashboardPublicIP")].message}{"\n"}'
+```
+
+## The setup link
+
+On a cluster whose dashboard has no users, the installer makes a setup link, for example `https://203.0.113.10/setup#<token>`. The link opens **Create your admin**, which creates an admin and signs that person in. The link works one time, for 24 hours.
+
+- The installer stores only a SHA-256 hash of the token, in the key `setup` of the Secret `geass-dashboard-auth` in `geass-system`.
+- The token is after the `#`. Browsers do not send that part of a link to a server, so access logs do not contain it.
+- The installer prints the link and does not write it to its log.
+- A wrong token counts as a failed sign-in for the address that sent it.
+
+If the dashboard has no public IPv4 address, the installer prints the reason. It then prints an `ssh` command and the link at `http://localhost:8085/setup#<token>` instead.
+
+To make a new link later, run the `dashboard-link` command on a control plane server:
+
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link
+```
+
+The command does these things:
+
+1. It makes a new setup link. A link that nobody used stops working.
+2. It sets `spec.dashboard.publicIP` to `true`.
+3. It waits up to 5 minutes for the address of the dashboard.
+4. It prints the link. The link uses the verified domain, the public IP address, or the `ssh` command and `localhost`, in that order.
+
+If you enter the name of an existing user on the link page, the link sets the password of that user, and makes the user an admin. Geass signs that user out of all other sessions.
+
 ## What the installer does
 
 The installer runs these steps in sequence. The names are the names that it prints.
@@ -82,9 +132,10 @@ The installer runs these steps in sequence. The names are the names that it prin
 | 9 | `wait for operator ready` | Waits up to 5 minutes for `deployment/geass-controller-manager` to roll out |
 | 10 | `store worker join token` | Reads the node token of K3s, and saves it as the Secret `geass-token` in `geass-system`. The operator reads the token there when it joins workers. The installer gives the token on standard input, so the installer log does not contain the token |
 | 11 | `apply GeassCluster CR` | Waits up to 60 seconds for the `geassclusters` definition. Then applies the cluster object that this page shows below, with the address of this server as `serverURL`. Without `GEASS_ACME_EMAIL`, it prints the warning that [HTTPS certificates](/docs/getting-started/install/#https-certificates) describes |
-| 12 | `open the dashboard on 127.0.0.1:8085` | Writes the service `geass-dashboard`, starts it, and waits up to 3 minutes for the dashboard to answer. The service is a systemd unit, or an OpenRC script on a server that uses OpenRC. It runs `k3s kubectl port-forward --address 127.0.0.1` to the dashboard Service, so the dashboard answers on `127.0.0.1:8085` only. The service manager starts it again when the dashboard pod changes. If the dashboard does not answer in time, the step prints a warning and does not stop the install |
-| 13 | `create the first dashboard user` | Creates the Secret `geass-dashboard-auth` in `geass-system` with one `admin` user. The password is 20 random characters, stored as a bcrypt hash. The installer gives the Secret on standard input, so the log contains neither the password nor its hash. It never replaces users that work. If the Secret exists with no valid user, it adds the user to that Secret. The installer prints the password immediately, and again at the end. This step runs before the long wait, so an install that you stop during the wait still has a user |
+| 12 | `open the dashboard on 127.0.0.1:8085` | Writes the service `geass-dashboard`, starts it, and waits up to 3 minutes for the dashboard to answer. The service is a systemd unit, or an OpenRC script on a server that uses OpenRC. It runs `k3s kubectl port-forward --address 127.0.0.1` to the dashboard Service, so the dashboard answers on `127.0.0.1:8085` only. The service manager starts it again when the dashboard pod changes. If the dashboard does not answer in time, the step prints a warning and does not stop the install. The `ssh` command that the installer prints when the dashboard has no public address uses this service |
+| 13 | `create the dashboard setup link` | When the dashboard has no valid user, writes the hash of a new setup token to the key `setup` of the Secret `geass-dashboard-auth` in `geass-system`. It creates the Secret, or changes only that key of an existing Secret. The installer gives the Secret on standard input, so the log does not contain it. When the dashboard has users, the step makes no link. See [The setup link](#the-setup-link) |
 | 14 | `wait for Geass to be ready` | Waits up to 15 minutes for `status.phase` of the cluster object to be `Ready`, that is, for cert-manager, monitoring, and Longhorn to run. It prints the add-on charts that K3s has not installed yet. If the time ends first, the step prints a warning and does not stop the install |
+| 15 | `wait for the dashboard's address` | Waits up to 5 minutes for `status.dashboardPublicURL` of the cluster object. If the time ends first, the step prints a warning with the reason from the `DashboardPublicIP` condition, and does not stop the install. See [The dashboard at the public IP address](#the-dashboard-at-the-public-ip-address) |
 
 Step 5 writes `/etc/rancher/k3s/config.yaml` with mode 0600. The file sets these things:
 
@@ -121,6 +172,8 @@ spec:
       enabled: true
     logging:
       enabled: true
+  dashboard:
+    publicIP: true
 ```
 
 If you set `GEASS_ACME_EMAIL`, the object also has these lines under `addons`:
@@ -164,7 +217,7 @@ The cluster object does not turn on cert-manager or monitoring, because both are
 
 The installer passes its full environment to the K3s install script. Thus, the `INSTALL_K3S_*` variables of K3s take effect when you set them. Geass sets `INSTALL_K3S_EXEC` itself, and it overrides your value. Geass also sets `INSTALL_K3S_VERSION` when you pass `GEASS_K3S_VERSION`. If you set nothing, K3s selects its release channel: the `stable` channel at the time that you install.
 
-The installer also takes options. When you pipe the installer, put the options after `-s --`. The options are `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--join-server`, `--etcd-snapshots`, `--version`, and `--help`. For the update options, see [Upgrade Geass](/docs/operations/upgrading/#options).
+The installer also takes options. When you pipe the installer, put the options after `-s --`. The options are `--k3s-version`, `--upgrade`, `--force`, `--skip-snapshot`, `--allow-untested-k3s`, `--reinstall`, `--yes`, `--join-server`, `--etcd-snapshots`, `--version`, and `--help`. For the update options, see [Upgrade Geass](/docs/operations/upgrading/#options). The installer also takes the commands `etcd-snapshots` and `dashboard-link`. See [Disaster recovery](/docs/operations/disaster-recovery/) and [The setup link](#the-setup-link).
 
 ### Copies of the cluster's state
 
@@ -290,7 +343,7 @@ If K3s files exist but no uninstall script exists, a reinstall stops with `exist
 
 **`✗ system checks failed: GEASS_ACME_EMAIL "..." is not an email address`.** The value must look like `name@host.tld`, with no spaces and at most 254 characters. This step runs first, so nothing on the machine has changed. Fix the variable, and run the installer again.
 
-**`warning: GEASS_ACME_EMAIL is not set, so no certificate issuer is created ...`.** This warning is informational. The install continues. Geass issues no HTTPS certificate until you set the address. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
+**`warning: GEASS_ACME_EMAIL is not set. The dashboard at this server's IP address needs none ...`.** This warning is informational. The install continues. The certificate for the IP address of the server needs no email. Geass issues no certificate for your domains until you set the address. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
 
 **`warning: No active host firewall detected; skipping port configuration`.** This warning is informational. K3s manages its own packet rules, so the cluster starts. If you add a firewall later, open the ports that the warning lists. These ports include 80/tcp and 443/tcp.
 
@@ -325,7 +378,9 @@ A missing issuer or an `ACMEEmailMissing` reason means that no address was set. 
 
 **`warning: failed to initialize install logging`.** Neither the log path nor the temporary directory was writable. The install continues, but there is no log file to read afterwards.
 
-**The installer printed no password.** The installer creates a user only when the cluster has no dashboard users. It then prints `The dashboard already has users`. See [Sign in to the dashboard](/docs/getting-started/sign-in/#set-a-new-password).
+**The installer printed no setup link.** The installer makes a link only when the dashboard has no users. The log then has `The dashboard has users, so no setup link is made`. If nobody can sign in, run the `dashboard-link` command. See [The setup link](#the-setup-link).
+
+**`warning: The dashboard is not served at the public IP address yet: ...`.** The message gives the reason from the `DashboardPublicIP` condition. The installer prints the `ssh` command instead of an `https` link. Usually, 80/tcp is closed in the firewall of your provider, or the server has no public IPv4 address. Fix the cause, and run the `dashboard-link` command. See [The dashboard at the public IP address](#the-dashboard-at-the-public-ip-address).
 
 **`warning: The dashboard does not answer on 127.0.0.1:8085 yet ...`.** The operator is still starting, or port 8085 on the server is in use. The service keeps trying. Run `sudo systemctl status geass-dashboard` to see why.
 

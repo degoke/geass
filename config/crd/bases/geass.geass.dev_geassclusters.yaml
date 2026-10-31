@@ -130,6 +130,16 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              dashboard:
+                description: Dashboard says how the dashboard is reached before it
+                  has a domain.
+                properties:
+                  publicIP:
+                    description: |-
+                      PublicIP serves the dashboard over HTTPS at the control plane's public IPv4 address, with a Let's Encrypt
+                      certificate for that address, until a dashboard domain is verified. The installer turns it on for a new cluster.
+                    type: boolean
+                type: object
               defaultRegion:
                 description: |-
                   DefaultRegion is where projects that do not choose a region run. Left empty, such projects
@@ -439,6 +449,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dashboardPublicURL:
+                description: DashboardPublicURL is the HTTPS address of the dashboard
+                  at the public IP address, once its certificate is issued.
+                type: string
               etcdSnapshots:
                 description: EtcdSnapshots is what the operator found in the bucket
                   that spec.etcdSnapshots names.

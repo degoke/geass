@@ -72,8 +72,9 @@ make run     # installs the CRDs on the current context, then runs the operator 
 ```
 
 Or run the two halves yourself: `make dashboard-backend` (the operator with the dashboard API on :8085) and
-`make dashboard-dev` (the Vite dev server). The dashboard signs in with the users in the `geass-system` Secret; the
-[sign-in guide](https://rungeass.com/docs/getting-started/sign-in/) says how they are created. `GEASS_ALLOW_LOOPBACK=true`,
+`make dashboard-dev` (the Vite dev server). The dashboard signs in with the users in the Secret `geass-dashboard-auth` in `geass-system`. When that Secret has no
+users, set `GEASS_DASHBOARD_PASSWORD` for the operator process to sign in as `admin`. On an installed cluster, the setup
+link of the installer creates the first user. See the [sign-in guide](https://rungeass.com/docs/getting-started/sign-in/). `GEASS_ALLOW_LOOPBACK=true`,
 which `make dashboard-backend` sets, lets Settings → Sign-in use an identity provider on your own machine.
 
 ## Building the installer

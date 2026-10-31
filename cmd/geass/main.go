@@ -58,13 +58,15 @@ func run(args []string) int {
 	var summary func() installer.NextSteps
 	switch mode {
 	case installer.ModeUpgrade:
-		steps = upgradeSteps(opts)
+		steps, summary = upgradeSteps(opts)
 	case installer.ModeJoinServer:
 		steps = installer.JoinServerSteps(opts)
 	case installer.ModeRefreshServer:
 		steps = installer.RefreshServerSteps()
 	case installer.ModeEtcdSnapshots:
 		steps = installer.EtcdSnapshotsSteps(opts)
+	case installer.ModeDashboardLink:
+		steps, summary = dashboardLinkSteps()
 	case installer.ModeReinstall:
 		var install []installer.Step
 		install, summary = installSteps(opts)
@@ -97,7 +99,7 @@ func run(args []string) int {
 		fmt.Printf("✓ %s\n", step.Name())
 	}
 	if summary != nil {
-		// Printed, not logged: it can hold the first user's password.
+		// Printed, not logged: it can hold a setup link.
 		fmt.Print(summary().String())
 	}
 	return 0
@@ -105,7 +107,7 @@ func run(args []string) int {
 
 // upgradeSteps updates a cluster that is already here. The settings of a new cluster are not applied to it: its
 // address, region and certificate contact are on the GeassCluster object, which the update leaves alone.
-func upgradeSteps(opts installer.Options) []installer.Step {
+func upgradeSteps(opts installer.Options) ([]installer.Step, func() installer.NextSteps) {
 	for _, name := range []string{
 		"GEASS_ACME_EMAIL", "GEASS_MULTI_SITE", "GEASS_NODE_EXTERNAL_IP",
 		"GEASS_MESH", "GEASS_TAILSCALE_AUTH_KEY_FILE", "GEASS_TAILSCALE_CONTROL_URL",
@@ -124,7 +126,22 @@ func upgradeSteps(opts installer.Options) []installer.Step {
 		installer.Warnf("installer", "GEASS_K3S_VERSION is ignored: it picks the K3s of a new cluster, "+
 			"and this one is being updated. To upgrade its K3s as well, pass --k3s-version")
 	}
-	return installer.UpgradeSteps(installer.NewUpgradePlan(opts.Upgrade))
+	// A cluster whose dashboard has no users yet gets the setup link and the dashboard at its public IP address, as a new
+	// one does.
+	setup := &installer.DashboardSetup{}
+	made := func() bool { return setup.Token != "" }
+	address := &installer.WaitForDashboardAddress{Skip: func() bool { return !made() }}
+	steps := append(installer.UpgradeSteps(installer.NewUpgradePlan(opts.Upgrade)),
+		setup, &installer.DashboardPublicIP{Needed: made}, address)
+	return steps, linkSummary(setup, address)
+}
+
+// dashboardLinkSteps make a new setup link, and serve the dashboard at the public IP address unless it has a domain.
+func dashboardLinkSteps() ([]installer.Step, func() installer.NextSteps) {
+	setup := &installer.DashboardSetup{Always: true}
+	address := &installer.WaitForDashboardAddress{}
+	steps := []installer.Step{setup, &installer.DashboardPublicIP{}, address}
+	return steps, linkSummary(setup, address)
 }
 
 // installSteps builds a cluster. It is also what a reinstall does after it has removed the old one. The summary is read
@@ -147,8 +164,9 @@ func installSteps(opts installer.Options) ([]installer.Step, func() installer.Ne
 	snapshots := &installer.EtcdSnapshotsChoice{}
 	access := &installer.DashboardAccess{}
 	ready := &installer.WaitForGeass{}
-	admin := &installer.DashboardAdmin{}
-	summary := func() installer.NextSteps { return installer.NextStepsFor(admin, access, ready, network, acmeEmail) }
+	setup := &installer.DashboardSetup{}
+	address := &installer.WaitForDashboardAddress{}
+	summary := func() installer.NextSteps { return installer.NextStepsFor(setup, access, ready, address, network) }
 
 	return []installer.Step{
 		// OS, memory, disk, arch, the ACME email, and WireGuard for multi-site.
@@ -188,9 +206,23 @@ func installSteps(opts installer.Options) ([]installer.Step, func() installer.Ne
 		&installer.TakeFirstEtcdSnapshot{Destination: opts.EtcdSnapshots.Destination, Choice: snapshots},
 		// Keep the dashboard on this machine's loopback address, where an SSH port forward reaches it.
 		access,
-		// The first dashboard user, before the long wait, so that an install stopped during it still has one.
-		admin,
+		// The link that makes the first admin.
+		setup,
 		// Wait for the add-ons, so that the install ends when Geass can run what is deployed to it. It never fails.
 		ready,
+		// And for the dashboard at the public IP address, which needs a certificate. It never fails either.
+		address,
 	}, summary
+}
+
+// linkSummary prints only the link, for an update and for dashboard-link.
+func linkSummary(
+	setup *installer.DashboardSetup, address *installer.WaitForDashboardAddress,
+) func() installer.NextSteps {
+	return func() installer.NextSteps {
+		next := installer.NextStepsFor(setup, &installer.DashboardAccess{Started: true}, &installer.WaitForGeass{Ready: true},
+			address, installer.Network{})
+		next.LinkOnly = true
+		return next
+	}
 }

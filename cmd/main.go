@@ -334,9 +334,10 @@ type sharedParts struct {
 // nolint:gocyclo
 func addControllers(mgr ctrl.Manager, restConfig *rest.Config, o controllerOptions) sharedParts {
 	if err := (&controller.GeassClusterReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		LostNodeAfter: o.lostNodeAfter,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		LostNodeAfter:      o.lostNodeAfter,
+		DashboardElsewhere: o.dashboardElsewhere,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "geasscluster")
 		os.Exit(1)

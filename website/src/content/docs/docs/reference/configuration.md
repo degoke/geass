@@ -233,6 +233,7 @@ stringData:
 | --- | --- |
 | `users` | A JSON array of `{"username","password","role"}`. Roles are `admin` and `viewer`. `observer` is a token role, not a user role. Geass replaces plain passwords with bcrypt hashes the first time that it reads them |
 | `session-key` | The key that signs sessions, as `hex:` plus 64 hex characters. Generated on first use. To sign everyone out, delete it |
+| `setup` | The SHA-256 hash of the token of the setup link, and when the link expires. The installer writes it, and the first use of the link deletes it. See [The setup link](/docs/operations/installer/#the-setup-link) |
 | `session-epochs` | A JSON object of counters for each user, which Geass increments on sign-out |
 | `login-lockouts` | A JSON object of failed sign-in counters and lock times, for each configured username. Expired records are removed, and at most 256 records are kept |
 
@@ -347,6 +348,7 @@ The installer creates one, named `default`. See [GeassCluster](/docs/reference/r
 | `spec.defaultRegion` | empty | The region for projects that do not choose one. Edited in **Settings** → **Usage** (**Default region**) |
 | `spec.serverURL` | The address of the control plane itself on its default route, for a single-site install | The address that workers join. The installer fills it in with the address that its default route uses, which is a private address on most cloud servers. A multi-site install writes the public address. A loopback address is never used: workers join on the address of the control plane node itself instead. Set it only to use a different address. See [Add servers](/docs/getting-started/add-servers/#set-the-address-workers-join) |
 | `spec.tokenSecretRef`, `spec.version` | `geass-token` in `geass-system`, and `v1` | The Secret with the join token, and a label that is not a K3s version |
+| `spec.dashboard.publicIP` | off (the installer sets `true` on a new cluster) | Serve the dashboard over HTTPS at the public IPv4 address of the server, with a Let's Encrypt certificate for that address, until a dashboard domain is verified. See [The dashboard at the public IP address](/docs/operations/installer/#the-dashboard-at-the-public-ip-address) |
 
 To turn the add-ons on or off, open **Settings** and select **Add-ons**, or run `geass addons`. See
 [Observability](/docs/guides/observability/#change-the-add-ons), [Storage](/docs/guides/storage/#turn-on-replicated-storage),
@@ -362,6 +364,9 @@ reasons are `IssuerReady`, `ACMEEmailMissing`, `WaitingForCertManager`, `IssuerR
 `ManagedByAnotherCluster`, `IssuerApplyFailed`, and `IssuerAccessDenied`. While the HTTPS of the dashboard domain is unreachable, Geass
 adds the same message to the status of that domain (`PendingHTTPS`). For an explanation of each reason, see
 [HTTPS certificates](/docs/getting-started/install/#https-certificates).
+
+The `DashboardPublicIP` condition reports the dashboard at the public IP address. When the address works,
+`status.dashboardPublicURL` holds it. See [`DashboardPublicIP`](/docs/reference/resources/geass-cluster/#dashboardpublicip).
 
 ```bash title="Read the issuer condition"
 kubectl -n geass-system get geasscluster default \
@@ -421,7 +426,7 @@ Geass installs these add-ons and images at fixed versions, through HelmChart res
 
 | Component | Version | Namespace |
 | --- | --- | --- |
-| cert-manager (chart) | v1.17.2 | `cert-manager` |
+| cert-manager (chart) | v1.21.3 | `cert-manager` |
 | kube-prometheus-stack (chart) | 69.8.2 | `monitoring` |
 | Longhorn (chart) | 1.12.1 | `longhorn-system` |
 | CloudNativePG operator (chart) | 0.23.2 | `cnpg-system` |
@@ -470,6 +475,7 @@ Geass makes the `AlertmanagerConfig` `geass-alerts` in `geass-system` from the a
 
 | Port | Component | Protocol |
 | --- | --- | --- |
+| 80, 443 | Traefik: your services, and the dashboard on its domain or at the public IP address | HTTP, HTTPS |
 | 8085 | Dashboard and API (Service `geass-geass-dashboard`) | HTTP |
 | 8086 | Operator health probes | HTTP |
 | 8443 | Operator metrics (Service `geass-controller-manager-metrics-service`) | HTTPS |

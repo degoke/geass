@@ -232,7 +232,7 @@ func dashboardPublicPath(r *http.Request) bool {
 	// cluster is the credential.
 	case strings.HasPrefix(path, githubForwardedPrefix):
 		return true
-	case path == "/api/login", path == "/api/logout", path == "/api/session":
+	case path == "/api/login", path == "/api/logout", path == "/api/session", path == "/api/setup" && r.Method == http.MethodPost:
 		return true
 	// A deploy hook is called by a tool that cannot sign in: the secret in its URL is the credential. Every method
 	// gets through to the handler, which answers anything but POST with 405.

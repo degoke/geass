@@ -110,8 +110,8 @@ When you remove a person at the provider, their access ends in three ways. Use a
   provider the **Back-channel logout URI** that the page shows. Geass then ends every session of that person. By
   default, Geass also revokes the API tokens and deploy hooks that the person made.
 
-Many providers send a back-channel logout only to a public `https` address. So it works for a dashboard on a domain,
-not on `localhost` or through an SSH tunnel.
+Many providers send a back-channel logout only to a public `https` address. So it works for a dashboard on an `https`
+address. It does not work for a dashboard on `http://localhost:8085`.
 
 :::caution
 Do not make a token or a deploy hook for CI from the account of a person who signs out at the provider. Back-channel

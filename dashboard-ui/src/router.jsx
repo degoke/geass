@@ -43,6 +43,7 @@ export function createDashboardRouteTree() {
     route("/pools", "pools"),
     route("/pools/$poolName", "pool"),
     route("/device", "device", deviceSearch),
+    route("/setup", "setup"),
     route("/settings", "settings"),
     route("/settings/domain", "settings:domain"),
     route("/settings/connectors", "settings:connectors"),

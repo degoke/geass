@@ -116,9 +116,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// fixedSettingsMutations are the settings writes whose path is fixed. They are a map, as fixedReadRoutes is, so that
+// fixedSettingsMutations are the writes whose path is fixed, mostly settings. They are a map, as fixedReadRoutes is, so that
 // handleAPIMutation's switch stays under the linter's cyclomatic-complexity limit as settings are added.
 var fixedSettingsMutations = map[string]func(s *Server, w http.ResponseWriter, r *http.Request){
+	"/setup":                         (*Server).handleDashboardSetup,
 	"/settings/domain/save":          (*Server).handlePlatformDomainSave,
 	"/settings/domain/verify":        (*Server).handlePlatformDomainVerify,
 	acmeEmailSavePath:                (*Server).handleACMEEmailSave,

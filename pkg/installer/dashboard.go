@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
+	geassv1alpha1 "github.com/degoke/geass/api/v1alpha1"
 	"github.com/degoke/geass/pkg/platform"
 )
 
-// A new cluster has a dashboard that nobody can sign in to and nothing outside the cluster can reach. The two steps here
-// give it a first user and a way in that needs no kubectl: the dashboard answers on this machine's loopback address,
-// where an SSH port forward from the person's own computer reaches it, and nowhere else until it is given a domain.
+// A new cluster has a dashboard that nobody can sign in to. The steps here give it a way in that needs no kubectl: a setup
+// link that makes the first admin, the dashboard over HTTPS at the server's public IP address (which the operator serves),
+// and, for a server with no public address, the dashboard on this machine's loopback address, where an SSH port forward
+// from the person's own computer reaches it.
 
 const (
 	// dashboardLocalPort is where the dashboard answers on this machine's loopback address. It is the dashboard's own
@@ -30,8 +29,6 @@ const (
 	dashboardServiceName = "geass-geass-dashboard"
 	// dashboardUnitName is the systemd service that keeps the dashboard on the loopback address.
 	dashboardUnitName = "geass-dashboard.service"
-	// dashboardAdminUsername is the first user's name, which the sign-in page also fills in.
-	dashboardAdminUsername = "admin"
 )
 
 // dashboardUnitPath and dashboardInitScriptPath are where the service is written, for systemd and for OpenRC, the two
@@ -193,89 +190,73 @@ func probeLocalDashboard() error {
 	return nil
 }
 
-// DashboardAdmin creates the first dashboard user, an admin with a password generated here, on a cluster that has no
-// users. Users that work are never replaced. The password goes in on stdin as a bcrypt hash, so it is neither in the
-// log nor stored in plain text.
-type DashboardAdmin struct {
-	// Username and Password are the user that was created. Both are empty when the cluster had users already.
-	Username, Password string
+// DashboardSetup makes a setup link for the first admin, on a cluster whose dashboard has no users: the person opens it and
+// chooses the admin's name and password. The link works once, for a day, and only its hash is stored in the auth Secret.
+// The token goes in on stdin, so it is not in the log.
+type DashboardSetup struct {
+	// Always makes a link although the dashboard has users, for someone at the server who lost every password. The link
+	// then resets the password of the user it names.
+	Always bool
+	// Token is the token of the link, or empty when none was made.
+	Token string
 }
 
-func (s *DashboardAdmin) Name() string { return "create the first dashboard user" }
+func (s *DashboardSetup) Name() string { return "create the dashboard setup link" }
 
-func (s *DashboardAdmin) Run() error {
-	password, err := generateDashboardPassword()
-	if err != nil {
-		return err
-	}
-	users, err := dashboardAdminUsers(dashboardAdminUsername, password)
-	if err != nil {
-		return err
-	}
-	manifest, err := dashboardAdminManifest(users)
-	if err != nil {
-		return err
-	}
-	_, err = kubectl(s.Name(), strings.NewReader(manifest), "create", "-f", "-")
-	if err != nil && !strings.Contains(err.Error(), "AlreadyExists") && !strings.Contains(err.Error(), "already exists") {
-		return err
-	}
-	if err != nil {
-		// The dashboard also keeps its session key and sign-in lockouts in this Secret, so it can exist with no user.
-		existing, err := sh.run(s.Name(), commandOptions{
-			env: append(os.Environ(), k3sKubeconfigEnv), envLog: []string{k3sKubeconfigEnv}, unloggedStdout: true,
-		}, "k3s", "kubectl", "-n", platform.SystemNamespace, "get", "secret", platform.DashboardAuthSecretName,
-			"-o", "jsonpath={.data.users}")
+func (s *DashboardSetup) Run() error {
+	if !s.Always {
+		users, err := dashboardStoredUsers(s.Name())
 		if err != nil {
 			return err
 		}
-		if dashboardHasUser(strings.TrimSpace(string(existing))) {
-			Logf(s.Name(), "Secret %s has users, so they are kept and no user is created", platform.DashboardAuthSecretName)
+		if dashboardHasUser(users) {
+			Logf(s.Name(), "The dashboard has users, so no setup link is made")
 			return nil
 		}
-		patch, err := json.Marshal(map[string]any{"data": map[string]string{"users": base64.StdEncoding.EncodeToString(users)}})
-		if err != nil {
-			return err
-		}
-		if _, err := kubectl(s.Name(), strings.NewReader(string(patch)), "-n", platform.SystemNamespace, "patch", "secret",
-			platform.DashboardAuthSecretName, "--type", "merge", "--patch-file", "/dev/stdin"); err != nil {
-			return err
-		}
 	}
-	Logf(s.Name(), "Created dashboard user %q", dashboardAdminUsername)
-	s.Username, s.Password = dashboardAdminUsername, password
-	// Printed now as well as in the summary, so that an install stopped during the wait that follows does not lose it.
-	fmt.Printf("  Dashboard login: %s / %s\n", s.Username, s.Password)
+	token, value, err := platform.NewDashboardSetup(time.Now())
+	if err != nil {
+		return err
+	}
+	data := map[string]string{platform.DashboardSetupKey: base64.StdEncoding.EncodeToString(value)}
+	manifest, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "Opaque",
+		"metadata":   map[string]any{"name": platform.DashboardAuthSecretName, "namespace": platform.SystemNamespace},
+		"data":       data,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = kubectl(s.Name(), strings.NewReader(string(manifest)), "create", "-f", "-")
+	if err != nil && (strings.Contains(err.Error(), "AlreadyExists") || strings.Contains(err.Error(), "already exists")) {
+		// The Secret also holds the dashboard's session key and sign-in lockouts: only the setup key is replaced.
+		patch, marshalErr := json.Marshal(map[string]any{"data": data})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, err = kubectl(s.Name(), strings.NewReader(string(patch)), "-n", platform.SystemNamespace, "patch", "secret",
+			platform.DashboardAuthSecretName, "--type", "merge", "--patch-file", "/dev/stdin")
+	}
+	if err != nil {
+		return err
+	}
+	Logf(s.Name(), "Created a dashboard setup link that works until %s", time.Now().Add(platform.DashboardSetupTTL).Format(time.RFC3339))
+	s.Token = token
 	return nil
 }
 
-// dashboardPasswordAlphabet has 32 characters, so that each random byte picks one with no bias, and leaves out the ones
-// that are easy to misread (0 and o, 1 and l).
-const dashboardPasswordAlphabet = "abcdefghijkmnpqrstuvwxyz23456789"
-
-// generateDashboardPassword is 20 random characters (100 bits) in four groups of five, which is easy to copy and to type.
-func generateDashboardPassword() (string, error) {
-	raw := make([]byte, 20)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate a password: %w", err)
-	}
-	var out strings.Builder
-	for i, b := range raw {
-		if i > 0 && i%5 == 0 {
-			out.WriteByte('-')
-		}
-		out.WriteByte(dashboardPasswordAlphabet[int(b)%len(dashboardPasswordAlphabet)])
-	}
-	return out.String(), nil
-}
-
-// dashboardAdminUsers is the users value with one admin, hashed at the cost the dashboard itself hashes with.
-func dashboardAdminUsers(username, password string) ([]byte, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+// dashboardStoredUsers is the base64 users value of the auth Secret, or "" when there is no Secret. It is not logged.
+func dashboardStoredUsers(step string) (string, error) {
+	out, err := sh.run(step, commandOptions{
+		env: append(os.Environ(), k3sKubeconfigEnv), envLog: []string{k3sKubeconfigEnv}, unloggedStdout: true,
+	}, "k3s", "kubectl", "-n", platform.SystemNamespace, "get", "secret", platform.DashboardAuthSecretName,
+		"--ignore-not-found", "-o", "jsonpath={.data.users}")
 	if err != nil {
-		return nil, fmt.Errorf("hash the password: %w", err)
+		return "", err
 	}
-	return json.Marshal([]map[string]string{{"username": username, "password": string(hash), "role": "admin"}})
+	return strings.TrimSpace(string(out)), nil
 }
 
 // dashboardHasUser reports whether a base64 users value holds a user the dashboard accepts, by the rules of
@@ -305,47 +286,169 @@ func dashboardHasUser(encoded string) bool {
 	return len(seen) > 0
 }
 
-// dashboardAdminManifest is the users Secret the dashboard reads. It is JSON, so that nothing in it can be read as YAML.
-func dashboardAdminManifest(users []byte) (string, error) {
-	raw, err := json.Marshal(map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"type":       "Opaque",
-		"metadata":   map[string]any{"name": platform.DashboardAuthSecretName, "namespace": platform.SystemNamespace},
-		"data":       map[string]string{"users": base64.StdEncoding.EncodeToString(users)},
-	})
-	if err != nil {
-		return "", fmt.Errorf("render the dashboard users secret: %w", err)
-	}
-	return string(raw), nil
+// DashboardPublicIP turns on the dashboard at the public IP address (spec.dashboard.publicIP) on a cluster that exists.
+// When needed is set, it does so only if it is true at run time: an update turns it on only when it made a setup link.
+type DashboardPublicIP struct {
+	Needed func() bool
 }
 
-// NextSteps is what the installer prints when a new cluster is ready: the first sign-in and how to reach the dashboard
-// before it has a domain. It is printed and never logged, because it can hold the password.
+func (s *DashboardPublicIP) Name() string { return "serve the dashboard at the public IP address" }
+
+func (s *DashboardPublicIP) Run() error {
+	if s.Needed != nil && !s.Needed() {
+		return nil
+	}
+	_, err := kubectl(s.Name(), nil, "-n", geassNamespace, "patch", "geasscluster", "default", "--type", "merge",
+		"-p", `{"spec":{"dashboard":{"publicIP":true}}}`)
+	return err
+}
+
+// WaitForDashboardAddress waits for the operator to serve the dashboard at the public IP address, which needs a certificate
+// from Let's Encrypt. It never fails: without the address the summary gives the SSH command and says why.
+type WaitForDashboardAddress struct {
+	// URL is the address once the dashboard answers there, Domain the address of a verified dashboard domain, and Problem
+	// what the operator says when neither is so. IP is the server's public address, which the SSH command uses.
+	URL, Domain, Problem, IP string
+	// Timeout is how long to wait; dashboardAddressTimeout when zero.
+	Timeout time.Duration
+	// Skip says not to wait, when it is true at run time.
+	Skip func() bool
+}
+
+// dashboardAddressTimeout is long enough for cert-manager to register an account and Let's Encrypt to validate the address.
+const dashboardAddressTimeout = 5 * time.Minute
+
+func (s *WaitForDashboardAddress) Name() string { return "wait for the dashboard's address" }
+
+func (s *WaitForDashboardAddress) Run() error {
+	if s.Skip != nil && s.Skip() {
+		return nil
+	}
+	timeout := s.Timeout
+	if timeout == 0 {
+		timeout = dashboardAddressTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	jsonpath := `jsonpath={.status.dashboardPublicURL}{"\n"}{.status.conditions[?(@.type=="` + platform.ConditionDashboardPublicIP +
+		`")].reason}{"\n"}{.status.conditions[?(@.type=="` + platform.ConditionDashboardPublicIP + `")].message}`
+	for {
+		out, err := kubectl(s.Name(), nil, "-n", geassNamespace, "get", "geasscluster", "default", "-o", jsonpath)
+		if err == nil {
+			lines := strings.SplitN(string(out), "\n", 3)
+			for len(lines) < 3 {
+				lines = append(lines, "")
+			}
+			s.URL, s.Problem = strings.TrimSpace(lines[0]), strings.TrimSpace(lines[2])
+			if s.URL != "" {
+				Logf(s.Name(), "The dashboard answers at %s", s.URL)
+				return nil
+			}
+			if strings.TrimSpace(lines[1]) == "DomainVerified" {
+				s.Domain = dashboardDomainURL(s.Name())
+				return nil
+			}
+		}
+		if !time.Now().Before(deadline) {
+			Warnf(s.Name(), "The dashboard is not served at the public IP address yet: %s", s.Problem)
+			if out, err := kubectl(s.Name(), nil, "-n", platform.SystemNamespace, "get", "certificate", platform.DashboardPublicIPName,
+				"--ignore-not-found", "-o", "jsonpath={.spec.ipAddresses[0]}"); err == nil {
+				s.IP = strings.TrimSpace(string(out))
+			}
+			return nil
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// dashboardDomainURL is the address of the dashboard's domain, or "" when it cannot be read.
+func dashboardDomainURL(step string) string {
+	out, err := kubectl(step, nil, "-n", platform.SystemNamespace, "get", "geassplatformconfig", platform.HAReadinessName, "-o", "json")
+	if err != nil {
+		return ""
+	}
+	var config geassv1alpha1.GeassPlatformConfig
+	if json.Unmarshal(out, &config) != nil {
+		return ""
+	}
+	return platform.DashboardURLFromConfig(config)
+}
+
+// NextSteps is what the installer prints at the end: the link that opens the dashboard, and how to give it a domain. It is
+// printed and never logged, because the link makes an admin.
 type NextSteps struct {
-	// Username and Password are the user the install created; empty when the cluster had users already.
-	Username, Password string
+	// Token is the setup link's token, empty when none was made.
+	Token string
+	// PublicURL is the dashboard at the public IP address, DomainURL at its verified domain, and Problem why neither answers.
+	PublicURL, DomainURL, Problem string
 	// Tunnel says that the dashboard answers on this machine's loopback address.
 	Tunnel bool
 	// Ready says that Geass finished starting before the installer ended.
 	Ready bool
 	// SSHUser and Address fill in the SSH command. Either may be empty.
 	SSHUser, Address string
-	// ACMEEmail is the Let's Encrypt contact the cluster was given, if any.
-	ACMEEmail string
+	// LinkOnly prints only the link, after an update or for the dashboard-link command.
+	LinkOnly bool
 }
 
 // NextStepsFor is the summary of an install, from what its steps did.
-func NextStepsFor(admin *DashboardAdmin, access *DashboardAccess, ready *WaitForGeass, network Network, acmeEmail string) NextSteps {
-	return NextSteps{
-		Username: admin.Username, Password: admin.Password, Tunnel: access.Started, Ready: ready.Ready,
-		SSHUser: strings.TrimSpace(os.Getenv("SUDO_USER")), Address: network.ExternalIP, ACMEEmail: acmeEmail,
+func NextStepsFor(setup *DashboardSetup, access *DashboardAccess, ready *WaitForGeass, address *WaitForDashboardAddress, network Network) NextSteps {
+	next := NextSteps{
+		Token: setup.Token, PublicURL: address.URL, DomainURL: address.Domain, Problem: address.Problem,
+		Tunnel: access.Started, Ready: ready.Ready, SSHUser: strings.TrimSpace(os.Getenv("SUDO_USER")), Address: network.ExternalIP,
 	}
+	if next.Address == "" {
+		next.Address = address.IP
+	}
+	return next
 }
 
 func (n NextSteps) String() string {
+	if n.LinkOnly && n.Token == "" {
+		return ""
+	}
 	var b strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
+	line("")
+	if !n.LinkOnly {
+		if n.Ready {
+			line("Geass is installed and ready.")
+		} else {
+			line("Geass is installed, and it is still starting. This can take a few more minutes.")
+			line("Until it is ready, the dashboard shows \"Geass is starting\". Deploy after that message goes away.")
+		}
+		line("")
+	}
+
+	line("Open the dashboard")
+	base := n.DomainURL
+	if base == "" {
+		base = n.PublicURL
+	}
+	switch {
+	case n.Token != "" && base != "":
+		line("  Open this link in your browser, and create your admin user:")
+		line("    %s", platform.DashboardSetupLink(base, n.Token))
+		line("  The link works once, for 24 hours.")
+	case base != "":
+		line("  Open %s in your browser, and sign in with your user.", base)
+	default:
+		n.writeLocalAccess(line)
+	}
+	if n.LinkOnly {
+		return b.String()
+	}
+	line("")
+	line("Put the dashboard on a domain")
+	line("  1. Create a DNS record, for example geass.example.com, that points at this server.")
+	line("  2. In the dashboard, open Settings > Domain, and enter the domain.")
+	line("  Then open the dashboard at https://geass.example.com.")
+	line("")
+	line("Docs: https://rungeass.com/docs/getting-started/sign-in/")
+	return b.String()
+}
+
+// writeLocalAccess is the way in when the dashboard has no public address: through SSH, or on this machine itself.
+func (n NextSteps) writeLocalAccess(line func(string, ...any)) {
 	address := n.Address
 	if address == "" {
 		address = "<server address>"
@@ -354,47 +457,23 @@ func (n NextSteps) String() string {
 	if sshUser == "" {
 		sshUser = "<your user>"
 	}
-
-	line("")
-	if n.Ready {
-		line("Geass is installed and ready.")
-	} else {
-		line("Geass is installed, and it is still starting. This can take a few more minutes.")
-		line("Until it is ready, the dashboard shows \"Geass is starting\". Deploy after that message goes away.")
+	local := "http://localhost:" + dashboardLocalPort
+	if n.Problem != "" {
+		line("  The dashboard has no public address yet: %s", n.Problem)
 	}
-	line("")
-	if n.Password != "" {
-		line("Dashboard sign-in")
-		line("  Username: %s", n.Username)
-		line("  Password: %s", n.Password)
-		line("  Save this password now. Nothing can show it again after the installer ends.")
-	} else {
-		line("Dashboard sign-in")
-		line("  The dashboard already has users, so the installer created none. Sign in with one of them.")
-	}
-	line("")
-	line("Open the dashboard")
 	line("  1. On your computer, run this command, and keep it open:")
 	line("       ssh -L %s:127.0.0.1:%s %s@%s", dashboardLocalPort, dashboardLocalPort, sshUser, address)
-	line("  2. In your browser, open http://localhost:%s", dashboardLocalPort)
-	line("  On this server itself, open http://localhost:%s directly.", dashboardLocalPort)
+	if n.Token != "" {
+		line("  2. Open this link in your browser, and create your admin user:")
+		line("       %s", platform.DashboardSetupLink(local, n.Token))
+		line("     The link works once, for 24 hours.")
+	} else {
+		line("  2. Open %s in your browser, and sign in with your user.", local)
+	}
 	if !n.Tunnel {
 		line("  The dashboard did not answer on this server yet. If the page does not open in a few minutes,")
 		line("  see https://rungeass.com/docs/getting-started/sign-in/#troubleshooting")
 	}
-	line("")
-	line("Put the dashboard on a domain")
-	line("  1. Create a DNS record, for example geass.example.com, that points at this server.")
-	line("  2. Open ports 80 and 443 to this server.")
-	if n.ACMEEmail == "" {
-		line("  3. In the dashboard, open Settings > Domain. Enter an email address for Let's Encrypt, and the domain.")
-	} else {
-		line("  3. In the dashboard, open Settings > Domain, and enter the domain.")
-	}
-	line("  Then open the dashboard at https://geass.example.com. You no longer need the SSH command.")
-	line("")
-	line("Docs: https://rungeass.com/docs/getting-started/sign-in/")
-	return b.String()
 }
 
 // WaitForGeass waits for the new cluster to say it is ready: cert-manager, monitoring and Longhorn installed and running.

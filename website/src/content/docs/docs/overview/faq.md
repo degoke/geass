@@ -105,7 +105,7 @@ free on `/`. These numbers are a minimum. See [Requirements](/docs/getting-start
 
 ### Can I run it on a server without a public IP?
 
-Yes. You reach the dashboard through an SSH tunnel. To publish services without open ports, use a Cloudflare Tunnel.
+Yes. You reach the dashboard with the `ssh` command that the installer prints. To publish services without open ports, use a Cloudflare Tunnel.
 That needs a Cloudflare account. The first server must still reach other servers over SSH. See
 [Sign in to the dashboard](/docs/getting-started/sign-in/) and [Connect a domain](/docs/getting-started/connect-domain/).
 
@@ -121,23 +121,32 @@ Yes. Each release has an `arm64` installer with an `arm64` build of Geass.
 
 ### Does the installer set up the dashboard login?
 
-Yes. A new install creates the user `admin` with a random password. The installer prints the password during the install and
-again at the end. Nothing can show it after that. An update creates no user. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
+The installer prints a setup link. You open the link, and you choose the username and the password of your admin. The
+link works one time, for 24 hours. The installer prints no password. An update prints a link only when the dashboard has
+no users. See [Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
+
+### What if I lose the setup link or every password?
+
+Run the `dashboard-link` command of the installer on the server. It prints a new setup link. See
+[Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
 
 ### How is the dashboard reached after the install?
 
-Before it has a domain, the dashboard answers only on the server itself. To open it from your computer, run the `ssh -L`
-command that the installer prints, and open `http://localhost:8085`. Then set a domain under **Settings → Domain**. See
-[Open the dashboard](/docs/getting-started/sign-in/).
+Before it has a domain, the dashboard is at `https://<public IP>` of the server, with a Let's Encrypt certificate for
+that address. The link that the installer prints opens it. Ports 80 and 443 must be open. Then set a domain under
+**Settings → Domain**. After the domain is verified, the IP address no longer answers. See
+[Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
+
+If the server has no public IPv4 address, the installer prints an `ssh` command and a link to `http://localhost:8085`.
 
 ### Do I need a domain?
 
-Not to install Geass, sign in, or run a service. You need a domain to publish services on HTTPS, to open the dashboard
-without a tunnel, and to connect GitHub. See [Connect a domain](/docs/getting-started/connect-domain/).
+Not to install Geass, sign in, or run a service. You need a domain to publish services on HTTPS, to give the dashboard
+a name, and to connect GitHub. See [Connect a domain](/docs/getting-started/connect-domain/).
 
 ### Is HTTPS automatic?
 
-Yes, after you give Geass an email for Let's Encrypt. Give it to the installer as `GEASS_ACME_EMAIL`, or enter it later
+For the dashboard at its IP address, yes. For a domain, yes, after you give Geass an email for Let's Encrypt. Give it to the installer as `GEASS_ACME_EMAIL`, or enter it later
 under **Settings** → **Domain** → **Certificate email**. Ports 80 and 443 must be open. With a Cloudflare Tunnel, Cloudflare serves HTTPS instead.
 See [Set the certificate email](/docs/getting-started/connect-domain/#1-set-the-certificate-email) and
 [Domains and TLS](/docs/guides/domains-and-tls/).

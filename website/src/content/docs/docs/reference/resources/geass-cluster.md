@@ -10,6 +10,7 @@ A `GeassCluster` represents the K3s cluster that Geass manages. It holds these s
 - The switches for the platform add-ons: cert-manager, monitoring, Longhorn storage, log collection, and sleep-when-idle.
 - The network mode.
 - The default region for projects.
+- Whether the dashboard answers at the public IP address of the server before it has a domain.
 - What the operator needs to join new workers: the API address of the cluster, and the Secret with the join token.
 
 The installer creates one `GeassCluster`, named `default`, in `geass-system`. You change it with `kubectl`. The dashboard writes only one field of it: the default region.
@@ -54,6 +55,8 @@ spec:
       enabled: true
     logging:
       enabled: true
+  dashboard:
+    publicIP: true
 ```
 
 The installer writes the `certManager` block only when `GEASS_ACME_EMAIL` is set. Use a real address, because Let's Encrypt refuses placeholder domains such as `example.com`. The installer leaves the other add-ons at their defaults, so cert-manager and monitoring are on.
@@ -120,6 +123,7 @@ spec:
 | `spec.network.controlPlaneFirewall.region` | string | Optional | None | The location of the firewall, for a cloud that answers for each region (AWS). |
 | `spec.k3s.version` | string | Optional. Empty by default. | Empty, or a K3s release such as `v1.36.5+k3s1`: `^(v1\.[0-9]+\.[0-9]+\+k3s[0-9]+)?$`. At most 40 characters | The K3s release for the **worker** nodes. When it is set and a worker runs an older release, the operator upgrades the workers one at a time over SSH. For each worker, it cordons the node, replaces K3s, waits until the node is ready on the new version, and uncordons the node. The operator moves workers only to a version that the control plane already runs. It never touches the control plane: the installer upgrades the control plane (`--k3s-version` sets this field for you). Empty means that Geass leaves K3s alone. See [Upgrade Geass](/docs/operations/upgrading/#workers). |
 | `spec.lostNodeAfter` | duration | Optional. 15 minutes when left out. | A duration such as `30m` or `2h`. `0s` turns it off | How long a node can be not ready before Geass considers it lost. Then Geass makes a database with one instance, or a database with volume copies on other nodes, start on a different node. Geass also replaces an instance of a highly available Postgres database whose volume was only on the lost node: it removes the volume and builds a new instance from the primary. Set `0s` before you shut down a node for longer than the limit. See [When a node is lost](/docs/operations/high-availability/#what-geass-does-after-fifteen-minutes). |
+| `spec.dashboard.publicIP` | boolean | Optional. Off when left out. The installer sets `true` on a new cluster. | None | Serves the dashboard over HTTPS at the public IPv4 address of the control plane, with a Let's Encrypt certificate for that address, until a dashboard domain is verified. It needs cert-manager on. When it is off, or after the domain is verified, the operator deletes the objects that serve the address. The installer `dashboard-link` command sets it to `true`. See [The dashboard at the public IP address](/docs/operations/installer/#the-dashboard-at-the-public-ip-address). |
 | `spec.defaultRegion` | string | Optional | Pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, max length 40 | The region of projects that do not select a region. Empty means that such projects can run on any node. |
 
 :::note
@@ -167,8 +171,9 @@ kubectl -n geass-system patch geasscluster default --type merge \
 | `status.k3s.controlPlaneVersion` | string | The oldest K3s version that a control plane node reports. Shown as `K3S`. |
 | `status.k3s.upgrade` | object | Progress of an upgrade of the workers to `spec.k3s.version`: `phase` (`WaitingForControlPlane`, `Waiting`, `Upgrading`, `Complete`, `Failed`), `targetVersion`, `currentNode`, `step`, `startedAt`, and a `message` that tells you what the upgrade does or why it does not continue. Absent while `spec.k3s.version` is empty. |
 | `status.addons` | list | How each add-on that you can turn on and off is doing. Each item has `name` (`serverless`, `longhorn`, `monitoring`, or `logging`), `state` (`Off`, `Installing`, `Ready`, or `Failed`), `reason` (`InstallFailed`, `InstallSuspended`, or `NoHelmController`, for `Failed`), `message`, and `installed`. The **Add-ons** page of the dashboard and `geass addons` show it. |
+| `status.dashboardPublicURL` | string | The HTTPS address of the dashboard at the public IP address, for example `https://203.0.113.10`, after its certificate is issued. Empty otherwise. |
 | `status.reconcileRetry` | object | Failure counters (`reconcileFailures`, `reconcileFailureStarted`, `reconcileFailureGeneration`). |
-| `status.conditions` | list | `Ready`. `AddonsReady`. `ClusterIssuerReady`, while cert-manager is on. `MeshReady`, while `spec.network.mesh` is set. `NetworkPolicyEnforced`, after the check that the cluster acts on network policies has run (`True`, `False`, or `Unknown`, see [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies)). `K3sUpgraded`, while `spec.k3s.version` is set: `True` after every worker runs that version, otherwise `False` with the phase of `status.k3s.upgrade` as its reason. Thus, `kubectl wait --for=condition=K3sUpgraded` works. |
+| `status.conditions` | list | `Ready`. `AddonsReady`. `ClusterIssuerReady`, while cert-manager is on. `DashboardPublicIP`, while `spec.dashboard.publicIP` is `true` and cert-manager is on. `MeshReady`, while `spec.network.mesh` is set. `NetworkPolicyEnforced`, after the check that the cluster acts on network policies has run (`True`, `False`, or `Unknown`, see [Network isolation](/docs/guides/network-isolation/#check-that-the-cluster-enforces-policies)). `K3sUpgraded`, while `spec.k3s.version` is set: `True` after every worker runs that version, otherwise `False` with the phase of `status.k3s.upgrade` as its reason. Thus, `kubectl wait --for=condition=K3sUpgraded` works. |
 
 | Condition | Reason | Status | Meaning |
 | --- | --- | --- | --- |
@@ -224,6 +229,21 @@ These add-ons do not gate `Ready`:
 When Longhorn is on, a node that has joined but has no ready Longhorn manager yet keeps `AddonsReady` and `Ready` at `False` until the manager starts. During that time, resources that reconcile report `project "<project>" cluster "<cluster>" is not ready`. This state clears without action from you, but it can take a few minutes while a new node pulls images. A special case applies after any node is a [compliance node](/docs/guides/compliance-tags/) and every other node is tagged for general volumes. Then only those other nodes need a ready manager for this check. This information comes from a reading of the controller code. Nobody has timed it on a real cluster.
 :::
 
+### `DashboardPublicIP`
+
+`DashboardPublicIP` tells you if the dashboard answers at the public IP address. It is for information only: it never changes `Ready`. The operator removes the condition, and empties `status.dashboardPublicURL`, while `spec.dashboard.publicIP` is off or cert-manager is off. While the operator sets up the address, it checks again every 30 seconds. After that, it checks every 10 minutes.
+
+| Status | Reason | Meaning |
+| --- | --- | --- |
+| `True` | `Ready` | The certificate is issued, and the dashboard answers at the address. The message is `The dashboard answers at <url>`. |
+| `False` | `WaitingForCertManager` | cert-manager is not ready yet. |
+| `False` | `NoPublicAddress` | The cluster has no public IPv4 address. A private address, or an address in `100.64.0.0/10` (carrier-grade NAT or Tailscale), does not count. |
+| `False` | `IssuingCertificate` | Let's Encrypt has not issued the certificate yet. The message says that port 80 must be open to the internet, and gives the reason from cert-manager. |
+| `False` | `DomainVerified` | The dashboard has a verified domain, so the operator does not serve it at the IP address. |
+| `False` | `TLSStoreInUse` | A Traefik `TLSStore` named `default` that Geass did not create is in `geass-system`. Geass leaves it as it is. |
+| `False` | `TraefikMissing` | The Traefik `IngressRoute` and `TLSStore` kinds are not installed. |
+| `False` | `ApplyFailed` | The operator could not read or create an object. The message names it, and the operator log tells you why. |
+
 ## What the dashboard writes
 
 | Where | What it does |
@@ -236,7 +256,7 @@ For all other changes, use `kubectl`. The dashboard does not turn add-ons on or 
 
 ## Editing by hand
 
-You can safely edit the add-on switches, `defaultRegion`, `serverURL`, and `k3s.version` with `kubectl`. The operator applies the change on its next pass.
+You can safely edit the add-on switches, `defaultRegion`, `serverURL`, `k3s.version`, and `dashboard.publicIP` with `kubectl`. The operator applies the change on its next pass.
 
 ```bash title="Set the address workers join"
 kubectl -n geass-system patch geasscluster default --type merge \
@@ -259,7 +279,7 @@ Each add-on is a HelmChart object in `kube-system`. The K3s Helm controller runs
 
 | Add-on | HelmChart | Namespace | Notes |
 | --- | --- | --- | --- |
-| cert-manager | `geass-cert-manager` | `cert-manager` | Chart v1.17.2 with `installCRDs: true`. The operator then creates the `letsencrypt-prod` ClusterIssuer when `acmeEmail` is set. See the list below. |
+| cert-manager | `geass-cert-manager` | `cert-manager` | Chart v1.21.3 with `installCRDs: true`. The operator then creates the `letsencrypt-prod` ClusterIssuer when `acmeEmail` is set. See the list below. |
 | Monitoring | `geass-kube-prometheus-stack` | `monitoring` | Chart 69.8.2. Prometheus keeps 15 days or 4GB on a 5Gi volume. The names are pinned so that the dashboard can find the Prometheus Service. |
 | Longhorn | `geass-longhorn` | `longhorn-system` | Chart 1.12.1. Geass turns off the storage class of the chart and the Longhorn UI. |
 | Logging | `geass-victoria-logs` and `geass-fluent-bit` | `geass-logging` | The store is limited to 4GiB on a 6Gi volume, and to your retention. The shippers skip system namespaces. |
@@ -281,6 +301,15 @@ In addition to the charts, the cluster controller keeps these objects in place:
   - The labels `geass.dev/managed-by=geass` and `geass.dev/cluster=<cluster>`.
 
   The operator watches the issuer and puts it back when someone deletes or edits it. The operator never touches an issuer without the managed-by label. If you later empty `acmeEmail`, the issuer that Geass made stays in place, so that existing certificates can renew.
+- **The dashboard at the public IP address**, while `spec.dashboard.publicIP` is `true`, cert-manager is on, and no dashboard domain is verified. The operator keeps these objects:
+  - The ClusterIssuer `geass-letsencrypt-ip`: ACME with the Let's Encrypt `shortlived` profile, no email, and HTTP-01 through the `traefik` ingress class.
+  - The Certificate `geass-dashboard-public-ip` in `geass-system`, with `ipAddresses` set to the address, and the Secret `geass-dashboard-public-ip-tls`. The certificate is valid for about 6 days, and cert-manager renews it.
+  - The Traefik `TLSStore` `default` in `geass-system`. Its default certificate is that Secret, because browsers send no server name for an IP address.
+  - The Traefik `IngressRoute` `geass-dashboard-public-ip`, on the `websecure` entry point. It matches ``Host(`<ip>`)`` and sends traffic to the dashboard Service on port 8085.
+  - The Traefik `Middleware` and `IngressRoute` `geass-dashboard-public-ip-http`. They redirect plain HTTP for the address to
+    HTTPS. Requests under `/.well-known/acme-challenge/` are not redirected, so that the certificate renews.
+
+  The `letsencrypt-prod` issuer for hostnames does not change. It still needs `acmeEmail`.
 - **Network policies** `geass-restrict-metrics-store` in `monitoring` and `geass-restrict-log-store` in `geass-logging`. With these policies, only the platform can read metrics and logs.
 - **A PodMonitor** `geass-ingress` in `monitoring`. With it, Prometheus scrapes Traefik, and the request charts get data.
 - **A ServiceMonitor and a PrometheusRule** named `geass-operator` in `monitoring`, while monitoring is on. With them, Prometheus scrapes the metrics of the operator and holds seven alerts on those metrics. See [Logs, metrics and terminal](/docs/guides/observability/#metrics-and-alerts-for-the-operator).
@@ -358,6 +387,10 @@ Read the `ClusterIssuerReady` condition: `kubectl -n geass-system get geassclust
 - `IssuerNotReady` gives the reason from cert-manager. Most often, Let's Encrypt refused the address. Let's Encrypt rejects placeholder domains such as `example.com`.
 
 Then run `kubectl get clusterissuer letsencrypt-prod`. See [Domains and TLS](/docs/guides/domains-and-tls/).
+
+### The dashboard does not answer at the public IP address
+
+Read the [`DashboardPublicIP`](#dashboardpublicip) condition and `status.dashboardPublicURL`. Usually, port 80 is closed in the firewall of the provider, and the reason is `IssuingCertificate`. See [The dashboard does not answer at the public IP address](/docs/operations/troubleshooting/#the-dashboard-does-not-answer-at-the-public-ip-address).
 
 ### A worker's K3s upgrade is `Failed` or `Waiting`
 

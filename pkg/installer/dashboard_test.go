@@ -13,43 +13,44 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
+
+	"github.com/degoke/geass/pkg/platform"
 )
 
-func TestTheFirstDashboardUserIsAnAdminWithAGeneratedPasswordStoredOnlyAsAHash(t *testing.T) {
+// storedSetup decodes the setup value that a call wrote, from a Secret manifest or a merge patch.
+func storedSetup(t *testing.T, stdin string) []byte {
+	t.Helper()
+	var object struct {
+		Data map[string]string `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdin), &object))
+	require.NotContains(t, object.Data, "users", "the users are never written by the installer")
+	raw, err := base64.StdEncoding.DecodeString(object.Data[platform.DashboardSetupKey])
+	require.NoError(t, err)
+	return raw
+}
+
+func TestANewClusterGetsASetupLinkStoredOnlyAsAHash(t *testing.T) {
 	host := &fakeHost{}
 	useHost(t, host)
 
-	admin := &DashboardAdmin{}
-	require.NoError(t, admin.Run())
-	require.Equal(t, "admin", admin.Username)
-	require.Regexp(t, regexp.MustCompile(`^[a-km-np-z2-9]{5}(-[a-km-np-z2-9]{5}){3}$`), admin.Password)
-	require.NotEqual(t, "CHANGE_ME", strings.ToUpper(admin.Password))
+	setup := &DashboardSetup{}
+	require.NoError(t, setup.Run())
+	require.Regexp(t, regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`), setup.Token)
 
-	require.Len(t, host.calls, 1)
-	call := host.calls[0]
-	require.Equal(t, []string{"kubectl", "create", "-f", "-"}, call.Args,
-		"created, never applied: a Secret that exists must not be replaced")
-	require.NotContains(t, call.text(), admin.Password, "the password is not in the command or what is fed to it")
-
+	i := host.index("create", "-f", "-")
+	require.GreaterOrEqual(t, i, 0, "created, never applied: a Secret that exists must not be replaced")
+	call := host.calls[i]
+	require.NotContains(t, call.text(), setup.Token, "the token is not in the command or what is fed to it")
 	var secret struct {
 		Kind     string            `json:"kind"`
 		Metadata map[string]string `json:"metadata"`
-		Data     map[string]string `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(call.Stdin), &secret))
 	require.Equal(t, "Secret", secret.Kind)
 	require.Equal(t, "geass-dashboard-auth", secret.Metadata["name"])
 	require.Equal(t, "geass-system", secret.Metadata["namespace"])
-	raw, err := base64.StdEncoding.DecodeString(secret.Data["users"])
-	require.NoError(t, err)
-	var users []map[string]string
-	require.NoError(t, json.Unmarshal(raw, &users))
-	require.Len(t, users, 1)
-	require.Equal(t, "admin", users[0]["username"])
-	require.Equal(t, "admin", users[0]["role"])
-	require.NoError(t, bcrypt.CompareHashAndPassword([]byte(users[0]["password"]), []byte(admin.Password)),
-		"the dashboard reads a bcrypt hash as it is")
+	require.True(t, platform.DashboardSetupMatches(storedSetup(t, call.Stdin), setup.Token, time.Now()))
 }
 
 // secretExists answers kubectl as for a users Secret that exists with this users value (base64, as the API gives it).
@@ -67,19 +68,19 @@ func secretExists(users string) *fakeHost {
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
-func TestUsersThatExistAreKeptAndNoPasswordIsShown(t *testing.T) {
+func TestADashboardWithUsersGetsNoSetupLink(t *testing.T) {
 	host := secretExists(b64(`[{"username":"ops","password":"$2a$10$abc","role":"admin"}]`))
 	useHost(t, host)
 
-	admin := &DashboardAdmin{}
-	require.NoError(t, admin.Run())
-	require.Empty(t, admin.Username)
-	require.Empty(t, admin.Password, "a password that was not stored must not be printed")
-	require.False(t, host.ran("patch"), "users that work are never replaced")
-	require.Contains(t, NextSteps{}.String(), "already has users")
+	setup := &DashboardSetup{}
+	require.NoError(t, setup.Run())
+	require.Empty(t, setup.Token)
+	require.False(t, host.ran("create"))
+	require.False(t, host.ran("patch"))
+	require.Empty(t, NextSteps{LinkOnly: true}.String(), "an update with nothing to open prints nothing")
 }
 
-func TestASecretWithNoUsableUserGetsTheAdmin(t *testing.T) {
+func TestASecretWithNoUsableUserGetsASetupLink(t *testing.T) {
 	for name, users := range map[string]string{
 		"only what the dashboard keeps for itself": "",
 		"only the placeholder password":            b64(`[{"username":"admin","password":"change_me","role":"admin"}]`),
@@ -88,29 +89,64 @@ func TestASecretWithNoUsableUserGetsTheAdmin(t *testing.T) {
 	} {
 		host := secretExists(users)
 		useHost(t, host)
-		admin := &DashboardAdmin{}
-		require.NoError(t, admin.Run(), name)
-		require.Equal(t, "admin", admin.Username, name)
+		setup := &DashboardSetup{}
+		require.NoError(t, setup.Run(), name)
+		require.NotEmpty(t, setup.Token, name)
 		i := host.index("patch", "secret", "geass-dashboard-auth", "--patch-file")
 		require.GreaterOrEqual(t, i, 0, name)
-		require.NotContains(t, host.calls[i].String(), "users", "the hash goes in on stdin, not on the command line")
-		require.Contains(t, host.calls[i].Stdin, `"users"`, name)
+		require.True(t, platform.DashboardSetupMatches(storedSetup(t, host.calls[i].Stdin), setup.Token, time.Now()), name)
 	}
 }
 
-func TestAFailureToCreateTheFirstUserFailsTheInstall(t *testing.T) {
+func TestTheDashboardLinkCommandMakesALinkAlthoughThereAreUsers(t *testing.T) {
+	host := secretExists(b64(`[{"username":"ops","password":"$2a$10$abc","role":"admin"}]`))
+	useHost(t, host)
+
+	setup := &DashboardSetup{Always: true}
+	require.NoError(t, setup.Run())
+	require.NotEmpty(t, setup.Token)
+	require.True(t, host.ran("patch"))
+}
+
+func TestAFailureToMakeTheSetupLinkFailsTheInstall(t *testing.T) {
 	useHost(t, &fakeHost{answer: func(fakeCall) ([]byte, error) { return nil, errors.New("connection refused") }})
-	require.Error(t, (&DashboardAdmin{}).Run())
+	require.Error(t, (&DashboardSetup{}).Run())
 }
 
-func TestGeneratedPasswordsDiffer(t *testing.T) {
-	seen := map[string]bool{}
-	for range 50 {
-		password, err := generateDashboardPassword()
-		require.NoError(t, err)
-		require.False(t, seen[password])
-		seen[password] = true
-	}
+func TestTheInstallerWaitsForTheDashboardAddress(t *testing.T) {
+	polls := 0
+	useHost(t, &fakeHost{answer: func(c fakeCall) ([]byte, error) {
+		polls++
+		if polls < 3 {
+			return []byte("\nIssuingCertificate\nWaiting for Let's Encrypt"), nil
+		}
+		return []byte("https://203.0.113.10\nReady\nThe dashboard answers at https://203.0.113.10"), nil
+	}})
+
+	address := &WaitForDashboardAddress{}
+	require.NoError(t, address.Run())
+	require.Equal(t, "https://203.0.113.10", address.URL)
+}
+
+func TestADashboardAddressThatDoesNotComeDoesNotFailTheInstall(t *testing.T) {
+	useHost(t, &fakeHost{answer: func(fakeCall) ([]byte, error) {
+		return []byte("\nNoPublicAddress\nThe cluster has no public IPv4 address"), nil
+	}})
+	address := &WaitForDashboardAddress{Timeout: time.Nanosecond}
+	require.NoError(t, address.Run())
+	require.Empty(t, address.URL)
+	require.Equal(t, "The cluster has no public IPv4 address", address.Problem)
+
+	useHost(t, &fakeHost{answer: func(c fakeCall) ([]byte, error) {
+		if slices.Contains(c.Args, "certificate") {
+			return []byte("203.0.113.10"), nil
+		}
+		return []byte("\nIssuingCertificate\nWaiting for Let's Encrypt"), nil
+	}})
+	address = &WaitForDashboardAddress{Timeout: time.Nanosecond}
+	require.NoError(t, address.Run())
+	next := NextStepsFor(&DashboardSetup{Token: "k7Qx"}, &DashboardAccess{Started: true}, &WaitForGeass{Ready: true}, address, Network{})
+	require.Contains(t, next.String(), "@203.0.113.10", "the SSH command names the address the certificate was asked for")
 }
 
 func TestTheDashboardUnitForwardsOnlyTheLoopbackAddress(t *testing.T) {
@@ -124,25 +160,34 @@ func TestTheDashboardUnitForwardsOnlyTheLoopbackAddress(t *testing.T) {
 	require.NotContains(t, unit, "0.0.0.0")
 }
 
-func TestTheSummaryGivesTheLoginAndTheWayIn(t *testing.T) {
-	// Built from parts so that secret scanners do not take it for a password.
-	password := strings.Join([]string{"abcde", "fghij", "kmnpq", "rstuv"}, "-")
-	out := NextSteps{Username: "admin", Password: password, Tunnel: true, SSHUser: "ubuntu"}.String()
-	require.Contains(t, out, "Username: admin")
-	require.Contains(t, out, "Password: "+password)
+func TestTheSummaryGivesTheSetupLinkAtThePublicAddress(t *testing.T) {
+	out := NextSteps{Token: "k7Qx", PublicURL: "https://203.0.113.10", Tunnel: true, Ready: true}.String()
+	require.Contains(t, out, "https://203.0.113.10/setup#k7Qx")
+	require.Contains(t, out, "works once, for 24 hours")
+	require.NotContains(t, out, "ssh", "with a public address nothing asks for SSH")
+	require.NotContains(t, out, "kubectl")
+	require.Contains(t, out, "Settings > Domain")
+
+	withDomain := NextSteps{Token: "k7Qx", PublicURL: "https://203.0.113.10", DomainURL: "https://geass.example.com", LinkOnly: true}.String()
+	require.Contains(t, withDomain, "https://geass.example.com/setup#k7Qx", "a verified domain comes first")
+	require.NotContains(t, withDomain, "Put the dashboard on a domain")
+}
+
+func TestWithoutAPublicAddressTheSummaryGivesTheSSHWayIn(t *testing.T) {
+	out := NextSteps{Token: "k7Qx", Problem: "The cluster has no public IPv4 address", Tunnel: true, SSHUser: "ubuntu"}.String()
+	require.Contains(t, out, "no public address yet: The cluster has no public IPv4 address")
 	require.Contains(t, out, "ssh -L 8085:127.0.0.1:8085 ubuntu@<server address>")
-	require.Contains(t, out, "http://localhost:8085")
-	require.Contains(t, out, "email address for Let's Encrypt", "a cluster with no contact is told where to set one")
-	require.NotContains(t, out, "kubectl", "with the tunnel running, nothing asks for kubectl")
+	require.Contains(t, out, "http://localhost:8085/setup#k7Qx")
+	require.NotContains(t, out, "kubectl")
 
-	withEmail := NextSteps{Username: "admin", Password: "x", Tunnel: true, Address: "203.0.113.10", ACMEEmail: "ops@example.org"}.String()
-	require.Contains(t, withEmail, "<your user>@203.0.113.10", "no guess at a user that may not be able to sign in")
-	require.NotContains(t, withEmail, "Let's Encrypt")
+	withAddress := NextSteps{Token: "k7Qx", Tunnel: true, Address: "203.0.113.10"}.String()
+	require.Contains(t, withAddress, "<your user>@203.0.113.10", "no guess at a user that may not be able to sign in")
 
-	notAnswering := NextSteps{Username: "admin", Password: "x"}.String()
-	require.Contains(t, notAnswering, "ssh -L 8085:127.0.0.1:8085")
+	notAnswering := NextSteps{Token: "k7Qx"}.String()
 	require.Contains(t, notAnswering, "did not answer on this server yet")
-	require.NotContains(t, notAnswering, "kubectl", "nothing the installer prints asks for kubectl")
+
+	noLink := NextSteps{PublicURL: "https://203.0.113.10"}.String()
+	require.Contains(t, noLink, "sign in with your user")
 
 	require.Contains(t, NextSteps{Ready: true}.String(), "Geass is installed and ready.")
 	starting := NextSteps{}.String()

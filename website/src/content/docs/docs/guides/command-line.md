@@ -718,8 +718,8 @@ line. Update the one that is older.
 
 **A certificate error, for example `x509: certificate signed by unknown authority`.** The command line always checks
 the certificate of the server. Fix the certificate (see [Domains and TLS](/docs/guides/domains-and-tls/)), or trust
-your certificate authority on this machine. Before you have a domain, use the `localhost` address from
-[Sign in](/docs/getting-started/sign-in/).
+your certificate authority on this machine. Before you have a domain, use the `https://` address of the dashboard at
+the public IP address of the server. See [Sign in](/docs/getting-started/sign-in/).
 
 **The approval page shows `No sign-in request has that code. It may have expired: start again from the command line.`**
 The code is wrong, the code expired after 10 minutes, or Geass restarted. Run `geass login` again.
