@@ -318,11 +318,14 @@ cloud, for capacity, for SSH, or for a fix to its connection. See [Node pools](/
 ## What the dashboard writes
 
 The dashboard creates a `GeassNode` from **Add server**, and deletes a `GeassNode` that it created with **Remove**. The
-dashboard also edits the placement of a node.
+dashboard also edits the placement of a node, retries a server that failed, and cordons a node.
 
 | Where | What it does |
 | --- | --- |
-| **Settings** > **Usage** > **Nodes** | Lists every Kubernetes node: **Node**, **Role**, **Region**, **Tags**, **CPU**, **Memory**, **Pressure**, and **Status** (`Ready`, `Not ready`, or `Unschedulable`). It shows nodes whether or not a `GeassNode` exists. |
+| **Settings** > **Usage** > **Nodes** | Lists every Kubernetes node: **Node**, **Status**, **Role**, **Region**, **Tags**, **CPU**, **Memory**, and **Pressure**. **Status** is `Ready`, `Not ready`, or `Cordoned`. It shows nodes whether or not a `GeassNode` exists. A `GeassNode` that has no node yet, or that failed, has a row too. Its **Status** is `Waiting`, `Creating machine`, `Joining`, or `Failed`, from `status.phase`, and the error is `status.message`. |
+| **Retry** on a server that failed | Adds the annotation `geass.dev/retry` to the `GeassNode`. The operator starts over from the first step and removes the annotation. Only for a `GeassNode` whose `status.phase` is `Failed`. |
+| **Update host keys** on a server that you have | Replaces the lines for the address of the server in the key `known_hosts` of the Secret in `spec.sshKeySecretRef`. Lines for other addresses stay. Not for a machine that Geass creates. |
+| **Cordon**, **Uncordon** in the menu of a node | Sets `spec.unschedulable` on the Kubernetes node. Geass refuses to cordon the last node that can start new work, and to uncordon a node that the operator cordoned for an upgrade or for a pool. |
 | **Add server** | Opens a form that creates a `GeassNode`. For **A server I have**, the node gets `eip`, `sshUser`, the port, and a Secret `<name>-ssh` that the dashboard makes from the key that you paste. For **A cloud machine**, the node gets `spec.cloud`. Names are lowercase letters, numbers, and hyphens, at most 55 characters. |
 | **Remove** on a server | Deletes the `GeassNode` after you enter its name. Only for a worker that is not part of a pool and is not the control plane. |
 | **Edit** on a node | Opens a dialog with **Region**, **Site**, and **Tags**. The dialog has one **Reserve this node for `<tag>`** switch for each tag. Under **Compliance tags**, it has one `<tag> is a compliance tag` switch for each tag. **Save** writes the labels and taints directly onto the Kubernetes node. If a `GeassNode` has the same name, or its `status.nodeName` matches, the dialog also writes `spec.placement` on it, so that the operator does not undo the edit. **Site** is `spec.placement.zone`. |

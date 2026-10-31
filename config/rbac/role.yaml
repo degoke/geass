@@ -119,9 +119,11 @@ rules:
 - apiGroups:
   - cert-manager.io
   resources:
+  - certificates
   - clusterissuers
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -355,6 +357,20 @@ rules:
   - storage.k8s.io
   resources:
   - storageclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - traefik.io
+  resources:
+  - ingressroutes
+  - middlewares
+  - tlsstores
   verbs:
   - create
   - delete

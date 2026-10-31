@@ -5,14 +5,14 @@ import { normalizeBasePath } from "@/lib/base-path";
 
 describe("hide", () => {
   it("takes away what a host that runs Geass for people manages, and leaves the logo", () => {
-    expect([...SELF_HOSTED_ONLY].sort()).toEqual(["account", "alerts", "domain", "registry", "servers", "signin", "tokens", "upgrade"]);
+    expect([...SELF_HOSTED_ONLY].sort()).toEqual(["account", "addons", "alerts", "domain", "registry", "servers", "signin", "tokens", "upgrade"]);
     expect(HIDEABLE).toContain("brand");
     expect(SELF_HOSTED_ONLY).not.toContain("brand");
   });
 
   it("takes away the pages that belong to a hidden part, and no other", () => {
     const hidden = new Set(SELF_HOSTED_ONLY);
-    for (const mode of ["settings:domain", "settings:tokens", "settings:auth", "settings:organizations", "settings:alerts", "settings:registry", "device"]) {
+    for (const mode of ["settings:domain", "settings:tokens", "settings:auth", "settings:organizations", "settings:alerts", "settings:addons", "settings:registry", "device"]) {
       expect(pageHidden(mode, hidden), mode).toBe(true);
       expect(pageHidden(mode, new Set()), mode).toBe(false);
     }

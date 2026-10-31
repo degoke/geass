@@ -1,123 +1,127 @@
 ---
 title: "Sign in to the dashboard"
-description: "Create the first dashboard login, open the dashboard before you have a domain, sign in the command line, and manage users, passwords, and sessions."
+description: "Open the dashboard the first time with the setup link that the installer prints, create your admin, and sign in the command line."
 ---
 
-The dashboard requires a login, and a new install has none. Geass does not create a default password, and it does not generate one. You create the first user when you save a Kubernetes Secret. Then you open the dashboard through a tunnel from your own machine. This page tells you about these topics:
+At the end of the install, the installer prints a setup link, for example:
 
-- The first sign-in.
-- How the `geass` command line signs in after you have a dashboard login.
-- The two roles.
-- How to rotate credentials.
+```text
+Open the dashboard
+  Open this link in your browser, and create your admin user:
+    https://203.0.113.10/setup#k7Qx…
+  The link works once, for 24 hours.
+```
+
+The link opens the dashboard over HTTPS at the IP address of your server. You do not need a domain or SSH for it.
+
+## Open the dashboard
+
+1. Copy the link that the installer printed, and open it in your browser.
+2. In **Username**, keep `admin`, or enter another name.
+3. In **Password**, enter a password of at least 12 characters.
+4. Click **Create admin**.
+
+The dashboard signs you in. Save the password in your password manager. Geass keeps only a hash of it.
+
+The link works once, for 24 hours. If the link expired, or someone used it, make a new one. See
+[Lost the link or every password](#lost-the-link-or-every-password).
+
+The dashboard stays at `https://<server IP>` until you [put it on a domain](#put-the-dashboard-on-a-domain). To sign in
+again later, open that address, enter your username and password, and click **Continue**.
 
 ![The Geass sign-in page.](../../../../assets/docs/login.webp)
 *Screenshot with example data.*
 
-## Before you start
+A session lasts 12 hours. Usernames do not depend on letter case.
 
-- A finished [install](/docs/getting-started/install/). The operator pod `geass-controller-manager` must be running.
-- SSH access to the control plane, and `sudo` access on the control plane.
+After five failed attempts for one username from one address in one minute, Geass locks that username for that address.
+The lock lasts one minute. The page still says `invalid username or password`. Wait one minute, and then try again. See
+[Security](/docs/operations/security/#dashboard-users) for the full lockout rules.
 
-## Create the first user
+### When the installer prints an SSH command
 
-1. On the control plane, save this Secret as `dashboard-auth.yaml`. Replace `CHANGE_ME` with a password that you select:
+To serve the dashboard at its IP address, Let's Encrypt must reach your server on port 80. If it cannot, the installer
+says why, and prints an SSH command and a `localhost` link instead:
 
-   ```yaml title="dashboard-auth.yaml"
-   apiVersion: v1
-   kind: Secret
-   metadata:
-     name: geass-dashboard-auth
-     namespace: geass-system
-   type: Opaque
-   stringData:
-     users: |
-       [{"username":"admin","password":"CHANGE_ME","role":"admin"}]
-   ```
+1. On your computer, run the `ssh` command that the installer printed. Keep this terminal open.
+2. In your browser, open the `http://localhost:8085/setup#…` link that the installer printed.
+3. Create your admin as in the steps above.
 
-   The `users` value is a JSON array. If the password contains `"` or `\`, escape these characters as JSON requires.
+The common reasons are these:
 
-2. Apply the Secret and remove the file. Remove the file because it holds the password in plain text:
+- A cloud firewall, for example an AWS security group, blocks port 80 or 443. Open both ports to the internet. Then make
+  a new link. See [Lost the link or every password](#lost-the-link-or-every-password).
+- The server has no public IPv4 address. Use the SSH command, or [put the dashboard on a domain](#put-the-dashboard-on-a-domain).
 
-   ```bash
-   sudo k3s kubectl apply -f dashboard-auth.yaml
-   rm dashboard-auth.yaml
-   ```
+If you installed Geass on the computer that you use, skip step 1.
 
-Geass reads the Secret when someone signs in, so the operator does not need a restart. The first sign-in attempt replaces each plain-text password in the Secret with a bcrypt hash.
+## Lost the link or every password
 
-:::note
-This Secret is the sample at `config/samples/geass_dashboard_auth.yaml` in the repository. Geass refuses the password `CHANGE_ME`, in any letter case, for every user. Thus, if you forget to replace it, you have no working login. You do not get a login with a known password.
-:::
+To get a new setup link, run this command on the first server:
 
-## Reach the dashboard
+```bash
+curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link
+```
 
-The operator serves the dashboard on port 8085, behind the `ClusterIP` Service `geass-geass-dashboard`. Nothing publishes the dashboard after the install, so you reach it through a tunnel:
+The command prints a new link, which works once, for 24 hours. An earlier link that nobody used stops working. If you
+enter the name of an existing user, the link sets a new password for that user, makes the user an admin, and signs out
+the other sessions of that user.
 
-1. From your machine, open an SSH session that forwards a local port to the loopback address of the server:
+If you lost only your own password, ask another admin to reset it under **Settings** → **Users**. See
+[Users and API tokens](/docs/guides/users-and-tokens/#reset-a-password).
 
-   ```bash
-   ssh -L 8085:127.0.0.1:8085 root@203.0.113.10
-   ```
+## Sign out and add people
 
-2. In that session, forward the Service to the loopback address of the server. Leave the command running:
+To sign out, open the account menu at the top right, and select **Sign out**. Sign-out ends the sessions of that user in
+every browser.
 
-   ```bash
-   sudo k3s kubectl -n geass-system port-forward svc/geass-geass-dashboard 8085:8085
-   ```
+To invite people, let them sign in by email, or use organizations and teams, connect an identity provider. Open
+**Settings** → **Sign-in**. See [Sign in with an identity provider](/docs/guides/external-sign-in/).
 
-3. Open `http://localhost:8085` in your browser.
+## Put the dashboard on a domain
 
-If you already run `kubectl` on your own machine against this cluster, run the `port-forward` command there and skip the SSH forward. K3s writes its kubeconfig to `/etc/rancher/k3s/k3s.yaml` on the server, with the address `127.0.0.1`. Change that address to one that your machine can reach, and keep 6443/tcp open to your machine.
+Before you use the dashboard from other places, give it a domain:
 
-:::note
-Use `localhost` or `127.0.0.1` for this first session. The sign-in cookie is marked `Secure` unless the page comes over HTTPS or from a loopback address. Thus a browser drops the cookie on plain HTTP to a public address, and you stay on the sign-in form.
-:::
+1. Open **Settings** → **Domain**.
+2. If **Certificate email** shows **Not set**, enter your email address, and click **Save email**. Let's Encrypt needs
+   this address before it issues HTTPS certificates.
+3. Enter your domain, and click **Save dashboard domain**.
 
-After you sign in, publish the dashboard on a domain from **Settings → Domain**, and use that address from then on. See [Connect a domain](/docs/getting-started/connect-domain/).
-
-## Sign in
-
-The page shows these items:
-
-- The title **Sign in**.
-- A **Username** field, with the value `admin` already in it.
-- A **Password** field.
-- A **Continue** button.
-
-Enter the user from your Secret.
-
-Sessions last 12 hours. Geass matches usernames without regard to letter case and to spaces before or after the name. The lockout rules are as follows:
-
-- After five failed attempts for one username from one client address in one minute, Geass locks that username for that address for one minute. The page still says `invalid username or password`. Thus a person who continues to guess is locked out, but you can still sign in from a different address.
-- Twenty-five failures for one username in one minute, from all clients together, lock that username for everyone for one minute. Where Geass cannot tell the clients apart, five failures in one minute lock the username for everyone for one minute.
-- Geass saves the count for the username in the Secret, so the count stays after an operator restart. Geass records only usernames that are in your Secret. It removes a record after the minute of that record is over.
-- Separately, a client that fails 20 sign-ins in one minute, with any usernames, is refused for one minute, with the same message.
-
-When the connection comes through a proxy or a tunnel, Geass reads the address of the client from `X-Forwarded-For`. See [Security](/docs/operations/security/#dashboard-users).
-
-To sign out, open the account menu at the top right, and select **Sign out**. The account menu shows your initial. When you sign out, Geass ends every session of that user in every browser, not only the current session.
-
-You can connect an identity provider under **Settings** → **Sign-in** after you sign in. With an identity provider, you can invite people, let them sign in by email, or keep organizations and teams. The sign-in page then shows **Sign in with ...** first, and it keeps the admin password below it. See [Sign in with an identity provider](/docs/guides/external-sign-in/).
+From then on, open the dashboard at its domain, for example `https://geass.example.com`. For the DNS record and the
+ports, see [Connect a domain](/docs/getting-started/connect-domain/).
 
 ## Sign in from the command line
 
-The `geass` command line has no password. It signs in with a code that you approve in the dashboard, so you need a dashboard login first. Install the command line, as [Install Geass](/docs/getting-started/install/#install-the-command-line-optional) tells you. Then run it with the address of your dashboard:
+The `geass` command line has no password. It signs in with a code that you approve in the dashboard. You need a
+dashboard login first. To install the command line, see
+[Install Geass](/docs/getting-started/install/#install-the-command-line-optional).
 
-```bash
-geass login --url https://geass.example.com
-```
+1. Run `geass login` with the address of your dashboard:
 
-For the first session, before you have a domain, start the tunnel from [Reach the dashboard](#reach-the-dashboard), and use `--url http://localhost:8085`.
+   ```bash
+   geass login --url https://geass.example.com
+   ```
 
-1. `geass login` prints a code, for example `BCDF-GHJK`, and the address `<dashboard>/device`. When `geass login` runs in a terminal, it opens that page in your browser. To stop this, add `--no-browser`.
-2. If the dashboard asks, sign in as an `admin`. The page **Sign in the command line** shows the name of the machine that asks, for example `geass CLI on laptop`. Make sure that the code on the page is the code in your terminal. Approve only a code that you started.
-3. Select an **Access** level: **Read only, including logs (recommended)**, **Read only, without logs**, or **Full access**.
-4. Select an **Expires** period: **7 days**, **30 days**, or **90 days**. The default is **30 days**.
-5. Click **Approve**.
+   Before you have a domain, use the address of the dashboard at the IP address of your server, for example
+   `--url https://203.0.113.10`.
 
-The terminal then prints `Signed in to ... as token:CLI: geass CLI on laptop`. The command line saves the token in `config.json` in the `geass` folder of your user configuration directory, with mode `0600`. On Linux, this file is `~/.config/geass/config.json`. The code is valid for 10 minutes. A viewer cannot approve a code, and an API token cannot approve one either. Thus a leaked token cannot make another token.
+2. The command prints a code, for example `BCDF-GHJK`, and opens the page `/device` of your dashboard in your browser. To
+   stop the browser from opening, add `--no-browser`.
+3. If the dashboard asks, sign in as an admin.
+4. On the page **Sign in the command line**, make sure that the code is the code in your terminal. Approve only a code
+   that you started.
+5. Select an **Access** level: **Read only, including logs (recommended)**, **Read only, without logs**, or **Full
+   access**.
+6. Select an **Expires** period: **7 days**, **30 days**, or **90 days**. The default is **30 days**.
+7. Click **Approve**.
 
-The approval creates an API token. The token appears in **Settings → Tokens** as `CLI: geass CLI on <machine>`. To end the token, revoke it there. `geass logout` only removes the token from your machine. Scripts and CI cannot approve a code. For them, create a token under **Settings → Tokens**, and set `GEASS_URL` and `GEASS_TOKEN`. See [Command line](/docs/guides/command-line/#sign-in) and [Users and API tokens](/docs/guides/users-and-tokens/).
+The terminal then prints `Signed in to ... as token:CLI: geass CLI on <machine>`. The code is valid for 10 minutes. Only
+an admin who signed in to the dashboard can approve a code. A viewer and an API token cannot.
+
+The approval creates an API token named `CLI: geass CLI on <machine>` in **Settings** → **Tokens**. To end the token,
+revoke it there. `geass logout` only removes the token from your computer. For scripts and CI, create a token under
+**Settings** → **Tokens**, and set `GEASS_URL` and `GEASS_TOKEN`. See [Command line](/docs/guides/command-line/#sign-in)
+and [Users and API tokens](/docs/guides/users-and-tokens/).
 
 ## Roles
 
@@ -125,127 +129,131 @@ Each user has one role.
 
 | Role | What the user can do |
 | --- | --- |
-| `admin` | All that the dashboard offers: create, change, deploy, and delete resources, change settings, and create API tokens |
-| `viewer` | Read-only. Geass refuses every write with `viewer role cannot access this`. It also refuses the reads that show secrets: logs, terminals, variables, templates, API tokens, and the GitHub repository list. Geass removes hostnames, connection details, variable values, and cloud settings from the data that the browser of the viewer receives |
+| `admin` | Everything in the dashboard: create, change, deploy, and delete, change settings, and create API tokens. |
+| `viewer` | Read only. A viewer cannot see logs, terminals, variable values, API tokens, connection details, or hostnames. |
 
-A user entry without a `role` is a `viewer`. Geass ignores an entry with any other role, `observer` included. If no valid entry is left, sign-in fails as the Troubleshooting section tells you. Role changes apply to sessions that are already open.
+The user that the installer creates is an `admin`. A user without a `role` is a `viewer`. API tokens have one more
+role, **Read only, with logs**. See [Users and API tokens](/docs/guides/users-and-tokens/).
 
-API tokens have their own roles:
+## Troubleshooting
 
-- **Full access** (`admin`).
-- **Read only, with logs** (`observer`). This role can also read logs and the names of variables, but it can change nothing.
-- **Read only** (`viewer`).
+**The setup link does not open.** Port 443 is closed to your computer, or the server has a new IP address. Open ports
+80 and 443, and then [make a new link](#lost-the-link-or-every-password).
 
-`observer` exists only for tokens. The page **Sign in the command line** uses other labels for the same roles:
-**Read only, including logs (recommended)** is `observer`, and **Read only, without logs** is `viewer`. See
-[Users and tokens](/docs/guides/users-and-tokens/).
+**The page says `this setup link was used or has expired`.** [Make a new link](#lost-the-link-or-every-password).
 
-## Manage users and passwords
+**`localhost:8085` does not respond.** The SSH session closed, or the dashboard on the server stopped. Start the
+`ssh` command again. If the page still does not respond, see [Under the hood](#under-the-hood).
 
-The Secret `geass-dashboard-auth` in `geass-system` holds all of the sign-in data:
+**`invalid username or password`.** The username or the password is wrong, or the username is locked for one minute.
+Wait one minute, and then try again.
 
-| Key | Content |
-| --- | --- |
-| `users` | JSON array of `{"username", "password", "role"}` |
-| `session-key` | The key that signs session cookies. Geass generates it |
-| `session-epochs` | A counter for each user. Geass increases it at sign-out, and Geass manages it |
-| `login-lockouts` | Records of failed attempts, for your users only. Geass removes expired records, and Geass manages this key |
+**You sign in and return to the sign-in page.** The browser rejected the sign-in cookie. Open the dashboard at an
+HTTPS address, or at `http://localhost:8085` with the SSH command.
 
-Edit only `users`. To end all sessions, you can also edit `session-key`. Each username must be unique, without regard to letter case.
+**The installer printed no setup link.** The installer makes a link only when the dashboard has no users. Sign in with
+an existing user, or [make a new link](#lost-the-link-or-every-password).
 
-**Change a password.** Patch the whole `users` array, with the new plain-text password in place of `CHANGE_ME`. Geass hashes the password at the next sign-in:
+**`request origin could not be verified`.** A proxy or a tunnel changed the host name of the request. Forward the
+original `Host` header, or open the dashboard as [Open the dashboard](#open-the-dashboard) shows.
+
+**`dashboard authentication is unavailable` when you click Continue.** Geass found no valid user.
+[Make a new link](#lost-the-link-or-every-password).
+
+**The page says `Dashboard unavailable`.** Click **Try again**. If the message stays, read the Geass log. See
+[Under the hood](#under-the-hood).
+
+**`geass login` says `the sign-in was not approved in time`, or the page says `No sign-in request has that code`.** The
+code expired after 10 minutes, or Geass restarted. Run `geass login` again.
+
+**The approval page says `Only an admin can approve this`.** You signed in as a viewer. Sign in as an admin.
+
+## Under the hood
+
+### When the dashboard does not answer on the server
+
+To see whether the dashboard service on the server runs, run this command on the server, and read its last lines:
 
 ```bash
-sudo k3s kubectl -n geass-system patch secret geass-dashboard-auth --type merge \
-  -p '{"stringData":{"users":"[{\"username\":\"admin\",\"password\":\"CHANGE_ME\",\"role\":\"admin\"}]"}}'
+sudo systemctl status geass-dashboard
 ```
 
-The patch replaces the list, so include every user that you want to keep. You can copy existing hashes from the current value. To read the current value, run this command:
+On a server that uses OpenRC, run `sudo rc-service geass-dashboard status` instead.
+
+### How the dashboard is reached
+
+On a new cluster, the installer sets `spec.dashboard.publicIP: true` on the GeassCluster. Until the dashboard domain is
+verified, the operator then keeps these objects:
+
+- The ClusterIssuer `geass-letsencrypt-ip`. It uses the Let's Encrypt profile `shortlived`, which IP address
+  certificates require, and it needs no email. The `letsencrypt-prod` issuer for domains does not change.
+- The Certificate `geass-dashboard-public-ip` in `geass-system`, for the public IPv4 address of the server. It lasts about
+  six days, and cert-manager renews it.
+- The Traefik `TLSStore` named `default` in `geass-system`. A browser sends no server name for an IP address, so Traefik
+  answers with this default certificate.
+- The Traefik `IngressRoute` `geass-dashboard-public-ip`. It sends HTTPS requests for the address, and no other host, to
+  the dashboard Service `geass-geass-dashboard` on port 8085.
+- The Traefik `Middleware` and `IngressRoute` `geass-dashboard-public-ip-http`. They redirect plain HTTP for the address to
+  HTTPS. Requests under `/.well-known/acme-challenge/` are not redirected, so that the certificate renews.
+
+The GeassCluster condition `DashboardPublicIP` says how this goes, and `status.dashboardPublicURL` holds the address when
+it answers. When the dashboard domain is verified, the operator deletes the four objects. If a `TLSStore` named `default`
+that Geass did not create exists in `geass-system`, Geass leaves it, and the condition says `TLSStoreInUse`.
+
+To read the condition, run this command:
+
+```bash
+sudo k3s kubectl -n geass-system get geasscluster default -o jsonpath='{.status.conditions[?(@.type=="DashboardPublicIP")].message}'
+```
+
+The installer also adds the service `geass-dashboard` on the first server: a systemd unit, or an OpenRC script. It runs
+`k3s kubectl port-forward --address 127.0.0.1` to the dashboard Service, so the dashboard also answers on
+`127.0.0.1:8085`. The SSH command uses this address. The installer adds this service on a new install only.
+
+The users are in the Kubernetes Secret `geass-dashboard-auth` in the namespace `geass-system`. A setup link is the key
+`setup` of that Secret: a SHA-256 hash of the token and the time when the link expires. The token follows the `#` of the
+link, and a browser never sends that part to a server. A wrong token counts as a failed sign-in for the lockout. The
+installer and `dashboard-link` write only the `setup` key, and never change users. You edit only the `users` key. Geass
+manages the other keys: `session-key`, `session-epochs`, and `login-lockouts`.
+
+To read the users, run this command. The output shows usernames, roles, and password hashes:
 
 ```bash
 sudo k3s kubectl -n geass-system get secret geass-dashboard-auth -o jsonpath='{.data.users}' | base64 -d
 ```
 
-That output holds usernames, roles, and bcrypt hashes. Geass accepts a hash in a `password` field as it is.
+### Set a new password
 
-**Add or remove a user, or change a role.** Edit the array in the same way. The sessions of a removed user stop working immediately. API tokens are not tied to the account of the user, and they continue to work. This includes the tokens that the user approved for the command line. Revoke these tokens under **Settings → Tokens**.
+To add users, change roles, and reset passwords, use **Settings** → **Users**. See
+[Users and API tokens](/docs/guides/users-and-tokens/#manage-users). When no admin can sign in, make a new setup link.
+See [Lost the link or every password](#lost-the-link-or-every-password).
 
-**End every session.** A password change does not end sessions that are already open. These sessions last until they expire or the user signs out. To end all of them, delete the signing key. Geass creates a new key on the next request, and every cookie signed with the old key stops working. This does not apply if `GEASS_DASHBOARD_SESSION_KEY` is set, because that variable has priority over the Secret:
+### Other details
+
+Geass can also read users from the environment variables `GEASS_DASHBOARD_PASSWORD`, `GEASS_DASHBOARD_USERNAME`, and
+`GEASS_DASHBOARD_USERS` on the `manager` container of the Deployment `geass-controller-manager`. Geass uses them only when
+the Secret has no valid users. At the first sign-in, Geass copies them into the Secret, and from then on the Secret has
+priority. `GEASS_DASHBOARD_SESSION_KEY` sets the session key and has priority over the Secret. Use the Secret instead,
+because the variables show the password in plain text to anyone who can read the Deployment.
+
+The session cookie is `__Host-geass_session`, or `geass_session` over plain HTTP on `localhost`. It is `HttpOnly`,
+`SameSite=Lax`, and `Secure` except on a loopback address. Geass checks the `Origin` or `Referer` of each change against
+the `Host` of the request. A reverse proxy in front of the dashboard must pass the `Host` header without a change.
+
+If you run `kubectl` on your own computer against this cluster, you can run a `port-forward` command there instead of
+the SSH command. K3s writes its kubeconfig to `/etc/rancher/k3s/k3s.yaml` on the server, with the address `127.0.0.1`.
+Change that address to one that your computer can reach, and open 6443/tcp to your computer.
+
+To read the Geass log, run this command on the server:
 
 ```bash
-sudo k3s kubectl -n geass-system patch secret geass-dashboard-auth --type json \
-  -p '[{"op":"remove","path":"/data/session-key"}]'
+sudo k3s kubectl -n geass-system logs deploy/geass-controller-manager -c manager
 ```
-
-**Forgot the password.** Patch the Secret as the previous steps show. After the first sign-in, Geass stores only the hash, so you cannot read back a password.
-
-## Configure users with environment variables
-
-The operator can read users from its environment instead of from the Secret. Set these variables on the `manager` container of the Deployment `geass-controller-manager`:
-
-| Variable | Meaning |
-| --- | --- |
-| `GEASS_DASHBOARD_PASSWORD` | Password of one `admin` user. Geass uses it only when `GEASS_DASHBOARD_USERS` is empty |
-| `GEASS_DASHBOARD_USERNAME` | Name of that user. The default is `admin` |
-| `GEASS_DASHBOARD_USERS` | Many users: a JSON array like the array in the Secret, or `name:password:role` entries separated by commas |
-| `GEASS_DASHBOARD_SESSION_KEY` | Session signing key: at least 16 characters, or `hex:` followed by at least 16 bytes in hex. It has priority over `session-key` in the Secret |
-
-:::caution
-Use the Secret, not environment variables. Environment variables are a weaker choice. The password is in plain text in the Deployment, and anyone who can read Deployments sees it. After the first sign-in, Geass copies the hashed users into the Secret. From then on, the Secret has priority over the variables, so a later change to `GEASS_DASHBOARD_PASSWORD` has no effect.
-:::
-
-## What happens under the hood
-
-- `/api/login` uses bcrypt to check the user against the Secret. When the Secret has no valid users, it checks against the variables. Then it sets the cookie `__Host-geass_session`. Over plain http on this machine, the cookie is `geass_session`. The cookie is `HttpOnly` and `SameSite=Lax`, it is signed with the session key, and it is valid for 12 hours. It carries the user name, the role, and the epoch of the user.
-- Every API request needs that cookie, or an API token in an `Authorization: Bearer` header. Only these items are public:
-  - The static page shell and its files.
-  - The login, logout, and session endpoints.
-  - The two endpoints that a program uses to start and collect a command-line sign-in: `POST /api/auth/device` and `POST /api/auth/token`, also under `/api/v1/auth/`.
-  - `/geass-probe`.
-  - The GitHub webhook endpoint.
-
-  The approval of a sign-in is not public. It needs a signed-in admin.
-- Geass checks the `Origin` or `Referer` header of a write against the `Host` that the request used to reach the dashboard. Thus a form on a different site cannot act as you. Geass trusts forwarded host headers only when the request reaches the dashboard by its in-cluster Service name. A reverse proxy in front of the dashboard must pass the `Host` header through without a change. A request that carries an API token has no cookie to protect, so it skips this check.
-
-## Troubleshooting
-
-**`dashboard authentication is unavailable` when you press Continue.** Geass found no valid user. Check these items in sequence:
-
-1. The Secret exists: `sudo k3s kubectl -n geass-system get secret geass-dashboard-auth`.
-2. `users` is valid JSON.
-3. Every entry has a username and a password that are not empty.
-4. No password is `CHANGE_ME`.
-5. Each role is `admin` or `viewer`.
-6. No two usernames are equal, without regard to letter case.
-
-The same message appears when Geass cannot read the Kubernetes API.
-
-**`invalid username or password`.** One of these conditions is true:
-
-- The credentials do not match.
-- Your address failed five times for this username in the last minute, or the username failed 25 times from all addresses in the last minute.
-- Your address caused 20 failed sign-ins in the last minute.
-
-Wait one minute and try one more time.
-
-**You sign in and return to the sign-in form.** The browser rejected the session cookie. Reach the dashboard on `localhost` or `127.0.0.1` through the tunnel, or on an HTTPS address.
-
-**`request origin could not be verified`.** The `Origin` of the request does not match its `Host`. A proxy or a tunnel that rewrites the host name causes this error. Forward the original `Host` header, or use a port-forward.
-
-**You are sent back to the sign-in form after some hours.** Sessions last 12 hours. Sign in again.
-
-**The page says `Dashboard unavailable` and offers Try again.** The dashboard answered with an error that is not a sign-in prompt. Check the operator with `sudo k3s kubectl -n geass-system get pods` and `sudo k3s kubectl -n geass-system logs deploy/geass-controller-manager -c manager`.
-
-**`geass login` ends with `the sign-in was not approved in time`, or the page says `No sign-in request has that code`.** The code is valid for 10 minutes. The operator keeps pending requests in memory, so an operator restart cancels them. Run `geass login` again.
-
-**The approval page says `Only an admin can approve this`.** You are signed in to the dashboard as a viewer. Sign in as an admin.
-
-**`localhost:8085` does not respond.** The `port-forward` command stopped, or the SSH forward is not running. The Service is `geass-geass-dashboard`. To see it, run `sudo k3s kubectl -n geass-system get svc`.
 
 ## Related
 
 - [Deploy your first app](/docs/getting-started/first-app/)
 - [Connect a domain](/docs/getting-started/connect-domain/)
 - [Command line](/docs/guides/command-line/)
-- [Users and tokens](/docs/guides/users-and-tokens/)
+- [Users and API tokens](/docs/guides/users-and-tokens/)
 - [Security](/docs/operations/security/)

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { Menu } from "@mantine/core";
+import { MoreVertical, Plus } from "lucide-react";
 import { action, api } from "@/lib/api";
 import { canMutate } from "@/lib/dashboard";
 import { alertUser, alertError, notify } from "@/lib/notify";
-import { useRefreshCompute } from "@/lib/compute";
+import { useRefreshCompute, useServers } from "@/lib/compute";
 import { defaultRegion, describeTags, platformRegions } from "@/lib/placement";
 import { ClusterBackup } from "@/components/ClusterBackup";
 import { RecoverBackups } from "@/components/RecoverBackups";
@@ -13,6 +14,7 @@ import { useHidden } from "@/lib/options";
 import { managedFor } from "@/lib/managed";
 import { HAReadinessSection } from "@/components/HAReadinessSection";
 import { NodePlacementDialog } from "@/components/NodePlacementDialog";
+import { ServerHostKeysDialog } from "@/components/ServerHostKeysDialog";
 import { AddServerSheet } from "@/components/compute/AddServerSheet";
 import { Callout, ConfirmDelete } from "@/components/compute/ComputeBits";
 import { UsagePanel } from "@/components/UsagePanel";
@@ -102,6 +104,71 @@ function ServerImpact({ name }) {
   );
 }
 
+const PHASE_LABEL = {
+  Pending: "Waiting",
+  Creating: "Creating machine",
+  Joining: "Joining",
+  Failed: "Failed",
+  Deleting: "Removing",
+};
+
+/** What a server that has no node yet is doing, in a word, and the colour that goes with it. */
+function serverStatus(server) {
+  const failed = server.phase === "Failed";
+  return {
+    status: PHASE_LABEL[server.phase] || server.phase,
+    tone: failed ? "danger" : server.phase === "Deleting" ? "neutral" : "warning",
+  };
+}
+
+/** Who cordoned a node, when it was Geass: Geass then undoes it itself, so the button is off. */
+const CORDONED_BY = { upgrade: "to upgrade it", pool: "to empty it" };
+
+/**
+ * What can be done to a server. A server that failed to join shows Retry in the row, because that is what to do next.
+ * The rest are in a menu, so a row stays narrow however many apply.
+ */
+function RowActions({ row, manage, working, onEdit, onToggleCordon, onRetry, onHostKeys, onRemove }) {
+  const cordonVerb = row.cordoned ? "Uncordon" : "Cordon";
+  const retry = manage && row.server?.canRetry;
+  const items = [];
+  if (row.joined) items.push({ key: "edit", label: "Edit", onClick: onEdit });
+  if (row.joined && manage) {
+    items.push({
+      key: "cordon",
+      label: cordonVerb,
+      onClick: onToggleCordon,
+      disabled: Boolean(row.cordonedBy),
+      title: row.cordonedBy ? "Geass cordoned this server and uncordons it when it is done." : row.cordoned ? "Let new services start here again." : "Keep new services off this server. What runs here stays.",
+    });
+  }
+  if (row.server?.canUpdateHostKeys && manage) items.push({ key: "keys", label: "Update host keys", onClick: onHostKeys });
+  if (row.removable && manage) items.push({ key: "remove", label: "Remove", onClick: onRemove, danger: true });
+  return (
+    <span className="cp-row-actions">
+      {retry ? (
+        <Button size="xs" variant="outline" loading={working === `retry:${row.name}`} onClick={onRetry} aria-label={`Retry ${row.serverName}`}>Retry</Button>
+      ) : null}
+      {items.length ? (
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <button type="button" className="rw-icon-btn" aria-label={`Actions for ${row.name}`} disabled={Boolean(working) && working.endsWith(`:${row.name}`)}>
+              <MoreVertical size={15} />
+            </button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {items.map((item) => (
+              <Menu.Item key={item.key} color={item.danger ? "red" : undefined} disabled={item.disabled} title={item.title} onClick={item.onClick}>
+                {item.label}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      ) : null}
+    </span>
+  );
+}
+
 export function ClusterCapacityPage({ data, reload, embedded = false }) {
   const capacity = data?.platform?.capacity || {};
   const mutable = canMutate(data);
@@ -112,6 +179,9 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
   const [removing, setRemoving] = useState(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState("");
+  const [hostKeys, setHostKeys] = useState(null);
+  const [working, setWorking] = useState("");
+  const servers = useServers().data || [];
   const refreshCompute = useRefreshCompute();
   const cpuUsed = capacity.cpuAllocatableMillis ? Math.min(100, Math.round((capacity.cpuRequestedMillis / capacity.cpuAllocatableMillis) * 100)) : 0;
   const memUsed = capacity.memoryAllocatableBytes ? Math.min(100, Math.round((capacity.memoryRequestedBytes / capacity.memoryAllocatableBytes) * 100)) : 0;
@@ -120,11 +190,15 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
     { metric: "Memory available", value: capacity.memoryAvailable, detail: `${capacity.memoryRequested} requested of ${capacity.memoryAllocatable}`, load: memUsed },
     { metric: "Healthy nodes", value: String(capacity.healthyNodes ?? 0), detail: `${capacity.schedulableNodes ?? 0} schedulable`, load: 0 },
   ] : [];
+  const serverOfNode = new Map(servers.filter((server) => server.node).map((server) => [server.node, server]));
   const nodeRows = (capacity.nodes || []).map((node) => {
     const pressureScore = Math.min(100, (node.pressure?.length || 0) * 34);
     const load = node.cpuUsedPercent ?? pressureScore;
+    const server = serverOfNode.get(node.name);
+    const failed = server && server.phase === "Failed";
     return {
       name: node.name,
+      serverName: server?.name || node.name,
       role: node.role,
       cpu: node.cpuAllocatable,
       memory: node.memoryAllocatable,
@@ -134,27 +208,79 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       pool: node.pool || "",
       ephemeral: Boolean(node.ephemeral),
       // A server that was added on its own can be removed again; the control plane and a pool's nodes cannot.
-      removable: node.role !== "control-plane" && !node.pool,
+      removable: server ? server.canRemove : node.role !== "control-plane" && !node.pool,
+      joined: true,
+      cordoned: !node.schedulable,
+      cordonedBy: node.cordonedBy || "",
+      server,
       raw: node,
       pressure: node.pressure?.length ? node.pressure.join(", ") : "—",
       load,
-      status: !node.ready ? "Not ready" : !node.schedulable ? "Unschedulable" : "Ready",
-      tone: !node.ready ? "danger" : !node.schedulable ? "warning" : "success",
+      status: failed ? "Failed" : !node.ready ? "Not ready" : !node.schedulable ? "Cordoned" : "Ready",
+      tone: failed || !node.ready ? "danger" : !node.schedulable ? "warning" : "success",
+      message: failed ? server.message : "",
     };
   });
+  // A server that has not joined, or failed to, has no node, so it is a row of its own. This is where its error is.
+  const nodeNames = new Set(nodeRows.map((row) => row.name));
+  servers
+    .filter((server) => !server.joined && !nodeNames.has(server.name))
+    .forEach((server) => {
+      nodeRows.push({
+        name: server.name,
+        serverName: server.name,
+        role: server.role,
+        cpu: "—",
+        memory: "—",
+        k3s: "—",
+        region: "—",
+        tags: "—",
+        pool: server.pool || "",
+        ephemeral: false,
+        removable: server.canRemove,
+        joined: false,
+        cordoned: false,
+        cordonedBy: "",
+        server,
+        raw: null,
+        pressure: "—",
+        load: 0,
+        message: server.message,
+        ...serverStatus(server),
+      });
+    });
+
+  const refreshServers = () => Promise.all([reload?.(), refreshCompute()]);
+  const runOnServer = async (key, path, done) => {
+    setWorking(key);
+    try {
+      await action(path);
+      notify(done, "success");
+      await refreshServers();
+    } catch (error) {
+      alertError(error.message);
+    } finally {
+      setWorking("");
+    }
+  };
+  const toggleCordon = (row) => {
+    const verb = row.cordoned ? "uncordon" : "cordon";
+    return runOnServer(`${verb}:${row.name}`, `/nodes/${encodeURIComponent(row.name)}/${verb}`, row.cordoned ? `${row.name} takes new services again` : `${row.name} takes no new services`);
+  };
+  const retryServer = (row) => runOnServer(`retry:${row.name}`, `/servers/${encodeURIComponent(row.serverName)}/retry`, `Retrying ${row.serverName}`);
 
   const removeServer = async () => {
     setRemoveBusy(true);
     setRemoveError("");
     try {
-      await action(`/servers/${removing.name}/delete`, { confirmName: removing.name });
-      notify(`Removing ${removing.name}`, "success");
+      await action(`/servers/${encodeURIComponent(removing.serverName)}/delete`, { confirmName: removing.serverName });
+      notify(`Removing ${removing.serverName}`, "success");
       setRemoving(null);
       await Promise.all([reload?.(), refreshCompute()]);
     } catch (error) {
       setRemoveError(
         error.status === 404
-          ? `Geass did not add ${removing.name} as a server, so it cannot remove it here. Remove it where it was set up.`
+          ? `Geass did not add ${removing.serverName} as a server, so it cannot remove it here. Remove it where it was set up.`
           : error.message,
       );
     } finally {
@@ -210,6 +336,16 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
         <DataTable
           columns={[
             { label: "Node", key: "name" },
+            {
+              label: "Status",
+              render: (row) => (
+                <div className="cp-node-status">
+                  <Badge tone={row.tone}>{row.status}</Badge>
+                  {row.cordonedBy ? <Muted size="xs">Cordoned by Geass {CORDONED_BY[row.cordonedBy]}</Muted> : null}
+                  {row.message ? <Muted size="xs" className="cp-node-message">{row.message}</Muted> : null}
+                </div>
+              ),
+            },
             { label: "Role", key: "role" },
             {
               label: "Pool",
@@ -227,26 +363,25 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
             { label: "Memory", key: "memory" },
             { label: "Pressure", key: "pressure" },
             {
-              label: "Status",
-              align: "right",
-              render: (row) => <Badge tone={row.tone}>{row.status}</Badge>,
-            },
-            {
               label: "",
               align: "right",
               render: (row) => (mutable ? (
-                <span className="cp-row-actions">
-                  <Button size="xs" variant="outline" onClick={() => setEditing(row.raw)} aria-label={`Edit ${row.name}`}>Edit</Button>
-                  {row.removable && !hideServers ? (
-                    <Button size="xs" variant="outline" onClick={() => { setRemoveError(""); setRemoving(row); }} aria-label={`Remove ${row.name}`}>Remove</Button>
-                  ) : null}
-                </span>
+                <RowActions
+                  row={row}
+                  manage={!hideServers}
+                  working={working}
+                  onEdit={() => setEditing(row.raw)}
+                  onToggleCordon={() => toggleCordon(row)}
+                  onRetry={() => retryServer(row)}
+                  onHostKeys={() => setHostKeys(row.server)}
+                  onRemove={() => { setRemoveError(""); setRemoving(row); }}
+                />
               ) : null),
             },
           ]}
           rows={nodeRows}
           getRowKey={(row) => row.name}
-          empty="No Kubernetes nodes are visible yet."
+          empty="No servers are visible yet."
         />
         </div>
         {hasEphemeral ? (
@@ -265,11 +400,12 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
       <DefaultRegionSection data={data} reload={reload} mutable={mutable} />
       <HAReadinessSection data={data} />
       <NodePlacementDialog node={editing} data={data} reload={reload} onClose={() => setEditing(null)} />
+      <ServerHostKeysDialog server={hostKeys} onClose={() => setHostKeys(null)} onSaved={refreshServers} />
       <AddServerSheet opened={addingServer && !hideServers} onClose={() => setAddingServer(false)} />
       <ConfirmDelete
         opened={Boolean(removing)}
         title="Remove server?"
-        name={removing?.name || ""}
+        name={removing?.serverName || ""}
         confirmLabel="Remove server"
         busy={removeBusy}
         error={removeError}
@@ -277,9 +413,9 @@ export function ClusterCapacityPage({ data, reload, embedded = false }) {
         onConfirm={removeServer}
       >
         <p>
-          This removes the server <strong>{removing?.name}</strong> from the cluster. A machine Geass created at a cloud is deleted there; a server you added yourself is only taken out.
+          This removes the server <strong>{removing?.serverName}</strong> from the cluster. A machine Geass created at a cloud is deleted there; a server you added yourself is only taken out.
         </p>
-        {removing ? <ServerImpact name={removing.name} /> : null}
+        {removing ? <ServerImpact name={removing.serverName} /> : null}
       </ConfirmDelete>
     </>
   );

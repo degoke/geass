@@ -50,6 +50,14 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/usage/hours", "What each organization reserved, hour by hour, for billing (spec.usage.enabled). Send ?from= and ?to= (RFC 3339) and optionally ?org=. The platform's administrators only", accessAdmin, tagService, nil, false},
 	{http.MethodGet, "/mail/usage", "What each organization sent through the platform's mail relay (spec.tenancy.mail.relay), and what it was refused, since the relay started: counts kept in the relay's memory. Send ?org= for one. The platform's administrators only", accessAdmin, tagService, nil, false},
 
+	{http.MethodGet, "/settings/addons", "The add-ons that can be turned on and off (sleep when idle, replicated storage, metrics, logs): whether each is on, how it is doing (Off, Installing, Ready or Failed, with the reason), and what can be done to it. An admin only", accessAdmin, tagService, nil, false},
+	{http.MethodPost, "/settings/addons/{name}/save", "Turn an add-on on or off, or change its options. {name} is serverless, longhorn, monitoring or logging. Replicated storage (longhorn) cannot be turned off, because Geass never removes it and databases keep their data on it. Turning metrics or logs off removes them and what they kept. A field that is not sent stays as it is. An admin only", accessAdmin, tagService, []v1Field{
+		{"enabled", jsonBoolean, "true to turn it on, false to turn it off", false},
+		{"profile", jsonString, "For monitoring: lite or full", false},
+		{"retentionDays", jsonInteger, "For logging: how many days logs are kept, 1 to 90", false},
+	}, false},
+	{http.MethodPost, "/settings/addons/{name}/retry", "Start the install of an add-on over, when it is Failed because its install job failed or was suspended. The operator deletes the stuck job and K3s makes a new one. An admin only", accessAdmin, tagService, nil, false},
+
 	// ---- signing in ----
 	{http.MethodPost, "/auth/device", "Start a sign-in from a program. Returns a code for the person to approve", accessPublic, tagAuth,
 		[]v1Field{{"clientName", jsonString, "What is asking, shown to the person who approves", false}}, false},
@@ -58,7 +66,7 @@ var v1Operations = []v1Operation{
 	{http.MethodGet, "/auth/device/{code}", "What a sign-in request is, before approving it (the dashboard page uses this)", accessAdmin, tagAuth, nil, false},
 	{http.MethodPost, "/auth/device/approve", "Approve or refuse a sign-in. A signed-in admin only", accessAdmin, tagAuth, []v1Field{
 		{"userCode", jsonString, "The code the program is showing", true},
-		{"role", jsonString, "admin, observer or viewer. Defaults to observer", false},
+		{formRole, jsonString, "admin, observer or viewer. Defaults to observer", false},
 		{"expiresInDays", jsonInteger, "How long the token lasts. Defaults to 30", false},
 		{"deny", jsonBoolean, "Refuse the sign-in instead", false},
 	}, false},
@@ -73,6 +81,20 @@ var v1Operations = []v1Operation{
 		{"expiresInDays", jsonInteger, "Days until it expires; 0 for never", false},
 	}, false},
 	{http.MethodDelete, "/tokens/{id}", "Revoke an API token. A signed-in admin only", accessAdmin, tagAuth, nil, false},
+	{http.MethodGet, "/users", "The users who sign in to the dashboard with a password, with their roles, never a password. The platform's administrators only", accessAdmin, tagAuth, nil, false},
+	{http.MethodPost, "/users", "Make a dashboard user. Without a password Geass makes one up and returns it once. The platform's administrators only. A token can make a viewer, not an admin", accessAdmin, tagAuth, []v1Field{
+		{formUsername, jsonString, "The name to sign in with: letters, digits and . _ @ + -, up to 64 characters", true},
+		{formRole, jsonString, "admin or viewer. Defaults to viewer", false},
+		{"password", jsonString, "At least 12 characters. Leave it out to have one made up", false},
+	}, false},
+	{http.MethodPost, "/users/{name}/role", "Change a user's role. The last admin cannot be made a viewer. A token can only make a viewer", accessAdmin, tagAuth, []v1Field{
+		{formRole, jsonString, "admin or viewer", true},
+	}, false},
+	{http.MethodPost, "/users/{name}/password", "Set a user's password and sign them out. Without a password Geass makes one up and returns it once. A token can reset the password of a viewer, not of an admin", accessAdmin, tagAuth, []v1Field{
+		{"password", jsonString, "At least 12 characters. Leave it out to have one made up", false},
+	}, false},
+	{http.MethodDelete, "/users/{name}", "Remove a user and sign them out. The last admin cannot be removed", accessAdmin, tagAuth, nil, false},
+	{http.MethodPost, "/users/sign-out-all", "End every dashboard session, of every user and of everyone who signed in through an identity provider, yours included. API tokens keep working", accessAdmin, tagAuth, nil, false},
 
 	// ---- projects ----
 	{http.MethodGet, "/projects", "List projects", accessViewer, kindProjects, nil, false},
@@ -222,6 +244,8 @@ var v1Operations = []v1Operation{
 		{"tags", jsonArray, "The node's tags", false}, {"reserved", jsonArray, "Tags to reserve the node for", false},
 		{"compliance", jsonArray, "Tags that are compliance tags, which are always reserved", false},
 	}, false},
+	{http.MethodPost, "/nodes/{name}/cordon", "Cordon a node: what runs on it stays, and no new service starts there. Refused for the last node that can start new services", accessAdmin, tagNodes, nil, false},
+	{http.MethodPost, "/nodes/{name}/uncordon", "Uncordon a node. Refused for a node that Geass cordoned itself, to upgrade it or to empty it", accessAdmin, tagNodes, nil, false},
 	// ---- machines: clouds, pools and single servers ----
 	{http.MethodGet, "/compute/providers", "The clouds Geass can create machines at, and the credentials and settings each takes", accessViewer, tagCompute, nil, false},
 	{http.MethodGet, "/compute/sizes", "The machine sizes a cloud offers in a region, cheapest first. Send ?connection= and ?region=", accessAdmin, tagCompute, nil, false},
@@ -298,6 +322,11 @@ var v1Operations = []v1Operation{
 		{"placementZone", jsonString, "The site the node carries", false},
 		{"tags", jsonArray, "Node tags", false},
 		{"storage", jsonString, "None or Allow (the default for a single server)", false},
+	}, false},
+	{http.MethodGet, "/servers", "The servers Geass joins to the cluster, with the phase of each and, for one that failed, why. A server that has not joined is here and in no list of nodes", accessViewer, tagCompute, nil, false},
+	{http.MethodPost, "/servers/{name}/retry", "Start a server that failed to join over. Refused for a server that has not failed", accessAdmin, tagCompute, nil, false},
+	{http.MethodPost, "/servers/{name}/host-keys", "Replace the host keys Geass accepts from a server you have, for example after you rebuilt the machine. Only the lines for that server change", accessAdmin, tagCompute, []v1Field{
+		{"knownHosts", jsonString, "The lines that ssh-keyscan prints for the server", true},
 	}, false},
 	{http.MethodDelete, "/servers/{name}", "Remove a server that was added on its own: its services move elsewhere and a machine made for it is deleted", accessAdmin, tagCompute, []v1Field{fieldConfirm}, false},
 	{http.MethodGet, "/cluster/metrics", "What services use across the cluster, and what the machines are doing", accessViewer, tagNodes, nil, false},

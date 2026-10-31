@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, list } from "@/lib/api";
 import { ApiTokens } from "@/components/ApiTokens";
+import { AddonSettings } from "@/components/AddonSettings";
 import { AlertSettings } from "@/components/AlertSettings";
 import { AuthSettings } from "@/components/AuthSettings";
+import { UsersSettings } from "@/components/UsersSettings";
 import { OrgRegistrySettings } from "@/components/OrgRegistrySettings";
 import { AppLink } from "@/components/AppLink";
 import { Button, KeyValueTable } from "@/components/geass-ui";
@@ -105,6 +107,20 @@ export function PlatformSettingsPage({ data, page, reload }) {
     return (
       <SettingsSection title="Sign-in" flat>
         <AuthSettings mutable={canMutate(data)} managed={managedFor(data, "signIn")} />
+      </SettingsSection>
+    );
+  }
+  if (page === "users") {
+    return (
+      <SettingsSection title="Users" flat>
+        <UsersSettings mutable={canMutate(data)} managed={managedFor(data, "signIn")} />
+      </SettingsSection>
+    );
+  }
+  if (page === "addons") {
+    return (
+      <SettingsSection title="Add-ons" flat>
+        <AddonSettings mutable={canMutate(data)} />
       </SettingsSection>
     );
   }

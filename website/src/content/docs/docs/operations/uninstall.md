@@ -1,193 +1,218 @@
 ---
 title: "Uninstall Geass"
-description: "Remove Geass from your servers: the order to follow, what happens to workloads, volumes, and backups, and the cloud resources that you must clean up."
+description: "Remove Geass from your servers: the order to follow, what is deleted and what stays, and the cloud resources that you must clean up yourself."
 ---
 
-Geass has no uninstall command. You remove Geass in this order:
+Geass has no uninstall command. To remove Geass, do these steps in this order:
 
-1. Delete your resources from the dashboard, so that Geass cleans up what it created in other places.
-2. Remove the workers.
-3. Uninstall K3s with the K3s scripts.
+1. [Delete your resources from the dashboard](#step-1-delete-resources-from-the-dashboard), so that Geass removes what it created outside the cluster.
+2. [Disconnect the connectors](#step-2-disconnect-connectors).
+3. [Remove the other servers](#step-3-remove-workers).
+4. [Uninstall the control plane server](#step-4-uninstall-the-control-plane).
 
-This page gives that order. It also says what is deleted and what is left behind, based on what the code does. The important part: Geass cleans up some external resources only when you delete the matching resource first. Geass never removes other external resources, for example DNS records and the backup bucket.
-
-## What happens to what
-
-| Thing | When K3s is uninstalled | Notes |
-| --- | --- | --- |
-| The operator, the dashboard, every Geass object, secrets, dashboard users, and API tokens | Deleted | They are in the cluster's database. K3s's uninstall script removes that database with its data directory |
-| Workloads and their namespaces | Deleted | |
-| The add-ons and what the operator created for them: KEDA and its HTTP add-on (the `keda` namespace), the operator's `ServiceMonitor` and `PrometheusRule`, the admission policies for compliance tags, and the `CronJob` objects of function schedules | Deleted | They are objects in the cluster's database. Geass itself never uninstalls KEDA or the admission policies, so only the removal of the cluster removes them |
-| Volumes on K3s's `local-path` storage (metrics, log history, and the in-cluster object storage server and databases created without Longhorn) | Deleted | They are under K3s's data directory (`/var/lib/rancher/k3s` by default) |
-| Longhorn replica data (database and object storage volumes) | Left on disk | The data is in Longhorn's data directory (`/var/lib/longhorn/` by default) on each node. Nothing refers to the data anymore. Remove it yourself |
-| iSCSI initiator packages that the installer added | Left | |
-| Firewall rules that the installer added | Left | |
-| S3 buckets and IAM users of your **buckets** | Left, unless you deleted the bucket in Geass first | See [Buckets](#what-deleting-each-resource-does) |
-| The S3 bucket and IAM user for **backups**, and the backups in it | Left | Geass never deletes the backup bucket or its user. Geass deletes the backups of a deleted database after 7 days, but only while the operator runs |
-| Cloudflare DNS records and the Cloudflare Tunnel | Left | Geass has no code that deletes them |
-| The GitHub App | Left | Delete it in GitHub |
-| PlanetScale databases and passwords | Left | |
-| Worker servers | K3s agents keep running | Remove workers first, or run the agent uninstall script on each worker |
-| Machines that Geass created at a cloud (pools and servers added with a cloud connection) | **Keep running and keep billing** | Delete the pools and servers first, while the operator and the connection still work. Only this step deletes the machines. See [Step 3](#step-3-remove-workers) |
-| Images that your builds pushed to a registry | Left | |
-| The `geass` command line's saved logins on your machines, the tokens in your CI secrets, and the `geass mcp` entries in AI agent hosts | Left | They hold tokens that the deleted cluster no longer recognizes. See [Clean up your own machines](#clean-up-your-own-machines) |
+Geass removes some external resources only when you delete the matching resource in the dashboard first. Geass never removes other external resources, for example DNS records and the backup bucket.
 
 ## Before you uninstall
 
-- Use the databases' own tools to dump any data that you want to keep. Copy the contents of in-cluster buckets. Backups alone are not enough to rebuild, because the dashboard restores from records that are in the cluster that you are about to delete. See [Upgrade Geass](/docs/operations/upgrading/) for the reason.
-- Decide which external resources to keep: S3 buckets, DNS names, and PlanetScale databases.
-- While the dashboard still works, do the cleanup in the next sections. After the operator is gone, nothing can delete a bucket or an IAM user for you.
+- Dump the data that you want to keep with the tools of each database. Copy the contents of your buckets. The backups in S3 are not enough, because the dashboard restores from records that are inside the cluster.
+- Decide which external resources to keep, for example S3 buckets, DNS names, and PlanetScale databases.
+- Do the cleanup in the next steps while the dashboard still works. After Geass is gone, nothing can delete a bucket, an IAM user, or a cloud machine for you.
+
+## What is deleted and what stays
+
+| Thing | After you uninstall | Notes |
+| --- | --- | --- |
+| Projects, services, databases, secret variables, settings, dashboard users, and API tokens | Deleted | They are in the cluster's state, which the uninstall deletes. |
+| Data on volumes without replicated storage | Deleted | |
+| Data on replicated volumes | Stays on disk | Nothing uses it. See [Clean up the servers](#clean-up-the-servers). |
+| S3 buckets and IAM users of your buckets | Stay, unless you deleted the bucket in Geass first | See [What deleting each resource does](#what-deleting-each-resource-does). |
+| The backup bucket, its IAM user, and the backups in it | Stay | Geass never deletes the backup bucket. |
+| Cloudflare DNS records and the Cloudflare Tunnel | Stay | Delete them in Cloudflare. |
+| The GitHub App | Stays | Delete it in GitHub. |
+| PlanetScale databases and passwords | Stay | |
+| Other servers | Keep running | Remove them in [Step 3](#step-3-remove-workers). |
+| Machines that Geass created at a cloud | **Keep running and keep costing money** | Delete them in [Step 3](#step-3-remove-workers), while Geass still runs. Nothing else deletes them. |
+| Images that your builds pushed to a registry | Stay | |
+| Firewall rules and packages that the installer added | Stay | See [Clean up the servers](#clean-up-the-servers). |
+| Saved `geass` logins, tokens in CI secrets, and `geass mcp` entries | Stay | See [Clean up your own machines](#clean-up-your-own-machines). |
 
 ## Step 1: delete resources from the dashboard
 
-Delete resources one kind at a time. Wait until each resource disappears before you continue. Each resource shows **Deleting** until its cleanup finishes.
+Delete one kind of resource at a time. Each resource shows **Deleting** until Geass finishes its cleanup. Wait until each resource disappears before you continue.
 
-1. **Services.** Open the service, and go to **Delete service** in its **Settings**. Enter the service ID, click **Delete service**, and confirm with **Delete permanently**.
-2. **Databases.** In the same section, use **Delete database**. If backups were on, Geass first takes a last backup, and it waits up to 10 minutes for that backup. Then Geass keeps the backups restorable for 7 days. Without backups, the data is destroyed.
-3. **Buckets.** Use **Delete bucket**.
-4. **Projects.** In the project's **Settings → Danger**, enter the project name under **Delete Project**. Click **Delete**, and confirm. The same page has **Manage Services**, which lists every resource of the project with a **Remove** button. You can use that list to delete the resources one by one first.
+1. **Services.** Open the service settings, and select **Danger**. Enter the service ID, click **Delete service**, and click **Delete permanently**.
+2. **Databases.** Do the same with **Delete database**. If backups are on, Geass first takes a last backup, and waits up to 10 minutes for it. Geass keeps the backups for 7 days. Without backups, the data is gone.
+3. **Buckets.** Do the same with **Delete bucket**.
+4. **Projects.** In the project **Settings**, select **Danger**. Under **Delete Project**, enter the project name, click **Delete**, and click **Delete permanently**.
+
+The **Manage Services** list on the same page shows each resource of the project with a **Remove** button. You can use it to delete the resources one at a time.
 
 :::caution
-Delete buckets and databases before you delete their project, and wait for them to finish. When you delete a project, Geass also deletes the project's cloud connections (AWS and PlanetScale) in the same pass. The cleanup of an S3 bucket needs the AWS connection to delete the bucket and its IAM user. The purge of an old database's backups also needs the AWS connection. If the connection of a bucket is already gone, Geass cannot clean up that bucket. The bucket's object stays in `Deleting` and retries with the error `AWS connection is unavailable`, and the S3 bucket and IAM user remain. This is what the code does, and the order above prevents it.
+Delete buckets and databases before you delete their project, and wait until they are gone. Geass deletes the AWS and PlanetScale connections of a project together with the project. Geass needs the AWS connection to delete an S3 bucket and its IAM user. Without the connection, the bucket stays in **Deleting**, and its log shows `AWS connection is unavailable`.
 :::
 
-When you delete a project, Geass does not delete the credentials Secrets of its connections. A connection named `prod-aws` keeps a Secret named `prod-aws-credentials` in `geass-system`, with the access key inside. Delete that Secret yourself, and revoke the key in AWS.
+When you delete a project, the access key of each AWS connection stays in the cluster until you uninstall. Revoke the key in AWS.
 
 ### What deleting each resource does
 
-| Resource | What Geass removes | What it leaves |
+| Resource | What Geass removes | What stays |
 | --- | --- | --- |
-| Service | The Deployment, Service, Ingress, autoscaler, metrics monitor, and variables that it created, its deployment history, and its `<service-id>-secrets` Secret. For a service that sleeps when idle, its `<service-id>-wake` Service and `HTTPScaledObject`. For a function, its schedules (`CronJob` objects) and its `<service-id>-trigger` Secret | Images that builds pushed to a registry. Cloudflare DNS records for its hostname |
-| In-cluster database | The database server, its Service, and its connection Secrets. PostgreSQL and SQLite volumes go with it. Longhorn volumes use a `Delete` reclaim policy. Redis keeps no volume | Backups in S3, for 7 days. After that, Geass purges them while the operator runs. MySQL's volume claims: Geass does not delete them, so check `kubectl get pvc -n <project-id>-<environment>`. They are deleted when the project's namespace is deleted |
-| External database (PlanetScale, AWS RDS) | Geass's own connection details | The database itself. Geass has no code to delete a PlanetScale or RDS database |
-| Logical database on a shared server | The database and its login on the shared server, within 3 minutes | |
-| In-cluster bucket | The bucket with its objects, and the bucket's login on the object storage server | |
-| AWS S3 bucket created by Geass | The bucket with every object, version, and unfinished upload, and the scoped IAM user with its access keys and policy | |
-| AWS S3 bucket attached from your account | The scoped IAM user with its keys and policy | The bucket and its contents |
-| Project | All of the above for the project. Also the project's namespaces and everything in them, its shared-variable and webhook secrets, its GitHub link, its API tokens, and its cloud connections | The credentials Secrets of the connections. External resources whose cleanup needed a connection |
+| Service | The service, its domains, its variables and secret variables, its deploy history, and the schedules of a function | Images in a registry. Cloudflare DNS records for its domains. |
+| Database in the cluster | The database and its data | Backups in S3 for 7 days. After that, Geass deletes them while it runs. |
+| External database (PlanetScale, AWS RDS) | The connection details in Geass | The database itself. |
+| Database on a shared server | The database and its login, within 3 minutes | |
+| Bucket in the cluster | The bucket, its objects, and its login | |
+| S3 bucket that Geass created | The bucket, every object and version, and its IAM user and keys | |
+| S3 bucket that you attached from your account | The IAM user and keys that Geass made | The bucket and its contents. |
+| Project | All of the above for the project, its environments, its shared variables, its GitHub link, its API tokens, and its cloud connections | External resources whose cleanup needed a connection that was already gone. |
 
-A bucket or a database that was only a draft, and that was never deployed, has nothing outside the cluster to remove.
+A draft that you never deployed has nothing outside the cluster to remove.
 
-You cannot delete the in-cluster object storage server, SeaweedFS or Garage (**Settings → Object storage**), while project buckets exist on it. When you delete the object storage server, Geass deletes everything on its volume, and its network policy `geass-s3`. You cannot delete a shared database server (**Settings → Databases**) while databases are on it.
+You cannot delete the object storage server in **Settings** > **Object storage** while buckets use it. When you delete it, Geass deletes everything on it. You cannot delete a shared database server in **Settings** > **Databases** while databases use it.
 
 ## Step 2: disconnect connectors
 
-In **Settings → Connectors**, do these steps:
+Open **Settings** > **Connectors**, and do these steps:
 
-- **Cloudflare → Disconnect.** Enter `remove-cloudflare`. This stops the `cloudflared` deployment and the automatic DNS updates. Your Cloudflare account, the tunnel named `geass`, and every DNS record that Geass created stay. Delete these items in Cloudflare:
-  - The proxied `A` record for the dashboard host (`geass.<your domain>` by default).
-  - The `CNAME` records that point at the tunnel (dashboard and service hostnames, in Tunnel mode).
+- **Cloudflare.** Under **Disconnect Cloudflare**, enter `remove-cloudflare`, and click **Disconnect**. Geass stops its tunnel and its DNS updates. Your Cloudflare tunnel named `geass` and the DNS records stay. Delete them in Cloudflare:
+  - The `A` record for the dashboard host. By default, the host is `geass.<your domain>`.
+  - The `CNAME` records that point at the tunnel, for the dashboard and for your services.
   - The tunnel.
-- **GitHub → Remove GitHub App.** Enter `remove-github`. This removes Geass's copy of the app's credentials. The GitHub App itself and its installations stay. Delete them in your GitHub settings.
-- **AWS and PlanetScale.** Geass removes these connections with their project (see above). Revoke the access keys and tokens at the provider.
-- **Clouds for machines.** Do this after [Step 3](#step-3-remove-workers), not before. You cannot remove a connection from the dashboard while pools or machines still use it, because without the connection Geass could not delete the machines. Click **Remove** on each connection under **Server clouds**, or run `geass connections remove NAME`. This deletes the connection and its Secret. The credentials stay valid at the cloud until you revoke them there.
+- **GitHub.** Enter `remove-github`, and click **Remove GitHub App**. Geass forgets the app. The GitHub App and its installations stay. Delete them in your GitHub settings.
+- **AWS and PlanetScale.** Geass removed these connections with their projects. Revoke the access keys and tokens at the provider.
+- **Server clouds.** Do this after [Step 3](#step-3-remove-workers). Geass does not remove a connection while servers or pools use it, because it needs the connection to delete the machines. Click **Remove** on each connection under **Server clouds**, or run `geass connections remove NAME`. The credentials stay valid at the cloud until you revoke them there.
 
 ## Step 3: remove workers
 
-**Machines that Geass created at a cloud come first.** Delete every [pool](/docs/guides/node-pools/) with `geass pools delete NAME`, or with **Delete pool** on its page. Delete every server that was added with a cloud connection: click **Remove** in the **Nodes** table, or run `geass servers remove NAME`. Geass drains each node for up to five minutes, removes the node, and deletes its machine at the cloud. Wait until `geass nodes list` no longer shows them. Then look in the cloud's own console for machines that are left. These machines have the labels `geass-managed` and `geass-cluster`. If you uninstall K3s first, nothing can delete those machines anymore, and they continue to bill you.
+Remove the other servers while the control plane server still runs.
 
-Then, for servers that you joined over SSH, delete each node object from the control plane. Geass connects over SSH, runs `/usr/local/bin/k3s-agent-uninstall.sh`, and removes the node from the cluster:
+1. Delete each [pool](/docs/guides/node-pools/). Open the pool, and click **Delete pool**. Or run `geass pools delete NAME`.
+2. Open **Usage** in the left rail.
+3. In the **Nodes** table, click **Remove** on a server.
+4. Enter the server name, and click **Remove server**. You can also run `geass servers remove NAME`.
+5. Do steps 3 and 4 for each server that has a **Remove** button.
+6. Wait until the servers are gone from the **Nodes** table, or from `geass nodes list`.
 
-```bash
-sudo k3s kubectl -n geass-system get geassnodes
-sudo k3s kubectl -n geass-system delete geassnode worker-1
-```
+For a machine that Geass created at a cloud, Geass moves its services for up to five minutes. Then Geass removes the server and deletes the machine at the cloud. For a server that you added over SSH, Geass uninstalls its agent over SSH, and removes the server.
 
-Do this while the control plane still runs. If a server is unreachable, or the control plane is already gone, log in to the worker and run the script yourself:
+:::caution
+Remove the cloud machines before you uninstall the control plane server. After the uninstall, nothing can delete them, and they continue to cost money. When you finish, look in the console of each cloud for machines with the labels `geass-managed` and `geass-cluster`.
+:::
 
-```bash
-sudo /usr/local/bin/k3s-agent-uninstall.sh
-```
+Geass cannot remove a server that has no **Remove** button, or that Geass cannot reach. See [Under the hood](#under-the-hood).
 
-See [Add servers](/docs/getting-started/add-servers/#remove-a-node) for what removal does to the workloads on a node.
+See [Add servers](/docs/getting-started/add-servers/#remove-a-node) for what removal does to the services on a server.
 
 ## Step 4: uninstall the control plane
 
-On the control plane, run this command:
+Geass has no dashboard option or command to uninstall the control plane yet. See [Under the hood](#under-the-hood).
 
-```bash
-sudo /usr/local/bin/k3s-uninstall.sh
-```
-
-K3s's script does these things:
-
-- It stops K3s.
-- It unmounts and removes its mounts and network interfaces.
-- It deletes `/etc/rancher/k3s`, its data directory, `/var/lib/kubelet`, the `k3s` binary, and its `kubectl`, `crictl`, and `ctr` links.
-
-The embedded etcd database goes with the data directory, so you cannot recover the cluster after this step.
+This step deletes K3s, the cluster's state, and the local volumes. You cannot get the cluster back after this step. If the cluster has [three control plane servers](/docs/operations/high-availability/#run-three-control-plane-servers), do this step on each of them.
 
 ## Clean up the servers
 
-If you want to remove what the installer and K3s left on each server, remove these items:
+The uninstall leaves these items on each server: replicated volume data, the firewall rules that the installer added, Tailscale, the iSCSI packages, and the installer files. Geass has no command to remove them. See [Under the hood](#under-the-hood).
 
-- **Longhorn data.** Run `sudo rm -rf /var/lib/longhorn`. This command deletes the only copies of database volumes on that node. Run it when you are sure that you no longer need them.
-- **Firewall rules.** If `ufw` or `firewalld` is active, the installer opened 6443/tcp, 10250/tcp, and 8472/udp (51820/udp for a multi-site cluster). Delete these rules in your firewall, for example with `sudo ufw delete allow 6443/tcp`, or in your provider's security group. You must remove the rules that you added yourself, for example 80/tcp and 443/tcp.
-- **A Tailscale mesh.** Tailscale stays installed, and each server stays on the tailnet, because K3s did not install Tailscale. Remove the servers in the Tailscale or Headscale admin console, or run `sudo tailscale logout` on each server. Revoke the auth key that you gave Geass. K3s's script deletes `/etc/rancher/k3s`, and with it the file that held the key (`vpn-auth`). The Secret `geass-mesh-auth` goes with the cluster.
-- **iSCSI.** The `iscsid` service and the `open-iscsi` or `iscsi-initiator-utils` package are still installed.
-- **Installer files.** `geass-install-*.log` in the directory that you ran the installer from, and the downloaded installer in your temporary directory.
+Outside the servers, remove these items:
+
+- **Firewall rules at your provider.** Delete the rules for Geass in the security group of your provider, for example for 80/tcp and 443/tcp.
+- **A Tailscale mesh.** Remove the servers in the Tailscale or Headscale admin console. Revoke the auth key that you gave Geass.
 
 ## Clean up your own machines
 
-When you remove the cluster, every API token is deleted. But the places that hold a token or call the cluster are on other machines.
+The uninstall deletes every API token. But the tokens are also saved on other machines.
 
-- **Command line.** On each machine where you ran `geass login`, run `geass logout` to forget the token. Or delete the whole saved login: `config.json` in the `geass` folder of your user configuration directory. The path is one of these:
-  - On Linux, `~/.config/geass/config.json`.
-  - On macOS, `~/Library/Application Support/geass/config.json`.
-  - On Windows, `%AppData%\geass\config.json`.
-  - The path in `GEASS_CONFIG`.
+- **Command line.** On each machine where you ran `geass login`, run `geass logout`. Or delete the saved login file:
+  - On Linux: `~/.config/geass/config.json`.
+  - On macOS: `~/Library/Application Support/geass/config.json`.
+  - On Windows: `%AppData%\geass\config.json`.
+  - Or the path in `GEASS_CONFIG`.
 
-  `geass logout` only forgets the token on that machine. To end a token while the cluster still runs, revoke it under **Settings → Tokens**. There, the tokens from `geass login` are named `CLI: geass CLI on <machine>`. To remove the program itself, delete the `geass` file that `install-cli.sh` put in `/usr/local/bin` or `~/.local/bin`.
-- **CI and scripts.** Delete `GEASS_URL` and `GEASS_TOKEN` from the secret store of your CI system. Also delete the jobs that call `geass`.
-- **AI agents.** Remove the `geass mcp` entry from each agent host. For example, run `claude mcp remove geass` in Claude Code, or remove the `geass` block in the configuration file of Claude Desktop. Stop any `geass mcp --listen` server.
+  To remove the program, delete the `geass` file from `/usr/local/bin` or `~/.local/bin`.
+- **CI and scripts.** Delete `GEASS_URL` and `GEASS_TOKEN` from the secret store of your CI system. Delete the jobs that call `geass`.
+- **AI agents.** Remove the `geass mcp` entry from each agent host. For example, run `claude mcp remove geass` in Claude Code. Stop any `geass mcp --listen` server.
 
 ## Check what is left in other accounts
 
 | Where | Look for |
 | --- | --- |
-| AWS S3 | The S3 buckets of your own buckets, if a deletion did not finish. The backup bucket (default name `geass-backups-` plus 12 hex characters), and the objects in it under `<project-id>/<database-id>-<8 characters>/`. The last part comes from the database's UID |
-| AWS IAM | Users whose names start with `geass-`: one for each bucket, and one for each backup bucket. Delete their access keys and the users |
-| Every cloud that made machines | Machines labeled `geass-managed=true` (for OVHcloud, named `geass-...`), the firewalls that Geass made (`geass-<cluster>`), and the credentials that you gave a connection. Revoke these credentials. A security group or firewall rule that Geass added for the control plane has the description `geass` (AWS) or `geass-access` (Hetzner) |
-| Cloudflare | DNS records for the dashboard and your services, the tunnel `geass`, and the API token that you gave Geass |
-| GitHub | The GitHub App and its installations |
-| PlanetScale | Databases and passwords that Geass created, and the service token |
-| DNS provider | Any records that you created yourself |
-| Your machines, CI and agent hosts | Saved `geass` logins, `GEASS_TOKEN` secrets, and `geass mcp` entries. See [Clean up your own machines](#clean-up-your-own-machines) |
+| AWS S3 | Buckets whose deletion did not finish. The backup bucket, named `geass-backups-` and 12 hex characters by default. |
+| AWS IAM | Users whose names start with `geass-`. Delete their access keys and the users. |
+| Each cloud that made machines | Machines labeled `geass-managed=true` (on OVHcloud, named `geass-...`), firewalls named `geass-<cluster>`, and the credentials of the connection. A firewall rule that Geass added for the control plane has the description `geass` (AWS) or `geass-access` (Hetzner). |
+| Cloudflare | DNS records for the dashboard and your services, the tunnel `geass`, and the API token that you gave Geass. |
+| GitHub | The GitHub App and its installations. |
+| PlanetScale | Databases and passwords that Geass created, and the service token. |
+| Your DNS provider | Records that you created yourself. |
 
-## What happens under the hood
+## Troubleshooting
 
-Resources are Kubernetes objects with finalizers: `geass.geass.dev/app`, `/database`, `/objectstore`, `/project`, and `/logicaldatabase`, and `/node` on nodes. When you delete a resource, Kubernetes marks it for deletion. The operator does its cleanup before it removes the finalizer. For this reason, the cleanup needs the operator to run, and the objects show **Deleting** until the cleanup finishes. To see what is waiting, run these commands:
+**A resource stays in Deleting.** Geass retries its cleanup until it succeeds. The usual causes are these:
+
+- An AWS connection that is gone.
+- AWS credentials that expired or were revoked.
+- Buckets that still use the object storage server.
+
+Fix the cause, and the deletion finishes. To leave the external resource behind and stop the cleanup, see [Under the hood](#under-the-hood).
+
+**A server comes back in the Nodes table after you removed it.** Geass could not reach the machine, so its agent still runs. See [Under the hood](#under-the-hood).
+
+**Disk space is not freed after the uninstall.** The replicated volume data is still there. See [Clean up the servers](#clean-up-the-servers).
+
+## Under the hood
+
+Each Geass resource has a finalizer. Kubernetes keeps the object in **Deleting** until Geass finishes its cleanup and removes the finalizer. To see what waits, and why, run these commands on the control plane server:
 
 ```bash
 sudo k3s kubectl -n geass-system get geassapps,geassdatabases,geassobjectstores,geasslogicaldatabases,geassprojects
 sudo k3s kubectl -n geass-system logs deploy/geass-controller-manager -c manager
 ```
 
-## Troubleshooting
-
-**A resource stays in `Deleting`.** Look in the operator log for the error that the operator keeps retrying. Typical causes are these:
-
-- An AWS connection that no longer exists.
-- AWS credentials that expired or were revoked.
-- For the in-cluster object storage server, project buckets that still use it.
-
-Fix the cause, and the deletion finishes automatically. If you accept that the external resource stays behind, remove the finalizer by hand. This stops the cleanup permanently:
+To stop a cleanup permanently and leave the external resource behind, remove the finalizer:
 
 ```bash
 sudo k3s kubectl -n geass-system patch geassobjectstore <name> --type merge -p '{"metadata":{"finalizers":null}}'
 ```
 
-**`k3s-uninstall.sh: No such file or directory`.** This machine has no K3s server. Workers have `k3s-agent-uninstall.sh`.
+### Commands on the servers
 
-**A worker keeps appearing in the cluster after you deleted its node object.** Geass could not reach the machine, so its K3s agent still runs and registers again. Run the agent uninstall script on that machine.
+The dashboard and the command line cannot do these tasks.
 
-**Disk space is not freed after the uninstall.** Longhorn's data directory is still there. See [Clean up the servers](#clean-up-the-servers).
+**Remove a worker that Geass cannot remove.** On a server that has no **Remove** button, or that Geass cannot reach, run this command:
+
+```bash
+sudo /usr/local/bin/k3s-agent-uninstall.sh
+```
+
+**Uninstall the control plane.** On the control plane server, run these commands. On a cluster with three control plane servers, run them on each of them. The first command removes the service that keeps the dashboard on `127.0.0.1:8085`. On a server without systemd, skip it:
+
+```bash
+sudo systemctl disable --now geass-dashboard && sudo rm -f /etc/systemd/system/geass-dashboard.service
+sudo /usr/local/bin/k3s-uninstall.sh
+```
+
+The command stops K3s and deletes its files, the cluster's state, and its local volumes. If the command says `k3s-uninstall.sh: No such file or directory`, the machine is not a control plane server. On a worker, run `k3s-agent-uninstall.sh`.
+
+**Clean up each server.** Remove these items:
+
+- **Replicated volume data.** Run `sudo rm -rf /var/lib/longhorn`. This deletes the only copies of the database volumes on that server. Do it only when you are sure that you do not need them.
+- **Firewall rules.** If `ufw` or `firewalld` is active, the installer opened 6443/tcp, 10250/tcp, and 8472/udp. On a multi-site cluster, it opened 51820/udp. Delete these rules, for example with `sudo ufw delete allow 6443/tcp`. Also delete the rules that you added yourself, for example for 80/tcp and 443/tcp.
+- **A Tailscale mesh.** Tailscale stays installed, and each server stays on the tailnet. Run `sudo tailscale logout` on each server.
+- **iSCSI.** The `iscsid` service and the `open-iscsi` or `iscsi-initiator-utils` package stay installed.
+- **Installer files.** Delete `geass-install-*.log` in the directory where you ran the installer, and the downloaded installer in your temporary directory.
+
+### Details
+
+- A server added over SSH is a `GeassNode` in `geass-system`. The **Remove** button deletes it. Geass then runs `/usr/local/bin/k3s-agent-uninstall.sh` on the machine over SSH.
+- The access key of an AWS connection is in the Secret `<connection>-credentials` in `geass-system`. Deleting the project does not delete that Secret.
+- Geass does not delete the volume claims of a MySQL database. They go when the project's namespace is deleted.
+- The cluster's state is the embedded etcd database in `/var/lib/rancher/k3s`. `k3s-uninstall.sh` deletes it, with `/etc/rancher/k3s` and `/var/lib/kubelet`. Longhorn data is in `/var/lib/longhorn`.
+- Geass never uninstalls KEDA or the admission policies of compliance tags. Only the uninstall of K3s removes them.
 
 ## Related
 
 - [Upgrade Geass](/docs/operations/upgrading/)
-- [Command line](/docs/guides/command-line/)
+- [Add servers](/docs/getting-started/add-servers/)
 - [Backups and restore](/docs/guides/backups-and-restore/)
 - [Object storage](/docs/guides/object-storage/)
 - [Cloud connectors](/docs/guides/connectors/)
-- [Add servers](/docs/getting-started/add-servers/)
+- [Command line](/docs/guides/command-line/)

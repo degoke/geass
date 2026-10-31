@@ -169,6 +169,20 @@
   gap: 4px;
 }
 
+.cp-node-status {
+  min-width: 22ch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.cp-node-message {
+  max-width: 44ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .cp-row-actions {
   display: flex;
   justify-content: flex-end;

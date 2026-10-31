@@ -35,6 +35,7 @@ import {
 import { ClusterHealth } from "@/components/ClusterHealth";
 import { GeassLogo } from "@/components/GeassLogo";
 import { DeployControls } from "@/components/DeployControls";
+import { ClusterStartingBanner } from "@/components/ClusterStartingBanner";
 import { DomainSetupBanner } from "@/components/DomainSetupBanner";
 
 const NAV_ICONS = {
@@ -213,6 +214,7 @@ export function AppLayout({ children }) {
                 pathname={pathname}
                 canAdd={canMutate(data)}
               />
+              {isPlatformSession(data) ? <ClusterStartingBanner /> : null}
               <div className="rw-stage rw-stage-project">
                 <div className="rw-frame rw-frame-flush">
                   <div className="rw-frame-body">{children}</div>
@@ -222,6 +224,7 @@ export function AppLayout({ children }) {
           ) : (
             <div className="rw-account-pane">
               {/* Setting the dashboard's domain is the platform's to do; an organization is not told about it. */}
+              {isPlatformSession(data) ? <ClusterStartingBanner /> : null}
               {isPlatformSession(data) ? <DomainSetupBanner /> : null}
               <div className="rw-account-main">{children}</div>
             </div>

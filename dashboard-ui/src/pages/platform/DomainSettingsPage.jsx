@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { action } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { action, api } from "@/lib/api";
 import { canMutate, useBootstrap } from "@/lib/dashboard";
 import { alertUser, alertError } from "@/lib/notify";
 import { AppLink } from "@/components/AppLink";
 import { ManagedArea } from "@/components/ManagedNotice";
 import { managedFor } from "@/lib/managed";
-import { Button, Field, FormStack, Input, Select } from "@/components/geass-ui";
+import { Badge, Button, Field, FormStack, Input, Muted, Select } from "@/components/geass-ui";
 import { SettingsFormActions, SettingsPanel, SettingsSection } from "@/layout/SettingsShell";
 
 const DEFAULT_SUBDOMAIN = "geass";
@@ -55,6 +55,78 @@ function normalizeSubdomainInput(value) {
   if (!label) return DEFAULT_SUBDOMAIN;
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label) || label.length > 63) return "";
   return label;
+}
+
+/** What the Let's Encrypt issuer is doing, in the words and tones the page uses. */
+export const CERTIFICATE_STATES = {
+  missing: { label: "Not set", tone: "warning" },
+  waiting: { label: "Waiting", tone: "warning" },
+  ready: { label: "Ready", tone: "success" },
+  failing: { label: "Not working", tone: "danger" },
+};
+
+/**
+ * The contact address of the cluster's Let's Encrypt account. Without it Geass creates no certificate issuer, so no
+ * domain gets an HTTPS certificate, the dashboard's included. The installer sets it from GEASS_ACME_EMAIL.
+ */
+export function CertificateEmailPanel({ mutable }) {
+  const queryClient = useQueryClient();
+  const settings = useQuery({
+    queryKey: ["certificate-settings"],
+    queryFn: () => api("/api/settings/certificates"),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) => (query.state.data?.state === "waiting" ? 5_000 : 60_000),
+  });
+  const [email, setEmail] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  if (settings.isLoading || settings.isError) return null;
+  const saved = settings.data || {};
+  const state = CERTIFICATE_STATES[saved.state] || CERTIFICATE_STATES.missing;
+  const value = email ?? saved.email ?? "";
+
+  const save = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await action("/settings/domain/acme-email", { email: value.trim() });
+      await queryClient.invalidateQueries({ queryKey: ["certificate-settings"] });
+      setEmail(null);
+      alertUser("Email saved");
+    } catch (error) {
+      alertError(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsPanel>
+      <div className="rw-domain-quick-head">
+        <p className="rw-settings-subtitle">Certificate email</p>
+        <Badge tone={state.tone}>{state.label}</Badge>
+      </div>
+      {saved.message ? <Muted size="sm">{saved.message}</Muted> : null}
+      <FormStack className="rw-rail-form" onSubmit={save}>
+        <Field label="Email">
+          <Input
+            type="email"
+            required
+            value={value}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@yourdomain.com"
+            disabled={!mutable}
+          />
+        </Field>
+        <SettingsFormActions>
+          <Button type="submit" disabled={!mutable || saving || !value.trim() || value.trim() === saved.email}>
+            Save email
+          </Button>
+        </SettingsFormActions>
+      </FormStack>
+    </SettingsPanel>
+  );
 }
 
 export function DomainSettingsPage({
@@ -233,6 +305,7 @@ export function DomainSettingsPage({
   return (
     <SettingsSection title="Domain" flat>
       <ManagedArea managed={managed}>
+      <CertificateEmailPanel mutable={canMutate(data)} />
       {cloudflareConnected && !useManual ? (
         <>
           <SettingsPanel className="rw-domain-quick">

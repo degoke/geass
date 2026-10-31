@@ -22,7 +22,9 @@ Geass is a Kubernetes operator that runs on a K3s cluster that you own, and a we
 
   When the metrics add-on is on, the operator also creates a `ServiceMonitor` and a `PrometheusRule` in the `monitoring` namespace. Both objects are named `geass-operator`. With these objects, Prometheus scrapes the operator and has alert rules for failing or stalled reconciles, for example `GeassReconcileErrors`. Alertmanager is part of the metrics add-on. Alertmanager sends the alerts for which an admin sets up channels (see [Alerts](/docs/guides/alerts/)). The operator alerts go to those channels as cluster problems. The **Usage** page charts the metrics of the operator under **Geass health**.
 
-  The cluster can have a Let's Encrypt contact email, which is the `GEASS_ACME_EMAIL` setting of the installer. In that case, the operator also keeps the cert-manager `ClusterIssuer` named `letsencrypt-prod`. Every HTTPS certificate is requested from that issuer. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
+  The cluster can have a Let's Encrypt contact email, which is the `GEASS_ACME_EMAIL` setting of the installer. In that case, the operator also keeps the cert-manager `ClusterIssuer` named `letsencrypt-prod`. Every HTTPS certificate for a hostname is requested from that issuer. See [HTTPS certificates](/docs/getting-started/install/#https-certificates).
+
+  Before the dashboard has a domain, the operator serves it at the public IPv4 address of the server (`spec.dashboard.publicIP`). It keeps a second issuer, `geass-letsencrypt-ip`, a certificate for the address, a Traefik `TLSStore`, and an `IngressRoute`. It deletes them when the dashboard domain is verified. See [The dashboard at the public IP address](/docs/operations/installer/#the-dashboard-at-the-public-ip-address).
 - **Your workloads.** The Deployments, Services, Ingresses, volumes, and jobs that the operator creates for your services, databases, and buckets. They are in one namespace for each project environment.
 - **Connectors.** Optional links to Cloudflare, GitHub, AWS, and PlanetScale, and to the clouds that create machines for the cluster. The operator calls their APIs from inside the cluster, with credentials that you saved as Kubernetes Secrets.
 - **Node pools.** A `GeassNodePool` has a controller that adds and removes nodes. For a node whose machine Geass creates, the node controller does these steps:
@@ -113,13 +115,13 @@ Geass has no database of its own. All of its state is in Kubernetes or on the di
 | What | Where |
 | --- | --- |
 | Projects, services, databases, buckets, nodes, connections, the platform settings, and their pending changes | Kubernetes objects of the `geass.geass.dev` group, stored in the embedded etcd of K3s on the disk of the control plane |
-| Dashboard users, session key, login lockouts | The Secret `geass-dashboard-auth` |
+| Dashboard users, session key, login lockouts, and the hash of the setup link | The Secret `geass-dashboard-auth` |
 | API tokens (a hash of each secret), including the tokens that `geass login` and agents hold | The Secret `geass-api-tokens` |
 | Command-line sign-ins that wait for approval | The memory of the operator only, for 10 minutes. A restart of the operator cancels them |
 | The saved logins of the command line | `config.json` in the `geass` folder of the user configuration directory, on the machine where you ran `geass login`. The file holds a token, so its mode is `0600` |
 | Service secrets, shared project secrets, connection credentials, the join token | Secrets in `geass-system` |
 | The schedule token of a function (only for a function that has schedules or is an event handler) | The Secret `<service-id>-trigger` in the namespace of the service |
-| TLS certificates | The cert-manager Secret `<service-id>-tls` in the namespace of the service. The ACME account key, `letsencrypt-prod-account-key`, is in `cert-manager` |
+| TLS certificates | The cert-manager Secret `<service-id>-tls` in the namespace of the service. The ACME account key, `letsencrypt-prod-account-key`, is in `cert-manager`. The certificate of the dashboard at the public IP address is the Secret `geass-dashboard-public-ip-tls` in `geass-system` |
 | Plain service variables | The settings of the service. Geass applies them to the workload of the service as a ConfigMap |
 | PostgreSQL, MySQL, and SQLite data | Volumes on the nodes. The installer turns on Longhorn. With Longhorn, a volume keeps one copy on each node, up to three, or one copy for each instance for highly available Postgres. A database created without Longhorn uses the K3s `local-path` storage on one node |
 | Redis data | Memory only. Geass runs Redis without persistence |
@@ -164,7 +166,7 @@ Geass connects only to what the features that you use need:
 - The Helm controller downloads charts, and containerd pulls images, from public hosts.
 - When you connect them, the operator calls the GitHub, Cloudflare, AWS (S3 and IAM), and PlanetScale APIs.
 - For a connection for machines, the operator calls the API of that cloud: EC2, Azure Resource Manager, DigitalOcean, Compute Engine, Hetzner Cloud, Linode, Oracle Cloud, OVHcloud, Scaleway, UpCloud, Vultr, or your own webhook. The Azure driver also reads the public price list of Azure.
-- The operator asks `api.ipify.org`, then `ifconfig.me`, for the public IP of the server. The operator does this only when no node reports a public IP and the operator needs the address for dashboard DNS.
+- The operator asks `api.ipify.org`, then `ifconfig.me`, for the public IP of the server. The operator does this only when no node reports a public IP and the operator needs the address for dashboard DNS or for the dashboard at the public IP address.
 - cert-manager talks to Let's Encrypt (`acme-v02.api.letsencrypt.org`) after the certificate issuer exists.
 - Geass posts to the webhook URLs that you add to a project.
 - When the serverless add-on is on, the Helm controller also downloads charts from `kedacore.github.io`.

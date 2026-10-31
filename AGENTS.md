@@ -76,6 +76,12 @@ the ASD-STE100 Simplified Technical English writing rules. This includes `websit
 `CHANGELOG.md` entries, and dashboard text. The rules, with the word list and the checks, are in
 `docs/writing-style.md`. Where the two standards differ, use the stricter rule.
 
+### Keep Dashboard Text and Comments Short
+Dashboard text says what a thing is and what a control does, in one short line. Do not add explanatory paragraphs,
+descriptions under a title, or "what happens if" narrative. Warn only before an action that removes data or needs a
+prerequisite, and use one sentence. Do not add code comments that restate the code, and leave out section-header comments
+in JSX. Put longer explanations in `website/`.
+
 ### E2E Tests Require an Isolated Kind Cluster
 The e2e tests are designed to validate the solution in an isolated environment (similar to GitHub Actions CI).
 Ensure you run them against a dedicated [Kind](https://kind.sigs.k8s.io/) cluster (not your “real” dev/prod cluster).

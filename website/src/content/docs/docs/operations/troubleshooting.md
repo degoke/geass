@@ -14,7 +14,7 @@ only `kubectl` shows the exact text.
 
 | What | Where |
 | --- | --- |
-| The operator and dashboard | Deployment `geass-controller-manager` in namespace `geass-system`. The dashboard is part of the operator. It listens on port 8085 behind the service `geass-dashboard`. |
+| The operator and dashboard | Deployment `geass-controller-manager` in namespace `geass-system`. The dashboard is part of the operator. It listens on port 8085 behind the Service `geass-geass-dashboard`. |
 | Geass resources (`GeassApp`, `GeassDatabase`, `GeassProject`, `GeassCluster`, `GeassNode`, `GeassNodePool`, `GeassBuild`, and others) | Namespace `geass-system` |
 | The pods, services, and ingresses of a project environment | Namespace `<project>-<environment>`, for example `morning-beach-production` |
 | Add-ons | `cert-manager`, `monitoring`, `longhorn-system`, `cnpg-system`, `moco-system`, `mariadb-system`, `geass-logging`, and, when it is turned on, `keda` |
@@ -146,8 +146,8 @@ any other machine that has K3s, the installer stops and says why.
 :::
 
 **The installer warns that `GEASS_ACME_EMAIL` is not set.**
-The cluster installs and runs, but Geass creates no certificate issuer, so the cluster gets no HTTPS certificates. Set
-the address on the running cluster. See [A certificate is never issued](#a-certificate-is-never-issued).
+The cluster installs and runs, but Geass creates no `letsencrypt-prod` issuer, so hostnames get no HTTPS certificates.
+The dashboard at the public IP address does not need the address. Set the address on the running cluster. See [A certificate is never issued](#a-certificate-is-never-issued).
 
 **The installer warns "No active host firewall detected; skipping port configuration."**
 The installer found no active `ufw`, `firewalld`, or `iptables` rules, and opened nothing. That result is fine for K3s.
@@ -176,14 +176,15 @@ Check the operator, and then your route to it.
 
 ```bash
 kubectl -n geass-system get deploy geass-controller-manager
-kubectl -n geass-system get svc geass-dashboard
+kubectl -n geass-system get svc geass-geass-dashboard
 ```
 
-Until you set a dashboard domain or use a Cloudflare tunnel, nothing exposes the service outside the cluster. To reach
-the dashboard from your own computer, use a port forward, and open `http://localhost:8085`:
+Before you set a dashboard domain, the operator serves the dashboard at the public IP address of the server. If that
+address does not answer, see [The dashboard does not answer at the public IP address](#the-dashboard-does-not-answer-at-the-public-ip-address).
+To reach the dashboard from your own computer without it, use a port forward, and open `http://localhost:8085`:
 
 ```bash
-kubectl -n geass-system port-forward svc/geass-dashboard 8085:8085
+kubectl -n geass-system port-forward svc/geass-geass-dashboard 8085:8085
 ```
 
 After a domain is set, check DNS and the ingress. To check the ingress, run
@@ -191,10 +192,14 @@ After a domain is set, check DNS and the ingress. To check the ingress, run
 [The dashboard domain stays pending](#the-dashboard-domain-stays-pending).
 
 **Signing in says "dashboard authentication is unavailable".**
-Geass could not load a login. Usually, no login exists, because the installer does not create one. Create the Secret
-`geass-dashboard-auth` in `geass-system` with a `users` key. Or set `GEASS_DASHBOARD_PASSWORD` on the operator. The
-sample is `config/samples/geass_dashboard_auth.yaml`. Geass refuses the placeholder password `CHANGE_ME`, so replace
-it. Geass hashes the real password at the first sign-in. See [Sign in to the dashboard](/docs/getting-started/sign-in/).
+Geass could not load a login. Usually, no user exists. To create an admin, run the `dashboard-link` command of the
+installer on a control plane server, and open the link that it prints. See
+[Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link). You can also set
+`GEASS_DASHBOARD_PASSWORD` on the operator. Geass refuses the placeholder password `CHANGE_ME`.
+
+**The setup link says "this setup link was used or has expired".**
+A setup link works one time, for 24 hours. A newer link also replaces an older link that nobody used. Run the
+`dashboard-link` command again, and open the new link. A wrong link counts as a failed sign-in for your address.
 
 **Every sign-in says "invalid username or password".**
 Geass locks sign-in in these cases:
@@ -204,8 +209,8 @@ Geass locks sign-in in these cases:
 - If addresses cannot be told apart, five wrong attempts within a minute lock that user for everyone for a minute.
 - Twenty failed sign-ins from one client address within a minute refuse that address for a minute.
 
-While a lock is on, the message is the same. Wait a minute and try one time. If the sign-in still fails, read the users
-in the Secret.
+While a lock is on, the message is the same. Wait a minute and try one time. If the sign-in still fails, get a new setup
+link with the `dashboard-link` command. See [Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
 
 **Signing in works, then the dashboard asks for a sign-in again.**
 You opened the dashboard over plain HTTP at an address other than `localhost`. Geass marks its session cookie `Secure`
@@ -694,6 +699,28 @@ kubectl -n geass-system get geassplatformconfig platform -o jsonpath='{range .st
 | `Error` | "Cloudflare credentials are unavailable" or "… are incomplete" | Connect Cloudflare again under **Settings**, and then **Connectors**. |
 | `ZoneRequired` | "Select a Cloudflare zone in domain settings (multiple zones match this token)" | Select the zone. |
 | `VerificationTimedOut` | "Not verified after 15 minutes: …" | The cause follows the colon. Geass continues to check every five minutes. So when you fix the cause, the domain still turns green. |
+
+### The dashboard does not answer at the public IP address
+
+Before it has a domain, the dashboard is at `https://<public IP>`. Read the `DashboardPublicIP` condition of the cluster:
+
+```bash
+kubectl -n geass-system get geasscluster default -o jsonpath='{.status.dashboardPublicURL}{"\n"}{.status.conditions[?(@.type=="DashboardPublicIP")].reason}: {.status.conditions[?(@.type=="DashboardPublicIP")].message}{"\n"}'
+```
+
+| Reason | Cause and fix |
+| --- | --- |
+| `Ready` | The certificate is issued. The first line is the address. If the browser cannot reach it, open 443/tcp in the firewall of your provider. |
+| `WaitingForCertManager` | cert-manager is not ready yet. Wait. See [Everything says the cluster is not ready](#everything-says-the-cluster-is-not-ready). |
+| `NoPublicAddress` | The server has no public IPv4 address. A private address or an address in `100.64.0.0/10` (carrier-grade NAT or Tailscale) does not count. Use the `ssh` command, or [connect a domain](/docs/getting-started/connect-domain/). |
+| `IssuingCertificate` | Let's Encrypt has not issued the certificate. Usually, 80/tcp is closed in the firewall of your provider. Open it. The message gives the reason from cert-manager. |
+| `DomainVerified` | The dashboard has a verified domain, so Geass does not serve it at the IP address. Use the domain. |
+| `TLSStoreInUse` | A Traefik `TLSStore` named `default` that Geass did not create is in `geass-system`. Geass does not change it. Remove it, or use a domain. |
+| `TraefikMissing` | The Traefik `IngressRoute` and `TLSStore` kinds are not installed. Geass needs the Traefik of K3s. |
+| `ApplyFailed` | Geass could not create an object. The operator log says why. |
+
+After you fix the cause, run the `dashboard-link` command of the installer to get a new link. See
+[Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
 
 ### A service's HTTPS domain does not work
 

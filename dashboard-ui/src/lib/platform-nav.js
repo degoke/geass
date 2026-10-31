@@ -42,8 +42,10 @@ export const SETTINGS_PATHS = [
   "/settings/github",
   "/settings/tokens",
   "/settings/auth",
+  "/settings/users",
   "/settings/organizations",
   "/settings/alerts",
+  "/settings/addons",
   "/settings/registry",
   "/object-storage",
   "/shared-databases",
@@ -63,8 +65,10 @@ export const SETTINGS_LINKS = [
   // `tenant` is what an organization's administrators are shown: the rest is the platform's.
   { id: "tokens", label: "Tokens", to: "/settings/tokens", tenant: true, active: (path) => path.startsWith("/settings/tokens") },
   { id: "auth", label: "Sign-in", to: "/settings/auth", active: (path) => path.startsWith("/settings/auth") },
+  { id: "users", label: "Users", to: "/settings/users", active: (path) => path.startsWith("/settings/users") },
   { id: "organizations", label: "Organizations", to: "/settings/organizations", active: (path) => path.startsWith("/settings/organizations") },
   { id: "alerts", label: "Alerts", to: "/settings/alerts", tenant: true, active: (path) => path.startsWith("/settings/alerts") },
+  { id: "addons", label: "Add-ons", to: "/settings/addons", active: (path) => path.startsWith("/settings/addons") },
   // `orgOnly` is shown to organizations and not to the platform, whose registry is set under Connectors.
   { id: "registry", label: "Registry", to: "/settings/registry", tenant: true, orgOnly: true, active: (path) => path.startsWith("/settings/registry") },
   { id: "object", label: "Object storage", to: "/object-storage", active: (path) => path.startsWith("/object-storage") },

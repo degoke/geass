@@ -84,6 +84,10 @@ The reason is the same when the condition is `True` and when it is `False`. The 
 
 - **Healthy nodes**.
 - **Ready for HA**: Yes or No, from the `Ready` condition.
+- A table with one row for each condition: **Healthy nodes** (`NodesReady`), **Storage for databases**
+  (`StorageReady`), **Cluster** (`ClusterReady`), **Add-ons** (`AddonsReady`), and **Ready for HA** (`Ready`). The
+  **Result** column shows **Passed** or **Not passed**. **What it needs** shows the message of the condition, and
+  **Since** shows `lastTransitionTime`. The row **Healthy nodes** also says how many healthy nodes there are now.
 - The **Run readiness check** button.
 
 The dashboard reads the report from the same overview as all other data (`haReadiness` in `GET /api/bootstrap`). The button calls `POST /api/ha-readiness/check`, which creates the report if it does not exist. See [REST API](/docs/reference/rest-api/).

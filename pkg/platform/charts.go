@@ -11,7 +11,7 @@ const (
 
 	CertManagerChartName    = "geass-cert-manager"
 	CertManagerChartRepo    = "https://charts.jetstack.io"
-	CertManagerChartVersion = "v1.17.2"
+	CertManagerChartVersion = "v1.21.3"
 	CertManagerTargetNS     = "cert-manager"
 	CertManagerReleaseChart = "cert-manager"
 

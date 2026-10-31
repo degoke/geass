@@ -92,7 +92,7 @@ func etcdSnapshotSettingsOf(cluster *geassv1alpha1.GeassCluster, hasKey, mayChan
 // handleAPIEtcdSnapshotSettings says where the cluster's copies go and whether they are arriving. Anyone signed in can see
 // whether they are; where they go, and the policy for the key, are for the people who can change it. It never returns the key.
 func (s *Server) handleAPIEtcdSnapshotSettings(w http.ResponseWriter, r *http.Request) {
-	cluster, err := s.etcdSnapshotCluster(r.Context())
+	cluster, err := s.defaultGeassCluster(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{dashboardLiteralError: "could not load the cluster"})
 		return
@@ -108,8 +108,8 @@ func (s *Server) handleAPIEtcdSnapshotSettings(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, etcdSnapshotSettingsOf(cluster, hasKey, s.sessionCanMutate(r)))
 }
 
-// etcdSnapshotCluster is the cluster that the copies belong to.
-func (s *Server) etcdSnapshotCluster(ctx context.Context) (*geassv1alpha1.GeassCluster, error) {
+// defaultGeassCluster is the cluster that the copies of its state, its add-ons, and its certificate email belong to.
+func (s *Server) defaultGeassCluster(ctx context.Context) (*geassv1alpha1.GeassCluster, error) {
 	name, err := s.defaultCluster(ctx)
 	if err != nil {
 		return nil, err
@@ -146,7 +146,7 @@ func (s *Server) handleEtcdSnapshotsSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cluster, err := s.etcdSnapshotCluster(r.Context())
+	cluster, err := s.defaultGeassCluster(r.Context())
 	if err != nil {
 		fail("could not load the cluster")
 		return
@@ -187,7 +187,7 @@ func (s *Server) handleEtcdSnapshotsClear(w http.ResponseWriter, r *http.Request
 	if !requireMutation(w, r, etcdSnapshotsSettingsPath) || !parseFormOrRedirect(w, r, etcdSnapshotsSettingsPath) {
 		return
 	}
-	cluster, err := s.etcdSnapshotCluster(r.Context())
+	cluster, err := s.defaultGeassCluster(r.Context())
 	if err != nil {
 		redirectProbe(w, r, etcdSnapshotsSettingsPath, dashboardLiteralError, "could not load the cluster")
 		return

@@ -87,8 +87,7 @@ type GeassClusterLoggingAddon struct {
 type GeassClusterServerlessAddon struct {
 	// Enabled installs KEDA and the HTTP add-on. It is opt-in: it adds a few small pods, and changes the
 	// ingress controller's settings so it can route to the add-on. Services can then ask to scale to zero.
-	// Turning it off stops services from scaling to zero but never uninstalls KEDA: services that were asleep are
-	// woken and run normally.
+	// Turning it off never uninstalls KEDA, so services that sleep keep sleeping.
 	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
@@ -333,6 +332,18 @@ type GeassClusterSpec struct {
 	// longer than that.
 	// +optional
 	LostNodeAfter *metav1.Duration `json:"lostNodeAfter,omitempty"`
+
+	// Dashboard says how the dashboard is reached before it has a domain.
+	// +optional
+	Dashboard GeassClusterDashboardSpec `json:"dashboard,omitempty"`
+}
+
+// GeassClusterDashboardSpec says how the dashboard is reached before it has a domain.
+type GeassClusterDashboardSpec struct {
+	// PublicIP serves the dashboard over HTTPS at the control plane's public IPv4 address, with a Let's Encrypt
+	// certificate for that address, until a dashboard domain is verified. The installer turns it on for a new cluster.
+	// +optional
+	PublicIP *bool `json:"publicIP,omitempty"`
 }
 
 type ClusterPhase string
@@ -407,6 +418,45 @@ type GeassClusterK3sStatus struct {
 	Upgrade *GeassK3sUpgradeStatus `json:"upgrade,omitempty"`
 }
 
+// AddonState is where an add-on is in being installed.
+// +kubebuilder:validation:Enum=Off;Installing;Ready;Failed
+type AddonState string
+
+const (
+	// AddonStateOff: the add-on is not asked for. Installed says whether something of it is still in the cluster.
+	AddonStateOff AddonState = "Off"
+	// AddonStateInstalling: the add-on is asked for and is not up yet. Message says what it is waiting for.
+	AddonStateInstalling AddonState = "Installing"
+	// AddonStateReady: the add-on is installed and its pods are running.
+	AddonStateReady AddonState = "Ready"
+	// AddonStateFailed: the add-on is asked for and cannot come up without help. Reason and Message say why.
+	AddonStateFailed AddonState = "Failed"
+)
+
+// GeassClusterAddonStatus is how one add-on of spec.addons is doing. The operator writes it, so that a person can see why an
+// add-on is not up without looking at the Helm jobs that install it.
+type GeassClusterAddonStatus struct {
+	// Name is the add-on, as it is named under spec.addons: monitoring, logging, serverless or longhorn.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// State is Off, Installing, Ready or Failed.
+	State AddonState `json:"state"`
+
+	// Reason is a short word for why the add-on is Failed, such as InstallFailed or InstallSuspended.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// Message says in a sentence what the add-on is waiting for, or what went wrong.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// Installed says that something of the add-on is in the cluster. It is true for an add-on that is Off when turning it
+	// off does not remove it (scale to zero and replicated storage never are).
+	// +optional
+	Installed bool `json:"installed,omitempty"`
+}
+
 // GeassClusterStatus defines the observed state of GeassCluster.
 type GeassClusterStatus struct {
 	// conditions represent the current state of the GeassCluster resource.
@@ -441,6 +491,18 @@ type GeassClusterStatus struct {
 	// EtcdSnapshots is what the operator found in the bucket that spec.etcdSnapshots names.
 	// +optional
 	EtcdSnapshots *GeassClusterEtcdSnapshotsStatus `json:"etcdSnapshots,omitempty"`
+
+	// Addons is how each of the add-ons that can be switched on and off is doing: monitoring, logging, serverless and
+	// longhorn.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Addons []GeassClusterAddonStatus `json:"addons,omitempty"`
+
+	// DashboardPublicURL is the HTTPS address of the dashboard at the public IP address, once its certificate is issued.
+	// +optional
+	DashboardPublicURL string `json:"dashboardPublicURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true

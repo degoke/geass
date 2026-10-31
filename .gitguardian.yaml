@@ -1,0 +1,7 @@
+# Settings for GitGuardian secret scanning (ggshield). Test files hold made-up passwords and tokens on purpose.
+version: 2
+secret:
+  ignored_paths:
+    - "**/*_test.go"
+    - "**/*.test.js"
+    - "**/*.test.jsx"

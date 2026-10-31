@@ -22,8 +22,9 @@ command, or `geass help`. To see the help for one command, run `geass help <comm
 | Account | `login`, `logout`, `whoami`, `version`, `config` |
 | Services | `apps`, `deploy`, `build`, `status`, `logs`, `env`, `scale`, `rollback`, `metrics` |
 | Functions | `functions` |
-| Data and cluster | `projects` (with `quota` and `network`), `databases`, `stores`, `nodes`, `compliance` |
+| Data and cluster | `projects` (with `quota` and `network`), `databases`, `stores`, `nodes`, `compliance`, `addons` |
 | Clouds and machines | `providers`, `sizes`, `connections`, `pools`, `servers` |
+| Dashboard users | `users` |
 | Raw API and agents | `api`, `openapi`, `mcp` |
 | Built in | `help`, `completion`, `--help` (`-h`), `--version` (`-v`) |
 
@@ -1004,7 +1005,7 @@ details of a bucket.
 
 ### `geass nodes`
 
-Lists the cluster's nodes and tags them. Also `geass node`.
+Lists the cluster's nodes, tags them, and cordons them. Also `geass node`.
 
 #### `geass nodes list`
 
@@ -1014,7 +1015,7 @@ geass nodes list
 
 Also `geass nodes ls`. Prints these columns:
 
-- `NAME`, `STATUS` (`Ready` or `NotReady`), `REGION`, `ZONE`, `TAGS`, `CPU`, and `MEMORY`.
+- `NAME`, `STATUS` (`Ready`, `NotReady`, or `Ready, cordoned`), `REGION`, `ZONE`, `TAGS`, `CPU`, and `MEMORY`.
 - `POOL`: the [pool](/docs/guides/node-pools/) that the node belongs to.
 - `EPHEMERAL`: `yes` when the node keeps data off itself. Databases and volumes never run there, and the pool might
   remove the node when the load goes.
@@ -1027,12 +1028,35 @@ worker-1     Ready     eu      -     -                   4    8Gi     -      -
 worker-2     Ready     eu      fsn1  hipaa (compliance)  4    8Gi     -      -
 burst-x7k2m  Ready     eu      fsn1  -                   2    3Gi     burst  yes
 worker-3     NotReady  -       -     -                   -    -       -      -
+edge-1       Failed    -       -     -                   -    -       -      -
+
+edge-1: ssh dial 198.51.100.7:22: connect: connection refused
+  Fix it, then run `geass servers retry edge-1`.
 ```
 
-With `--json`, it prints `{"items": [...]}`. Each node has `name`, `ready`, `schedulable`, `controlPlane`, `region`,
-`zone`, `tags`, `cpu`, and `memory`, and `pool` and `ephemeral` when they apply.
+A server that has not joined yet, or failed to, has no node. It is a row with its phase as `STATUS` (`Pending`, `Creating`,
+`Joining`, or `Failed`), and the error is under the table.
 
-**API calls:** `GET /nodes`. **Needs:** any workspace token. A project token gets `403`.
+With `--json`, it prints `{"items": [...], "servers": [...]}`. Each node has `name`, `ready`, `schedulable`,
+`controlPlane`, `region`, `zone`, `tags`, `cpu`, and `memory`, and `pool`, `ephemeral`, and `cordoned` when they apply.
+`servers` lists the servers that have not joined, in the format of [`geass servers list`](#geass-servers-list).
+
+**API calls:** `GET /nodes`, `GET /servers`. **Needs:** any workspace token. A project token gets `403`.
+
+#### `geass nodes cordon` and `geass nodes uncordon`
+
+Stops new services on a node, or allows them again.
+
+```text
+geass nodes cordon NODE
+geass nodes uncordon NODE
+```
+
+What runs on the node stays. The command refuses to cordon the last node that can start new services. It refuses to
+uncordon a node that Geass cordoned to upgrade it or to empty it, because Geass uncordons that node itself. A cordoned node
+does not count for [high availability](/docs/operations/high-availability/#check-readiness).
+
+**API calls:** `POST /nodes/{name}/cordon`, `POST /nodes/{name}/uncordon`. **Needs:** Full access.
 
 #### `geass nodes tag`
 
@@ -1116,6 +1140,71 @@ Stops requiring node tags for a project. Prints `PROJECT no longer requires node
 
 **API calls (set and clear):** `POST /projects/{name}/compliance` with `{"requiredTags": "hipaa,pci"}`, or an empty
 string for `clear`. **Needs:** Full access.
+
+### `geass addons`
+
+Turns the cluster add-ons on and off, and shows how each one is doing. The add-ons are `serverless` (sleep when idle),
+`longhorn` (replicated storage), `monitoring` (metrics), and `logging` (logs). See
+[Sleep when idle](/docs/guides/scale-to-zero/), [Storage](/docs/guides/storage/), and
+[Observability](/docs/guides/observability/#change-the-add-ons).
+
+#### `geass addons list`
+
+```text
+geass addons [list]
+```
+
+Prints one row for each add-on: its name, whether it is on, its state (`Off`, `Installing`, `Ready`, or `Failed`), and
+details. For an add-on that is not ready, the details say what it waits for or why it failed. For a stuck add-on, they say
+to run `geass addons retry`. With `--json`, it prints the API answer.
+
+**API calls:** `GET /settings/addons`. **Needs:** Full access.
+
+#### `geass addons enable`
+
+```text
+geass addons enable ADD-ON [--profile lite|full] [--retention-days N] [--wait] [--timeout 15m]
+```
+
+Turns an add-on on. `--profile` is for `monitoring`, and `--retention-days` is for `logging`. With `--wait`, the command
+shows each change of state on the error stream and ends when the add-on is `Ready`. It stops with an error when the add-on is
+`Failed`, or when `--timeout` ends.
+
+**API calls:** `POST /settings/addons/{name}/save` with `{"enabled": true}`, and `GET /settings/addons` with `--wait`.
+**Needs:** Full access.
+
+#### `geass addons disable`
+
+```text
+geass addons disable ADD-ON
+```
+
+Turns an add-on off. Turning `monitoring` or `logging` off removes it and what it kept, so the command asks first. In a script,
+add `--yes`. Turning `serverless` off leaves KEDA installed. `longhorn` cannot be turned off, because Geass never removes
+it and databases keep their data on it.
+
+**API calls:** `POST /settings/addons/{name}/save` with `{"enabled": false}`. **Needs:** Full access.
+
+#### `geass addons set`
+
+```text
+geass addons set ADD-ON [--profile lite|full] [--retention-days N]
+```
+
+Changes an option of an add-on, and does not turn it on or off.
+
+**API calls:** `POST /settings/addons/{name}/save`. **Needs:** Full access.
+
+#### `geass addons retry`
+
+```text
+geass addons retry ADD-ON [--wait] [--timeout 15m]
+```
+
+Starts the install of a stuck add-on over. The operator deletes the install job, and K3s makes a new one. The command
+works only for an add-on that is `Failed` because its install job failed or is suspended.
+
+**API calls:** `POST /settings/addons/{name}/retry`. **Needs:** Full access.
 
 ## Clouds and machines
 
@@ -1327,12 +1416,50 @@ geass pools resume burst
 
 ### `geass servers`
 
-Adds one server to the cluster, or removes one that was added. Also `geass server`. See [Add servers](/docs/getting-started/add-servers/).
+Adds one server to the cluster, shows why one did not join, retries it, or removes it. Also `geass server`. See [Add servers](/docs/getting-started/add-servers/).
 
 ```text
+geass servers list
 geass servers add [NAME] (--connection CLOUD --size SIZE | --address ADDRESS --ssh-user USER (--ssh-key-file FILE | --ssh-key-secret SECRET)) [flags]
+geass servers retry NAME
+geass servers update NAME --known-hosts-file FILE
 geass servers remove NAME
 ```
+
+#### `geass servers list`
+
+Lists the servers that Geass joins, whether they came from `geass servers add`, from a pool, or with the cluster. Also
+`geass servers ls`. It prints `NAME`, `ROLE` (`worker` or `control-plane`), `STATUS`, `ADDRESS`, `SOURCE` (`cloud` or
+`existing`), and `POOL`. `STATUS` is `Pending`, `Creating`, `Joining`, `Ready`, or `Failed`, and `Ready, cordoned` for a
+server that takes no new work. Under the table, it prints the error of each server that is not ready. With `--json`, it
+prints `{"items": [...]}`.
+
+**API calls:** `GET /servers`. **Needs:** any workspace token. A token that cannot read logs does not get the errors.
+
+#### `geass servers retry`
+
+Starts a server that failed to join over. Fix the cause first. The command refuses a server that has not failed.
+
+**API calls:** `POST /servers/{name}/retry`. **Needs:** Full access.
+
+#### `geass servers update`
+
+Replaces the host keys that Geass accepts from a server that you have, for example after you rebuilt the machine.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--known-hosts-file` | path | none | The lines that `ssh-keyscan` prints for the server. `-` reads standard input. Required. |
+
+Only the lines for the address of this server change. The command refuses host keys that list no key for that address. It
+refuses a machine that Geass created.
+
+```bash
+ssh-keyscan -t ed25519 198.51.100.7 | geass servers update edge-1 --known-hosts-file -
+```
+
+**API calls:** `POST /servers/{name}/host-keys` with `knownHosts`. **Needs:** Full access.
+
+#### `geass servers add` and `geass servers remove`
 
 With `--connection` and `--size`, Geass creates a machine at the cloud. The machine costs money until you remove the
 server. If you give no name, the command makes one up. With `--address`, the server is one that you have. A name is
@@ -1362,6 +1489,48 @@ geass servers remove edge-1
 ```
 
 **API calls:** `POST /servers`, `DELETE /servers/{name}?confirmName={name}`. **Needs:** Full access.
+
+## Dashboard users
+
+### `geass users`
+
+Lists, adds, changes, and removes the users who sign in to the dashboard with a password. Also `geass user`. These
+commands do the same as **Settings** → **Users**. See [Manage users](/docs/guides/users-and-tokens/#manage-users).
+
+```text
+geass users list
+geass users add USERNAME [--role admin|viewer] [--password-file FILE]
+geass users set-role USERNAME admin|viewer
+geass users reset-password USERNAME [--password-file FILE]
+geass users remove USERNAME
+geass users sign-out-all
+```
+
+`add` and `reset-password` print a password that Geass makes, one time, on standard output. Geass cannot show the
+password again. With `--password-file`, the command reads the password from the file (`-` reads standard input) and
+prints nothing. A password has 12 to 72 characters. No flag takes the password as an argument, because the process list
+and the shell history show arguments.
+
+`remove` (also `rm` and `delete`) and `sign-out-all` ask you to confirm (`--yes` skips the question). `sign-out-all`
+ends every dashboard session, yours too. API tokens, including the token of the command line, keep working. Geass
+refuses to remove the last admin or to make the last admin a viewer.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--role` | string | `viewer` | For `add`: `admin` or `viewer`. |
+| `--password-file` | path | none | For `add` and `reset-password`: read the password from this file (`-` reads standard input). |
+
+```bash
+geass users add maria --role viewer
+printf '%s' "$PASSWORD" | geass users add ops --role admin --password-file -
+geass users set-role maria admin
+geass --yes users remove maria
+```
+
+**API calls:** `GET /users`, `POST /users`, `POST /users/{name}/role`, `POST /users/{name}/password`,
+`DELETE /users/{name}`, `POST /users/sign-out-all`. **Needs:** Full access with an install-wide token. A project token
+or an organization token cannot manage users. A token manages viewers only: it cannot make an admin, make a viewer an
+admin, or set the password of an admin. Geass answers `403` `a token can manage viewers only`. Do these in the dashboard.
 
 ## Raw API and agents
 

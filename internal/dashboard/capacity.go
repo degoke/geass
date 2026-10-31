@@ -63,6 +63,9 @@ type capacityNode struct {
 	// Pool is the pool the node belongs to; Ephemeral says it must not hold data.
 	Pool      string `json:"pool,omitempty"`
 	Ephemeral bool   `json:"ephemeral,omitempty"`
+	// CordonedBy is "upgrade" or "pool" when Geass cordoned the node, to upgrade it or to empty it, and Geass undoes it
+	// itself. It is empty for a node that nobody cordoned, and for one that an administrator did.
+	CordonedBy string `json:"cordonedBy,omitempty"`
 }
 
 type capacityIssue struct {
@@ -164,6 +167,7 @@ func describeCapacityNode(node corev1.Node) capacityNode {
 	placement := platform.NodePlacementOf(&node)
 	entry.Region, entry.Zone, entry.Tags = placement.Region, placement.Zone, placement.Tags
 	entry.Pool, entry.Ephemeral = node.Labels[platform.LabelPool], platform.IsEphemeralNode(&node)
+	entry.CordonedBy = cordonedBy(&node)
 	for _, condition := range node.Status.Conditions {
 		switch condition.Type {
 		case corev1.NodeReady:

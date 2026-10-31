@@ -222,3 +222,19 @@ func TestAReinstallGoesAheadWhenTheSnapshotCannotBeTaken(t *testing.T) {
 
 	require.NoError(t, ReinstallSnapshot(NewUpgradePlan(UpgradeOptions{})).Run())
 }
+
+func TestDashboardLinkIsACommandOfItsOwnOnAServer(t *testing.T) {
+	opts, err := ParseOptions([]string{"dashboard-link"}, noEnv)
+	require.NoError(t, err)
+	require.Equal(t, ModeDashboardLink, opts.Mode)
+	_, err = ParseOptions([]string{"dashboard-link", "--reinstall"}, noEnv)
+	require.ErrorContains(t, err, "cannot be combined")
+
+	mode, err := ChooseMode(ModeDashboardLink, Existing{K3sPresent: true, GeassPresent: true})
+	require.NoError(t, err)
+	require.Equal(t, ModeDashboardLink, mode)
+	_, err = ChooseMode(ModeDashboardLink, Existing{})
+	require.ErrorContains(t, err, "no K3s")
+	_, err = ChooseMode(ModeDashboardLink, Existing{K3sPresent: true, Agent: true})
+	require.ErrorContains(t, err, "worker")
+}

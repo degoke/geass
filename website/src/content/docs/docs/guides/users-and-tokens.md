@@ -5,367 +5,256 @@ description: "Dashboard users and roles, and API tokens and deploy hooks for scr
 
 Geass has two ways to sign in:
 
-- People use the dashboard with a username and password. Each user is an **admin** or a **viewer**.
+- People sign in to the dashboard. Each person is an **admin** or a **viewer**.
 - Programs use API tokens. A workspace token acts as an admin, an observer, or a viewer. A project token can deploy
   and edit variables in one environment of one project.
 
-The [command line](/docs/guides/command-line/) gets its token without a password. The command line shows a code, and
-an admin approves the code in the dashboard. A tool that can call a URL but cannot send a header uses a deploy hook.
-A deploy hook is a URL that deploys one service. This page covers users, tokens, deploy hooks, and that approval. It
-ends with `curl` examples for CI.
+The [command line](/docs/guides/command-line/) gets its token without a password: it shows a code, and an admin
+approves the code in the dashboard. A tool that can call a URL but cannot send a header uses a deploy hook, a URL that
+deploys one service.
 
-Roles are global. Users have no permissions for each project. By default, users come from a Kubernetes Secret. That
-Secret has no invitations, no sign-in by email, and no organizations. To get those features, sign people in through an
-identity provider, for example Better Auth. The identity provider owns the people, and Geass takes their role from its
-token. See [Sign in with an identity provider](/docs/guides/external-sign-in/). Tokens and deploy hooks work the same
-in both cases.
+Roles apply to the whole dashboard. There are no permissions for each project. By default, people sign in with a
+password that an admin sets. For invitations, sign-in by email, or organizations, sign people in through
+an identity provider. See [Sign in with an identity provider](/docs/guides/external-sign-in/). Tokens and deploy hooks
+work the same in both cases.
 
 ## Roles
 
 | Role | Held by | Can do |
 | --- | --- | --- |
-| `admin` | Dashboard users, and workspace tokens (**Full access**) | Everything in the dashboard and the API: create, change, and delete resources, deploy, open terminals, and manage settings and connections. Only a signed-in admin, not a token, manages tokens and approves device codes. |
-| `observer` | Workspace tokens only (**Read only, with logs**) | Read everything that a viewer can read, and also logs, pods, deploy logs, and variable names. Cannot change anything. The role for a monitoring script or an AI agent that must only watch. |
-| `viewer` | Dashboard users, and workspace tokens (**Read only**) | Read the state of the platform. Cannot change anything, and cannot read anything sensitive. See the list that follows. |
+| `admin` | People, and workspace tokens with **Full access** | Everything in the dashboard and the API: create, change, and delete resources, deploy, open terminals, and manage settings and connections. Only a signed-in admin, not a token, manages tokens and approves command-line sign-ins. |
+| `observer` | Workspace tokens with **Read only, with logs** | Read everything that a viewer can read, and also logs, deploy logs, runtime details, and variable names. Change nothing. Use it for a monitoring script or an AI agent that only watches. |
+| `viewer` | People, and workspace tokens with **Read only** | Read the state of the platform. Change nothing, and read nothing sensitive. |
 
-If a viewer calls a write endpoint or a sensitive read, Geass answers `403` with
-`{"error": "viewer role cannot access this"}`. An observer gets the same answer for any write.
+A viewer sees service names and status, deployment history, usage, metrics, and cluster events. A viewer does not see
+these items:
 
-A viewer can still read the overview that the dashboard loads. Geass removes from that overview all data that could
-leak a secret or show your setup. A viewer does not get these items:
+- Variable values, secret names, domains, repositories, and the source code of functions.
+- Database hosts, users, and connection details, and bucket names and endpoints.
+- Connections, platform settings, builds, and the token list.
+- Logs, deploy logs, terminals, and GitHub settings.
 
-- Environment variable values, secret references, config data, and `envFrom` sources of services.
-- Service host settings, repository names and commits, container pull-secret names, and function source code. The
-  status of a service still has its public URL.
-- Project shared variables, webhooks and delivery records, the GitHub link, and the backup storage choice.
-- Database engine, version, host, port, user, and connection Secret names, and bucket names, regions, and endpoints.
-- Cloud connections, the platform configuration, and builds.
-- Service logs, deploy logs, runtime details, variables, terminals, project logs (live and history), the template
-  list, GitHub repositories, GitHub settings, PlanetScale cluster sizes, and the token list.
+An observer also sees logs, deploy logs, runtime details, and variables, but not the token list or terminals. Know two
+facts about what an observer reads:
 
-Viewers can see service names and status, deployment history, usage, metrics, and cluster events. They can also read
-`GET /api/v1/apps/{name}/status`. This response includes the phase, failure reason, and source revision of the latest
-build.
+- Secrets come back as names only, but **plain configuration comes back with its values**. Keep sensitive values in a
+  secret.
+- Logs contain all that your app prints, including secrets that it must not print.
 
-An observer gets the same redacted overview as a viewer. An observer also gets the reads in the last item of the list,
-except the token list and terminals. An observer cannot create a terminal session, because that is a write. Know these
-two facts about what an observer reads:
+If a viewer tries to change something or read something sensitive, Geass answers `403` with
+`viewer role cannot access this`. An observer gets the same answer for any change.
 
-- The variables of a service come back as names for secrets, but **plain configuration comes back with its values**.
-  Keep all sensitive data in a secret, not in plain configuration.
-- Logs can contain all that your app prints, including secrets that it must not print.
+## Manage users
 
-Dashboard users are `admin` or `viewer`. `observer` is a token role. Geass drops a user whose `role` is `observer`.
-See the rules in the next section.
-
-## Create and change users
-
-The dashboard has no screen for users. Users are in the Secret `geass-dashboard-auth` in the `geass-system`
-namespace, under the key `users`, as a JSON array.
-
-```json title="users"
-[
-  { "username": "admin", "password": "a-long-passphrase", "role": "admin" },
-  { "username": "maria", "password": "another-long-passphrase", "role": "viewer" }
-]
-```
-
-Geass applies these rules when it reads the list:
-
-- `role` is `admin` or `viewer`. An empty role means `viewer`. Any other value, `observer` included, drops that user.
-- Geass compares usernames without case. If two users differ only by case, the whole list is invalid. Nobody can sign
-  in until you fix the list.
-- Geass ignores a user with an empty password or the password `CHANGE_ME`. `CHANGE_ME` is the placeholder in the sample
-  manifest, and Geass refuses it as a login. If no valid user is left, sign-in fails with "dashboard authentication is
-  unavailable".
-- Geass does not check the minimum length or the complexity of a password. Use a long passphrase.
-
-You can write a plain password. The next time that Geass reads the Secret, it replaces the password with a bcrypt hash
-and saves the Secret again. The first sign-in attempt causes this read. After that, the Secret holds only hashes.
+An admin manages users under **Settings** → **Users**. Only an admin sees this page.
 
 ### Add the first admin
 
-The installer does not create a login. Before you open the dashboard, create the Secret yourself:
+The installer prints a setup link. Open the link, and create the first admin on the **Create your admin** page. See
+[Open the dashboard](/docs/getting-started/sign-in/#open-the-dashboard).
 
-```yaml title="geass-dashboard-auth.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: geass-dashboard-auth
-  namespace: geass-system
-type: Opaque
-stringData:
-  users: |
-    [{"username":"admin","password":"replace-with-a-long-passphrase","role":"admin"}]
+### Get a new setup link
+
+Get a new setup link when nobody can sign in, or when the first link expired.
+
+1. Connect to a control plane server with SSH.
+2. Run this command:
+
+   ```bash
+   curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link
+   ```
+
+3. Open the link that the command prints.
+4. In **Username**, keep `admin`, or enter another name. To reset the password of a user, enter the name of that user.
+5. In **Password**, enter 12 characters or more.
+6. Click **Create admin**.
+
+Geass creates the admin and signs you in. If you entered the name of an existing user, Geass gives that user the new
+password and the admin role. Geass also signs that user out of all other sessions.
+
+The link works one time, for 24 hours. A new link replaces a link that nobody used. The command waits up to 5 minutes
+for the dashboard address. It prints the link on the dashboard domain, if it has one. Otherwise, it prints the link at
+the public IP address of the server, or an `ssh` command and a link to `http://localhost:8085`. See
+[Troubleshooting](/docs/getting-started/sign-in/#troubleshooting).
+
+### Add a user
+
+1. Open **Settings** → **Users**.
+2. Click **Add user**.
+3. Enter a username. Use letters, digits, and the characters `.`, `_`, `@`, `+`, and `-`. The name has 64 characters
+   or fewer.
+4. Select a role: **Viewer** or **Admin**.
+5. To choose the password, enter 12 to 72 characters. To let Geass make a password, leave the field empty.
+6. Click **Add user**.
+
+When Geass makes the password, the dialog shows it one time. Copy the password, and give it to the person. Geass
+cannot show it again.
+
+Geass compares usernames without case. You cannot add a name that another user has, even with different letter case.
+
+### Change a role
+
+1. Open **Settings** → **Users**.
+2. Click the **⋮** button of the user.
+3. Select **Make admin** or **Make viewer**.
+
+The new role applies to open sessions at their next request. The user does not sign in again.
+
+### Reset a password
+
+1. Open **Settings** → **Users**.
+2. Click the **⋮** button of the user, and select **Reset password**.
+3. Enter a new password, or leave the field empty to let Geass make one.
+4. Click **Reset password**.
+
+Geass signs the user out in all browsers, and the old password stops working. If you reset your own password, the
+dashboard asks you to sign in again.
+
+### Remove a user
+
+1. Open **Settings** → **Users**.
+2. Click the **⋮** button of the user, and select **Remove**.
+3. Click **Remove user**.
+
+Geass signs the user out. Geass does not revoke the tokens that the user made or approved. Revoke them under
+**Settings** → **Tokens**.
+
+Geass keeps one admin at all times. It refuses to remove the last admin or to make the last admin a viewer. To change
+the last admin, first make another user an admin.
+
+### Sign everyone out
+
+To end all sessions, click **Sign out everyone** on **Settings** → **Users**, and confirm. Everyone signs in again,
+and that includes you. API tokens keep working.
+
+### Manage users from the command line
+
+The `geass users` commands do the same as the page. Run `geass login` as an admin first. A project token or an
+organization token cannot manage users.
+
+A token manages viewers only. It cannot make an admin, make a viewer an admin, or set the password of an admin. Do
+these actions in the dashboard.
+
+```bash title="Manage users"
+geass users list
+geass users add maria --role viewer
+geass users set-role sam viewer
+geass users reset-password maria
+geass users remove maria
+geass users sign-out-all
 ```
 
-```bash title="Create the Secret"
-kubectl apply -f geass-dashboard-auth.yaml
+Without `--password-file`, `add` and `reset-password` print the password that Geass made, one time. To set a password
+that you choose, send it in a file or through standard input:
+
+```bash title="Add a user with a password that you choose"
+printf '%s' "$PASSWORD" | geass users add ops --role viewer --password-file -
 ```
 
-When the Secret has no users, the operator also accepts users from environment variables:
-
-- `GEASS_DASHBOARD_PASSWORD`, for one admin. `GEASS_DASHBOARD_USERNAME` gives the name, and the default is `admin`.
-- `GEASS_DASHBOARD_USERS`, as a JSON array like the one in the previous example, or as `username:password:role`
-  entries separated by commas.
-
-When the Secret has users, the Secret has priority. On first use, Geass copies the hashed environment users into the
-Secret. Thus, if you change the variables later, the change has no effect. See
-[Configuration](/docs/reference/configuration/).
-
-### Add, change or remove a user
-
-Read the current list, change it, and write it back. This example adds a viewer and needs `jq`:
-
-```bash title="Add a viewer"
-kubectl -n geass-system get secret geass-dashboard-auth -o jsonpath='{.data.users}' | base64 -d \
-  | jq '. + [{"username":"maria","password":"another-long-passphrase","role":"viewer"}]' > users.json
-
-kubectl -n geass-system patch secret geass-dashboard-auth --type merge \
-  -p "$(jq -n --rawfile users users.json '{stringData: {users: $users}}')"
-rm users.json
-```
-
-The change is live. You do not restart anything.
-
-- **Remove a user** by deleting their entry. Their session stops working on the next request.
-- **Change a role** by editing `role`. The change applies to sessions that are already open.
-- **Change a password** by writing the new plain password over the hash. Sessions that are already open stay valid
-  until they expire after 12 hours, or until the user signs out.
-
-Tokens that an admin created or approved are not tied to the account of that admin. If you remove the user, Geass
-does not revoke these tokens. Revoke them under **Settings** → **Tokens**.
+`remove` and `sign-out-all` ask for confirmation. In a script, add `--yes`. See the
+[command-line reference](/docs/reference/cli/) and the [REST API](/docs/reference/rest-api/).
 
 ### Sessions and lockout
 
-When you sign in, Geass sets the cookie `__Host-geass_session`. The cookie is HTTP only and `SameSite=Lax`. It is
-valid for 12 hours, and use does not extend it.
+A sign-in lasts 12 hours. Use does not make it longer. When a person clicks **Sign out**, Geass ends all of their
+sessions, in all browsers.
 
-The cookie is marked `Secure`, with one exception. If the request is plain HTTP to a loopback address (`localhost`,
-`127.0.0.1`, or `::1`), the cookie is `geass_session` and not `Secure`. A browser does not send a `Secure` cookie over
-plain HTTP. Thus, open the dashboard over HTTPS, or through `kubectl port-forward` to `localhost`.
+Open the dashboard over HTTPS, or on `localhost`. Over plain HTTP at any other address, the browser drops the session
+cookie, and you are signed out immediately.
 
-The `__Host-` prefix means that the browser accepts the cookie only from the own host of the dashboard, with no
-`Domain`. Thus, a service on a sibling subdomain of yours cannot plant a cookie of the same name for the whole domain.
-An update from a version that used the plain name signs everyone out one time.
+Geass slows down guessing:
 
-When a user signs out, Geass ends all sessions of that user, in all browsers. To sign everyone out, delete the
-`session-key` key from the Secret. Geass makes a new key, and all old cookies stop working.
-
-Geass uses these sign-in limits:
-
-- Five failed sign-ins for one username from one client address in one minute lock that username for that address
-  for one minute. Thus, Geass shuts out a person who continues to guess. The owner of the account, who signs in from
-  a different address, is not shut out.
-- 25 failures for one username in one minute from all clients together lock the username for everyone for one minute.
-- If Geass cannot tell clients apart, five failures in one minute lock the username for everyone for one minute.
-- A client that fails 20 sign-ins in one minute is also refused for one minute, whatever username it uses.
+- Five failed sign-ins for one username from one address in one minute lock that username for that address for one
+  minute. The owner, at a different address, is not locked out.
+- 25 failed sign-ins for one username in one minute, from all addresses, lock that username for everyone for one
+  minute.
+- A client with 20 failed sign-ins in one minute is refused for one minute, whatever username it tries.
 
 While a username is locked, the reply is the same `invalid username or password`.
-
-Geass stores the count for a username in the Secret key `login-lockouts`, so the count stays after an operator
-restart. Geass keeps the count for a username and an address in memory. Only your configured users get a record in
-the Secret. Geass drops a record when its minute is over. Geass keeps the count for each client in memory too.
-
-If a connection comes from a public address, Geass takes the client address from the connection. If the connection
-comes from a private address, Geass reads `X-Forwarded-For` from the right. All connections through the ingress of the
-cluster or a Cloudflare Tunnel come from a private address. Geass uses the right-most address that is public, because
-the nearest proxy wrote it. Geass does not believe the addresses that a client put before it.
-
-A caller inside the cluster can write that header itself and select its address. With this, the caller can use the
-allowance of a different client. But the caller can never have more than 25 failed sign-ins for a username in one
-minute in total.
 
 ## API tokens
 
 With an API token, a script can call the [REST API](/docs/reference/rest-api/) without a browser. Geass shows the token
-one time, when you create it. Geass stores only a hash.
-
-A token looks like `gsw_1a2b3c4d_` followed by 40 hexadecimal characters:
-
-- The prefix tells the kind.
-- The next part is a public identifier that Geass uses to find the token.
-- The rest is the secret.
-
-A third kind, the [deploy hook](#deploy-hooks) (`gsh_`), is a URL, not a credential for the API.
+one time, when you create it.
 
 | | Workspace token | Project token |
 | --- | --- | --- |
 | Prefix | `gsw_` | `gsp_` |
-| Acts as | A dashboard user, across all projects. When [organizations are on](/docs/guides/organizations-and-workspaces/#tokens) and the admin of an organization made the token, across all projects of that organization. | A fixed list of actions on one environment of one project |
-| Access | `admin` (**Full access**), `observer` (**Read only, with logs**), or `viewer` (**Read only**) | Fixed list, see below |
-| Use when | A script manages many things, or you need only to read | CI deploys one service and edits its variables |
+| Acts as | A dashboard user, across all projects. When [organizations are on](/docs/guides/organizations-and-workspaces/#tokens), across the projects of the organization of its maker. | A fixed list of actions in one environment of one project |
+| Access | **Full access**, **Read only, with logs**, or **Read only** | A fixed list. See [What a project token can do](#what-a-project-token-can-do). |
+| Use when | A script manages many things, or only reads | CI deploys services and edits their variables |
 
-If a script needs only to deploy, use a project token. If a script or an agent needs only to watch, use an observer
-token.
+If a script only deploys, use a project token. If a script or an agent only watches, use **Read only, with logs**.
 
 ### Create a token
 
-You must be signed in to the dashboard as an admin. Tokens cannot create, list, or revoke tokens, not even an admin
-token. Geass answers `403`: "API tokens can only be managed from the dashboard by an admin".
+You must sign in to the dashboard as an admin. A token cannot create, list, or revoke tokens, not even a
+**Full access** token.
 
-1. Open the tokens page:
+1. Open the token list:
    - For a workspace token, open **Settings** → **Tokens**.
-   - For a project token, open **Settings** → **Tokens** of the project.
+   - For a project token, open the project, and then **Settings** → **Tokens**.
 2. Click **New token**.
 3. Enter a **Name** that tells where you use the token, for example `github-actions`. The maximum is 60 characters.
 4. Set the access:
    - For a workspace token, select the **Access**: **Read only** (the default), **Read only, with logs**, or
      **Full access**.
    - For a project token, select the **Environment** that the token can change.
-5. Select an **Expiration**: **30 days**, **90 days**, **1 year**, or **No expiration**. The default is 90 days.
+5. Select an **Expiration**: **30 days**, **90 days** (the default), **1 year**, or **No expiration**.
 6. Click **Create token**.
 7. Copy the token from **Your new token**, and store it in your secret manager. Geass shows it only one time.
 
-The API accepts all lifetimes from 1 to 3650 days. The API treats a missing `expiresInDays`, or `0`, as no expiration.
-A project token needs a project and an environment that exist. A maximum of 600 tokens, deploy hooks included, can
-exist at the same time. A maximum of 100 of them can be for one
-[organization](/docs/guides/organizations-and-workspaces/#tokens).
-
-To create a token with the API, use a dashboard session. A token cannot do this. Sign in first and keep the cookie:
-
-```bash title="Sign in and create a project token"
-curl -fsS -c cookies.txt -X POST https://geass.example.com/api/login \
-  -H "Origin: https://geass.example.com" \
-  --data-urlencode "username=admin" \
-  --data-urlencode "password=replace-with-your-passphrase"
-
-curl -fsS -b cookies.txt -X POST https://geass.example.com/api/v1/tokens \
-  -H "Origin: https://geass.example.com" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "github-actions", "scope": "project", "project": "proj-1a2b3c4d", "environment": "production", "expiresInDays": 90}'
-```
-
-```json title="Response"
-{
-  "ok": true,
-  "token": "gsp_1a2b3c4d_0123456789abcdef0123456789abcdef01234567",
-  "item": {
-    "id": "1a2b3c4d",
-    "name": "github-actions",
-    "scope": "project",
-    "project": "proj-1a2b3c4d",
-    "environment": "production",
-    "role": "admin",
-    "createdBy": "admin",
-    "createdAt": "2026-10-12T09:00:00Z",
-    "expiresAt": "2027-01-10T09:00:00Z",
-    "expired": false
-  }
-}
-```
-
-For a workspace token for a monitoring script, send
-`{"name": "monitoring", "scope": "workspace", "role": "observer", "expiresInDays": 90}`. The response has the header
-`Cache-Control: no-store`. A project token reports `role: "admin"`, but its fixed list of actions limits it.
+An installation can have at most 600 tokens, deploy hooks and approved command-line sign-ins included. An
+[organization](/docs/guides/organizations-and-workspaces/#tokens) can have at most 100.
 
 ### Use a token
 
-Send the token as a Bearer token on each request:
+Send the token as a Bearer token with each request:
 
 ```bash title="Call the API with a token"
 export GEASS_TOKEN=gsw_1a2b3c4d_0123456789abcdef0123456789abcdef01234567
 curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/me
 ```
 
-`GET /api/v1/me` tells who the token is and what it can do. The response gives these fields:
+`GET /api/v1/me` tells who the token is: its role, whether it can change things, its scope, and its expiry.
 
-- Its role.
-- `canMutate`.
-- `canReadSensitive`, which is true for an admin or an observer.
-- Its scope, project, environment, and expiry.
+Under `/api/v1`, send writes as JSON. The older routes under `/api` read form fields. Send those requests with
+`curl --data-urlencode`. See [REST API](/docs/reference/rest-api/).
 
-`GET /api/token` shows the record of the token: its name, scope, project, environment, role, and expiry.
+### Use the access token of the identity provider
 
-If you send a Bearer header with a bad, expired, or revoked token, Geass answers `401` with
-`invalid or expired API token`. Geass does not then try a cookie.
-
-Calls that use a token skip the same-origin check that protects browser sessions. The reason is that a browser never
-adds a Bearer header automatically. Send the requests as follows:
-
-- Under `/api/v1`, send writes as JSON.
-- The older dashboard routes under `/api` read form fields, not JSON. Send those requests as
-  `application/x-www-form-urlencoded`, which `curl --data-urlencode` does.
-
-If a project token sends a different content type to a dashboard route, Geass answers `415`. For all other callers,
-Geass does not read a JSON body, and the fields arrive empty. See [REST API](/docs/reference/rest-api/).
-
-### Use the identity provider's access token
-
-This section applies when you use [sign-in through an identity provider](/docs/guides/external-sign-in/) and
-`spec.auth.oidc.accessTokens` is turned on. In that case, a program that is signed in at the provider can send
-**the access token the provider issued to the person** in place of a Geass token, as `Authorization: Bearer <jwt>`.
-The program can send it to all that an API token can reach:
-
-- The REST API.
-- The stream of events and the log streams.
-- The WebSocket of a terminal, as the subprotocol `geass.bearer.<jwt>`.
-
-Geass creates nothing in **Settings** → **Tokens**, and keeps nothing long-lived. The person is the actor, with the
-role and organizations that their claims map to. Geass records the address of the person as the actor, or their
-subject.
-
-The token must be a JWT access token with the audience of this cluster. The documentation of the provider and the
-[setup guide](/docs/guides/external-sign-in/#access-tokens-as-a-bearer-credential) describe this. Geass refuses the
-call in these cases:
-
-- With `401`, for all tokens that are not such an access token. An ID token is one example.
-- With `403`, for a person whose claims map to no access.
-
-Like an API token, this access token cannot manage sign-in, make tokens, or approve a device code. Those actions need
-the session of a signed-in admin. A stream or terminal that the access token opened ends when the token expires. This
-feature is off by default.
+When people [sign in through an identity provider](/docs/guides/external-sign-in/), a program that is signed in at the
+provider can send the access token of the person instead of a Geass token. This feature is off by default. To turn it
+on and set it up, see
+[Access tokens as a bearer credential](/docs/guides/external-sign-in/#access-tokens-as-a-bearer-credential).
 
 ### What a workspace token can do
 
-- An `admin` workspace token can call all endpoints that a signed-in admin can call, with these exceptions:
-  - The endpoints that manage tokens or approve device codes. They need the session of a signed-in admin.
-  - `POST /api/token/deploy`, which is for project tokens.
-
-  An admin token can also open a terminal. Thus, a leaked admin token is as serious as an admin password.
-- An `observer` workspace token can read what a viewer can read, with the same redactions. It can also do the reads in
-  [Roles](#roles). Geass refuses all writes.
-- A `viewer` workspace token can read what a viewer can read, with the same redactions.
+- A **Full access** token can do all that a signed-in admin can do, except manage tokens and approve command-line
+  sign-ins. It can also open a terminal. So a leaked **Full access** token is as serious as an admin password.
+- A **Read only, with logs** token reads what an observer reads.
+- A **Read only** token reads what a viewer reads.
 
 ### What a project token can do
 
-A project token can use only these endpoints, and only for services in its own project and environment:
+A project token works only for the services of its own project and environment. It can do these tasks:
 
-| Endpoint | Meaning |
-| --- | --- |
-| `GET /api/token`, `GET /api/token/services` | Describe the token. List the services and databases that it can reach. |
-| `POST /api/token/deploy` | Deploy all pending changes in the environment of the token |
-| `GET /api/apps/{name}/logs`, `/runtime`, `/variables`, `/metrics` | Read the logs, pods, variables, and metrics of a service. Variables show secrets as names only and plain configuration with its values. |
-| `GET /api/apps/{name}/deployments/{id}/logs` | Read the logs of one deploy |
-| `POST /api/apps/{name}/deploy`, `/rollback`, `/scale`, `/retry-provision`, `/update` | Deploy, roll back, scale, retry, and edit settings |
-| `POST /api/apps/{name}/build`, `/build/cancel` | Start or cancel a repository build |
-| `POST /api/apps/{name}/config/set`, `/config/delete`, `/config/raw` | Edit plain configuration |
-| `POST /api/apps/{name}/secrets/set`, `/secrets/delete`, `/env/delete` | Edit secrets and environment references |
+- List the services and databases that it can reach: `GET /api/v1/token/services`.
+- Deploy all pending changes of its environment: `POST /api/v1/token/deploy`.
+- Deploy, roll back, scale, and change the settings of a service.
+- Start or cancel a build of a service.
+- Set and remove variables and secrets.
+- Read the logs, deployments, deploy logs, runtime details, variables, status, and metrics of a service. Variables
+  show secrets as names only, and plain configuration with its values.
 
-On `/api/v1`, the same routes work with JSON bodies. `PATCH /api/v1/apps/{name}` is `update`. On `/api/v1`, a project
-token can also call these routes:
-
-- `GET /api/v1/me`, `/version`, `/apps` (only its own environment), `/apps/{name}`, `/apps/{name}/status`,
-  `/apps/{name}/deployments`, and `/apps/{name}/logs/stream`.
-- `GET /api/v1/token/services` and `POST /api/v1/token/deploy`.
-
-Geass refuses all other requests with `403` and `this token cannot access that endpoint`. These include:
-
-- Requests that create or delete resources, databases, and buckets.
-- Requests for terminals, networking and domains, settings, projects, users, and connections.
-- Requests that read project or cluster logs.
-
-A request for a service in a different project or environment gets `404` and `app not found`. This is the same answer
-as for a service that does not exist, so names do not leak. If a form field `project` or `environment` names a
-different project, Geass refuses it with `this token is limited to <project> / <environment>`.
-
-A project token cannot read the overview of the dashboard (`/api/bootstrap`). But on `/api/v1`,
-`GET /api/v1/apps/{name}/deployments` lists the deployment revisions that `POST /api/v1/apps/{name}/rollback` needs.
-Thus, a project token can roll back there. On the older routes, use a workspace token for rollbacks.
+A project token cannot create or delete services, databases, or buckets. It cannot open a terminal, or change
+domains, projects, settings, users, or connections. For these requests, Geass answers `403` with
+`this token cannot access that endpoint`. For a service in another project or environment, Geass answers `404` with
+`app not found`, the same as for a service that does not exist.
 
 ### Deploy with a project token
 
-CI calls `POST /api/token/deploy` or `POST /api/v1/token/deploy`. The call deploys all items with pending changes in
+CI calls `POST /api/v1/token/deploy`. The call deploys all services, databases, and buckets with pending changes in
 the environment of the token. See [Projects and environments](/docs/guides/projects-and-environments/).
 
 ```bash title="Deploy pending changes"
@@ -376,185 +265,105 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.
 { "ok": true, "deployed": 2 }
 ```
 
-`deployed` counts the services, databases, and buckets that had changes. A workspace token gets `403` here. A
-workspace token uses `POST /api/projects/{project}/deploy` with an `environment` field.
-
-Geass deploys services first, then databases, then buckets. If the cluster does not have room for one of the services
-or databases, the call stops there. It fails with `400`, and the message gives the capacity shortfall. All items that
-the call deployed before that point stay deployed. `GET /api/v1/token/services` shows which services still have
-`pendingChanges`.
+Geass deploys services first, then databases, then buckets. If the cluster does not have room for one item, the call
+stops there with `400` and the capacity shortfall. The items deployed before that point stay deployed.
 
 ### Deploy hooks
 
 A deploy hook is a URL that deploys one service when something calls it with `POST`. Use a deploy hook from a tool
-that can call a URL but cannot send a header. Examples are a registry that notifies when an image is pushed, a
-scheduler, a CMS, or a button on a page. If a tool can send `Authorization: Bearer`, use a project token.
+that can call a URL but cannot send a header. Examples are a registry that sends a notice when you push an image, a
+scheduler, or a CMS. If a tool can send `Authorization: Bearer`, use a project token.
+
+To make a deploy hook, do these steps:
+
+1. Open the service.
+2. Select **Settings** → **Deploy**.
+3. Under **Deploy hook**, click **Create deploy hook**.
+4. Copy the URL. Geass shows it only one time.
 
 ```bash title="Call a deploy hook"
 curl -X POST https://geass.example.com/hooks/deploy/gsh_1a2b3c4d_0123456789abcdef0123456789abcdef01234567
 ```
 
-```json title="Response"
-{ "ok": true, "action": "build", "service": "storefront" }
-```
-
 What the hook does depends on the service:
 
-| The service is | `action` | What happens |
-| --- | --- | --- |
-| Built from a repository | `build` | Geass starts its current build again from the head of the branch. The service rolls out when the build succeeds. A service with no build yet, a service that was never deployed, or a service that pins a commit answers `409`. A push to the branch also skips these services. |
-| An image or a function | `deploy` | Geass deploys its pending changes. This is what **Deploy changes** and **Redeploy** do in the dashboard. Thus, changes that someone saved but did not deploy also go out, and Geass deploys a draft for the first time. The same capacity check applies: a cluster with no room answers `400` and deploys nothing. |
+- **A service built from a repository**: Geass builds the head of its branch again, and deploys the result. The hook
+  answers `409` for a service that has no build yet, was never deployed, or pins a commit.
+- **An image or a function**: Geass deploys the pending changes of the service, as **Deploy changes** does in the
+  dashboard. If the cluster has no room, the hook answers `400` and deploys nothing.
 
-To make a deploy hook, do these steps in the settings of the service:
+A service has one hook. To get a new URL, click **Delete hook**, and make a new hook. The old URL stops working
+immediately. The hook also shows in **Settings** → **Tokens** as `Deploy hook · <service> · <environment>`. There you
+can see when it was last called, and revoke it.
 
-1. Open the service.
-2. Select **Settings** → **Deploy**, then **Deploy hook**.
-3. Click **Create deploy hook**. Geass shows the URL one time, with a copy button.
+Anyone who has the URL can deploy that service. Keep the URL as secret as a token. Geass limits the harm of a leaked
+URL:
 
-A service has one hook. To get a new URL, delete the hook and make a new one. The old URL stops working immediately.
+- The hook can only deploy its service. The API refuses it as a Bearer token.
+- Only `POST` does something. Other methods get `405`, so a link preview cannot deploy.
+- A wrong, revoked, or expired hook, or a hook of a deleted service, gets `404` `hook not found`.
+- A hook called less than 30 seconds ago answers `429` and does nothing.
+- After 20 wrong hook URLs in one minute, a client gets `429` for one minute.
+- Geass removes the hook from its own request log. A proxy in front of the dashboard might still log the URL.
 
-A hook appears in **Settings** → **Tokens**, and in **Tokens** of the project, as
-`Deploy hook · <service> · <environment>`. There, you can see when it was last called, and you can revoke it. The API
-makes a hook with `scope: "service"`, a `project`, an `environment`, and an `app`. Only a signed-in admin can do this.
-
-The secret is in the URL, because that is the only place where such a tool can put it. Thus, Geass makes the URL
-harmless if it leaks into the log of a proxy:
-
-- The hook is good for one service and one action. If you use it as a Bearer token, all API endpoints refuse it
-  (`401`), whatever the request.
-- Only `POST` does something. `GET`, `HEAD`, `PUT`, and `DELETE` answer `405`. Thus, a link preview or a crawler
-  cannot deploy anything.
-- All these hooks answer `404` `hook not found`: a hook that does not exist, is revoked, has expired, or belongs to a
-  service that is gone. Thus, a caller cannot tell which case applies. A token of a different kind in the URL also
-  gets `404`.
-- When you delete the service, its environment, or its project, Geass revokes its hook.
-- A hook that was called less than 30 seconds ago answers `429` with a `Retry-After` header and does nothing. Thus,
-  a URL that leaked into a loop cannot stop the builds of a service from finishing, or fill its deployment history. A
-  call that did nothing does not start the wait. Examples are a call that found no room in the cluster, or a `409`.
-- Geass slows down a client that continues to guess, as it does for a client that guesses passwords. After 20 misses
-  in one minute, even a good URL gets `429` for one minute. This limit applies to clients that connect from a public
-  address, not through a proxy or tunnel.
-- The request log of the operator shows the path as `/hooks/deploy/<redacted>`. Thus, a person who reads the log does
-  not get a hook. A reverse proxy or ingress in front of the dashboard might log the URL itself. Check what yours
-  writes.
-- The token list never shows the secret again.
-
-Anyone who has the URL can deploy that service. Keep the URL as secret as a token.
+When you delete the service, its environment, or its project, Geass revokes its hook.
 
 ### Rotate a token
 
-Geass does not rotate tokens in place. To rotate a token, do these steps:
+Geass does not rotate a token in place. To rotate a token, do these steps:
 
 1. Create a new token.
-2. Put the new token where you used the old one.
-3. Make sure that `Last used` changes on the new token.
+2. Put the new token where you used the old token.
+3. Make sure that **Last used** changes on the new token. Geass updates it at most every 10 minutes.
 4. Revoke the old token.
-
-The token list shows when Geass created each token, who created it, when it was last used, and when it expires. Geass
-writes the "last used" time a maximum of one time each 10 minutes. Thus, that time can be late.
 
 ### Revoke a token
 
-1. Open **Settings** → **Tokens**, or **Tokens** of the project.
-2. Click the menu on the token.
-3. Click **Revoke**.
-4. Click **Revoke token**. All clients that use the token stop working immediately. You cannot undo this action.
-
-```bash title="Revoke a token"
-curl -fsS -b cookies.txt -X DELETE https://geass.example.com/api/v1/tokens/1a2b3c4d \
-  -H "Origin: https://geass.example.com"
-```
+1. Open **Settings** → **Tokens**, or **Settings** → **Tokens** of the project.
+2. Open the menu of the token, and click **Revoke**.
+3. Click **Revoke token**. Every client that uses the token stops working immediately. You cannot undo this action.
 
 When you delete a project, Geass revokes its project tokens. When you remove an environment, Geass revokes the tokens
-for that environment.
-
-### How tokens are stored
-
-Geass keeps records in the Secret `geass-api-tokens` in `geass-system`, with one key for each token ID. A record holds
-these items:
-
-- The name, scope, project, environment, and role.
-- Who created the token, and when.
-- When the token expires, and when it was last used.
-- The SHA-256 hash of the secret part.
-
-Geass never stores the token itself, so Geass cannot show it again.
-
-When you create or revoke a token, Geass writes a line to the operator log:
-
-- `Created API token`, with the ID, scope, project, environment, and creator.
-- `Revoked API token`, with the ID.
-
-When an admin approves a command-line sign-in, Geass writes `Approved a command-line sign-in`, not
-`Created API token`. The line has the token ID, role, client name, and approver.
+of that environment.
 
 ## Sign in the command line
 
-`geass login` signs in without a password, and you do not paste a token. The command asks Geass for a short code,
-shows it, and waits while an admin approves it in the dashboard. Geass then gives the command a token, and the command
-saves the token on your machine. Programs other than the `geass` command line can use the same flow. See
+`geass login` signs in without a password, and you do not paste a token. The command shows a short code, and waits
+while an admin approves the code in the dashboard. Other programs can use the same flow. See
 [Sign in from a program](/docs/reference/rest-api/#sign-in-from-a-program).
 
 1. Run `geass login --url https://geass.example.com`. The command prints an address and a code, for example
-   `BCDF-GHJK`. When it runs in a terminal, it opens the page in your browser. `--no-browser` prints only the
-   address. The command waits up to 10 minutes.
-2. In the browser, if you are not signed in, sign in to the dashboard as an admin. The page,
-   **Sign in the command line**, is at `/device`. When you arrive from the link, the **Code** field is already filled
-   in.
-3. Make sure that the code on the page is the code that your terminal shows. The page names the program that asks.
+   `BCDF-GHJK`. It also opens the page in your browser. It waits up to 10 minutes.
+2. If the dashboard asks, sign in as an admin. The page **Sign in the command line** opens, with the **Code** filled in.
+3. Make sure that the code on the page is the code in your terminal. The page names the program that asks.
 4. Select the **Access**: **Read only, including logs (recommended)**, **Read only, without logs**, or
    **Full access**.
 5. Select when it **Expires**: **7 days**, **30 days** (the default), or **90 days**.
-6. Click **Approve**. The page says "Approved. You can close this page: the command line is signed in." To refuse the
-   request, click **Refuse**.
+6. Click **Approve**. To refuse the request, click **Refuse**.
 
-The token is a usual workspace token. It appears in **Settings** → **Tokens** with the name
-`CLI: geass CLI on <host name>`, created by the admin who approved it. You revoke it there like any other token. A
-viewer who opens the page sees "Only an admin can approve this". To approve, you need a signed-in admin session, not
-a token. Thus, a leaked token cannot make more tokens that live longer than it.
+The token is a usual workspace token. It shows in **Settings** → **Tokens** as `CLI: geass CLI on <host name>`. A
+viewer who opens the page sees "Only an admin can approve this".
 
-For a machine with no person to approve a code, create a token under **Settings** → **Tokens**. Give it to the
-command line with `geass login --token-stdin`, or set `GEASS_URL` and `GEASS_TOKEN`. See
-[Command line](/docs/guides/command-line/).
+For a machine where nobody can approve a code, create a token under **Settings** → **Tokens**. Give it to
+`geass login --token-stdin`, or set `GEASS_URL` and `GEASS_TOKEN`. See [Command line](/docs/guides/command-line/).
 
 :::caution
-Approve only a code that you started yourself. The program that asks selects the name that the page shows. The holder
-of the device code receives the token. Thus, an attacker can start a sign-in and get you to approve its code. The
-attacker then gets a token with the access that you selected. To prevent this:
+Approve only a code that you started yourself. Whoever started the request gets the token. An attacker can start a
+sign-in and ask you to approve the code. To prevent this, do these things:
 
 - Compare the code character by character.
 - Keep the access at the recommended read-only level, unless the program must change things.
 - Select a short expiry.
 :::
 
-`geass logout` removes the saved token only on your machine. The token stays valid until it expires. To end it
-immediately, revoke it in **Settings** → **Tokens**.
+`geass logout` removes the token only from your machine. To end the token, revoke it in **Settings** → **Tokens**.
 
 ## CI examples
 
 The examples use a project token in `GEASS_TOKEN`, and `https://geass.example.com` as the dashboard address. Replace
-`storefront` with the resource name of a service. `GET /api/v1/token/services` lists these names. In CI, you can also
-install the [command line](/docs/guides/command-line/) and set `GEASS_URL` and `GEASS_TOKEN`. The examples that follow
-use `curl`.
+`storefront` with the name of a service. In CI, you can also use the [command line](/docs/guides/command-line/).
 
-List the services that the token can reach:
-
-```bash title="List services"
-curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/token/services
-```
-
-```json title="Response"
-{
-  "project": "proj-1a2b3c4d",
-  "environment": "production",
-  "services": [
-    { "id": "storefront", "name": "storefront", "kind": "service", "source": "image", "ready": true },
-    { "id": "orders-db", "name": "orders-db", "kind": "database", "source": "postgres", "ready": true }
-  ]
-}
-```
-
-Point an image-based service at a new image, and deploy it in one call:
+Point an image service at a new image, and deploy it in one call:
 
 ```bash title="Ship a new image"
 curl -fsS -X PATCH -H "Authorization: Bearer $GEASS_TOKEN" \
@@ -563,11 +372,10 @@ curl -fsS -X PATCH -H "Authorization: Bearer $GEASS_TOKEN" \
   https://geass.example.com/api/v1/apps/storefront
 ```
 
-The response reports `applied` (`deployed`) and the pending state. Without `"deploy": true`, Geass saves the change as
-a pending change, and `POST /api/v1/token/deploy` ships it later. A service that is built from a repository or written
-as a function ignores `image`.
+Without `"deploy": true`, Geass saves a pending change, and `POST /api/v1/token/deploy` ships it later. A service
+built from a repository, or a function, ignores `image`.
 
-Set a secret and deploy it:
+Set a secret, and deploy it:
 
 ```bash title="Set a secret"
 curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" \
@@ -578,25 +386,7 @@ curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" \
 curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/token/deploy
 ```
 
-Scale a service, and read its logs:
-
-```bash title="Scale and read logs"
-curl -fsS -X POST -H "Authorization: Bearer $GEASS_TOKEN" \
-  -H "Content-Type: application/json" -d '{"replicas": 3}' \
-  https://geass.example.com/api/v1/apps/storefront/scale
-
-curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/apps/storefront/logs
-```
-
-To check a service from a monitoring job, use an observer workspace token. An observer token can read status and logs,
-but it cannot change anything:
-
-```bash title="Read the status with an observer token"
-curl -fsS -H "Authorization: Bearer $GEASS_TOKEN" https://geass.example.com/api/v1/apps/storefront/status
-```
-
-This GitHub Actions job deploys after the image is pushed. Store the token as a repository secret named
-`GEASS_TOKEN`:
+This GitHub Actions job deploys after you push. Store the token as a repository secret named `GEASS_TOKEN`:
 
 ```yaml title=".github/workflows/deploy.yml"
 name: deploy
@@ -620,90 +410,97 @@ jobs:
 
 ## Troubleshooting
 
-**`401` with `invalid or expired API token`.** One of these is the cause:
+**`401` with `invalid or expired API token`.** Someone revoked the token, the token expired, or the token was copied
+incompletely. Create a new token.
 
-- Someone revoked the token.
-- The token expired.
-- The token was copied incompletely.
-- The token belongs to a cluster whose Secret `geass-api-tokens` was removed.
-
-The format is `gsw_` or `gsp_`, an 8-character ID, and a 40-character secret. Create a new token.
-
-**`403` with `this token cannot access that endpoint`.** A project token called an endpoint that is not on its list.
+**`403` with `this token cannot access that endpoint`.** A project token called something that is not on its list.
 Use a workspace token, or do the action in the dashboard.
 
-**`403` with `viewer role cannot access this`.** The user or workspace token cannot do this action. A viewer cannot
-change anything or read logs. An observer cannot change anything. Use an `admin` identity.
+**`403` with `viewer role cannot access this`.** The user or token cannot do this action. Use an admin identity.
 
-**`403` with `only project tokens can use this endpoint`.** A workspace token called `/api/token/deploy`. Call
-`POST /api/projects/{project}/deploy` with `environment`.
+**`403` with `only project tokens can use this endpoint`.** A workspace token called the token deploy route. Call
+`POST /api/projects/{project}/deploy` with an `environment` field.
 
-**`403` with `API tokens can only be managed from the dashboard by an admin`.** A token tried to create, list, or
-revoke a token, or to approve a device code. Do the action from a signed-in admin session.
+**`403` with `API tokens can only be managed from the dashboard by an admin`.** A token tried to manage tokens or
+approve a sign-in. Do it from the dashboard as an admin.
 
-**`404` with `app not found` for a service that exists.** The service belongs to a different project or environment
-than the project token. Check `GET /api/v1/token/services`.
+**`404` with `app not found` for a service that exists.** The service is in another project or environment than the
+project token.
 
-**`415` with `send form-encoded data`.** A project token sent a body that is not form-encoded to a dashboard route
-(`/api/...`). Use `--data-urlencode`, or call the same route under `/api/v1` with a JSON body.
+**`415` with `send form-encoded data`.** A project token sent JSON to an older `/api/...` route. Use
+`--data-urlencode`, or call the same route under `/api/v1`.
 
-**`400` with `request origin could not be verified`.** A cookie-authenticated write has no `Origin` or `Referer`
-header that matches the dashboard host. Browsers add one. For scripts, use a token.
+**`400` with `request origin could not be verified`.** A script used a dashboard cookie. Use a token.
 
-**`400` with `too many API tokens; revoke some before creating more`.** The limit of 600 tokens is reached, or the
-limit of 100 tokens for one organization. Deploy hooks and approved device codes also count.
+**`400` with `too many API tokens; revoke some before creating more`.** The limit of 600 tokens, or 100 for one
+organization, is reached. Revoke tokens that you do not use.
 
-**`geass login` says the sign-in was not approved in time.** Nobody approved the code in 10 minutes, or the operator
-restarted. Geass keeps pending sign-ins in memory. Run the command again.
+**`geass login` says that the sign-in was not approved in time.** Nobody approved the code in 10 minutes, or Geass
+restarted. Run the command again.
 
-**The approval page says "No sign-in request has that code".** The code expired, was already used or refused, or was
-mistyped. Run `geass login` again and use the new code.
+**The approval page says "No sign-in request has that code".** The code expired, was used, or was mistyped. Run
+`geass login` again.
 
 **`429` with `too many sign-in requests, try again in a minute`.** One address started more than 10 sign-ins in one
 minute, or 100 sign-ins are waiting. Wait one minute.
 
-**Sign-in succeeds but you are signed out immediately.** The cookie is `Secure`, and you opened the dashboard over plain
-HTTP at an address that is not a loopback address. Use HTTPS or `localhost`.
+**You sign in and are signed out immediately.** You opened the dashboard over plain HTTP at an address that is not
+`localhost`. Use HTTPS.
 
-**Nobody can sign in: "dashboard authentication is unavailable".** One of these is the cause:
+**Nobody can sign in: "dashboard authentication is unavailable".** The list of users has no usable user, has duplicate
+usernames, has only `CHANGE_ME`, or is not valid JSON. Fix the list. See [Under the hood](#under-the-hood).
 
-- The Secret has no usable user.
-- The Secret has duplicate usernames.
-- The Secret still has only `CHANGE_ME`.
-- The `users` value of the Secret is not valid JSON.
+**A user is locked out.** Wait one minute.
 
-Fix `users`.
+**A deploy hook answers `404` `hook not found`.** The URL is wrong, or the hook, its service, its environment, or its
+project is gone. Make a new hook.
 
-**A user is locked out.** Wait one minute. These failures cause a lock:
+**A deploy hook answers `405`.** Send `POST`.
 
-- Five failed attempts for the username from your address in one minute.
-- 25 failed attempts for the username, from all addresses, in one minute.
-- Five failed attempts for the username in one minute, when Geass cannot tell clients apart.
+**A deploy hook answers `409`.** The service is built from a repository, and has no build yet, was never deployed, or
+pins a commit. Deploy it one time from the dashboard, or remove the pinned commit.
 
-A separate limit of 20 failed sign-ins in one minute applies to each client, whatever name it tries.
+**A deploy hook answers `429`.** The hook was called less than 30 seconds ago, or the address tried too many wrong
+hooks. Wait, and call it again. The `Retry-After` header says how long.
 
-**A deploy hook answers `404` `hook not found`.** One of these is the cause:
+## Under the hood
 
-- The URL is wrong or incomplete.
-- Someone deleted the hook, or the hook expired.
-- Someone deleted its service, environment, or project.
+### The user list
 
-The answer is the same for all of these causes. Make a new hook in the settings of the service.
+Use **Settings** → **Users** to change users. When nobody can sign in, use the
+[`dashboard-link` command](#get-a-new-setup-link).
 
-**A deploy hook answers `405`.** The hook accepts only `POST`.
+The list of users is a JSON array in the Secret `geass-dashboard-auth` in `geass-system`, under the key `users`. The
+page and the command line change this key.
 
-**A deploy hook answers `409`.** The service is built from a repository and has no build yet, was never deployed, or
-pins a commit. Deploy the service one time from the dashboard, or unpin the commit.
+```json title="users"
+[
+  { "username": "admin", "password": "a-bcrypt-hash", "role": "admin" },
+  { "username": "maria", "password": "another-bcrypt-hash", "role": "viewer" }
+]
+```
 
-**A deploy hook answers `429`.** One of these is the cause:
+Geass applies these rules to the list:
 
-- Something called the hook less than 30 seconds ago. The `Retry-After` header tells how long to wait.
-- The client address missed too many hook URLs in one minute.
+- `role` is `admin` or `viewer`. An empty role means `viewer`. Geass ignores a user with any other role.
+- Geass compares usernames without case. If two users differ only by case, nobody can sign in until you fix the list.
+- Geass ignores a user with an empty password or the placeholder `CHANGE_ME`.
 
-Wait, and then call the hook again.
+You can write a plain password. Geass replaces it with a hash at the next sign-in attempt.
 
-**A deploy hook answers `401` when used as `Authorization: Bearer`.** A hook is not a credential for the API. For the
-API, use a project token.
+The same Secret holds the setup link under the key `setup`: a SHA-256 hash of its token, and its expiry. The first use
+of the link deletes the key. See [The setup link](/docs/operations/installer/#the-setup-link).
+
+You can also set the first users with environment variables. See [Configuration](/docs/reference/configuration/).
+
+### Tokens and sessions
+
+- Geass keeps a hash of each token, never the token, in the Secret `geass-api-tokens` in `geass-system`.
+- The operator log records `Created API token`, `Revoked API token`, and `Approved a command-line sign-in`.
+- **Sign out everyone** makes a new `session-key` in the Secret `geass-dashboard-auth`. If you set
+  `GEASS_DASHBOARD_SESSION_KEY` on the operator, Geass refuses the action. Change the variable instead.
+- When the Secret has no users, Geass reads `GEASS_DASHBOARD_PASSWORD`, `GEASS_DASHBOARD_USERNAME`, or
+  `GEASS_DASHBOARD_USERS` from the environment. When the Secret has users, the Secret wins.
 
 ## Related
 
@@ -713,4 +510,3 @@ API, use a project token.
 - [REST API](/docs/reference/rest-api/)
 - [Security](/docs/operations/security/)
 - [Projects and environments](/docs/guides/projects-and-environments/)
-- [Configuration](/docs/reference/configuration/)

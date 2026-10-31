@@ -27,6 +27,8 @@ type commandOptions struct {
 	stdin      io.Reader
 	echoStdout bool
 	echoStderr bool
+	// unloggedStdout keeps what the command prints out of the install log, for output that can hold a secret.
+	unloggedStdout bool
 }
 
 func InitLogging() (string, string, error) {
@@ -239,11 +241,12 @@ func (l *installerLogger) writeLine(step, stream, line string) {
 }
 
 type streamWriter struct {
-	step   string
-	stream string
-	echo   io.Writer
-	buf    *bytes.Buffer
-	line   bytes.Buffer
+	step     string
+	stream   string
+	echo     io.Writer
+	buf      *bytes.Buffer
+	line     bytes.Buffer
+	unlogged bool
 }
 
 func newStreamWriter(step, stream string, buf *bytes.Buffer) *streamWriter {
@@ -266,6 +269,9 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 		}
 	}
 
+	if w.unlogged {
+		return len(p), nil
+	}
 	for _, b := range p {
 		if b == '\n' {
 			installLog.writeLine(w.step, w.stream, w.line.String())

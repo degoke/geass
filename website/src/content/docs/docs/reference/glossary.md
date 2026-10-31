@@ -68,7 +68,7 @@ fields behind the term. Sometimes the dashboard uses a friendlier word for the s
 
 ## D
 
-**Dashboard.** The web interface, embedded in the operator binary and served on port 8085. See [Introduction](/docs/overview/introduction/).
+**Dashboard.** The web interface, embedded in the operator binary and served on port 8085. Before it has a domain, Geass serves it over HTTPS at the public IP address of the server. See [Introduction](/docs/overview/introduction/).
 
 **Dashboard URL.** The public HTTPS address of the dashboard, `https://<subdomain>.<root domain>`, set in **Settings** → **Domain**. See [Domains and TLS](/docs/guides/domains-and-tls/).
 
@@ -203,6 +203,8 @@ fields behind the term. Sometimes the dashboard uses a friendlier word for the s
 **Serverless add-on.** The cluster add-on (`spec.addons.serverless`) that installs KEDA and its HTTP add-on so that services can sleep when idle. See [Configuration](/docs/reference/configuration/#geasscluster).
 
 **Service.** What the dashboard calls a deployed app: an image, a repository build, or a function. See [Apps](/docs/guides/apps/).
+
+**Setup link.** A link, `https://<address>/setup#<token>`, that the installer prints. It opens a page that creates a dashboard admin. It works one time, for 24 hours. See [Get a new setup link](/docs/guides/users-and-tokens/#get-a-new-setup-link).
 
 **Shared database server.** One Postgres or MySQL server, shared by many projects, where each project takes logical databases. See [Shared database servers](/docs/guides/shared-database-servers/).
 

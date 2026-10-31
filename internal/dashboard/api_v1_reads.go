@@ -134,7 +134,7 @@ func (s *Server) v1Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := map[string]any{
-		"username": caller.session.Username, "role": caller.session.Role,
+		"username": caller.session.Username, formRole: caller.session.Role,
 		"canMutate": caller.canMutate(), "canReadSensitive": caller.canReadSensitive(),
 		"authentication": "session",
 	}
@@ -663,6 +663,10 @@ type v1Node struct {
 	// it, and it may be removed when the load goes).
 	Pool      string `json:"pool,omitempty"`
 	Ephemeral bool   `json:"ephemeral,omitempty"`
+	// Cordoned says no new service starts on the node. CordonedBy is "upgrade" or "pool" when Geass did it, and Geass
+	// then undoes it itself.
+	Cordoned   bool   `json:"cordoned,omitempty"`
+	CordonedBy string `json:"cordonedBy,omitempty"`
 }
 
 type v1NodeTag struct {
@@ -691,6 +695,7 @@ func (s *Server) v1Nodes(w http.ResponseWriter, r *http.Request) {
 			CPU: node.Status.Allocatable.Cpu().String(), Memory: node.Status.Allocatable.Memory().String(),
 		}
 		view.Pool, view.Ephemeral = node.Labels[platform.LabelPool], platform.IsEphemeralNode(node)
+		view.Cordoned, view.CordonedBy = node.Spec.Unschedulable, cordonedBy(node)
 		_, view.ControlPlane = node.Labels["node-role.kubernetes.io/control-plane"]
 		for _, tag := range placement.Tags {
 			view.Tags = append(view.Tags, v1NodeTag{Name: tag.Name, Reserved: tag.Reserved, Compliance: tag.Compliance})

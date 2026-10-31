@@ -31,6 +31,8 @@ const (
 	// ModeEtcdSnapshots turns on, turns off or looks at the sending of the cluster's snapshots to S3, on a control plane
 	// server. It changes nothing else.
 	ModeEtcdSnapshots Mode = "etcd-snapshots"
+	// ModeDashboardLink prints a new setup link for the dashboard, on a control plane server. It changes nothing else.
+	ModeDashboardLink Mode = "dashboard-link"
 )
 
 // Options are what the installer was asked to do.
@@ -87,6 +89,9 @@ updates the Geass that is already here, keeping everything it holds. It never re
   etcd-snapshots disable   stop sending them. Copies already in the bucket stay
   etcd-snapshots status    say whether this server sends them, where to, and whether the newest copy is recent
 
+  dashboard-link           print a new link that creates a dashboard admin, or resets the password of the user you
+                           name. It works once, for 24 hours. Use it when nobody can sign in
+
 Run on a server that joined a cluster, with no options, the installer only puts the operator's image on it, which is what
 lets the operator run there when the first server is gone. Run it on each of them after the first one is updated.
 
@@ -131,6 +136,10 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 			i++
 			continue
 		}
+		if a == string(ModeDashboardLink) {
+			opts.Mode = ModeDashboardLink
+			continue
+		}
 		if a == "upgrade" || a == "install" {
 			upgrade = upgrade || a == "upgrade"
 			if a == "install" {
@@ -173,6 +182,9 @@ func ParseOptions(args []string, getenv func(string) string) (Options, error) {
 	opts.Yes = opts.Yes || truthy(getenv("GEASS_YES"))
 
 	switch {
+	case opts.Mode == ModeDashboardLink && (reinstall || upgrade || opts.JoinServer != "" || opts.EtcdSnapshots.Action != ""):
+		return Options{}, errors.New("dashboard-link only prints a setup link, and cannot be combined with other commands")
+	case opts.Mode == ModeDashboardLink:
 	case opts.EtcdSnapshots.Action != "" && (reinstall || upgrade || opts.JoinServer != "" || opts.Upgrade.K3sVersion != ""):
 		return Options{}, errors.New("etcd-snapshots only changes how this server sends snapshots, and cannot be combined with --reinstall, --upgrade, --join-server or --k3s-version")
 	case opts.EtcdSnapshots.Action != "":
@@ -234,6 +246,15 @@ func ChooseMode(want Mode, here Existing) (Mode, error) {
 			return "", errors.New("this machine is a worker, which has no database to snapshot. Run this on a control plane server")
 		}
 		return ModeEtcdSnapshots, nil
+	}
+	if want == ModeDashboardLink {
+		switch {
+		case !here.K3sPresent:
+			return "", errors.New("this machine has no K3s, and so no dashboard. Run the installer without dashboard-link to build a cluster")
+		case here.Agent:
+			return "", errors.New("this machine is a worker. Run dashboard-link on a control plane server")
+		}
+		return ModeDashboardLink, nil
 	}
 	if want == ModeJoinServer {
 		if here.K3sPresent {

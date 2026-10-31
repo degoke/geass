@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"regexp"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -29,7 +30,22 @@ const (
 	// ConditionClusterIssuerReady is the GeassCluster condition that says whether certificates can be
 	// issued. It is informational: a cluster without an issuer still runs workloads.
 	ConditionClusterIssuerReady = "ClusterIssuerReady"
+	// ClusterIssuerReasonWaitingForCertManager and ClusterIssuerReasonRegistering are the ClusterIssuerReady reasons of an
+	// issuer that is on its way, not broken.
+	ClusterIssuerReasonWaitingForCertManager = "WaitingForCertManager"
+	ClusterIssuerReasonRegistering           = "IssuerRegistering"
+
+	// ACMEEmailMaxLength is the longest spec.addons.certManager.acmeEmail the GeassCluster CRD accepts.
+	ACMEEmailMaxLength = 254
 )
+
+// acmeEmailPattern is the CRD's pattern for spec.addons.certManager.acmeEmail, without the empty value it also allows.
+var acmeEmailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// ValidACMEEmail reports whether the CRD accepts a non-empty contact address.
+func ValidACMEEmail(email string) bool {
+	return len(email) <= ACMEEmailMaxLength && acmeEmailPattern.MatchString(email)
+}
 
 // ClusterIssuerGVK is the cert-manager kind. The Go types are not a dependency, so the issuer is handled
 // as unstructured.

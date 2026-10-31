@@ -72,8 +72,9 @@ make run     # installs the CRDs on the current context, then runs the operator 
 ```
 
 Or run the two halves yourself: `make dashboard-backend` (the operator with the dashboard API on :8085) and
-`make dashboard-dev` (the Vite dev server). The dashboard signs in with the users in the `geass-system` Secret; the
-[sign-in guide](https://rungeass.com/docs/getting-started/sign-in/) says how they are created. `GEASS_ALLOW_LOOPBACK=true`,
+`make dashboard-dev` (the Vite dev server). The dashboard signs in with the users in the Secret `geass-dashboard-auth` in `geass-system`. When that Secret has no
+users, set `GEASS_DASHBOARD_PASSWORD` for the operator process to sign in as `admin`. On an installed cluster, the setup
+link of the installer creates the first user. See the [sign-in guide](https://rungeass.com/docs/getting-started/sign-in/). `GEASS_ALLOW_LOOPBACK=true`,
 which `make dashboard-backend` sets, lets Settings → Sign-in use an identity provider on your own machine.
 
 ## Building the installer
@@ -200,7 +201,7 @@ How it works, so that a change keeps it working:
   open inside that element (a `Portal` target set on a nested theme), where the scoped styles reach them. Dark and light follow the
   `data-mantine-color-scheme` the host's Mantine puts on `<html>`.
 - **What can be left out.** `hide` takes names from `HIDEABLE` (`src/lib/options.jsx`): `upgrade`, `servers`, `signin`, `domain`, `tokens`,
-  `alerts`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
+  `alerts`, `addons`, `registry`, `account` and `brand`. `SELF_HOSTED_ONLY` is all but `brand`. A hidden page's links are removed and its address
   says *Not available here*. `tokens` also takes away a project's Tokens section and a service's Deploy hook, which are made with tokens. `tokens`, `alerts` and `registry` are hidden because the server answers those only to a signed-in admin, never
   to a token (`requireSessionAdmin`), so with a token they would only fail. A new page that a host cannot use belongs in that list.
 - **People.** The query cache is dropped when `apiBaseUrl` or `sessionKey` changes, so pass `sessionKey` (a user id) when one host page can sign

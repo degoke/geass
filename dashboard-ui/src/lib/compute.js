@@ -58,6 +58,23 @@ export function usePool(name) {
   });
 }
 
+/** The phases a server leaves by itself. A server that failed waits for you, so it is not looked at often. */
+const CHANGING_PHASES = new Set(["Pending", "Creating", "Joining", "Deleting"]);
+
+/**
+ * The servers Geass joins to the cluster, with where each is in joining and why one failed. Servers that have not
+ * joined, or failed to, are only here: the cluster has no node for them. A server that is about to change is looked
+ * at often.
+ */
+export function useServers() {
+  return useQuery({
+    queryKey: [...COMPUTE_KEY, "servers"],
+    queryFn: () => api("/api/v1/servers"),
+    refetchInterval: (query) => (itemsOf(query.state.data).some((server) => CHANGING_PHASES.has(server.phase)) ? 5000 : 20000),
+    select: itemsOf,
+  });
+}
+
 /** The sizes a cloud offers in a region. Admin only: the call is made with the connection's credentials. */
 export function useSizes(connection, region, enabled = true) {
   return useQuery({

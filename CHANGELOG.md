@@ -17,6 +17,76 @@ The first public release, open source under the Apache License 2.0.
 
 ### Added
 
+- **First sign-in with a setup link.** The installer creates no user and prints no password. On a cluster whose
+  dashboard has no users, it prints a setup link, `https://<public IP>/setup#<token>`. The link opens **Create your
+  admin**, where you choose the username and a password of 12 characters or more. Then Geass signs you in. The link
+  works one time, for 24 hours. The Secret `geass-dashboard-auth` holds only a SHA-256 hash of the token, under the key
+  `setup`. The token is after the `#`, so browsers do not send it to a server. A wrong token counts toward the sign-in
+  lockout of the address. An update of a cluster whose dashboard has no users also prints a link. Managed mode refuses
+  `POST /api/setup`. See [Sign in to the dashboard](website/src/content/docs/docs/getting-started/sign-in.md).
+- **The dashboard over HTTPS at the public IP address.** A new cluster sets `spec.dashboard.publicIP: true`. The
+  operator then serves the dashboard at the public IPv4 address of the server, with a Let's Encrypt certificate for
+  that address. The certificate uses the Let's Encrypt `shortlived` profile, and cert-manager renews it. You need no
+  domain and no certificate email, but ports 80 and 443 must be open. The condition `DashboardPublicIP` and the field
+  `status.dashboardPublicURL` report the state. When a dashboard domain is verified, the operator removes the address.
+  If the server has no public IPv4 address, or the address cannot be served, the installer prints the reason, an `ssh`
+  command, and a link to `http://localhost:8085`.
+- **`dashboard-link` command.** Run
+  `curl -sfL https://github.com/degoke/geass/releases/latest/download/install.sh | sudo sh -s -- dashboard-link` on a
+  control plane server to print a new setup link. If you enter the name of an existing user, the link sets the
+  password of that user and makes the user an admin. This command replaces the `kubectl` procedure for a cluster where
+  nobody can sign in.
+- **The install ends when Geass is ready.** The installer waits up to 15 minutes for certificates, metrics, and storage
+  to run, and it prints what is left while it waits. You no longer check the cluster on the server before you deploy.
+  If the time ends first, the installer says that Geass is still starting. The dashboard then shows **Geass is
+  starting** at the top of each page until the cluster is ready.
+- **The dashboard on the loopback address.** The installer adds the service `geass-dashboard` on the first server, as
+  a systemd unit or an OpenRC script. The service keeps the dashboard on `127.0.0.1:8085` and on no other address. When
+  the dashboard has no public address, run `ssh -L 8085:127.0.0.1:8085` to the server, and open `http://localhost:8085`.
+  The service manager starts the forward again when the dashboard pod changes. A server that you installed with an
+  earlier release does not get this service.
+- **Certificate email in the dashboard.** **Settings** → **Domain** has a **Certificate email** field. It sets the
+  contact address of the Let's Encrypt account, `spec.addons.certManager.acmeEmail`, and it shows the state of the
+  issuer. Before, you could set the address only with `GEASS_ACME_EMAIL` or `kubectl patch`.
+- **Manage dashboard users without kubectl.** An admin adds, changes, and removes users under **Settings** → **Users**.
+  The same actions are in `geass users list|add|set-role|reset-password|remove`, and in `GET /api/v1/users` and the other
+  `/api/v1/users` routes. A user has the role `admin` or `viewer`. When Geass makes a password, it shows the password one
+  time. A password reset or a removal signs the user out. Geass refuses to remove the last admin or to make the last
+  admin a viewer. **Sign out everyone** (`geass users sign-out-all`) ends every session and keeps the API tokens. The
+  Secret `geass-dashboard-auth` keeps its shape. A cluster that is already installed needs no change. You can still edit
+  the Secret by hand. Only the platform's administrators can use these routes. A token manages viewers only: it cannot
+  make an admin or set an admin's password. Managed mode refuses the routes with the sign-in settings. The dashboard's own
+  tests cover the handler chain. A real browser on the real operator against K3s (server only, 2026-10-30) did these
+  actions: add, change a role, reset, remove, and sign out everyone. See
+  [Users and API tokens](website/src/content/docs/docs/guides/users-and-tokens.md).
+- **Turn the add-ons on and off in the dashboard and the command line.** **Settings** → **Add-ons** (admins only) lists
+  **Sleep when idle** (`spec.addons.serverless`), **Replicated storage** (`spec.addons.longhorn`), **Metrics**
+  (`spec.addons.monitoring`, with the `lite` or `full` footprint), and **Logs** (`spec.addons.logging`, with 1 to 90 days of
+  retention). Each shows a state (`Off`, `Installing`, `Ready`, or `Failed`) with the reason, and a **Retry install** button for
+  an add-on whose install job failed or was suspended, which used to need `kubectl delete job`. Replicated storage can be turned
+  on and cannot be turned off, because Geass never uninstalls it. The same is in `geass addons` (`list`, `enable --wait`,
+  `disable`, `set`, `retry`) and in the API: `GET /api/v1/settings/addons` and `POST /api/v1/settings/addons/{name}/save` and
+  `/retry`. The operator writes the state to the new field `status.addons` of the cluster (additive: `make crd-compat` passes)
+  and carries out a retry when the cluster has the annotation `geass.dev/retry-addon`. Existing clusters change when the
+  operator is updated: they get `status.addons` and nothing else. The guides on sleep when idle, storage, and observability
+  now use the page, and keep their `kubectl` steps under their *Under the hood* sections. Metrics and logs stores outside the
+  cluster and the usage meter are not on the page yet.
+- **Server management without `kubectl`.** The **Nodes** table on the **Usage** page, `/api/v1`, and the command line now
+  do what needed `kubectl` before. The changes are additive.
+  - A server that has not joined, or failed to join, has a row with its phase and its error. The phase is `Waiting`,
+    `Creating machine`, `Joining`, or `Failed`. `GET /servers` and `geass servers list` list these servers.
+    `geass nodes list` also lists them.
+  - **Retry** starts a failed server over. Use `POST /servers/{name}/retry` or `geass servers retry NAME`.
+  - **Update host keys** replaces the lines for one server in the `known_hosts` of its SSH key Secret. Use
+    `POST /servers/{name}/host-keys` or `geass servers update NAME --known-hosts-file FILE`. Lines for other servers stay.
+    Geass refuses a machine that it created, and keys that list no key for the address of the server.
+  - **Cordon** and **Uncordon** use `POST /nodes/{name}/cordon`, `POST /nodes/{name}/uncordon`,
+    `geass nodes cordon NODE`, and `geass nodes uncordon NODE`. Geass refuses to cordon the last node that can start new
+    services. Geass refuses to uncordon a node that it cordoned for an upgrade or for a pool.
+  - The nodes in the API now have `cordoned` and `cordonedBy`. The **Status** column is now the second column. It says
+    **Cordoned** where it said **Unschedulable**. The row actions are in a menu.
+  - **HA readiness** shows a table with every condition and whether it passed.
+  - Geass does not remove a control plane server here. Geass has no SSH access to it, so it cannot stop K3s on the machine.
 - **Managed mode, for a platform that runs Geass for other people.** `spec.managed.enabled` on the platform configuration
   (`spec.managed.provider` names the platform in the messages) makes the dashboard's API refuse every write to sign-in
   (`/api/settings/auth/*`, and an organization's own provider), to the dashboard's domain and DNS (`/api/settings/domain/*` and the
@@ -473,6 +543,8 @@ The first public release, open source under the Apache License 2.0.
 
 ### Changed
 
+- **cert-manager v1.21.3.** The cert-manager add-on moves from v1.17.2 to v1.21.3. The certificate for the IP address of
+  the dashboard uses an ACME profile, and cert-manager added profiles in 1.18.
 - **The documentation follows the Google developer documentation style guide and the ASD-STE100 writing rules.** The
   README and every page at rungeass.com/docs use short sentences, the active voice, and one word for one meaning. The rules
   are in `docs/writing-style.md`. A check of the pages against the code also corrected about 30 statements, for example the

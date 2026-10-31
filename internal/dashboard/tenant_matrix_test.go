@@ -433,6 +433,8 @@ func TestAnOrganizationCannotReachThePlatformsOwnRoutes(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/settings/auth"}, {http.MethodGet, "/api/settings/github"}, {http.MethodGet, "/api/settings/registry"},
 		{http.MethodGet, "/api/settings/cloudflare"}, {http.MethodGet, "/api/settings/alerts"},
+		{http.MethodGet, "/api/users"}, {http.MethodGet, "/api/v1/users"}, {http.MethodPost, "/api/users/create"}, {http.MethodPost, "/api/users/role"},
+		{http.MethodPost, "/api/users/password"}, {http.MethodPost, "/api/users/remove"}, {http.MethodPost, "/api/users/sign-out-all"},
 		{http.MethodPost, "/api/settings/domain/save"}, {http.MethodPost, "/api/settings/auth/mode"}, {http.MethodPost, "/api/settings/auth/clear"},
 		{http.MethodPost, "/api/settings/registry/save"}, {http.MethodPost, "/api/settings/alerts/channels"},
 		{http.MethodPost, "/api/nodes/worker-1/placement"}, {http.MethodPost, "/api/platform/default-region"},

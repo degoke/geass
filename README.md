@@ -99,6 +99,7 @@ You need a new Linux server with these properties:
 - 2 GB of memory or more.
 - 10 GB or more of free space on `/`.
 - Outbound HTTPS access.
+- Ports 80 and 443 open to the internet, for the dashboard and your services.
 - Root access.
 
 Connect to the server with SSH, and run this command:
@@ -111,7 +112,8 @@ The script downloads the installer for your architecture, checks it against the 
 runs it. The installer checks the machine, installs K3s, deploys the operator, and creates the cluster. The operator
 image is in the installer, so Geass downloads nothing more.
 
-To get HTTPS certificates, give the installer an email address for Let's Encrypt. To make the install repeatable, set
+Before it has a domain, the dashboard uses HTTPS at the public IP address of the server. To get HTTPS certificates for
+your domains, give the installer an email address for Let's Encrypt. To make the install repeatable, set
 the release version:
 
 ```bash
@@ -121,7 +123,8 @@ curl -sfL https://github.com/degoke/geass/releases/download/v0.1.0/install.sh \
 
 After you install Geass, do these steps:
 
-1. [Sign in to the dashboard](https://rungeass.com/docs/getting-started/sign-in/).
+1. Open the link that the installer printed, and create your admin user. See
+   [Sign in to the dashboard](https://rungeass.com/docs/getting-started/sign-in/).
 2. [Add servers](https://rungeass.com/docs/getting-started/add-servers/). You can add servers that you have, or
    machines at a cloud.
 3. [Deploy your first app](https://rungeass.com/docs/getting-started/first-app/).

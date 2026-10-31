@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,8 +44,13 @@ func TestAClusterThatDoesNotUseTheMeshIsInstalledExactlyAsBefore(t *testing.T) {
 	multi := Network{MultiSite: true, ExternalIP: "203.0.113.1"}
 	require.Equal(t, golden["single-server-config"], single.ServerConfig())
 	require.Equal(t, golden["multi-server-config"], multi.ServerConfig())
-	require.Equal(t, golden["single-manifest"], geassClusterManifest("default", "v1", "https://10.0.0.5:6443", single, "ops@example.com"))
-	require.Equal(t, golden["multi-manifest"], geassClusterManifest("default", "v1", "https://203.0.113.1:6443", multi, "ops@example.com"))
+	// The dashboard section came later, and is the same for every network.
+	withoutDashboard := func(manifest string) string {
+		require.Contains(t, manifest, dashboardManifestSection)
+		return strings.Replace(manifest, dashboardManifestSection, "", 1)
+	}
+	require.Equal(t, golden["single-manifest"], withoutDashboard(geassClusterManifest("default", "v1", "https://10.0.0.5:6443", single, "ops@example.com")))
+	require.Equal(t, golden["multi-manifest"], withoutDashboard(geassClusterManifest("default", "v1", "https://203.0.113.1:6443", multi, "ops@example.com")))
 	require.Equal(t, golden["multi-server-url"], multi.ServerURL())
 }
 

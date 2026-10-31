@@ -2444,10 +2444,19 @@ spec:
                         description: |-
                           Enabled installs KEDA and the HTTP add-on. It is opt-in: it adds a few small pods, and changes the
                           ingress controller's settings so it can route to the add-on. Services can then ask to scale to zero.
-                          Turning it off stops services from scaling to zero but never uninstalls KEDA: services that were asleep are
-                          woken and run normally.
+                          Turning it off never uninstalls KEDA, so services that sleep keep sleeping.
                         type: boolean
                     type: object
+                type: object
+              dashboard:
+                description: Dashboard says how the dashboard is reached before it
+                  has a domain.
+                properties:
+                  publicIP:
+                    description: |-
+                      PublicIP serves the dashboard over HTTPS at the control plane's public IPv4 address, with a Let's Encrypt
+                      certificate for that address, until a dashboard domain is verified. The installer turns it on for a new cluster.
+                    type: boolean
                 type: object
               defaultRegion:
                 description: |-
@@ -2653,6 +2662,50 @@ spec:
           status:
             description: GeassClusterStatus defines the observed state of GeassCluster.
             properties:
+              addons:
+                description: |-
+                  Addons is how each of the add-ons that can be switched on and off is doing: monitoring, logging, serverless and
+                  longhorn.
+                items:
+                  description: |-
+                    GeassClusterAddonStatus is how one add-on of spec.addons is doing. The operator writes it, so that a person can see why an
+                    add-on is not up without looking at the Helm jobs that install it.
+                  properties:
+                    installed:
+                      description: |-
+                        Installed says that something of the add-on is in the cluster. It is true for an add-on that is Off when turning it
+                        off does not remove it (scale to zero and replicated storage never are).
+                      type: boolean
+                    message:
+                      description: Message says in a sentence what the add-on is waiting
+                        for, or what went wrong.
+                      type: string
+                    name:
+                      description: 'Name is the add-on, as it is named under spec.addons:
+                        monitoring, logging, serverless or longhorn.'
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: Reason is a short word for why the add-on is Failed,
+                        such as InstallFailed or InstallSuspended.
+                      type: string
+                    state:
+                      description: State is Off, Installing, Ready or Failed.
+                      enum:
+                      - "Off"
+                      - Installing
+                      - Ready
+                      - Failed
+                      type: string
+                  required:
+                  - name
+                  - state
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               conditions:
                 description: conditions represent the current state of the GeassCluster
                   resource.
@@ -2714,6 +2767,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dashboardPublicURL:
+                description: DashboardPublicURL is the HTTPS address of the dashboard
+                  at the public IP address, once its certificate is issued.
+                type: string
               etcdSnapshots:
                 description: EtcdSnapshots is what the operator found in the bucket
                   that spec.etcdSnapshots names.
@@ -8955,9 +9012,11 @@ rules:
 - apiGroups:
   - cert-manager.io
   resources:
+  - certificates
   - clusterissuers
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -9191,6 +9250,20 @@ rules:
   - storage.k8s.io
   resources:
   - storageclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - traefik.io
+  resources:
+  - ingressroutes
+  - middlewares
+  - tlsstores
   verbs:
   - create
   - delete

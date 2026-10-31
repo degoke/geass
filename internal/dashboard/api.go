@@ -116,6 +116,28 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// fixedSettingsMutations are the writes whose path is fixed, mostly settings. They are a map, as fixedReadRoutes is, so that
+// handleAPIMutation's switch stays under the linter's cyclomatic-complexity limit as settings are added.
+var fixedSettingsMutations = map[string]func(s *Server, w http.ResponseWriter, r *http.Request){
+	"/setup":                         (*Server).handleDashboardSetup,
+	"/settings/domain/save":          (*Server).handlePlatformDomainSave,
+	"/settings/domain/verify":        (*Server).handlePlatformDomainVerify,
+	acmeEmailSavePath:                (*Server).handleACMEEmailSave,
+	"/settings/cloudflare/save":      (*Server).handlePlatformCloudflareSettingsSave,
+	"/settings/cloudflare/clear":     (*Server).handlePlatformCloudflareClear,
+	"/settings/cloudflare/discover":  (*Server).handleAPICloudflareDiscover,
+	"/settings/cloudflare/refresh":   (*Server).handlePlatformCloudflareRefresh,
+	"/settings/registry/save":        (*Server).handlePlatformRegistrySave,
+	"/settings/registry/clear":       (*Server).handlePlatformRegistryClear,
+	"/settings/etcd-snapshots/save":  (*Server).handleEtcdSnapshotsSave,
+	"/settings/etcd-snapshots/clear": (*Server).handleEtcdSnapshotsClear,
+	"/settings/auth/save":            (*Server).handlePlatformAuthSave,
+	"/settings/auth/mode":            (*Server).handlePlatformAuthMode,
+	"/settings/auth/clear":           (*Server).handlePlatformAuthClear,
+	"/settings/auth/logout-policy":   (*Server).handlePlatformAuthLogoutPolicy,
+	"/settings/auth/tenancy":         (*Server).handlePlatformAuthTenancy,
+}
+
 func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{dashboardLiteralError: "method not allowed"})
@@ -150,6 +172,8 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleAPITokenCreate(w, mutation)
 	case mutation.URL.Path == "/tokens/revoke":
 		s.handleAPITokenRevoke(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, "/users/"):
+		s.handleUserRoutes(w, mutation)
 	case mutation.URL.Path == "/token/deploy":
 		s.handleAPITokenDeploy(w, mutation)
 	case mutation.URL.Path == "/projects/create":
@@ -184,50 +208,24 @@ func (s *Server) handleAPIMutation(w http.ResponseWriter, r *http.Request) {
 		s.handleNodeRoutes(w, mutation)
 	case mutation.URL.Path == "/platform/default-region":
 		s.handlePlatformDefaultRegionSave(w, mutation)
-	case mutation.URL.Path == "/settings/domain/save":
-		s.handlePlatformDomainSave(w, mutation)
-	case mutation.URL.Path == "/settings/domain/verify":
-		s.handlePlatformDomainVerify(w, mutation)
+	case fixedSettingsMutations[mutation.URL.Path] != nil:
+		fixedSettingsMutations[mutation.URL.Path](s, w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/settings/github/"):
 		s.handlePlatformGitHubRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/github/connections/"):
 		s.handleGitHubConnectionRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/abuse/"):
 		s.handleAbuseRoutes(w, mutation)
-	case mutation.URL.Path == "/settings/cloudflare/save":
-		s.handlePlatformCloudflareSettingsSave(w, mutation)
-	case mutation.URL.Path == "/settings/cloudflare/clear":
-		s.handlePlatformCloudflareClear(w, mutation)
-	case mutation.URL.Path == "/settings/cloudflare/discover":
-		s.handleAPICloudflareDiscover(w, mutation)
-	case mutation.URL.Path == "/settings/cloudflare/refresh":
-		s.handlePlatformCloudflareRefresh(w, mutation)
-	case mutation.URL.Path == "/settings/registry/save":
-		s.handlePlatformRegistrySave(w, mutation)
-	case mutation.URL.Path == "/settings/registry/clear":
-		s.handlePlatformRegistryClear(w, mutation)
 	case mutation.URL.Path == "/backups/recover":
 		s.handleBackupsRecover(w, mutation)
-	case mutation.URL.Path == "/settings/etcd-snapshots/save":
-		s.handleEtcdSnapshotsSave(w, mutation)
-	case mutation.URL.Path == "/settings/etcd-snapshots/clear":
-		s.handleEtcdSnapshotsClear(w, mutation)
+	case strings.HasPrefix(mutation.URL.Path, addonsSettingsPath+"/"):
+		s.handleAddonRoutes(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/settings/alerts/"):
 		s.handleAlertSettings(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/alerts/channels/"):
 		s.handleOrgAlertChannels(w, mutation)
 	case strings.HasPrefix(mutation.URL.Path, "/registry/"):
 		s.handleOrgRegistry(w, mutation)
-	case mutation.URL.Path == "/settings/auth/save":
-		s.handlePlatformAuthSave(w, mutation)
-	case mutation.URL.Path == "/settings/auth/mode":
-		s.handlePlatformAuthMode(w, mutation)
-	case mutation.URL.Path == "/settings/auth/clear":
-		s.handlePlatformAuthClear(w, mutation)
-	case mutation.URL.Path == "/settings/auth/logout-policy":
-		s.handlePlatformAuthLogoutPolicy(w, mutation)
-	case mutation.URL.Path == "/settings/auth/tenancy":
-		s.handlePlatformAuthTenancy(w, mutation)
 	case mutation.URL.Path == "/ha-readiness/check":
 		s.handleHAReadinessCheck(w, mutation)
 	case mutation.URL.Path == "/cloud-connections/create" || mutation.URL.Path == "/connections/create":

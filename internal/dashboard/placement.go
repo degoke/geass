@@ -227,12 +227,18 @@ func (s *Server) poolsCanMakeRoom(ctx context.Context, placement platform.Placem
 	return platform.PoolsCanMakeRoom(pools.Items, nodes.Items, platform.UsageOfPods(pods.Items), placement, est)
 }
 
-// handleNodeRoutes serves /nodes/{name}/placement.
+// handleNodeRoutes serves /nodes/{name}/{placement,cordon,uncordon}.
 func (s *Server) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/nodes/"), "/"), "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] == "placement" {
-		s.handleNodePlacementSave(w, r, parts[0])
-		return
+	if len(parts) == 2 && parts[0] != "" {
+		switch parts[1] {
+		case "placement":
+			s.handleNodePlacementSave(w, r, parts[0])
+			return
+		case "cordon", "uncordon":
+			s.setCordon(w, r, parts[0], parts[1] == "cordon")
+			return
+		}
 	}
 	http.NotFound(w, r)
 }
